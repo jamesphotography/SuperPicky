@@ -11,38 +11,57 @@ import numpy as np
 import cv2
 import shutil
 
+import sys
+from PyQt6.QtWidgets import QApplication
+from MainWindow import MainWindow
+
 
 # 定义一个用于记录日志的函数
 def log_message(message, dir):
-    log_file_path = os.path.join(dir, "process_log.txt")
-    log_file = open(log_file_path, "a")
-    log_file.write(message+"\n")
-    log_file.close()
-    print(message)
+    log_file_path = os.path.join(dir, "process_log.txt")    # gets path to log file
+    log_file = open(log_file_path, "a")                     # opens and allows writing
+    log_file.write(message + "\n")                          # writes message to log
+    log_file.close()                                        # closes log file
+    print(message)                                          # prints message in console
 
 
-# checks and makes a new directory within directory_path
+# checks and makes a new directory within directory_path and returns the path of the new dir
 def make_new_dir(directory_path, new_dir_name):
+
+    # gets path for the new directory
     new_dir_path = os.path.join(directory_path, new_dir_name)
     log_message(f"New directory path: {new_dir_path}", directory_path)
+
+    # checks if directory already exists, make it if it does not
     if not os.path.exists(new_dir_path):
         os.makedirs(new_dir_path)
+
     return new_dir_path
 
 
+# checks if the directory contains any raw files, makes sure that each raw file has a jpg counterpart
 def directory_contains_raw(directory):
+
+    # lists all the possible extensions for raws and jpgs
     raw_extensions = ['.nef', '.cr2', '.arw', '.raf', '.orf', '.rw2', '.pef', '.dng']
     jpg_extensions = ['.jpg', '.jpeg']
+
+    # dictionaries to keep track of which files are raw and which aren't as well as their specific extension
     raw_dict = {}
     jpg_dict = {}
 
+    # loops through the names of every file in the directory
     for filename in os.listdir(directory):
-        file_prefix, file_ext = os.path.splitext(filename)
+
+        file_prefix, file_ext = os.path.splitext(filename)      # gets file name and the extensions and splits it
+
+        # adds files to their respective dictionaries based on their extension
         if file_ext.lower() in raw_extensions:
             raw_dict[file_prefix] = file_ext
         if file_ext.lower() in jpg_extensions:
             jpg_dict[file_prefix] = file_ext
 
+    #
     for key, value in raw_dict.items():
         if key in jpg_dict.keys():
             log_message(f"{key} has raw and jpg files", directory)
@@ -281,6 +300,14 @@ def run_super_picky(directory):
 
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
+    # Initialize the application
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+
+    # Run the application
+    sys.exit(app.exec())
+
     dir_pth = input("Enter directory path:\n")
 
     start = time.time()
