@@ -1,0 +1,292 @@
+import os
+import time
+from PIL import Image, ImageDraw
+import rawpy
+
+import torchvision.transforms as T
+from torchvision.models.detection import fasterrcnn_resnet50_fpn
+from torchvision.models.detection.faster_rcnn import FasterRCNN_ResNet50_FPN_Weights
+import torch
+import numpy as np
+import cv2
+import shutil
+
+
+# 定义一个用于记录日志的函数
+def log_message(message, dir):
+    log_file_path = os.path.join(dir, "process_log.txt")
+    log_file = open(log_file_path, "a")
+    log_file.write(message+"\n")
+    log_file.close()
+    print(message)
+
+
+# checks and makes a new directory within directory_path
+def make_new_dir(directory_path, new_dir_name):
+    new_dir_path = os.path.join(directory_path, new_dir_name)
+    log_message(f"New directory path: {new_dir_path}", directory_path)
+    if not os.path.exists(new_dir_path):
+        os.makedirs(new_dir_path)
+    return new_dir_path
+
+
+def directory_contains_raw(directory):
+    raw_extensions = ['.nef', '.cr2', '.arw', '.raf', '.orf', '.rw2', '.pef', '.dng']
+    jpg_extensions = ['.jpg', '.jpeg']
+    raw_dict = {}
+    jpg_dict = {}
+
+    for filename in os.listdir(directory):
+        file_prefix, file_ext = os.path.splitext(filename)
+        if file_ext.lower() in raw_extensions:
+            raw_dict[file_prefix] = file_ext
+        if file_ext.lower() in jpg_extensions:
+            jpg_dict[file_prefix] = file_ext
+
+    for key, value in raw_dict.items():
+        if key in jpg_dict.keys():
+            log_message(f"{key} has raw and jpg files", directory)
+            jpg_dict.pop(key)
+            continue
+        else:
+            raw_to_jpeg(os.path.join(directory, key + value))
+            log_message(f"{key} now has completed a conversion to jpg", directory)
+
+    if len(jpg_dict.keys()) == 0:
+        return True
+
+    else:
+        unusable_files = make_new_dir(directory, "Unusuable Files")
+
+        for key, value in jpg_dict.items():
+            move_originals(key, directory, unusable_files)
+
+    return False
+
+
+def resize_image(image, max_length=1024):
+    # 计算缩放比例
+    width, height = image.size
+    scaling_factor = max_length / max(width, height)
+
+    # 如果需要缩放，进行缩放操作
+    if scaling_factor < 1:
+        new_width = int(width * scaling_factor)
+        new_height = int(height * scaling_factor)
+        return image.resize((new_width, new_height), Image.LANCZOS)
+    return image
+
+
+def resize_folder(directory):
+    jpg_extensions = ['.jpg', '.jpeg']
+
+    # creates a folder called "Resized" within the given directory to store all the resized images
+    resized_path = make_new_dir(directory, "Resized")
+
+    for filename in os.listdir(directory):
+        log_message("=" * 30, directory)
+        log_message(f"Begin resizing process on file {filename}", directory)
+        file_path = os.path.join(directory, filename)
+        file_prefix, file_ext = os.path.splitext(filename)
+
+        # checks if its a jpg file
+        if file_ext.lower() in jpg_extensions:
+            log_message(f"file extension matches, resizing image\n", directory)
+            # 打开并保存缩放后的 JPEG 图像
+            with Image.open(file_path) as img:
+                resized_img = resize_image(img)
+                resized_jpeg_path = os.path.join(resized_path, filename)
+                resized_img.save(resized_jpeg_path)
+
+
+def raw_to_jpeg(raw_file_path):
+    filename = os.path.basename(raw_file_path)
+    file_prefix, file_ext = os.path.splitext(filename)
+
+    directory_path = raw_file_path[:-len(filename)]
+    jpg_file_path = os.path.join(directory_path, (file_prefix + ".jpg"))
+
+    log_message(f"filename is: {filename}", directory_path)
+
+    log_message(f"destination file path is: {jpg_file_path}", directory_path)
+
+    if os.path.exists(jpg_file_path):
+        log_message("ERROR, file already exists", directory_path)
+        return False
+
+    # 异常处理，确保转换过程中的错误被捕获并记录
+    try:
+        with rawpy.imread(raw_file_path) as raw:
+            rgb = raw.postprocess(use_auto_wb=True)  # 使用自动白平衡
+            image = Image.fromarray(rgb)
+            image.save(jpg_file_path)
+
+            log_message(f"RAW 文件转换为 JPEG: {raw_file_path} -> {jpg_file_path}", directory_path)
+    except Exception as e:
+        log_message(f"转换 RAW 文件时出错: {raw_file_path}, 错误: {e}", directory_path)
+
+
+def calculate_sharpness(image):
+    gray = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2GRAY)
+    laplacian = cv2.Laplacian(gray, cv2.CV_64F)
+    sharpness = np.var(laplacian)
+    return sharpness
+
+
+# 初始化 Faster R-CNN 模型
+def get_model():
+    model = fasterrcnn_resnet50_fpn(weights=FasterRCNN_ResNet50_FPN_Weights.DEFAULT)
+    model.eval()
+    return model
+
+
+# 检测图片中的鸟类并绘制边界框
+def detect_and_draw_birds(image_path, model, output_path, area_threshold=0.05, center_threshold=0.6):
+    bird_dominant = False
+    bird_detected = False
+    bird_sharp = False
+
+    if ".jpg" not in image_path.lower() and ".jpeg" not in image_path.lower():
+        print("ERROR, input file not an image of jpg format")
+        return None
+
+    # 确保打开的是图像文件
+    with Image.open(image_path) as img:
+        # 对图像进行转换和预处理
+        transform = T.Compose([T.ToTensor()])
+        image_tensor = transform(img).unsqueeze(0)
+
+        image_width, image_height = img.size
+
+        # 使用模型进行预测
+        with torch.no_grad():
+            prediction = model(image_tensor)
+
+        # 绘制检测到的鸟类的边界框
+        draw = ImageDraw.Draw(img)
+        for element in zip(prediction[0]['boxes'], prediction[0]['labels'], prediction[0]['scores']):
+            box, label, score = element
+
+            # checks if a bird has been detected and draws a box around it if true
+            if score > 0.7 and label == 16:  # 假设 16 是鸟类的标签， 0.7 confidence threshold
+                draw.rectangle([(box[0], box[1]), (box[2], box[3])], outline="red", width=3)
+                bird_detected = True
+
+                # checks if the bird is at the centre of the image
+                x1, y1, x2, y2 = box
+                box_area = (x2 - x1) * (y2 - y1)
+                image_area = image_width * image_height
+                area_ratio = box_area / image_area
+
+                center_x, center_y = (x1 + x2) / 2, (y1 + y2) / 2
+                center_distance_x = abs(center_x - image_width / 2) / (image_width / 2)
+                center_distance_y = abs(center_y - image_height / 2) / (image_height / 2)
+
+                if area_ratio > area_threshold and center_distance_x < center_threshold and center_distance_y < center_threshold:
+                    bird_dominant = True
+
+                # calculates sharpness
+                bird_region = img.crop((int(box[0]), int(box[1]), int(box[2]), int(box[3])))
+                sharpness = calculate_sharpness(bird_region)
+                if sharpness > 800:
+                    bird_sharp = True
+
+                print(f"Sharpness = {sharpness}")
+
+        # 保存绘制了边界框的图片
+        img.save(output_path)
+        return bird_detected, bird_dominant, bird_sharp
+
+
+def get_originals(file_prefix, dir_pth):
+    og_files = []
+
+    for filename in os.listdir(dir_pth):
+        if file_prefix in filename:
+            og_files.append(filename)
+
+    return og_files
+
+
+def move_originals(file_prefix, dir_pth, save_to_pth):
+    og_files = get_originals(file_prefix, dir_pth)
+
+    if len(og_files) < 1:
+        log_message(f"ERROR, original files for {file_prefix} not found", dir_pth)
+        return False
+
+    for file in og_files:
+        source_pth = os.path.join(dir_pth, file)
+
+        if os.path.exists(source_pth):
+            shutil.move(source_pth, os.path.join(save_to_pth, file))
+            log_message(f"{source_pth} moved into {save_to_pth}", dir_pth)
+        else:
+            log_message(f"ERROR, file to be moved {source_pth} does not exist", dir_pth)
+            return False
+    return True
+
+
+def run_model_on_directory(dir_pth):
+    output_dir = make_new_dir(dir_pth, "Boxed")
+    super_picky_dir = make_new_dir(dir_pth, "Super_Picky")
+    bird_detected_dir = make_new_dir(dir_pth, "Contains_Birds")
+    no_birds_dir = make_new_dir(dir_pth, "No_Birds")
+
+    resized_dir = os.path.join(dir_pth, "Resized")
+    if not os.path.exists(resized_dir):
+        log_message("ERROR in run_model_on_directory, 'Resized' folder not found in give directory", dir_pth)
+        return False
+
+    for filename in os.listdir(resized_dir):
+        log_message("=" * 30, dir_pth)
+        log_message(f"Processing file: {filename}", dir_pth)
+        file_prefix, file_ext = os.path.splitext(filename)
+
+        filepath = os.path.join(resized_dir, filename)
+        output_pth = os.path.join(output_dir, filename)
+
+        # runs model and draws a box on the resized image
+        result = detect_and_draw_birds(filepath, get_model(), output_pth)
+        if result == None:
+            continue
+        detected, dominant, sharp = result[0], result[1], result[2]
+
+        log_message(f"detected: {detected}, dominant: {dominant}, sharp: {sharp}", dir_pth)
+
+        save_to_pth = dir_pth
+        if detected:
+            if dominant and sharp:
+                save_to_pth = super_picky_dir
+            else:
+                save_to_pth = bird_detected_dir
+        else:
+            save_to_pth = no_birds_dir
+
+        move_originals(file_prefix, dir_pth, save_to_pth)
+
+    return True
+
+
+def run_super_picky(directory):
+    if not directory_contains_raw(directory):
+        log_message(f"ERROR: {directory} does not contain any raw files", directory)
+
+    resize_folder(directory)
+
+    if run_model_on_directory(directory):
+        return True
+    return False
+
+
+# Press the green button in the gutter to run the script.
+if __name__ == '__main__':
+    dir_pth = input("Enter directory path:\n")
+
+    start = time.time()
+    run = run_super_picky(dir_pth)
+    end = time.time()
+
+    log_message(f"Processing time: {end - start}, run = {run}", dir_pth)
+
+# See PyCharm help at https://www.jetbrains.com/help/pycharm/
