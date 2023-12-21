@@ -4,9 +4,14 @@ from PyQt6.QtWidgets import QDialog, QFileDialog
 from main_ui import Ui_Dialog  # Import from generated UI file
 from find_bird_util import log_message, run_super_picky
 
+
 class MainWindow(QDialog, Ui_Dialog):
     def __init__(self, parent=None):
         super().__init__(parent)
+
+        # self.setWindowTitle("Test Window")
+        # self.setGeometry(100, 100, 600, 400)
+
         self.setupUi(self)
 
         self.directoryPath = ""
@@ -24,6 +29,8 @@ class MainWindow(QDialog, Ui_Dialog):
             self.display_dir_box.setText(directory)
             print(f"Selected directory: {self.directoryPath}")
 
+        return None
+
     def accept(self):
         # Code to run when the confirm button is accepted
         if not os.path.exists(self.directoryPath):
@@ -34,6 +41,8 @@ class MainWindow(QDialog, Ui_Dialog):
         end = time.time()
 
         log_message(f"Processing time: {end - start}, run = {run}", self.directoryPath)
+
+        return None
 
     def reject(self):
         self.directoryPath = ""

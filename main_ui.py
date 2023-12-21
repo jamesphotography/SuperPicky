@@ -99,6 +99,8 @@ class Ui_Dialog(object):
         QtCore.QMetaObject.connectSlotsByName(Dialog)
         Dialog.setTabOrder(self.display_dir_box, self.processing_txt_box)
 
+        Dialog.closeEvent = self.customCloseEvent
+
     def retranslateUi(self, Dialog):
         _translate = QtCore.QCoreApplication.translate
         Dialog.setWindowTitle(_translate("Dialog", "SuperPicky V0.01"))
@@ -126,3 +128,6 @@ class Ui_Dialog(object):
         self.label_contact_email.setText(_translate("Dialog", "技术支持：james@jamesphotography.com.au"))
         self.browse_dir_button.setText(_translate("Dialog", "选择目录"))
 
+    def customCloseEvent(self, event):
+        # Force close the application
+        QtCore.QCoreApplication.instance().quit()

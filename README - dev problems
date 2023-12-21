@@ -1,0 +1,2 @@
+1. closeEvent is overridden (to resolve of red X not closing application in testing environment, may cause issues)
+2.
