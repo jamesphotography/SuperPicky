@@ -6,8 +6,8 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         # Set window title and size
-        self.setWindowTitle("My PyQt6 App")
-        self.setGeometry(100, 100, 280, 80)
+        self.setWindowTitle("SuperPicky")
+        self.setGeometry(100, 100, 1100, 800)
 
         # Create a layout and a label widget
         layout = QVBoxLayout()

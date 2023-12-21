@@ -1,7 +1,9 @@
 import os
 import time
-from PIL import Image, ImageDraw
+
+from PIL import Image, ImageDraw, ImageFont
 import rawpy
+import textwrap
 
 import torchvision.transforms as T
 from torchvision.models.detection import fasterrcnn_resnet50_fpn
@@ -23,6 +25,40 @@ def log_message(message, dir):
     log_file.write(message + "\n")                          # writes message to log
     log_file.close()                                        # closes log file
     print(message)                                          # prints message in console
+
+
+def write_text_on_existing_image(image_path, text, font_size=80, font_color=(0, 0, 0), max_width=1024):
+    """
+    Write paragraph text on an existing image at the top left corner.
+
+    :param image_path: The path of the existing image.
+    :param text: The paragraph text to write.
+    :param font_size: The size of the font.
+    :param font_color: The color of the font (R, G, B).
+    :param max_width: The maximum width of the text area.
+    """
+    # 加载现有图片
+    image = Image.open(image_path)
+
+    # 调整图片大小，如果图片的宽度超过max_width
+    if image.width > max_width:
+        height = int(max_width * image.height / image.width)
+        image = image.resize((max_width, height), Image.LANCZOS)
+
+    # 准备绘制文字
+    draw = ImageDraw.Draw(image)
+
+    # 使用默认字体
+    font = ImageFont.load_default()
+
+    # 文本换行处理
+    wrapped_text = textwrap.fill(text, width=int(max_width / font_size * 5))
+
+    # 在图片左上角写文本
+    draw.text((10, 10), wrapped_text, font=font, fill=font_color)
+
+    # 保存修改后的图片，覆盖原文件
+    image.save(image_path)
 
 
 # checks and makes a new directory within directory_path and returns the path of the new dir
@@ -75,7 +111,7 @@ def directory_contains_raw(directory):
         return True
 
     else:
-        unusable_files = make_new_dir(directory, "Unusuable Files")
+        unusable_files = make_new_dir(directory, "Unusable Files")
 
         for key, value in jpg_dict.items():
             move_originals(key, directory, unusable_files)
@@ -198,8 +234,14 @@ def detect_and_draw_birds(image_path, model, output_path, area_threshold=0.05, c
                 area_ratio = box_area / image_area
 
                 center_x, center_y = (x1 + x2) / 2, (y1 + y2) / 2
-                center_distance_x = abs(center_x - image_width / 2) / (image_width / 2)
-                center_distance_y = abs(center_y - image_height / 2) / (image_height / 2)
+                center_distance_x = center_x / image_width
+                center_distance_y = center_y / image_height
+
+                print(area_ratio)
+                print(center_distance_x, center_distance_y)
+
+                write_text_on_existing_image(image_path, f"Area ratio: {area_ratio}\nCentre X {center_distance_x}, "
+                                                         f"Centre Y{center_distance_y}")
 
                 if area_ratio > area_threshold and center_distance_x < center_threshold and center_distance_y < center_threshold:
                     bird_dominant = True
@@ -210,6 +252,7 @@ def detect_and_draw_birds(image_path, model, output_path, area_threshold=0.05, c
                 if sharpness > 800:
                     bird_sharp = True
 
+                write_text_on_existing_image(image_path, f"Sharpness: {sharpness}")
                 print(f"Sharpness = {sharpness}")
 
         # 保存绘制了边界框的图片
@@ -301,16 +344,18 @@ def run_super_picky(directory):
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
     # Initialize the application
-    app = QApplication(sys.argv)
-    window = MainWindow()
-    window.show()
+
+    #app = QApplication(sys.argv)
+    #window = MainWindow()
+    #window.show()
 
     # Run the application
-    sys.exit(app.exec())
+    #sys.exit(app.exec())
 
     dir_pth = input("Enter directory path:\n")
 
     start = time.time()
+
     run = run_super_picky(dir_pth)
     end = time.time()
 
