@@ -1,2 +1,3 @@
 1. closeEvent is overridden (to resolve of red X not closing application in testing environment, may cause issues)
-2.
+    - when app is closed mid processing images, python sends thru "app closed unexpectedly error"
+2. process bar jumps back and forth due to multi-processing (i think?)

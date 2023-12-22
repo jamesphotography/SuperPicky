@@ -134,6 +134,7 @@ def resize_folder(directory):
     resized_path = make_new_dir(directory, "Resized")
 
     for filename in os.listdir(directory):
+
         log_message("=" * 30, directory)
         log_message(f"Begin resizing process on file {filename}", directory)
         file_path = os.path.join(directory, filename)
@@ -147,6 +148,8 @@ def resize_folder(directory):
                 resized_img = resize_image(img)
                 resized_jpeg_path = os.path.join(resized_path, filename)
                 resized_img.save(resized_jpeg_path)
+
+        QApplication.processEvents()
 
 
 def raw_to_jpeg(raw_file_path):
@@ -342,7 +345,4 @@ def run_super_picky(directory):
         log_message(f"ERROR: {directory} does not contain any raw files", directory)
 
     resize_folder(directory)
-
-    if run_model_on_directory(directory):
-        return True
-    return False
+    return True

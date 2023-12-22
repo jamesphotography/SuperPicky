@@ -1,6 +1,8 @@
 import os
 import time
 from PyQt6.QtWidgets import QDialog, QFileDialog
+
+from Worker import Worker
 from main_ui import Ui_Dialog  # Import from generated UI file
 from find_bird_util import log_message, run_super_picky
 import sys
@@ -12,10 +14,6 @@ class MainWindow(QDialog, Ui_Dialog):
 
         self.stream = Stream(newText=self.onUpdateText)
         sys.stdout = self.stream
-
-        # self.setWindowTitle("Test Window")
-        # self.setGeometry(100, 100, 600, 400)
-
         self.setupUi(self)
 
         self.directoryPath = ""
@@ -24,6 +22,10 @@ class MainWindow(QDialog, Ui_Dialog):
         self.browse_dir_button.clicked.connect(self.on_browse_button_clicked)
         self.confirm_button.accepted.connect(self.accept)
         self.confirm_button.rejected.connect(self.reject)
+
+        self.progressBar.setValue(0)
+        self.progressBar.setMaximum(100)
+        self.progressBar.setMinimum(0)
 
     def onUpdateText(self, text):
         self.processing_txt_box.append(text)
@@ -45,6 +47,8 @@ class MainWindow(QDialog, Ui_Dialog):
 
         start = time.time()
         run = run_super_picky(self.directoryPath)
+        if(run):
+            self.startProcessing()
         end = time.time()
 
         log_message(f"Processing time: {end - start}, run = {run}", self.directoryPath)
@@ -57,3 +61,13 @@ class MainWindow(QDialog, Ui_Dialog):
         # Code for cancelling the process
         print("Process cancelled.")
         return None
+
+    def startProcessing(self):
+        dir_pth = self.directoryPath
+        self.worker = Worker(dir_pth)
+        self.worker.updateProgress.connect(self.updateProcessBar)
+        self.worker.start()
+
+    def updateProcessBar(self, value):
+        print(f"========UPDATING PROGRESS BAR: {value}========")
+        self.progressBar.setValue(value)
