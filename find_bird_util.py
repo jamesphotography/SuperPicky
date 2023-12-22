@@ -5,6 +5,7 @@ import rawpy
 import textwrap
 
 import torchvision.transforms as T
+from PyQt6.QtWidgets import QApplication
 from torchvision.models.detection import fasterrcnn_resnet50_fpn
 from torchvision.models.detection.faster_rcnn import FasterRCNN_ResNet50_FPN_Weights
 import torch
@@ -237,9 +238,6 @@ def detect_and_draw_birds(image_path, model, output_path, area_threshold=0.03, c
                 center_distance_x = center_x / image_width
                 center_distance_y = center_y / image_height
 
-                print(area_ratio)
-                print(center_distance_x, center_distance_y)
-
                 if area_ratio >= area_threshold:
                     bird_dominant = True
 
@@ -317,11 +315,11 @@ def run_model_on_directory(dir_pth):
 
         # runs model and draws a box on the resized image
         result = detect_and_draw_birds(filepath, get_model(), output_pth)
-        if result == None:
+        if result is None:
             continue
         detected, dominant, centered, sharp = result[0], result[1], result[2], result[3]
 
-        log_message(f"detected: {detected}, dominant: {dominant}, centered: {centered},"
+        log_message(f"RESULTS-----detected: {detected}, dominant: {dominant}, centered: {centered},"
                     f" sharp: {sharp}", dir_pth)
 
         save_to_pth = dir_pth
@@ -334,6 +332,7 @@ def run_model_on_directory(dir_pth):
             save_to_pth = no_birds_dir
 
         move_originals(file_prefix, dir_pth, save_to_pth)
+        QApplication.processEvents()
 
     return True
 

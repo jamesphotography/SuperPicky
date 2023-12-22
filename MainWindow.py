@@ -3,11 +3,15 @@ import time
 from PyQt6.QtWidgets import QDialog, QFileDialog
 from main_ui import Ui_Dialog  # Import from generated UI file
 from find_bird_util import log_message, run_super_picky
-
+import sys
+from Stream import Stream
 
 class MainWindow(QDialog, Ui_Dialog):
     def __init__(self, parent=None):
         super().__init__(parent)
+
+        self.stream = Stream(newText=self.onUpdateText)
+        sys.stdout = self.stream
 
         # self.setWindowTitle("Test Window")
         # self.setGeometry(100, 100, 600, 400)
@@ -20,6 +24,9 @@ class MainWindow(QDialog, Ui_Dialog):
         self.browse_dir_button.clicked.connect(self.on_browse_button_clicked)
         self.confirm_button.accepted.connect(self.accept)
         self.confirm_button.rejected.connect(self.reject)
+
+    def onUpdateText(self, text):
+        self.processing_txt_box.append(text)
 
     def on_browse_button_clicked(self):
         # Open a dialog to select a directory
