@@ -1,3 +1,20 @@
 1. closeEvent is overridden (to resolve of red X not closing application in testing environment, may cause issues)
     - when app is closed mid processing images, python sends thru "app closed unexpectedly error"
 2. process bar jumps back and forth due to multi-processing (i think?)
+
+
+Superpicky V0.01 内容修改记录
+
+- [ ] 增加 loaing page 选择一张名为 Splash.jpg 的图片，不用管大小，不用管内容，这样我之后只要更换这个图片，重新打包就可以调整图片内容了
+- [ ] 调整程序上的 Button 功能 程序内 设置每个 Button 的值得地方 加上 中文注释 注释开头用//詹姆斯调整点 ，这样我就可以 搜索到 ，可以频繁调整，找到最佳值
+- [ ] 昨晚 14寸笔记本和 imac 最后都程序报错
+- [ ] 检查Process log 出现 ERROR 找不到文件
+- [ ] 确定按钮（OK）按一次之后变为 Stop 或者reset 可以将目录复原
+- [ ] 自动删除 Resize目录，建议修改 Resize 为 _temp，这样万一程序报错，使用者也知道这个是无用的目录
+- [ ] Box 目录建议命名为 Redbox 增加识别度，但是只出现 真的有鸟的图片了
+- [ ] Superpicky 目录内的 执行exif 信息调整为4星的操作 ，在 keyword 或者某个地方，加上 Superpicky的关键字
+- [ ] DMG 打包启动画面有点小 Readme看不到
+- [ ] 增加 fix issue 的执行脚本，不用使用者打开终端操作
+- [ ] Designer 增加使用最基本 操作说明
+- [ ] 写详细操作说明以及 最佳使用状态
+- [ ] 选择100张 各种有代表性的图片 作为 Demo测试图片 打包在 DMG 内，可以让使用者下载后先使用 Demo 文件夹进行测试 增加使用信心
