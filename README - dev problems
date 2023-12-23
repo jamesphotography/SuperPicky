@@ -2,6 +2,9 @@
     - when app is closed mid processing images, python sends thru "app closed unexpectedly error"
 2. process bar jumps back and forth due to multi-processing (i think?)
 
+注释：JAMES 可编辑在一下的文档中
+* main_ui.py
+
 
 Superpicky V0.01 内容修改记录
 

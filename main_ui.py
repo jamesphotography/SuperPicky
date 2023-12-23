@@ -7,6 +7,7 @@
 import sys
 
 from PyQt6 import QtCore, QtGui, QtWidgets
+from PyQt6.QtWidgets import QButtonGroup
 
 
 class Ui_Dialog(object):
@@ -35,6 +36,9 @@ class Ui_Dialog(object):
         self.radioButton_AI_normal = QtWidgets.QRadioButton(parent=Dialog)
         self.radioButton_AI_normal.setGeometry(QtCore.QRect(160, 80, 99, 20))
         self.radioButton_AI_normal.setObjectName("radioButton_AI_normal")
+        self.radioButton_AI_normal.setAcceptDrops(True)
+        self.radioButton_AI_normal.setAutoFillBackground(True)
+        self.radioButton_AI_normal.setChecked(True)
         self.radioButton_AI_high = QtWidgets.QRadioButton(parent=Dialog)
         self.radioButton_AI_high.setGeometry(QtCore.QRect(230, 80, 51, 20))
         self.radioButton_AI_high.setAcceptDrops(True)
@@ -44,11 +48,13 @@ class Ui_Dialog(object):
         self.radioButton_bird_small = QtWidgets.QRadioButton(parent=Dialog)
         self.radioButton_bird_small.setGeometry(QtCore.QRect(160, 110, 51, 20))
         self.radioButton_bird_small.setObjectName("radioButton_bird_small")
+        self.radioButton_bird_small.setAcceptDrops(True)
+        self.radioButton_bird_small.setAutoFillBackground(True)
+        self.radioButton_bird_small.setChecked(False)
         self.radioButton_bird_normal = QtWidgets.QRadioButton(parent=Dialog)
         self.radioButton_bird_normal.setGeometry(QtCore.QRect(230, 110, 51, 20))
         self.radioButton_bird_normal.setAcceptDrops(True)
         self.radioButton_bird_normal.setAutoFillBackground(True)
-        self.radioButton_bird_normal.setChecked(False)
         self.radioButton_bird_normal.setObjectName("radioButton_bird_normal")
         self.label_bird_ratio = QtWidgets.QLabel(parent=Dialog)
         self.label_bird_ratio.setGeometry(QtCore.QRect(20, 110, 111, 16))
@@ -75,7 +81,7 @@ class Ui_Dialog(object):
         self.radioButton_sharpness_extra_clear.setGeometry(QtCore.QRect(300, 140, 51, 20))
         self.radioButton_sharpness_extra_clear.setAcceptDrops(True)
         self.radioButton_sharpness_extra_clear.setAutoFillBackground(True)
-        self.radioButton_sharpness_extra_clear.setChecked(True)
+        self.radioButton_sharpness_extra_clear.setChecked(False)
         self.radioButton_sharpness_extra_clear.setObjectName("radioButton_sharpness_extra_clear")
         self.label_contact_email = QtWidgets.QLabel(parent=Dialog)
         self.label_contact_email.setGeometry(QtCore.QRect(30, 440, 311, 16))
@@ -95,18 +101,50 @@ class Ui_Dialog(object):
         self.select_dir_layout.addWidget(self.browse_dir_button)
 
         self.retranslateUi(Dialog)
-        self.confirm_button.accepted.connect(Dialog.accept) # type: ignore
-        self.confirm_button.rejected.connect(Dialog.reject) # type: ignore
         QtCore.QMetaObject.connectSlotsByName(Dialog)
         Dialog.setTabOrder(self.display_dir_box, self.processing_txt_box)
 
         Dialog.closeEvent = self.customCloseEvent
+        # Create button groups
+        self.groupAIConfidence = QButtonGroup(Dialog)
+        self.groupBirdRatio = QButtonGroup(Dialog)
+        self.groupBirdSharpness = QButtonGroup(Dialog)
+
+        # Add radio buttons to their respective groups
+        self.groupAIConfidence.addButton(self.radioButton_AI_normal)
+        self.groupAIConfidence.addButton(self.radioButton_AI_high)
+
+        self.groupBirdRatio.addButton(self.radioButton_bird_small)
+        self.groupBirdRatio.addButton(self.radioButton_bird_normal)
+        self.groupBirdRatio.addButton(self.radioButton_bird_large)
+
+        self.groupBirdSharpness.addButton(self.radioButton_sharpness_normal)
+        self.groupBirdSharpness.addButton(self.radioButton_sharpness_clear)
+        self.groupBirdSharpness.addButton(self.radioButton_sharpness_extra_clear)
+
+        """ JAMES 可编辑 （设置 default）"""
+        self.radioButton_AI_normal.setChecked(True)
+        self.radioButton_bird_normal.setChecked(True)
+        self.radioButton_sharpness_clear.setChecked(True)
+
 
     def retranslateUi(self, Dialog):
+        eagle_ascii = """
+                   __
+                 /  (
+                /    \\\\
+               /      \\\\
+              /  0  0  \\\\
+        ((\\__/  (_()()()()()
+        (      \\\\       /
+         \\\\ \\\\    )=====(  /
+          \\\\ \\\\  /        \\\\ 
+        """
+
         _translate = QtCore.QCoreApplication.translate
         Dialog.setWindowTitle(_translate("Dialog", "SuperPicky V0.01"))
         self.label_select_steps.setText(_translate("Dialog", "选择你的RAW 格式鸟图目录："))
-        self.processing_txt_box.setText(_translate("Dialog", "处理程序休息。。\n请选择要处理的文档"))
+        self.processing_txt_box.setText(_translate("Dialog", "SuperPicky 程序待命中......\n打鸟一时爽，选片帮你忙......\n"+eagle_ascii))
         self.label_AI_confidence.setText(_translate("Dialog", "选择AI 处理置信度："))
         self.radioButton_AI_normal.setText(_translate("Dialog", "正常"))
         self.radioButton_AI_high.setText(_translate("Dialog", "高"))
@@ -115,8 +153,8 @@ class Ui_Dialog(object):
         self.label_bird_ratio.setText(_translate("Dialog", "选择鸟画面占比："))
         self.radioButton_bird_large.setText(_translate("Dialog", "大"))
         self.label_bird_sharpness.setText(_translate("Dialog", "选择鸟清晰度："))
-        self.radioButton_sharpness_clear.setText(_translate("Dialog", "清晰"))
-        self.radioButton_sharpness_normal.setText(_translate("Dialog", "常规"))
+        self.radioButton_sharpness_clear.setText(_translate("Dialog", "普通"))
+        self.radioButton_sharpness_normal.setText(_translate("Dialog", "清晰"))
         self.radioButton_sharpness_extra_clear.setText(_translate("Dialog", "数毛"))
         self.label_contact_email.setText(_translate("Dialog", "技术支持：james@jamesphotography.com.au"))
         self.browse_dir_button.setText(_translate("Dialog", "选择目录"))
@@ -126,4 +164,29 @@ class Ui_Dialog(object):
         sys.stdout = sys.__stdout__
         QtCore.QCoreApplication.instance().quit()
 
-        # super.closeEvent(event)
+    """ JAMES 可编辑"""
+    def getCurrentSelections(self):
+        # For AI Confidence
+        global ai_confidence, bird_ratio, sharpness
+        if self.radioButton_AI_normal.isChecked():          # default
+            ai_confidence = 0.8
+        elif self.radioButton_AI_high.isChecked():
+            ai_confidence = 0.9
+
+        # For Bird Ratio
+        if self.radioButton_bird_small.isChecked():
+            bird_ratio = 0.03
+        elif self.radioButton_bird_normal.isChecked():      # default
+            bird_ratio = 0.05
+        elif self.radioButton_bird_large.isChecked():
+            bird_ratio = 0.08
+
+        # For Sharpness
+        if self.radioButton_sharpness_normal.isChecked():
+            sharpness = 800
+        elif self.radioButton_sharpness_clear.isChecked():  # default
+            sharpness = 1000
+        elif self.radioButton_sharpness_extra_clear.isChecked():
+            sharpness = 2000
+
+        return ai_confidence, bird_ratio, sharpness

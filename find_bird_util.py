@@ -8,7 +8,7 @@ import torchvision.transforms as T
 from PyQt6.QtWidgets import QApplication
 from torchvision.models.detection import fasterrcnn_resnet50_fpn
 from torchvision.models.detection.faster_rcnn import FasterRCNN_ResNet50_FPN_Weights
-import torch
+from torch import no_grad
 import numpy as np
 import cv2
 import shutil
@@ -17,10 +17,10 @@ import shutil
 # 定义一个用于记录日志的函数
 def log_message(message, dir):
     log_file_path = os.path.join(dir, "process_log.txt")  # gets path to log file
-    log_file = open(log_file_path, "a")  # opens and allows writing
-    log_file.write(message + "\n")  # writes message to log
-    log_file.close()  # closes log file
-    print(message)  # prints message in console
+    with open(log_file_path, "a") as log_file:  # opens and allows writing
+        log_file.write(message + "\n")  # writes message to log
+    if message != ("="*50):
+        print(message)  # prints message in console
 
 
 def write_text_on_existing_image(image_path, text, font_size=30, font_color=(255, 255, 255), max_width=1024):
@@ -127,7 +127,7 @@ def resize_image(image, max_length=1024):
     return image
 
 
-def resize_folder(directory):
+def resize_folder(directory, callback=None):
     jpg_extensions = ['.jpg', '.jpeg']
 
     # creates a folder called "Resized" within the given directory to store all the resized images
@@ -135,14 +135,14 @@ def resize_folder(directory):
 
     for filename in os.listdir(directory):
 
-        log_message("=" * 30, directory)
+        log_message("=" * 50, directory)
         log_message(f"Begin resizing process on FILE: [{filename}]", directory)
         file_path = os.path.join(directory, filename)
         file_prefix, file_ext = os.path.splitext(filename)
 
         # checks if its a jpg file
         if file_ext.lower() in jpg_extensions:
-            log_message(f"NOTE: file extension matches, resizing image\n", directory)
+            log_message(f"NOTE: file extension matches, resizing image", directory)
             # 打开并保存缩放后的 JPEG 图像
             with Image.open(file_path) as img:
                 resized_img = resize_image(img)
@@ -150,6 +150,9 @@ def resize_folder(directory):
                 resized_img.save(resized_jpeg_path)
 
         QApplication.processEvents()
+
+    if callback is not None:
+        callback()
 
 
 def raw_to_jpeg(raw_file_path):
@@ -177,7 +180,8 @@ def raw_to_jpeg(raw_file_path):
             log_message(f"CONVERSION: RAW 文件转换为 JPEG: {raw_file_path} -> {jpg_file_path}", directory_path)
     except Exception as e:
         log_message(f"ERROR: 转换 RAW 文件时出错: {raw_file_path}, 错误: {e}", directory_path)
-
+    finally:
+        pass
 
 def calculate_sharpness(image):
     gray = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2GRAY)
@@ -194,13 +198,20 @@ def get_model():
 
 
 # 检测图片中的鸟类并绘制边界框
-def detect_and_draw_birds(image_path, model, output_path, area_threshold=0.03, center_threshold=0.6):
+def detect_and_draw_birds(image_path, model, output_path, ui_settings, center_threshold=0.6):
+    area_threshold = ui_settings[1]
+    ai_confidence = ui_settings[0]
+    sharpness_threshold = ui_settings[2]
     bird_dominant = False
     bird_detected = False
     bird_sharp = False
     bird_centred = False
 
     if ".jpg" not in image_path.lower() and ".jpeg" not in image_path.lower():
+        return None
+
+    if not os.path.exists(image_path):
+        print(f"ERROR: in detect_and_draw_birds, {image_path} not found")
         return None
 
     # 确保打开的是图像文件
@@ -217,7 +228,7 @@ def detect_and_draw_birds(image_path, model, output_path, area_threshold=0.03, c
         center_distance_y = 0.0
 
         # 使用模型进行预测
-        with torch.no_grad():
+        with no_grad():
             prediction = model(image_tensor)
 
         # 绘制检测到的鸟类的边界框
@@ -226,7 +237,7 @@ def detect_and_draw_birds(image_path, model, output_path, area_threshold=0.03, c
             box, label, score = element
 
             # checks if a bird has been detected and draws a box around it if true
-            if score >= 0.8 and label == 16:  # 假设 16 是鸟类的标签， 0.7 confidence threshold
+            if score >= ai_confidence and label == 16:  # 假设 16 是鸟类的标签， 0.7 confidence threshold
                 draw.rectangle([(box[0], box[1]), (box[2], box[3])], outline="red", width=3)
                 bird_detected = True
 
@@ -249,7 +260,7 @@ def detect_and_draw_birds(image_path, model, output_path, area_threshold=0.03, c
                 # calculates sharpness
                 bird_region = img.crop((int(box[0]), int(box[1]), int(box[2]), int(box[3])))
                 sharpness = calculate_sharpness(bird_region)
-                if sharpness >= 800:
+                if sharpness >= sharpness_threshold:
                     bird_sharp = True
 
                 print(f"Sharpness = {sharpness}")
@@ -305,61 +316,11 @@ def delete_directory(dir_path):
     else:
         print(f"ERROR in CLEAN UP: The directory '{dir_path}' does not exist.")
 
-
-"""
-def run_model_on_directory(dir_pth):
-    output_dir = make_new_dir(dir_pth, "Boxed")
-    super_picky_dir = make_new_dir(dir_pth, "Super_Picky")
-    bird_detected_dir = make_new_dir(dir_pth, "Contains_Birds")
-    no_birds_dir = make_new_dir(dir_pth, "No_Birds")
-
-    resized_dir = os.path.join(dir_pth, "Resized")
-    if not os.path.exists(resized_dir):
-        log_message("ERROR: 'Resized' folder not found.", dir_pth)
-        return False
-
-    log_message(f"Number of photos to be processed: {len(os.listdir(resized_dir))}", dir_pth)
-    log_message("=" * 30, dir_pth)
-    log_message(f"Number of photos to be processed: {len(os.listdir(resized_dir))}", dir_pth)
-
-    for filename in os.listdir(resized_dir):
-        log_message("=" * 30, dir_pth)
-        log_message(f"Processing file: {filename}", dir_pth)
-        file_prefix, file_ext = os.path.splitext(filename)
-
-        filepath = os.path.join(resized_dir, filename)
-        output_pth = os.path.join(output_dir, filename)
-
-        # runs model and draws a box on the resized image
-        result = detect_and_draw_birds(filepath, get_model(), output_pth)
-        if result is None:
-            continue
-        detected, dominant, centered, sharp = result[0], result[1], result[2], result[3]
-
-        log_message(f"RESULTS: [detected = {detected}, dominant = {dominant}, centered = {centered},"
-                    f" sharp = {sharp}]", dir_pth)
-
-        save_to_pth = dir_pth
-        if detected:
-            if dominant and sharp:
-                save_to_pth = super_picky_dir
-            else:
-                save_to_pth = bird_detected_dir
-        else:
-            save_to_pth = no_birds_dir
-
-        move_originals(file_prefix, dir_pth, save_to_pth)
-        QApplication.processEvents()
-
-        log_message(f"Process Completed, files processed: {len(os.listdir(resized_dir))}", dir_pth)
-
-    return True"""
-
-
 def run_super_picky(directory):
     if not directory_contains_raw(directory):
         log_message(f"ERROR: {directory} does not contain any raw files", directory)
 
+    log_message(f"RAW FILES FOUND and CONVERTED: continuing onto resizing files", directory)
     resize_folder(directory)
 
     #if run_model_on_directory(directory):
