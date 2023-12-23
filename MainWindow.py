@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import QDialog, QFileDialog
 
 from Worker import Worker
 from main_ui import Ui_Dialog  # Import from generated UI file
-from find_bird_util import log_message, run_super_picky
+from find_bird_util import log_message, run_super_picky, delete_directory
 import sys
 from Stream import Stream
 
@@ -41,17 +41,22 @@ class MainWindow(QDialog, Ui_Dialog):
         return None
 
     def accept(self):
-        # Code to run when the confirm button is accepted
         if not os.path.exists(self.directoryPath):
             return None
 
         start = time.time()
-        run = run_super_picky(self.directoryPath)
-        if(run):
-            self.startProcessing()
-        end = time.time()
 
-        log_message(f"Processing time: {end - start}, run = {run}", self.directoryPath)
+        # First, run the run_super_picky function and wait for it to complete
+        run_super_picky(self.directoryPath)
+
+        # Then, start the processing which includes Worker thread
+        self.startProcessing()
+
+        # If you want to wait for the Worker to finish in this method:
+        self.worker.finishedProcessing.connect(self.onWorkerFinished)
+
+        end = time.time()
+        log_message(f"Processing time: {end - start}", self.directoryPath)
 
         return None
 
@@ -71,3 +76,12 @@ class MainWindow(QDialog, Ui_Dialog):
     def updateProcessBar(self, value):
         print(f"========UPDATING PROGRESS BAR: {value}========")
         self.progressBar.setValue(value)
+
+    def onWorkerFinished(self):
+        # Code to execute after the Worker thread has finished
+        delete_directory(os.path.join(self.directoryPath, "Resized"))
+        end = time.time()
+        log_message(f"Processing time: {end - self.start}", self.directoryPath)
+
+
+## add comment

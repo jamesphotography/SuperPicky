@@ -95,12 +95,12 @@ def directory_contains_raw(directory):
     #
     for key, value in raw_dict.items():
         if key in jpg_dict.keys():
-            log_message(f"{key} has raw and jpg files", directory)
+            log_message(f"FILE: [{key}] has raw and jpg files", directory)
             jpg_dict.pop(key)
             continue
         else:
             raw_to_jpeg(os.path.join(directory, key + value))
-            log_message(f"{key} now has completed a conversion to jpg", directory)
+            log_message(f"FILE: [{key}] now has completed a conversion to jpg", directory)
 
     if len(jpg_dict.keys()) == 0:
         return True
@@ -136,13 +136,13 @@ def resize_folder(directory):
     for filename in os.listdir(directory):
 
         log_message("=" * 30, directory)
-        log_message(f"Begin resizing process on file {filename}", directory)
+        log_message(f"Begin resizing process on FILE: [{filename}]", directory)
         file_path = os.path.join(directory, filename)
         file_prefix, file_ext = os.path.splitext(filename)
 
         # checks if its a jpg file
         if file_ext.lower() in jpg_extensions:
-            log_message(f"file extension matches, resizing image\n", directory)
+            log_message(f"NOTE: file extension matches, resizing image\n", directory)
             # 打开并保存缩放后的 JPEG 图像
             with Image.open(file_path) as img:
                 resized_img = resize_image(img)
@@ -159,12 +159,12 @@ def raw_to_jpeg(raw_file_path):
     directory_path = raw_file_path[:-len(filename)]
     jpg_file_path = os.path.join(directory_path, (file_prefix + ".jpg"))
 
-    log_message(f"filename is: {filename}", directory_path)
+    log_message(f"CONVERSION: Filename is [{filename}]", directory_path)
 
-    log_message(f"destination file path is: {jpg_file_path}", directory_path)
+    log_message(f"CONVERSION: Destination file path is [{jpg_file_path}]", directory_path)
 
     if os.path.exists(jpg_file_path):
-        log_message("ERROR, file already exists", directory_path)
+        log_message(f"ERROR, file [{filename}] already exists", directory_path)
         return False
 
     # 异常处理，确保转换过程中的错误被捕获并记录
@@ -174,9 +174,9 @@ def raw_to_jpeg(raw_file_path):
             image = Image.fromarray(rgb)
             image.save(jpg_file_path)
 
-            log_message(f"RAW 文件转换为 JPEG: {raw_file_path} -> {jpg_file_path}", directory_path)
+            log_message(f"CONVERSION: RAW 文件转换为 JPEG: {raw_file_path} -> {jpg_file_path}", directory_path)
     except Exception as e:
-        log_message(f"转换 RAW 文件时出错: {raw_file_path}, 错误: {e}", directory_path)
+        log_message(f"ERROR: 转换 RAW 文件时出错: {raw_file_path}, 错误: {e}", directory_path)
 
 
 def calculate_sharpness(image):
@@ -201,7 +201,6 @@ def detect_and_draw_birds(image_path, model, output_path, area_threshold=0.03, c
     bird_centred = False
 
     if ".jpg" not in image_path.lower() and ".jpeg" not in image_path.lower():
-        print("ERROR, input file not an image of jpg format")
         return None
 
     # 确保打开的是图像文件
@@ -256,10 +255,11 @@ def detect_and_draw_birds(image_path, model, output_path, area_threshold=0.03, c
                 print(f"Sharpness = {sharpness}")
 
         # 保存绘制了边界框的图片
-        img.save(output_path)
-        write_text_on_existing_image(output_path,
-                                     f"Area ratio: {area_ratio * 100:.4f}, \nCentre X {center_distance_x:.2f}, "
-                                     f"Centre Y{center_distance_y:.2f}, \nSharpness: {sharpness:.2f}")
+        if bird_detected:
+            img.save(output_path)
+            write_text_on_existing_image(output_path,
+                                         f"Area ratio: {area_ratio * 100:.4f}, \nCentre X {center_distance_x:.2f}, "
+                                         f"Centre Y{center_distance_y:.2f}, \nSharpness: {sharpness:.2f}")
 
         return bird_detected, bird_dominant, bird_centred, bird_sharp
 
@@ -292,7 +292,21 @@ def move_originals(file_prefix, dir_pth, save_to_pth):
             return False
     return True
 
+import shutil
+import os
 
+def delete_directory(dir_path):
+    # Check if the directory exists
+    if os.path.exists(dir_path):
+
+        # Remove the directory and all its contents
+        shutil.rmtree(dir_path)
+        print(f"CLEAN UP: The directory '{dir_path}' has been deleted.")
+    else:
+        print(f"ERROR in CLEAN UP: The directory '{dir_path}' does not exist.")
+
+
+"""
 def run_model_on_directory(dir_pth):
     output_dir = make_new_dir(dir_pth, "Boxed")
     super_picky_dir = make_new_dir(dir_pth, "Super_Picky")
@@ -301,10 +315,10 @@ def run_model_on_directory(dir_pth):
 
     resized_dir = os.path.join(dir_pth, "Resized")
     if not os.path.exists(resized_dir):
-        log_message("ERROR in run_model_on_directory, 'Resized' folder not found in give directory", dir_pth)
+        log_message("ERROR: 'Resized' folder not found.", dir_pth)
         return False
 
-    print(f"Number of photos to be processed: {len(os.listdir(resized_dir))}")
+    log_message(f"Number of photos to be processed: {len(os.listdir(resized_dir))}", dir_pth)
     log_message("=" * 30, dir_pth)
     log_message(f"Number of photos to be processed: {len(os.listdir(resized_dir))}", dir_pth)
 
@@ -322,8 +336,8 @@ def run_model_on_directory(dir_pth):
             continue
         detected, dominant, centered, sharp = result[0], result[1], result[2], result[3]
 
-        log_message(f"RESULTS-----detected: {detected}, dominant: {dominant}, centered: {centered},"
-                    f" sharp: {sharp}", dir_pth)
+        log_message(f"RESULTS: [detected = {detected}, dominant = {dominant}, centered = {centered},"
+                    f" sharp = {sharp}]", dir_pth)
 
         save_to_pth = dir_pth
         if detected:
@@ -337,7 +351,9 @@ def run_model_on_directory(dir_pth):
         move_originals(file_prefix, dir_pth, save_to_pth)
         QApplication.processEvents()
 
-    return True
+        log_message(f"Process Completed, files processed: {len(os.listdir(resized_dir))}", dir_pth)
+
+    return True"""
 
 
 def run_super_picky(directory):
@@ -345,4 +361,9 @@ def run_super_picky(directory):
         log_message(f"ERROR: {directory} does not contain any raw files", directory)
 
     resize_folder(directory)
+
+    #if run_model_on_directory(directory):
+    #    log_message("Completed to FULL", directory)
+    #else:
+    #    log_message("ERROR: Process ended before all files were processed", directory)
     return True
