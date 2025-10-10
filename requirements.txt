@@ -1,0 +1,16 @@
+# SuperPicky 依赖包
+
+# 核心依赖
+ultralytics>=8.0.0
+opencv-python>=4.0.0
+rawpy>=0.18.0
+imageio>=2.0.0
+numpy>=1.20.0
+Pillow>=9.0.0
+
+# UI 相关（可选但推荐）
+ttkthemes>=3.2.0
+
+# 说明：
+# - Pillow: 必需，用于图片预览功能
+# - ttkthemes: 可选，用于美化界面主题

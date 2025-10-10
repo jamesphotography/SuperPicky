@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/copilot.*
+.vscode/
+*.swp
+*.swo
+
+# 测试和临时文件
+test_*.py
+*.csv
+.DS_Store
+.env
+
+# 临时目录
+temp/
+.superpicky_temp/
+
+# 虚拟环境
+.venv/
+venv/

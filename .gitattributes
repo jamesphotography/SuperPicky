@@ -1,0 +1,4 @@
+*.so filter=lfs diff=lfs merge=lfs -text
+*.wights filter=lfs diff=lfs merge=lfs -text
+*.dylib filter=lfs diff=lfs merge=lfs -text
+*.pt filter=lfs diff=lfs merge=lfs -text

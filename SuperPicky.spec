@@ -1,18 +1,55 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import os
+from pathlib import Path
+
+# 获取当前工作目录
+base_path = os.path.abspath('.')
+
+# Python虚拟环境路径
+venv_path = '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages'
 
 a = Analysis(
     ['main.py'],
-    pathex=[],
+    pathex=[base_path],
     binaries=[],
-    datas=[],
-    hiddenimports=[],
+    datas=[
+        # AI模型文件（只使用yolo11m-seg.pt）
+        (os.path.join(base_path, 'models/yolo11m-seg.pt'), 'models'),
+
+        # ExifTool
+        (os.path.join(base_path, 'exiftool'), '.'),
+        (os.path.join(base_path, 'exiftool_bundle'), 'exiftool_bundle'),
+
+        # 图片资源
+        (os.path.join(base_path, 'img'), 'img'),
+
+        # Ultralytics配置文件
+        (os.path.join(venv_path, 'ultralytics/cfg/default.yaml'), 'ultralytics/cfg'),
+        (os.path.join(venv_path, 'ultralytics/utils'), 'ultralytics/utils'),
+        (os.path.join(venv_path, 'ultralytics/nn'), 'ultralytics/nn'),
+    ],
+    hiddenimports=[
+        'ultralytics',
+        'torch',
+        'torchvision',
+        'PIL',
+        'PIL._tkinter_finder',
+        'tkinter',
+        'tkinter.ttk',
+        'cv2',
+        'numpy',
+        'yaml',
+        'ttkthemes',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['PyQt5', 'PyQt6', 'matplotlib'],
     noarchive=False,
+    optimize=0,
 )
+
 pyz = PYZ(a.pure)
 
 exe = EXE(
@@ -29,10 +66,11 @@ exe = EXE(
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
-    icon=['/Users/jameszhenyu/PycharmProjects/SuperPickyV0.02/SuperPicky.icns'],
+    codesign_identity='Developer ID Application: James Zhen Yu (JWR6FDB52H)',
+    entitlements_file='entitlements.plist',
+    icon='img/SuperPicky-V0.02.icns',
 )
+
 coll = COLLECT(
     exe,
     a.binaries,
@@ -42,9 +80,21 @@ coll = COLLECT(
     upx_exclude=[],
     name='SuperPicky',
 )
+
 app = BUNDLE(
     coll,
     name='SuperPicky.app',
-    icon='/Users/jameszhenyu/PycharmProjects/SuperPickyV0.02/SuperPicky.icns',
-    bundle_identifier=None,
+    icon='img/SuperPicky-V0.02.icns',
+    bundle_identifier='com.jamesphotography.superpicky',
+    info_plist={
+        'NSPrincipalClass': 'NSApplication',
+        'NSHighResolutionCapable': 'True',
+        'CFBundleName': 'SuperPicky',
+        'CFBundleDisplayName': 'SuperPicky - 慧眼选鸟',
+        'CFBundleVersion': '3.0.0',
+        'CFBundleShortVersionString': '3.0',
+        'NSHumanReadableCopyright': 'Copyright © 2025 James Zhen Yu. All rights reserved.',
+        'LSMinimumSystemVersion': '10.15',
+        'NSRequiresAquaSystemAppearance': False,
+    },
 )
