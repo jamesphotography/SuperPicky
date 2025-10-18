@@ -55,7 +55,9 @@ class ExifToolManager:
         file_path: str,
         rating: int,
         pick: int = 0,
-        sharpness: float = None
+        sharpness: float = None,
+        nima_score: float = None,
+        brisque_score: float = None
     ) -> bool:
         """
         设置照片评分和旗标 (Lightroom标准)
@@ -65,6 +67,8 @@ class ExifToolManager:
             rating: 评分 (-1=拒绝, 0=无评分, 1-5=星级)
             pick: 旗标 (-1=排除旗标, 0=无旗标, 1=精选旗标)
             sharpness: 锐度值（可选，写入IPTC:City字段，用于Lightroom排序）
+            nima_score: NIMA美学评分（可选，写入IPTC:Country-PrimaryLocationName字段）
+            brisque_score: BRISQUE技术质量评分（可选，写入IPTC:Province-State字段）
 
         Returns:
             是否成功
@@ -86,6 +90,18 @@ class ExifToolManager:
             sharpness_str = f'{sharpness:06.2f}'  # 6位总宽度，2位小数，前面补零
             cmd.append(f'-IPTC:City={sharpness_str}')
 
+        # 如果提供了NIMA美学评分，写入IPTC:Country-PrimaryLocationName字段
+        # 格式：00.00 到 10.00（NIMA范围0-10）
+        if nima_score is not None:
+            nima_str = f'{nima_score:05.2f}'  # 5位总宽度，2位小数，前面补零
+            cmd.append(f'-IPTC:Country-PrimaryLocationName={nima_str}')
+
+        # 如果提供了BRISQUE技术质量评分，写入IPTC:Province-State字段
+        # 格式：000.00 到 100.00（BRISQUE范围0-100，越低越好）
+        if brisque_score is not None:
+            brisque_str = f'{brisque_score:06.2f}'  # 6位总宽度，2位小数，前面补零
+            cmd.append(f'-IPTC:Province-State={brisque_str}')
+
         cmd.extend(['-overwrite_original', file_path])
 
         try:
@@ -100,7 +116,9 @@ class ExifToolManager:
                 filename = os.path.basename(file_path)
                 pick_desc = {-1: "排除旗标", 0: "无旗标", 1: "精选旗标"}.get(pick, str(pick))
                 sharpness_info = f", 锐度={sharpness:06.2f}" if sharpness is not None else ""
-                print(f"✅ EXIF已更新: {filename} (Rating={rating}, Pick={pick_desc}{sharpness_info})")
+                nima_info = f", NIMA={nima_score:05.2f}" if nima_score is not None else ""
+                brisque_info = f", BRISQUE={brisque_score:06.2f}" if brisque_score is not None else ""
+                print(f"✅ EXIF已更新: {filename} (Rating={rating}, Pick={pick_desc}{sharpness_info}{nima_info}{brisque_info})")
                 return True
             else:
                 print(f"❌ ExifTool错误: {result.stderr}")
@@ -123,9 +141,9 @@ class ExifToolManager:
         Args:
             files_metadata: 文件元数据列表
                 [
-                    {'file': 'path1.NEF', 'rating': 3, 'pick': 1, 'sharpness': 95.3},
-                    {'file': 'path2.NEF', 'rating': 2, 'pick': 0, 'sharpness': 78.5},
-                    {'file': 'path3.NEF', 'rating': -1, 'pick': -1, 'sharpness': 45.2},
+                    {'file': 'path1.NEF', 'rating': 3, 'pick': 1, 'sharpness': 95.3, 'nima_score': 7.5, 'brisque_score': 25.0},
+                    {'file': 'path2.NEF', 'rating': 2, 'pick': 0, 'sharpness': 78.5, 'nima_score': 6.8, 'brisque_score': 35.2},
+                    {'file': 'path3.NEF', 'rating': -1, 'pick': -1, 'sharpness': 45.2, 'nima_score': 5.2, 'brisque_score': 55.8},
                 ]
 
         Returns:
@@ -142,6 +160,8 @@ class ExifToolManager:
             rating = item.get('rating', 0)
             pick = item.get('pick', 0)
             sharpness = item.get('sharpness', None)
+            nima_score = item.get('nima_score', None)
+            brisque_score = item.get('brisque_score', None)
 
             if not os.path.exists(file_path):
                 print(f"⏭️  跳过不存在的文件: {file_path}")
@@ -159,6 +179,16 @@ class ExifToolManager:
             if sharpness is not None:
                 sharpness_str = f'{sharpness:06.2f}'  # 6位总宽度，2位小数，前面补零
                 cmd.append(f'-IPTC:City={sharpness_str}')
+
+            # 如果提供了NIMA美学评分，写入IPTC:Country-PrimaryLocationName字段
+            if nima_score is not None:
+                nima_str = f'{nima_score:05.2f}'
+                cmd.append(f'-IPTC:Country-PrimaryLocationName={nima_str}')
+
+            # 如果提供了BRISQUE技术质量评分，写入IPTC:Province-State字段
+            if brisque_score is not None:
+                brisque_str = f'{brisque_score:06.2f}'
+                cmd.append(f'-IPTC:Province-State={brisque_str}')
 
             cmd.append(file_path)
 
@@ -207,6 +237,8 @@ class ExifToolManager:
             '-XMP:Pick',
             '-XMP:Label',
             '-IPTC:City',
+            '-IPTC:Country-PrimaryLocationName',
+            '-IPTC:Province-State',
             '-json',
             file_path
         ]
@@ -244,13 +276,15 @@ class ExifToolManager:
             print(f"❌ 文件不存在: {file_path}")
             return False
 
-        # 删除Rating、Pick和City字段
+        # 删除Rating、Pick、City、Country和Province-State字段
         cmd = [
             self.exiftool_path,
             '-Rating=',
             '-XMP:Pick=',
             '-XMP:Label=',
             '-IPTC:City=',
+            '-IPTC:Country-PrimaryLocationName=',
+            '-IPTC:Province-State=',
             '-overwrite_original',
             file_path
         ]
@@ -322,11 +356,13 @@ class ExifToolManager:
             # 构建ExifTool命令（使用-if条件过滤）
             cmd = [
                 self.exiftool_path,
-                '-if', '$Rating <= 3 or not defined $Rating',  # 只处理≤3星或无评分的照片
+                '-if', 'not defined $Rating or $Rating <= 3',  # 先检查未定义，再检查≤3星（修复短路问题）
                 '-Rating=',
                 '-XMP:Pick=',
                 '-XMP:Label=',
                 '-IPTC:City=',
+                '-IPTC:Country-PrimaryLocationName=',
+                '-IPTC:Province-State=',
                 '-overwrite_original'
             ] + valid_files
 
@@ -380,10 +416,11 @@ def get_exiftool_manager() -> ExifToolManager:
 
 
 # 便捷函数
-def set_photo_metadata(file_path: str, rating: int, pick: int = 0, sharpness: float = None) -> bool:
+def set_photo_metadata(file_path: str, rating: int, pick: int = 0, sharpness: float = None,
+                      nima_score: float = None, brisque_score: float = None) -> bool:
     """设置照片元数据的便捷函数"""
     manager = get_exiftool_manager()
-    return manager.set_rating_and_pick(file_path, rating, pick, sharpness)
+    return manager.set_rating_and_pick(file_path, rating, pick, sharpness, nima_score, brisque_score)
 
 
 if __name__ == "__main__":
