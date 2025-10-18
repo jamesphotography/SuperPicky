@@ -5,6 +5,10 @@ from ultralytics import YOLO
 from utils import log_message, write_to_csv
 from config import config
 from sharpness import MaskBasedSharpnessCalculator
+from iqa_scorer import get_iqa_scorer
+
+# 禁用 Ultralytics 设置警告
+os.environ['YOLO_VERBOSE'] = 'False'
 
 
 def load_yolo_model():
@@ -39,8 +43,29 @@ def preprocess_image(image_path, target_size=None):
     return img
 
 
-# 初始化全局锐度计算器（使用掩码 + 方差 + sqrt归一化）
-_sharpness_calculator = MaskBasedSharpnessCalculator(method='variance', normalization='sqrt')
+# 锐度计算器将根据用户选择动态创建
+def _get_sharpness_calculator(normalization_mode=None):
+    """
+    获取锐度计算器实例
+
+    Args:
+        normalization_mode: 归一化模式 (None, 'sqrt', 'linear', 'log', 'gentle')
+
+    Returns:
+        MaskBasedSharpnessCalculator 实例
+    """
+    return MaskBasedSharpnessCalculator(method='variance', normalization=normalization_mode)
+
+# 初始化全局 IQA 评分器（延迟加载）
+_iqa_scorer = None
+
+
+def _get_iqa_scorer():
+    """获取 IQA 评分器单例"""
+    global _iqa_scorer
+    if _iqa_scorer is None:
+        _iqa_scorer = get_iqa_scorer(device='mps')
+    return _iqa_scorer
 
 
 def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, crop_temp_dir=None, center_threshold=None, preview_callback=None):
@@ -62,11 +87,19 @@ def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, crop
     if preview_callback:
         save_crop = True
 
+    # 锐度归一化模式（新增）
+    normalization_mode = ui_settings[5] if len(ui_settings) >= 6 else None
+
+    # 根据用户选择的归一化模式创建锐度计算器
+    sharpness_calculator = _get_sharpness_calculator(normalization_mode)
+
     bird_dominant = False
     found_bird = False
     bird_sharp = False
     bird_centred = False
     bird_result = False
+    nima_score = None  # 美学评分（全图）
+    brisque_score = None  # 技术质量评分（crop图）
 
     # 使用配置检查文件类型
     if not config.is_jpg_file(image_path):
@@ -102,6 +135,8 @@ def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, crop
                 "像素数": "0",
                 "原始锐度": "0.00",
                 "归一化锐度": "0.00",
+                "NIMA美学": "-",
+                "BRISQUE技术": "-",
                 "星等": "❌",
                 "面积达标": "否",
                 "居中": "否",
@@ -144,6 +179,8 @@ def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, crop
             "像素数": "0",
             "原始锐度": "0.00",
             "归一化锐度": "0.00",
+            "NIMA美学": "-",
+            "BRISQUE技术": "-",
             "星等": "❌",
             "面积达标": "否",
             "居中": "否",
@@ -152,6 +189,17 @@ def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, crop
         }
         write_to_csv(data, dir, False)
         return found_bird, bird_result, 0.0, 0.0
+
+    # 计算 NIMA 美学评分（使用全图，只计算一次）
+    if bird_idx != -1:
+        try:
+            scorer = _get_iqa_scorer()
+            nima_score = scorer.calculate_nima(image_path)
+            if nima_score is not None:
+                log_message(f"🎨 NIMA 美学评分: {nima_score:.2f} / 10", dir)
+        except Exception as e:
+            log_message(f"⚠️  NIMA 计算失败: {e}", dir)
+            nima_score = None
 
     # 只处理面积最大的那只鸟
     for idx, (detection, conf, class_id) in enumerate(zip(detections, confidences, class_ids)):
@@ -196,6 +244,16 @@ def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, crop
                 log_message(f"ERROR: Crop image is empty for {image_path}", dir)
                 continue
 
+            # 计算 BRISQUE 技术质量评分（使用 crop 图片）
+            try:
+                scorer = _get_iqa_scorer()
+                brisque_score = scorer.calculate_brisque(crop_img)
+                if brisque_score is not None:
+                    log_message(f"🔧 BRISQUE 技术质量: {brisque_score:.2f} / 100 (越低越好)", dir)
+            except Exception as e:
+                log_message(f"⚠️  BRISQUE 计算失败: {e}", dir)
+                brisque_score = None
+
             # 使用新的基于掩码的锐度计算
             mask_crop = None
             if masks is not None and idx < len(masks):
@@ -230,7 +288,7 @@ def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, crop
                     cv2.imwrite(crop_path, crop_with_mask)
 
                 # 使用新算法计算锐度（基于掩码）
-                sharpness_result = _sharpness_calculator.calculate(crop_img, mask_crop)
+                sharpness_result = sharpness_calculator.calculate(crop_img, mask_crop)
                 real_sharpness = sharpness_result['total_sharpness']
                 sharpness = sharpness_result['normalized_sharpness']
                 effective_pixels = sharpness_result['effective_pixels']
@@ -241,7 +299,7 @@ def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, crop
 
                 # 创建全1掩码（退化为整个BBox）
                 full_mask = np.ones((h, w), dtype=np.uint8)
-                sharpness_result = _sharpness_calculator.calculate(crop_img, full_mask)
+                sharpness_result = sharpness_calculator.calculate(crop_img, full_mask)
                 real_sharpness = sharpness_result['total_sharpness']
                 sharpness = sharpness_result['normalized_sharpness']
                 effective_pixels = sharpness_result['effective_pixels']
@@ -294,6 +352,8 @@ def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, crop
                 "像素数": f"{effective_pixels}",
                 "原始锐度": f"{real_sharpness:.2f}",
                 "归一化锐度": f"{sharpness:.2f}",
+                "NIMA美学": f"{nima_score:.2f}" if nima_score is not None else "-",
+                "BRISQUE技术": f"{brisque_score:.2f}" if brisque_score is not None else "-",
                 "星等": rating_stars,
                 "面积达标": "是" if bird_dominant else "否",
                 "居中": "是" if bird_centred else "否",
@@ -327,7 +387,7 @@ def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, crop
         cv2.imwrite(output_path, image)
     # --- 修改结束 ---
 
-    # 返回 found_bird, bird_result, AI置信度, 归一化锐度（用于1星/2星判断）
+    # 返回 found_bird, bird_result, AI置信度, 归一化锐度, NIMA分数, BRISQUE分数（用于日志显示）
     bird_confidence = float(confidences[bird_idx]) if bird_idx != -1 else 0.0
     bird_sharpness = sharpness if bird_idx != -1 else 0.0
-    return found_bird, bird_result, bird_confidence, bird_sharpness
+    return found_bird, bird_result, bird_confidence, bird_sharpness, nima_score, brisque_score

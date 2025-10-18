@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 SuperPicky - 简化版 (Pure Tkinter, 无PyQt依赖)
+Version: 3.0.1
 """
 
 import tkinter as tk
@@ -87,8 +88,12 @@ class WorkerThread(threading.Thread):
 
         # ⏱️ 计时点1：扫描文件
         scan_start = time.time()
-        # 扫描文件
+        # 扫描文件（跳过隐藏文件，如 .DS_Store, ._xxx）
         for filename in os.listdir(self.dir_path):
+            # 跳过隐藏文件和系统文件
+            if filename.startswith('.'):
+                continue
+
             file_prefix, file_ext = os.path.splitext(filename)
             if file_ext.lower() in raw_extensions:
                 raw_dict[file_prefix] = file_ext
@@ -157,7 +162,7 @@ class WorkerThread(threading.Thread):
 
         # 批量EXIF写入：收集元数据列表
         exif_batch = []
-        BATCH_SIZE = 10  # 每10张照片批量写入一次
+        BATCH_SIZE = 1  # 每1张照片立即写入EXIF（v3.0.1修复）
 
         # ⏱️ 计时点3：加载模型
         model_start = time.time()
@@ -216,7 +221,7 @@ class WorkerThread(threading.Thread):
                 self.log_callback(f"  ❌ 处理异常: {filename} - {str(e)}", "error")
                 continue
 
-            detected, selected, confidence, sharpness = result[0], result[1], result[2], result[3]
+            detected, selected, confidence, sharpness, nima, brisque = result[0], result[1], result[2], result[3], result[4], result[5]
 
             # 获取RAW文件路径
             raw_file_path = None
@@ -224,19 +229,26 @@ class WorkerThread(threading.Thread):
                 raw_extension = raw_dict[file_prefix]
                 raw_file_path = os.path.join(self.dir_path, file_prefix + raw_extension)
 
+            # 构建IQA评分显示文本
+            iqa_text = ""
+            if nima is not None:
+                iqa_text += f", NIMA:{nima:.2f}"
+            if brisque is not None:
+                iqa_text += f", BRISQUE:{brisque:.2f}"
+
             # 设置评分（新逻辑：3星/2星/1星/-1星）
             if selected:
                 rating, pick = 3, 1
                 self.stats['star_3'] += 1
-                self.log_callback(f"  优秀照片 -> 3星 + 精选 (AI:{confidence:.2f}, 锐度:{sharpness:.1f})", "success")
+                self.log_callback(f"  优秀照片 -> 3星 + 精选 (AI:{confidence:.2f}, 锐度:{sharpness:.1f}{iqa_text})", "success")
             elif detected and confidence >= 0.5 and sharpness >= 50:
                 rating, pick = 2, 0
                 self.stats['star_2'] += 1
-                self.log_callback(f"  良好照片 -> 2星 (AI:{confidence:.2f}, 锐度:{sharpness:.1f})", "info")
+                self.log_callback(f"  良好照片 -> 2星 (AI:{confidence:.2f}, 锐度:{sharpness:.1f}{iqa_text})", "info")
             elif detected:
                 rating, pick = 1, 0
                 self.stats['star_1'] += 1
-                self.log_callback(f"  普通照片 -> 1星 (AI:{confidence:.2f}, 锐度:{sharpness:.1f})", "warning")
+                self.log_callback(f"  普通照片 -> 1星 (AI:{confidence:.2f}, 锐度:{sharpness:.1f}{iqa_text})", "warning")
             else:
                 rating, pick = -1, -1
                 self.stats['no_bird'] += 1
@@ -323,7 +335,7 @@ class WorkerThread(threading.Thread):
 class SuperPickyApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("SuperPicky V3.0 - 慧眼选鸟")
+        self.root.title("SuperPicky V3.0.1 - 慧眼选鸟")
         self.root.geometry("1200x750")  # 加宽以容纳预览面板
 
         # 设置图标（Tkinter在macOS上使用PNG）
@@ -408,6 +420,9 @@ class SuperPickyApp:
         self.dir_entry = ttk.Entry(dir_frame, font=("Arial", 11))
         self.dir_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
 
+        # 启用拖拽支持(macOS)
+        self._setup_drag_drop()
+
         ttk.Button(dir_frame, text="浏览", command=self.browse_directory, width=10).pack(side=tk.LEFT)
 
         # 参数设置
@@ -440,12 +455,27 @@ class SuperPickyApp:
         sharp_frame = ttk.Frame(settings_frame)
         sharp_frame.pack(fill=tk.X, pady=5)
         ttk.Label(sharp_frame, text="鸟锐度阈值:", width=14, font=("Arial", 11)).pack(side=tk.LEFT)
-        self.sharp_var = tk.IntVar(value=100)
-        self.sharp_slider = ttk.Scale(sharp_frame, from_=0, to=200, variable=self.sharp_var, orient=tk.HORIZONTAL)
+        self.sharp_var = tk.IntVar(value=2000)  # v3.0.1: 提高默认阈值，适配真实锐度值
+        self.sharp_slider = ttk.Scale(sharp_frame, from_=0, to=10000, variable=self.sharp_var, orient=tk.HORIZONTAL)
         self.sharp_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        self.sharp_label = ttk.Label(sharp_frame, text="100", width=6, font=("Arial", 11))
+        self.sharp_label = ttk.Label(sharp_frame, text="2000", width=6, font=("Arial", 11))
         self.sharp_label.pack(side=tk.LEFT)
         self.sharp_slider.configure(command=lambda v: self.sharp_label.configure(text=f"{int(float(v))}"))
+
+        # 锐度归一化模式
+        norm_frame = ttk.Frame(settings_frame)
+        norm_frame.pack(fill=tk.X, pady=5)
+        ttk.Label(norm_frame, text="锐度归一化:", width=14, font=("Arial", 11)).pack(side=tk.LEFT)
+        self.norm_var = tk.StringVar(value="原始方差(推荐) - 不惩罚大小")
+        norm_options = [
+            "原始方差(推荐) - 不惩罚大小",
+            "log归一化 - 最轻微惩罚大鸟",
+            "gentle归一化 - 轻微惩罚大鸟",
+            "sqrt归一化 - 温和惩罚大鸟",
+            "linear归一化 - 严重惩罚大鸟"
+        ]
+        self.norm_combobox = ttk.Combobox(norm_frame, textvariable=self.norm_var, values=norm_options, state='readonly', font=("Arial", 11))
+        self.norm_combobox.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
 
         # 进度显示
         progress_frame = ttk.LabelFrame(parent, text="处理进度", padding=10)
@@ -499,7 +529,7 @@ class SuperPickyApp:
         button_container = ttk.Frame(btn_frame)
         button_container.pack(side=tk.RIGHT)
 
-        ttk.Label(button_container, text="V3.0 - EXIF标记模式", font=("Arial", 9)).pack(side=tk.RIGHT, padx=10)
+        ttk.Label(button_container, text="V3.0.1 - EXIF标记模式", font=("Arial", 9)).pack(side=tk.RIGHT, padx=10)
 
         self.cleanup_btn = ttk.Button(button_container, text="🧹 清理临时文件", command=self.cleanup_temp_files, width=15)
         self.cleanup_btn.pack(side=tk.RIGHT, padx=5)
@@ -611,9 +641,112 @@ class SuperPickyApp:
         self.preview_area = ttk.Label(info_grid, text="--", font=("Arial", 12))
         self.preview_area.grid(row=row, column=5, sticky=tk.W, padx=5)
 
+        # 第二行：NIMA美学 和 BRISQUE技术
+        row += 1
+        # NIMA美学
+        ttk.Label(info_grid, text="NIMA美学:", font=("Arial", 12)).grid(row=row, column=0, sticky=tk.W, padx=5, pady=3)
+        self.preview_nima = ttk.Label(info_grid, text="--", font=("Arial", 12, "bold"), foreground="#9b59d0")
+        self.preview_nima.grid(row=row, column=1, sticky=tk.W, padx=5)
+
+        # BRISQUE技术
+        ttk.Label(info_grid, text="BRISQUE技术:", font=("Arial", 12)).grid(row=row, column=2, sticky=tk.W, padx=5, pady=3)
+        self.preview_brisque = ttk.Label(info_grid, text="--", font=("Arial", 12, "bold"), foreground="#d07959")
+        self.preview_brisque.grid(row=row, column=3, sticky=tk.W, padx=5)
+
         # 星级评分（用emoji星星显示，匹配日志颜色）
         self.preview_rating = ttk.Label(meta_frame, text="", font=("Arial", 18))
         self.preview_rating.pack(pady=5)
+
+    def _setup_drag_drop(self):
+        """配置拖拽和粘贴支持"""
+        try:
+            # 尝试导入 tkinterdnd2 用于拖拽支持
+            from tkinterdnd2 import DND_FILES, TkinterDnD
+
+            # 如果成功导入，启用拖拽
+            def on_drop(event):
+                # macOS/Windows 拖拽数据格式可能包含花括号
+                data = event.data
+                # 清理路径（去除花括号和额外空格）
+                if data.startswith('{') and data.endswith('}'):
+                    data = data[1:-1]
+                data = data.strip()
+
+                # 检查是否为目录
+                if os.path.isdir(data):
+                    self.directory_path = data
+                    self.dir_entry.delete(0, tk.END)
+                    self.dir_entry.insert(0, data)
+                    self.reset_btn.configure(state='normal')
+                    self.log(f"✅ 已拖入目录: {data}\n")
+                    self._handle_directory_selection(data)
+                else:
+                    messagebox.showwarning("警告", "请拖入文件夹（不是文件）！")
+
+            # 为输入框启用拖拽
+            self.dir_entry.drop_target_register(DND_FILES)
+            self.dir_entry.dnd_bind('<<Drop>>', on_drop)
+            # 标记拖拽可用（稍后在show_initial_help中显示）
+            self._drag_drop_available = True
+        except ImportError:
+            # tkinterdnd2 未安装，使用粘贴方案
+            self._drag_drop_available = False
+
+        # 无论是否有拖拽，都支持粘贴和回车
+        def on_paste_or_enter(event=None):
+            """处理粘贴或回车事件"""
+            path = self.dir_entry.get().strip()
+            # 移除可能的引号
+            if path.startswith('"') and path.endswith('"'):
+                path = path[1:-1]
+            if path.startswith("'") and path.endswith("'"):
+                path = path[1:-1]
+
+            if path and os.path.isdir(path):
+                self.directory_path = path
+                self.dir_entry.delete(0, tk.END)
+                self.dir_entry.insert(0, path)
+                self.reset_btn.configure(state='normal')
+                self.log(f"✅ 已选择目录: {path}\n")
+                self._handle_directory_selection(path)
+            elif path:
+                messagebox.showwarning("警告", f"目录不存在: {path}")
+
+        # 绑定回车键
+        self.dir_entry.bind('<Return>', on_paste_or_enter)
+        # 绑定失焦事件（当用户点击其他地方时）
+        self.dir_entry.bind('<FocusOut>', lambda e: on_paste_or_enter() if self.dir_entry.get().strip() and not self.directory_path else None)
+
+    def _handle_directory_selection(self, directory):
+        """处理目录选择的通用逻辑（用于浏览和拖拽）"""
+        # 创建工作目录并尝试加载历史记录
+        self.work_dir = self.temp_manager.get_work_dir(directory)
+
+        # 检查是否有历史记录（CSV文件在_tmp目录中）
+        csv_path = Path(directory) / "_tmp" / "report.csv"
+        if csv_path.exists():
+            # 弹窗询问用户
+            result = messagebox.askyesnocancel(
+                "检测到历史记录",
+                f"此目录已有处理记录！\n\n检测到历史文件：\n• CSV报告\n• Crop预览图片\n\n您想要：\n\n【是】- 查看历史记录（保留数据）\n【否】- 重置目录（删除历史，重新处理）\n【取消】- 取消选择目录",
+                icon='question'
+            )
+
+            if result is None:  # 取消
+                self.directory_path = ""
+                self.dir_entry.delete(0, tk.END)
+                self.reset_btn.configure(state='disabled')
+                self.log("❌ 已取消选择目录\n")
+                return
+            elif result:  # 是 - 查看历史记录
+                self.log("📂 检测到历史记录，正在加载...\n", "info")
+                self._load_history_from_csv()
+                if self.preview_history:
+                    self.log(f"✅ 已加载 {len(self.preview_history)} 张照片的历史记录\n", "success")
+                    self.log("💡 您可以使用左右箭头键或按钮浏览历史照片\n", "info")
+            else:  # 否 - 重置目录
+                self.log("🔄 准备重置目录...\n", "warning")
+                self.reset_directory()
 
     def browse_directory(self):
         directory = filedialog.askdirectory(title="选择照片目录")
@@ -624,34 +757,8 @@ class SuperPickyApp:
             self.reset_btn.configure(state='normal')
             self.log(f"✅ 已选择目录: {directory}\n")
 
-            # 创建工作目录并尝试加载历史记录
-            self.work_dir = self.temp_manager.get_work_dir(self.directory_path)
-
-            # 检查是否有历史记录（CSV文件在_tmp目录中）
-            csv_path = Path(self.directory_path) / "_tmp" / "report.csv"
-            if csv_path.exists():
-                # 弹窗询问用户
-                result = messagebox.askyesnocancel(
-                    "检测到历史记录",
-                    f"此目录已有处理记录！\n\n检测到历史文件：\n• CSV报告\n• Crop预览图片\n\n您想要：\n\n【是】- 查看历史记录（保留数据）\n【否】- 重置目录（删除历史，重新处理）\n【取消】- 取消选择目录",
-                    icon='question'
-                )
-
-                if result is None:  # 取消
-                    self.directory_path = ""
-                    self.dir_entry.delete(0, tk.END)
-                    self.reset_btn.configure(state='disabled')
-                    self.log("❌ 已取消选择目录\n")
-                    return
-                elif result:  # 是 - 查看历史记录
-                    self.log("📂 检测到历史记录，正在加载...\n", "info")
-                    self._load_history_from_csv()
-                    if self.preview_history:
-                        self.log(f"✅ 已加载 {len(self.preview_history)} 张照片的历史记录\n", "success")
-                        self.log("💡 您可以使用左右箭头键或按钮浏览历史照片\n", "info")
-                else:  # 否 - 重置目录
-                    self.log("🔄 准备重置目录...\n", "warning")
-                    self.reset_directory()
+            # 使用通用处理逻辑
+            self._handle_directory_selection(directory)
 
     def log(self, message, tag=None):
         """添加日志（支持颜色标签）"""
@@ -665,11 +772,17 @@ class SuperPickyApp:
 
     def show_initial_help(self):
         """显示初始帮助信息"""
-        help_text = """━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  欢迎使用 SuperPicky V3.0 - 慧眼选鸟 | AI智能筛选鸟类照片
+        # 判断拖拽功能是否可用
+        if hasattr(self, '_drag_drop_available') and self._drag_drop_available:
+            input_hint = "  1️⃣ 点击\"浏览\"选择照片目录 或 拖拽文件夹到输入框（支持RAW/JPG）"
+        else:
+            input_hint = "  1️⃣ 点击\"浏览\"选择照片目录 或 粘贴路径到输入框并按回车（支持RAW/JPG）"
+
+        help_text = f"""━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  欢迎使用 SuperPicky V3.0.1 - 慧眼选鸟 | AI智能筛选鸟类照片
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 使用步骤：
-  1️⃣ 点击"浏览"选择照片目录（支持RAW/JPG）
+{input_hint}
   2️⃣ 调整筛选参数（可选，推荐默认值）
   3️⃣ 大批量照片建议关闭实时预览0.6秒/张，实时预览大约1.2秒/张
   4️⃣ 点击"▶️ 开始处理"自动识别并评分
@@ -791,6 +904,17 @@ class SuperPickyApp:
             self.preview_confidence.config(text=f"{metadata['confidence']*100:.1f}%")
             self.preview_sharpness.config(text=f"{metadata['sharpness']:.1f}")
             self.preview_area.config(text=f"{metadata['area_ratio']*100:.2f}%")
+
+            # 更新 IQA 评分（如果存在）
+            if 'nima_score' in metadata and metadata['nima_score'] is not None:
+                self.preview_nima.config(text=f"{metadata['nima_score']:.2f}/10")
+            else:
+                self.preview_nima.config(text="--")
+
+            if 'brisque_score' in metadata and metadata['brisque_score'] is not None:
+                self.preview_brisque.config(text=f"{metadata['brisque_score']:.2f}/100")
+            else:
+                self.preview_brisque.config(text="--")
 
             # 评分显示（使用emoji星星，颜色匹配日志）
             rating = metadata['rating']
@@ -1031,13 +1155,28 @@ class SuperPickyApp:
         # 写入CSV（暂时还是保存在原目录）
         write_to_csv(None, self.directory_path, True)
 
-        # 获取设置（[confidence, area, sharpness, center_threshold=15%, save_crop=True]）
+        # 将归一化模式文本映射到代码值（提取破折号前的关键词）
+        selected_text = self.norm_var.get()
+        # 从"原始方差(推荐) - 不惩罚大小"中提取"原始方差(推荐)"
+        mode_key = selected_text.split(" - ")[0].strip()
+
+        norm_mapping = {
+            "原始方差(推荐)": None,
+            "log归一化": "log",
+            "gentle归一化": "gentle",
+            "sqrt归一化": "sqrt",
+            "linear归一化": "linear"
+        }
+        selected_norm = norm_mapping.get(mode_key, None)
+
+        # 获取设置（[confidence, area, sharpness, center_threshold=15%, save_crop=True, normalization]）
         ui_settings = [
             self.ai_var.get(),          # AI置信度 (0-100)
             self.ratio_var.get(),       # 鸟类占比 (0.5-10)
             self.sharp_var.get(),       # 锐度阈值 (0-300)
             15,                         # 居中阈值硬编码为15%
-            True                        # 总是保存Crop图片（用于预览）
+            True,                       # 总是保存Crop图片（用于预览）
+            selected_norm               # 锐度归一化模式
         ]
 
         # 启动Worker线程
