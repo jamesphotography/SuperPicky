@@ -265,9 +265,11 @@ class WorkerThread(threading.Thread):
                     'sharpness': sharpness
                 })
 
-                # 达到批量大小时，执行批量写入
+                # 达到批量大小时，执行写入（BATCH_SIZE=1时为单张写入）
                 if len(exif_batch) >= BATCH_SIZE:
-                    self.log_callback(f"\n📦 批量写入EXIF ({len(exif_batch)}张)...")
+                    # 单张写入时不显示日志，避免刷屏
+                    if BATCH_SIZE > 1:
+                        self.log_callback(f"\n📦 写入EXIF ({len(exif_batch)}张)...")
                     batch_stats = exiftool_mgr.batch_set_metadata(exif_batch)
                     if batch_stats['failed'] > 0:
                         self.log_callback(f"  ⚠️  {batch_stats['failed']} 张照片EXIF写入失败")
@@ -275,7 +277,8 @@ class WorkerThread(threading.Thread):
 
         # 处理剩余的EXIF元数据（不足一批的部分）
         if exif_batch:
-            self.log_callback(f"\n📦 批量写入EXIF ({len(exif_batch)}张)...")
+            if BATCH_SIZE > 1:
+                self.log_callback(f"\n📦 写入EXIF ({len(exif_batch)}张)...")
             batch_stats = exiftool_mgr.batch_set_metadata(exif_batch)
             if batch_stats['failed'] > 0:
                 self.log_callback(f"  ⚠️  {batch_stats['failed']} 张照片EXIF写入失败")

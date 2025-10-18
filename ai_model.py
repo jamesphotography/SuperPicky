@@ -144,7 +144,7 @@ def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, crop
                 "类别ID": "-"
             }
             write_to_csv(data, dir, False)
-            return found_bird, bird_result, 0.0, 0.0
+            return found_bird, bird_result, 0.0, 0.0, None, None
 
     detections = results[0].boxes.xyxy.cpu().numpy()
     confidences = results[0].boxes.conf.cpu().numpy()
@@ -188,7 +188,7 @@ def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, crop
             "类别ID": "-"
         }
         write_to_csv(data, dir, False)
-        return found_bird, bird_result, 0.0, 0.0
+        return found_bird, bird_result, 0.0, 0.0, None, None
 
     # 计算 NIMA 美学评分（使用全图，只计算一次）
     if bird_idx != -1:
