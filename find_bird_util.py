@@ -77,6 +77,8 @@ def reset(directory, log_callback=None):
     log("\n🗑️  删除XMP侧车文件...")
     xmp_pattern = os.path.join(directory, "*.xmp")
     xmp_files = glob.glob(xmp_pattern)
+    # 过滤掉隐藏文件
+    xmp_files = [f for f in xmp_files if not os.path.basename(f).startswith('.')]
     if xmp_files:
         log(f"  发现 {len(xmp_files)} 个XMP文件，正在删除...")
         deleted_xmp = 0
@@ -97,11 +99,14 @@ def reset(directory, log_callback=None):
     image_extensions = ['*.NEF', '*.nef', '*.CR2', '*.cr2', '*.ARW', '*.arw',
                        '*.JPG', '*.jpg', '*.JPEG', '*.jpeg', '*.DNG', '*.dng']
 
-    # 收集所有图片文件
+    # 收集所有图片文件（跳过隐藏文件）
     image_files = []
     for ext in image_extensions:
         pattern = os.path.join(directory, ext)
-        image_files.extend(glob.glob(pattern))
+        files = glob.glob(pattern)
+        # 过滤掉隐藏文件（以.开头的文件）
+        files = [f for f in files if not os.path.basename(f).startswith('.')]
+        image_files.extend(files)
 
     if image_files:
         log(f"  发现 {len(image_files)} 个图片文件")
