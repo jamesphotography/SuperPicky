@@ -1,4 +1,5 @@
 import os
+import time
 import cv2
 import numpy as np
 from ultralytics import YOLO
@@ -6,6 +7,7 @@ from utils import log_message, write_to_csv
 from config import config
 from sharpness import MaskBasedSharpnessCalculator
 from iqa_scorer import get_iqa_scorer
+from advanced_config import get_advanced_config
 
 # 禁用 Ultralytics 设置警告
 os.environ['YOLO_VERBOSE'] = 'False'
@@ -68,11 +70,15 @@ def _get_iqa_scorer():
     return _iqa_scorer
 
 
-def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, crop_temp_dir=None, center_threshold=None, preview_callback=None):
+def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings):
     """
-    检测并标记鸟类（V3.1）
+    检测并标记鸟类（V3.1 - 简化版，移除预览功能）
 
     Args:
+        image_path: 图片路径
+        model: YOLO模型
+        output_path: 输出路径（带框图片）
+        dir: 工作目录
         ui_settings: [ai_confidence, sharpness_threshold, nima_threshold, save_crop, normalization_mode]
     """
     # V3.1: 从 ui_settings 获取参数
@@ -80,11 +86,8 @@ def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, crop
     sharpness_threshold = ui_settings[1]  # 锐度阈值：6000-9000
     nima_threshold = ui_settings[2]       # NIMA美学阈值：5.0-6.0
 
-    # 是否保存Crop图片（预览时总是临时保存）
-    save_crop = ui_settings[3] if len(ui_settings) >= 4 else False
-    # 如果有预览回调，强制生成crop图片（用于预览）
-    if preview_callback:
-        save_crop = True
+    # V3.1: 不再保存Crop图片（移除预览功能）
+    save_crop = False
 
     # 锐度归一化模式（V3.1默认log_compression）
     normalization_mode = ui_settings[4] if len(ui_settings) >= 5 else 'log_compression'
@@ -108,9 +111,18 @@ def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, crop
         log_message(f"ERROR: in detect_and_draw_birds, {image_path} not found", dir)
         return None
 
+    # 记录总处理开始时间
+    total_start = time.time()
+
+    # Step 1: 图像预处理
+    step_start = time.time()
     image = preprocess_image(image_path)
     height, width, _ = image.shape
+    preprocess_time = (time.time() - step_start) * 1000
+    log_message(f"  ⏱️  [1/7] 图像预处理: {preprocess_time:.1f}ms", dir)
 
+    # Step 2: YOLO推理
+    step_start = time.time()
     # 使用MPS设备进行推理（如果可用），失败时降级到CPU
     try:
         # 尝试使用MPS设备
@@ -142,6 +154,11 @@ def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, crop
             write_to_csv(data, dir, False)
             return found_bird, bird_result, 0.0, 0.0, None, None
 
+    yolo_time = (time.time() - step_start) * 1000
+    log_message(f"  ⏱️  [2/7] YOLO推理: {yolo_time:.1f}ms", dir)
+
+    # Step 3: 解析检测结果
+    step_start = time.time()
     detections = results[0].boxes.xyxy.cpu().numpy()
     confidences = results[0].boxes.conf.cpu().numpy()
     class_ids = results[0].boxes.cls.cpu().numpy()
@@ -162,6 +179,9 @@ def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, crop
             if area > max_area:
                 max_area = area
                 bird_idx = idx
+
+    parse_time = (time.time() - step_start) * 1000
+    log_message(f"  ⏱️  [3/7] 结果解析: {parse_time:.1f}ms", dir)
 
     # 如果没有找到鸟，记录到CSV并返回（V3.1）
     if bird_idx == -1:
@@ -184,15 +204,21 @@ def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, crop
         write_to_csv(data, dir, False)
         return found_bird, bird_result, 0.0, 0.0, None, None
 
-    # 计算 NIMA 美学评分（使用全图，只计算一次）
+    # Step 4: 计算 NIMA 美学评分（使用全图，只计算一次）
+    nima_time = 0
     if bird_idx != -1:
+        step_start = time.time()
         try:
             scorer = _get_iqa_scorer()
             nima_score = scorer.calculate_nima(image_path)
+            nima_time = (time.time() - step_start) * 1000
             if nima_score is not None:
                 log_message(f"🎨 NIMA 美学评分: {nima_score:.2f} / 10", dir)
+                log_message(f"  ⏱️  [4/7] NIMA评分: {nima_time:.1f}ms", dir)
         except Exception as e:
+            nima_time = (time.time() - step_start) * 1000
             log_message(f"⚠️  NIMA 计算失败: {e}", dir)
+            log_message(f"  ⏱️  [4/7] NIMA评分(失败): {nima_time:.1f}ms", dir)
             nima_score = None
 
     # 只处理面积最大的那只鸟
@@ -214,14 +240,8 @@ def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, crop
             area_ratio = (w * h) / (width * height)
             filename = os.path.basename(image_path)
 
-            # 只有在 save_crop=True 时才设置裁剪路径
+            # V3.1: 不再保存Crop图片
             crop_path = None
-            if save_crop:
-                if crop_temp_dir:
-                    crop_path = os.path.join(crop_temp_dir, 'Crop_' + filename)
-                else:
-                    # 如果没有提供裁剪目录，则保存到主工作目录
-                    crop_path = os.path.join(dir, 'Crop_' + filename)
 
             x = max(0, min(x, width - 1))
             y = max(0, min(y, height - 1))
@@ -238,17 +258,23 @@ def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, crop
                 log_message(f"ERROR: Crop image is empty for {image_path}", dir)
                 continue
 
-            # 计算 BRISQUE 技术质量评分（使用 crop 图片）
+            # Step 5: 计算 BRISQUE 技术质量评分（使用 crop 图片）
+            step_start = time.time()
             try:
                 scorer = _get_iqa_scorer()
                 brisque_score = scorer.calculate_brisque(crop_img)
+                brisque_time = (time.time() - step_start) * 1000
                 if brisque_score is not None:
                     log_message(f"🔧 BRISQUE 技术质量: {brisque_score:.2f} / 100 (越低越好)", dir)
+                    log_message(f"  ⏱️  [5/7] BRISQUE评分: {brisque_time:.1f}ms", dir)
             except Exception as e:
+                brisque_time = (time.time() - step_start) * 1000
                 log_message(f"⚠️  BRISQUE 计算失败: {e}", dir)
+                log_message(f"  ⏱️  [5/7] BRISQUE评分(失败): {brisque_time:.1f}ms", dir)
                 brisque_score = None
 
-            # 使用新的基于掩码的锐度计算
+            # Step 6: 使用新的基于掩码的锐度计算
+            step_start = time.time()
             mask_crop = None
             if masks is not None and idx < len(masks):
                 mask = masks[idx]
@@ -298,6 +324,9 @@ def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, crop
                 sharpness = sharpness_result['normalized_sharpness']
                 effective_pixels = sharpness_result['effective_pixels']
 
+            sharpness_time = (time.time() - step_start) * 1000
+            log_message(f"  ⏱️  [6/7] 锐度计算: {sharpness_time:.1f}ms", dir)
+
             cv2.rectangle(image, (x, y), (x + w, y + h), (0, 0, 255), 2)
 
             # V3.1: 新的评分逻辑
@@ -316,19 +345,19 @@ def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, crop
                         f" - Center_x:{center_x:.2f} - Center_y:{center_y:.2f}", dir)
 
             # V3.1 星级评定规则：
-            # 1. 置信度 < 50% → -1星（Rejected）
-            # 2. BRISQUE > 30 或 NIMA < 4.0 或 锐度 < 4000 → 0星（技术质量差）
+            # V3.1: 使用高级配置的阈值
+            # 1. 完全没鸟 → -1星（Rejected）
+            # 2. 置信度/噪点/美学/锐度不达标 → 0星（技术质量差）
             # 3. 锐度 ≥ 阈值 且 NIMA ≥ 阈值 → 3星（优选）
             # 4. 锐度 ≥ 阈值 或 NIMA ≥ 阈值 → 2星（良好）
             # 5. 其他 → 1星（普通）
 
-            if conf < 0.5:
-                # 置信度太低，标记为拒绝
-                rating_stars = "❌"
-                rating_value = -1
-            elif (brisque_score is not None and brisque_score > 30) or \
-                 (nima_score is not None and nima_score < 4.0) or \
-                 sharpness < 4000:
+            adv_config = get_advanced_config()
+
+            if conf < adv_config.min_confidence or \
+               (brisque_score is not None and brisque_score > adv_config.max_brisque) or \
+               (nima_score is not None and nima_score < adv_config.min_nima) or \
+               sharpness < adv_config.min_sharpness:
                 # 技术质量太差
                 rating_stars = "0星"
                 rating_value = 0
@@ -365,32 +394,21 @@ def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, crop
                 "类别ID": class_id
             }
 
+            # Step 7: CSV写入
+            step_start = time.time()
             write_to_csv(data, dir, False)
-
-            # 如果有预览回调且crop图片存在，触发预览更新
-            if preview_callback and crop_path and os.path.exists(crop_path):
-                # 直接使用原始JPG路径，不复制（节省50-150ms/张）
-                jpg_preview_path = image_path
-
-                # 准备元数据（V3.1）
-                metadata = {
-                    'filename': os.path.basename(image_path),
-                    'confidence': float(conf),
-                    'sharpness': sharpness,
-                    'area_ratio': area_ratio,
-                    'nima': nima_score if nima_score is not None else 0.0,
-                    'brisque': brisque_score if brisque_score is not None else 0.0,
-                    'rating': rating_value,
-                    'pick': 1 if rating_value == 3 else 0
-                }
-                # 传递crop路径和jpg路径
-                preview_callback(crop_path, jpg_preview_path, metadata)
+            csv_time = (time.time() - step_start) * 1000
+            log_message(f"  ⏱️  [7/7] CSV写入: {csv_time:.1f}ms", dir)
 
     # --- 修改开始 ---
     # 只有在 found_bird 为 True 且 output_path 有效时，才保存带框的图片
     if found_bird and output_path:
         cv2.imwrite(output_path, image)
     # --- 修改结束 ---
+
+    # 计算总处理时间
+    total_time = (time.time() - total_start) * 1000
+    log_message(f"  ⏱️  ========== 总耗时: {total_time:.1f}ms ==========", dir)
 
     # 返回 found_bird, bird_result, AI置信度, 归一化锐度, NIMA分数, BRISQUE分数（用于日志显示）
     bird_confidence = float(confidences[bird_idx]) if bird_idx != -1 else 0.0

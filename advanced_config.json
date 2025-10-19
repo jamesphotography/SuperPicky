@@ -1,0 +1,10 @@
+{
+  "min_confidence": 0.5,
+  "min_sharpness": 4000,
+  "min_nima": 4.0,
+  "max_brisque": 30,
+  "picked_top_percentage": 10,
+  "save_csv": true,
+  "log_level": "detailed",
+  "language": "zh_CN"
+}

@@ -132,7 +132,10 @@
       "Bash(exiftool -Rating /Volumes/990PRO4TB/2025/2025-10-17/_Z9W2909.NEF)",
       "Bash(exiftool -if '$Rating <= 3 or not defined $Rating' -Rating= -overwrite_original /Volumes/990PRO4TB/2025/2025-10-17/_Z9W2909.NEF)",
       "Bash(exiftool -if 'not defined $Rating or $Rating <= 3' -Rating= -overwrite_original /Volumes/990PRO4TB/2025/2025-10-17/_Z9W2910.NEF)",
-      "Read(//Users/jameszhenyu/Documents/SuperPicky/**)"
+      "Read(//Users/jameszhenyu/Documents/SuperPicky/**)",
+      "Read(//Users/jameszhenyu/Desktop/**)",
+      "Read(//Volumes/990PRO4TB/2025/2025-08-19/**)",
+      "Bash(xargs -I {} basename {})"
     ],
     "deny": [],
     "ask": []

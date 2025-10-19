@@ -90,14 +90,21 @@ def process_directory(dir_path, settings=None):
                 print(f"  ⚠️  转换失败，跳过")
                 continue
 
-            # 2. 检测鸟
+            # 2. 检测鸟 (V3.1: 使用新的简化API)
+            # ui_settings: [ai_confidence, sharpness_threshold, nima_threshold, save_crop, normalization_mode]
+            ui_settings = [
+                int(settings['confidence_threshold'] * 100),  # 转换为0-100范围
+                settings['sharpness_threshold'],
+                5.0,  # NIMA阈值默认值
+                False,  # 不保存crop
+                'log_compression'  # 默认归一化方法
+            ]
             result = detect_and_draw_birds(
                 image_path=jpg_path,
                 model=model,
-                confidence_threshold=settings['confidence_threshold'],
-                draw_boxes=True,
-                output_dir=str(work_dir),
-                exiftool_manager=exiftool_mgr
+                output_path=None,  # 不输出带框图片
+                dir=str(work_dir),
+                ui_settings=ui_settings
             )
 
             if not result:

@@ -197,7 +197,10 @@ class ExifToolManager:
 
         # 执行批量命令
         try:
-            print(f"📦 批量处理 {len(files_metadata)} 个文件...")
+            # V3.1.2: 只在处理多个文件时显示消息（单文件处理不显示，避免刷屏）
+            if len(files_metadata) > 1:
+                print(f"📦 批量处理 {len(files_metadata)} 个文件...")
+
             result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -207,7 +210,9 @@ class ExifToolManager:
 
             if result.returncode == 0:
                 stats['success'] = len(files_metadata) - stats['failed']
-                print(f"✅ 批量处理完成: {stats['success']} 成功, {stats['failed']} 失败")
+                # V3.1.2: 只在处理多个文件时显示完成消息
+                if len(files_metadata) > 1:
+                    print(f"✅ 批量处理完成: {stats['success']} 成功, {stats['failed']} 失败")
             else:
                 print(f"❌ 批量处理失败: {result.stderr}")
                 stats['failed'] = len(files_metadata)
