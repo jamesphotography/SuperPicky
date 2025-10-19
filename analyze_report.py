@@ -7,7 +7,6 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
 from scipy.stats import pearsonr, spearmanr
 
 # 设置中文字体
@@ -15,7 +14,12 @@ plt.rcParams['font.sans-serif'] = ['Arial Unicode MS', 'SimHei']
 plt.rcParams['axes.unicode_minus'] = False
 
 # 读取数据
-df = pd.read_csv('/Volumes/990PRO4TB/2025/2025-08-17/_tmp/report.csv')
+import sys
+if len(sys.argv) > 1:
+    csv_path = sys.argv[1]
+else:
+    csv_path = '/Volumes/990PRO4TB/2025/2025-08-17/_tmp/report.csv'
+df = pd.read_csv(csv_path)
 
 # 只保留有鸟的数据
 df = df[df['是否有鸟'] == '是'].copy()
@@ -36,6 +40,16 @@ df['鸟占比_数值'] = df['鸟占比'].str.rstrip('%').astype(float)
 df['居中_数值'] = (df['居中'] == '是').astype(int)
 df['锐度达标_数值'] = (df['锐度达标'] == '是').astype(int)
 df['面积达标_数值'] = (df['面积达标'] == '是').astype(int)
+
+# 转换数值类型列
+numeric_convert_cols = ['NIMA美学', '置信度', '归一化锐度']
+# 检查可选列是否存在
+for col in ['BRISQUE技术', 'MUSIQ综合']:
+    if col in df.columns:
+        numeric_convert_cols.append(col)
+
+for col in numeric_convert_cols:
+    df[col] = pd.to_numeric(df[col], errors='coerce')
 
 # 统计星级分布
 print("\n" + "="*80)
@@ -105,10 +119,19 @@ for col in ['鸟占比_数值', '归一化锐度', 'NIMA美学', 'BRISQUE技术'
 # 可视化
 fig, axes = plt.subplots(2, 2, figsize=(15, 12))
 
-# 1. 相关性热力图
-sns.heatmap(corr_df, annot=True, fmt='.2f', cmap='coolwarm', center=0,
-            ax=axes[0, 0], vmin=-1, vmax=1)
+# 1. 相关性热力图 (手动实现)
+im = axes[0, 0].imshow(corr_df.values, cmap='coolwarm', vmin=-1, vmax=1, aspect='auto')
+axes[0, 0].set_xticks(range(len(corr_df.columns)))
+axes[0, 0].set_yticks(range(len(corr_df.columns)))
+axes[0, 0].set_xticklabels(corr_df.columns, rotation=45, ha='right', fontsize=8)
+axes[0, 0].set_yticklabels(corr_df.columns, fontsize=8)
 axes[0, 0].set_title('指标相关性热力图', fontsize=14, fontweight='bold')
+# 添加数值标注
+for i in range(len(corr_df.columns)):
+    for j in range(len(corr_df.columns)):
+        text = axes[0, 0].text(j, i, f'{corr_df.values[i, j]:.2f}',
+                              ha="center", va="center", color="black", fontsize=6)
+plt.colorbar(im, ax=axes[0, 0])
 
 # 2. 星级分布
 star_counts.plot(kind='bar', ax=axes[0, 1], color=['#FFD700', '#FFA500', '#FF6347'])
@@ -132,8 +155,10 @@ axes[1, 1].set_ylabel('NIMA美学分数')
 plt.suptitle('')  # 移除默认标题
 
 plt.tight_layout()
-plt.savefig('/Volumes/990PRO4TB/2025/2025-08-17/_tmp/correlation_analysis.png', dpi=300, bbox_inches='tight')
-print("\n可视化图表已保存到: /Volumes/990PRO4TB/2025/2025-08-17/_tmp/correlation_analysis.png")
+output_dir = os.path.dirname(csv_path)
+output_path = os.path.join(output_dir, 'correlation_analysis.png')
+plt.savefig(output_path, dpi=300, bbox_inches='tight')
+print(f"\n可视化图表已保存到: {output_path}")
 
 # 关键发现总结
 print("\n" + "="*80)

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 SuperPicky - 简化版 (Pure Tkinter, 无PyQt依赖)
-Version: 3.0.1
+Version: 3.1.0
 """
 
 import tkinter as tk
@@ -236,23 +236,46 @@ class WorkerThread(threading.Thread):
             if brisque is not None:
                 iqa_text += f", BRISQUE:{brisque:.2f}"
 
-            # 设置评分（新逻辑：3星/2星/1星/-1星）
-            if selected:
+            # V3.1: 新的评分逻辑（从ai_model.py的rating_value推导）
+            # rating_value: -1=拒绝, 0=0星, 1=1星, 2=2星, 3=3星
+            # 从detected和selected推导rating_value
+            if not detected:
+                rating_value = -1
+            elif selected:
+                rating_value = 3  # bird_result=True表示3星
+            else:
+                # 需要从BRISQUE、NIMA、sharpness重新计算
+                if (brisque is not None and brisque > 30) or \
+                   (nima is not None and nima < 4.0) or \
+                   sharpness < 4000:
+                    rating_value = 0
+                elif sharpness >= self.ui_settings[1] or \
+                     (nima is not None and nima >= self.ui_settings[2]):
+                    rating_value = 2
+                else:
+                    rating_value = 1
+
+            # 根据rating_value设置Lightroom评分
+            if rating_value == 3:
                 rating, pick = 3, 1
                 self.stats['star_3'] += 1
-                self.log_callback(f"  优秀照片 -> 3星 + 精选 (AI:{confidence:.2f}, 锐度:{sharpness:.1f}{iqa_text})", "success")
-            elif detected and confidence >= 0.5 and sharpness >= 50:
+                self.log_callback(f"  ⭐⭐⭐ 优选照片 (AI:{confidence:.2f}, 锐度:{sharpness:.1f}{iqa_text})", "success")
+            elif rating_value == 2:
                 rating, pick = 2, 0
                 self.stats['star_2'] += 1
-                self.log_callback(f"  良好照片 -> 2星 (AI:{confidence:.2f}, 锐度:{sharpness:.1f}{iqa_text})", "info")
-            elif detected:
+                self.log_callback(f"  ⭐⭐ 良好照片 (AI:{confidence:.2f}, 锐度:{sharpness:.1f}{iqa_text})", "info")
+            elif rating_value == 1:
                 rating, pick = 1, 0
                 self.stats['star_1'] += 1
-                self.log_callback(f"  普通照片 -> 1星 (AI:{confidence:.2f}, 锐度:{sharpness:.1f}{iqa_text})", "warning")
-            else:
+                self.log_callback(f"  ⭐ 普通照片 (AI:{confidence:.2f}, 锐度:{sharpness:.1f}{iqa_text})", "warning")
+            elif rating_value == 0:
+                rating, pick = 0, 0
+                self.stats['star_1'] += 1  # 计入普通照片统计
+                self.log_callback(f"  0星 技术质量差 (AI:{confidence:.2f}, 锐度:{sharpness:.1f}{iqa_text})", "warning")
+            else:  # rating_value == -1
                 rating, pick = -1, -1
                 self.stats['no_bird'] += 1
-                self.log_callback(f"  无鸟照片 -> 已拒绝", "error")
+                self.log_callback(f"  ❌ 已拒绝", "error")
 
             self.stats['total'] += 1
 
@@ -338,8 +361,8 @@ class WorkerThread(threading.Thread):
 class SuperPickyApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("SuperPicky V3.0.1 - 慧眼选鸟")
-        self.root.geometry("1200x750")  # 加宽以容纳预览面板
+        self.root.title("SuperPicky V3.1.0 - 慧眼选鸟")
+        self.root.geometry("700x600")  # V3.1: 移除预览面板，缩小窗口
 
         # 设置图标（Tkinter在macOS上使用PNG）
         icon_path = os.path.join(os.path.dirname(__file__), "img", "icon.png")
@@ -353,58 +376,26 @@ class SuperPickyApp:
 
         self.directory_path = ""
         self.worker = None
-        self.preview_photo = None  # 保持图片引用，避免被垃圾回收
-        self.preview_photo2 = None  # 第二张预览图片引用
 
-        # 临时文件管理器
-        self.temp_manager = get_temp_manager()
-        self.work_dir = None  # 当前工作目录
-
-        # 预览历史记录
-        self.preview_history = []  # 存储所有处理过的照片信息
-        self.current_preview_index = -1  # 当前显示的索引
-
-        # 启动时不再自动清理临时文件（保留历史记录）
-        # 用户可以通过"清理临时文件"按钮手动清理
-        pass
+        # V3.1: 移除临时文件管理器和预览功能
+        # self.temp_manager = get_temp_manager()
+        # self.work_dir = None
 
         self.create_widgets()
 
-        # 绑定键盘快捷键
-        self.root.bind('<Left>', lambda e: self.show_prev_preview())
-        self.root.bind('<Right>', lambda e: self.show_next_preview())
-
-        # 绑定窗口大小变化事件
-        self.root.bind('<Configure>', self.on_window_resize)
-        self.last_resize_time = 0
-
         # 绑定窗口关闭事件
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
-
-        # 加载默认预览图片
-        self.load_default_preview()
 
         # 显示初始帮助信息
         self.show_initial_help()
 
     def create_widgets(self):
-        # 创建主容器（左右分栏）
-        main_container = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
-        main_container.pack(fill=tk.BOTH, expand=True)
+        # V3.1: 移除预览面板，使用单栏布局
+        main_frame = ttk.Frame(self.root)
+        main_frame.pack(fill=tk.BOTH, expand=True)
 
-        # 左侧面板（控制区）
-        left_frame = ttk.Frame(main_container)
-        main_container.add(left_frame, weight=3)
-
-        # 右侧面板（预览区）
-        right_frame = ttk.Frame(main_container)
-        main_container.add(right_frame, weight=2)
-
-        # 在左侧创建控制界面
-        self.create_control_panel(left_frame)
-
-        # 在右侧创建预览面板
-        self.create_preview_panel(right_frame)
+        # 创建控制界面
+        self.create_control_panel(main_frame)
 
     def create_control_panel(self, parent):
         """创建左侧控制面板"""
@@ -432,53 +423,37 @@ class SuperPickyApp:
         settings_frame = ttk.LabelFrame(parent, text="优选照片设置", padding=10)
         settings_frame.pack(fill=tk.X, padx=10, pady=5)
 
-        # 选鸟置信度（50%-100%）
-        ai_frame = ttk.Frame(settings_frame)
-        ai_frame.pack(fill=tk.X, pady=5)
-        ttk.Label(ai_frame, text="选鸟置信度:", width=14, font=("Arial", 11)).pack(side=tk.LEFT)
-        self.ai_var = tk.IntVar(value=80)
-        self.ai_slider = ttk.Scale(ai_frame, from_=50, to=100, variable=self.ai_var, orient=tk.HORIZONTAL)
-        self.ai_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        self.ai_label = ttk.Label(ai_frame, text="80%", width=6, font=("Arial", 11))
-        self.ai_label.pack(side=tk.LEFT)
-        self.ai_slider.configure(command=lambda v: self.ai_label.configure(text=f"{int(float(v))}%"))
+        # V3.1: 隐藏置信度滑块（固定为50%，仅用于过滤）
+        self.ai_var = tk.IntVar(value=50)
 
-        # 鸟面积占比（最大25%）
-        ratio_frame = ttk.Frame(settings_frame)
-        ratio_frame.pack(fill=tk.X, pady=5)
-        ttk.Label(ratio_frame, text="鸟面积占比:", width=14, font=("Arial", 11)).pack(side=tk.LEFT)
-        self.ratio_var = tk.DoubleVar(value=2.0)
-        self.ratio_slider = ttk.Scale(ratio_frame, from_=0.5, to=25, variable=self.ratio_var, orient=tk.HORIZONTAL)
-        self.ratio_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        self.ratio_label = ttk.Label(ratio_frame, text="2.0%", width=6, font=("Arial", 11))
-        self.ratio_label.pack(side=tk.LEFT)
-        self.ratio_slider.configure(command=lambda v: self.ratio_label.configure(text=f"{float(v):.1f}%"))
+        # V3.1: 隐藏锐度归一化选择（固定为log_compression）
+        self.norm_var = tk.StringVar(value="对数压缩(V3.1) - 大小鸟公平")
 
-        # 鸟锐度阈值（默认100，最大200）
+        # 鸟锐度阈值（V3.1: 6000-9000，步长500，默认8000）
         sharp_frame = ttk.Frame(settings_frame)
         sharp_frame.pack(fill=tk.X, pady=5)
         ttk.Label(sharp_frame, text="鸟锐度阈值:", width=14, font=("Arial", 11)).pack(side=tk.LEFT)
-        self.sharp_var = tk.IntVar(value=2000)  # v3.0.1: 提高默认阈值，适配真实锐度值
-        self.sharp_slider = ttk.Scale(sharp_frame, from_=0, to=10000, variable=self.sharp_var, orient=tk.HORIZONTAL)
+        self.sharp_var = tk.IntVar(value=8000)  # V3.1: 默认8000
+        # 使用步长500的Scale（from_=6000, to=9000, resolution=500）
+        self.sharp_slider = ttk.Scale(sharp_frame, from_=6000, to=9000, variable=self.sharp_var, orient=tk.HORIZONTAL)
         self.sharp_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        self.sharp_label = ttk.Label(sharp_frame, text="2000", width=6, font=("Arial", 11))
+        self.sharp_label = ttk.Label(sharp_frame, text="8000", width=6, font=("Arial", 11))
         self.sharp_label.pack(side=tk.LEFT)
-        self.sharp_slider.configure(command=lambda v: self.sharp_label.configure(text=f"{int(float(v))}"))
+        # 配置步长和更新回调
+        self.sharp_slider.configure(
+            command=lambda v: self._update_sharp_label(v)
+        )
 
-        # 锐度归一化模式
-        norm_frame = ttk.Frame(settings_frame)
-        norm_frame.pack(fill=tk.X, pady=5)
-        ttk.Label(norm_frame, text="锐度归一化:", width=14, font=("Arial", 11)).pack(side=tk.LEFT)
-        self.norm_var = tk.StringVar(value="原始方差(推荐) - 不惩罚大小")
-        norm_options = [
-            "原始方差(推荐) - 不惩罚大小",
-            "log归一化 - 最轻微惩罚大鸟",
-            "gentle归一化 - 轻微惩罚大鸟",
-            "sqrt归一化 - 温和惩罚大鸟",
-            "linear归一化 - 严重惩罚大鸟"
-        ]
-        self.norm_combobox = ttk.Combobox(norm_frame, textvariable=self.norm_var, values=norm_options, state='readonly', font=("Arial", 11))
-        self.norm_combobox.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        # NIMA美学阈值（V3.1新增: 5.0-6.0，步长0.1，默认5.0）
+        nima_frame = ttk.Frame(settings_frame)
+        nima_frame.pack(fill=tk.X, pady=5)
+        ttk.Label(nima_frame, text="NIMA美学阈值:", width=14, font=("Arial", 11)).pack(side=tk.LEFT)
+        self.nima_var = tk.DoubleVar(value=5.0)  # V3.1: 默认5.0
+        self.nima_slider = ttk.Scale(nima_frame, from_=5.0, to=6.0, variable=self.nima_var, orient=tk.HORIZONTAL)
+        self.nima_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        self.nima_label = ttk.Label(nima_frame, text="5.0", width=6, font=("Arial", 11))
+        self.nima_label.pack(side=tk.LEFT)
+        self.nima_slider.configure(command=lambda v: self.nima_label.configure(text=f"{float(v):.1f}"))
 
         # 进度显示
         progress_frame = ttk.LabelFrame(parent, text="处理进度", padding=10)
@@ -503,39 +478,15 @@ class SuperPickyApp:
         self.log_text.tag_config("warning", foreground="#ffaa00")  # 橙黄色 - 1星普通
         self.log_text.tag_config("info", foreground="#00aaff")     # 天蓝色 - 2星良好
 
-        # 控制按钮
+        # V3.1: 控制按钮（移除预览开关）
         btn_frame = ttk.Frame(parent, padding=10)
         btn_frame.pack(fill=tk.X)
 
-        # 左侧：实时预览开关 + 提示
-        preview_container = ttk.Frame(btn_frame)
-        preview_container.pack(side=tk.LEFT, fill=tk.X, expand=False)
-
-        self.enable_preview_var = tk.BooleanVar(value=True)  # 默认启用
-        preview_checkbox = ttk.Checkbutton(
-            preview_container,
-            text="实时预览",
-            variable=self.enable_preview_var,
-            style='TCheckbutton'
-        )
-        preview_checkbox.pack(side=tk.LEFT, padx=(0, 5))
-
-        # 提示文字（灰色小字）
-        ttk.Label(
-            preview_container,
-            text="💡 大批量照片建议关闭以提速",
-            font=("Arial", 9),
-            foreground="#888888"
-        ).pack(side=tk.LEFT, padx=5)
-
-        # 右侧：按钮组
+        # 按钮组
         button_container = ttk.Frame(btn_frame)
         button_container.pack(side=tk.RIGHT)
 
-        ttk.Label(button_container, text="V3.0.1 - EXIF标记模式", font=("Arial", 9)).pack(side=tk.RIGHT, padx=10)
-
-        self.cleanup_btn = ttk.Button(button_container, text="🧹 清理临时文件", command=self.cleanup_temp_files, width=15)
-        self.cleanup_btn.pack(side=tk.RIGHT, padx=5)
+        ttk.Label(button_container, text="V3.1.0 - EXIF标记模式", font=("Arial", 9)).pack(side=tk.RIGHT, padx=10)
 
         self.reset_btn = ttk.Button(button_container, text="🔄 重置目录", command=self.reset_directory, width=15, state='disabled')
         self.reset_btn.pack(side=tk.RIGHT, padx=5)
@@ -782,7 +733,7 @@ class SuperPickyApp:
             input_hint = "  1️⃣ 点击\"浏览\"选择照片目录 或 粘贴路径到输入框并按回车（支持RAW/JPG）"
 
         help_text = f"""━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  欢迎使用 SuperPicky V3.0.1 - 慧眼选鸟 | AI智能筛选鸟类照片
+  欢迎使用 SuperPicky V3.1.0 - 慧眼选鸟 | AI智能筛选鸟类照片
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 使用步骤：
 {input_hint}
@@ -1164,22 +1115,23 @@ class SuperPickyApp:
         mode_key = selected_text.split(" - ")[0].strip()
 
         norm_mapping = {
-            "原始方差(推荐)": None,
-            "log归一化": "log",
-            "gentle归一化": "gentle",
-            "sqrt归一化": "sqrt",
-            "linear归一化": "linear"
+            "对数压缩(V3.1) - 大小鸟公平": "log_compression",
+            "原始方差 - 不惩罚大小": None,
+            "log归一化 - 最轻微惩罚大鸟": "log",
+            "gentle归一化 - 轻微惩罚大鸟": "gentle",
+            "sqrt归一化 - 温和惩罚大鸟": "sqrt",
+            "linear归一化 - 严重惩罚大鸟": "linear"
         }
-        selected_norm = norm_mapping.get(mode_key, None)
+        selected_norm = norm_mapping.get(mode_key, "log_compression")  # V3.1默认log_compression
 
-        # 获取设置（[confidence, area, sharpness, center_threshold=15%, save_crop=True, normalization]）
+        # V3.1: 获取设置（[confidence, sharpness, nima_threshold, normalization]）
+        # 移除了area参数和center_threshold
         ui_settings = [
-            self.ai_var.get(),          # AI置信度 (0-100)
-            self.ratio_var.get(),       # 鸟类占比 (0.5-10)
-            self.sharp_var.get(),       # 锐度阈值 (0-300)
-            15,                         # 居中阈值硬编码为15%
+            self.ai_var.get(),          # AI置信度 (50-100)
+            self.sharp_var.get(),       # 锐度阈值 (6000-9000)
+            self.nima_var.get(),        # NIMA美学阈值 (5.0-6.0) - V3.1新增
             True,                       # 总是保存Crop图片（用于预览）
-            selected_norm               # 锐度归一化模式
+            selected_norm               # 锐度归一化模式（默认log_compression）
         ]
 
         # 启动Worker线程
@@ -1424,6 +1376,19 @@ class SuperPickyApp:
         # 更新显示
         self._display_preview_at_index(new_index)
         self._update_nav_buttons()
+
+    def _update_sharp_label(self, value):
+        """
+        更新锐度滑块标签（V3.1: 步长500）
+
+        Args:
+            value: 滑块当前值（字符串）
+        """
+        # 将值四舍五入到最近的500
+        rounded_value = round(float(value) / 500) * 500
+        # 更新变量和标签
+        self.sharp_var.set(int(rounded_value))
+        self.sharp_label.configure(text=f"{int(rounded_value)}")
 
     def _on_slider_change(self, value):
         """

@@ -12,7 +12,7 @@ from typing import Dict, Optional, Tuple
 class MaskBasedSharpnessCalculator:
     """基于掩码的锐度计算器"""
 
-    def __init__(self, method='variance', normalization='sqrt'):
+    def __init__(self, method='variance', normalization='log_compression'):
         """
         初始化锐度计算器
 
@@ -21,7 +21,9 @@ class MaskBasedSharpnessCalculator:
                 - 'variance': 拉普拉斯方差（推荐）
                 - 'L2': 拉普拉斯L2范数（兼容旧算法）
             normalization: 归一化方法
-                - 'sqrt': 除以像素数平方根（推荐，方案B）
+                - None: 不归一化，使用原始方差（推荐，与NIMA/BRISQUE相关性最强）
+                - 'log_compression': 对数压缩 log(1+x)*1000（V3.1默认，大小鸟公平）
+                - 'sqrt': 除以像素数平方根（方案B）
                 - 'linear': 除以像素数（文档方案A）
                 - 'log': 除以像素数对数（方案C，最温和）
                 - 'gentle': 温和归一化（给大鸟适当优势）
@@ -135,8 +137,19 @@ class MaskBasedSharpnessCalculator:
         if pixel_count <= 0:
             return 0.0
 
-        if self.normalization == 'sqrt':
-            # 方案B（推荐）：除以像素数平方根
+        if self.normalization is None or self.normalization == 'none':
+            # 不归一化，直接返回原始方差（推荐）
+            # 与NIMA/BRISQUE相关性最强，对鸟大小偏差最小
+            return sharpness
+
+        elif self.normalization == 'log_compression':
+            # V3.1 对数压缩：log(1 + x) * 1000
+            # 范围：4508-10455，大小鸟公平（比例0.971）
+            # 推荐滑块范围：6000-9000，默认7000
+            return np.log1p(sharpness) * 1000
+
+        elif self.normalization == 'sqrt':
+            # 方案B：除以像素数平方根
             return sharpness / np.sqrt(pixel_count)
 
         elif self.normalization == 'linear':
@@ -154,8 +167,8 @@ class MaskBasedSharpnessCalculator:
             return sharpness / (pixel_count ** 0.35)
 
         else:
-            # 默认使用平方根
-            return sharpness / np.sqrt(pixel_count)
+            # 默认使用原始方差（不归一化）
+            return sharpness
 
     def _get_zero_result(self) -> Dict[str, float]:
         """返回零值结果"""
@@ -170,7 +183,7 @@ class MaskBasedSharpnessCalculator:
 # 兼容旧代码的简单函数接口
 def calculate_sharpness_with_mask(image: np.ndarray, mask: np.ndarray) -> float:
     """
-    简单接口：计算归一化锐度（使用推荐配置）
+    简单接口：计算归一化锐度（使用V3.1推荐配置）
 
     Args:
         image: 原图（BGR格式）
@@ -179,7 +192,7 @@ def calculate_sharpness_with_mask(image: np.ndarray, mask: np.ndarray) -> float:
     Returns:
         归一化锐度值
     """
-    calculator = MaskBasedSharpnessCalculator(method='variance', normalization='sqrt')
+    calculator = MaskBasedSharpnessCalculator(method='variance', normalization='log_compression')
     result = calculator.calculate(image, mask)
     return result['normalized_sharpness']
 

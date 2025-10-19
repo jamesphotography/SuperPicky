@@ -50,7 +50,7 @@ def process_directory(dir_path, settings=None):
 
     # 重置环境
     print("正在重置环境...")
-    reset()
+    reset(str(work_dir))
 
     # 加载YOLO模型
     print("正在加载YOLO模型...")
@@ -85,7 +85,7 @@ def process_directory(dir_path, settings=None):
             print(f"[{idx}/{stats['total']}] 处理: {filename}")
 
             # 1. 转换NEF到JPG
-            jpg_path = raw_to_jpeg(str(nef_path), str(work_dir))
+            jpg_path = raw_to_jpeg(str(nef_path))
             if not jpg_path or not Path(jpg_path).exists():
                 print(f"  ⚠️  转换失败，跳过")
                 continue

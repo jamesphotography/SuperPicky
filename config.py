@@ -58,7 +58,10 @@ class AIConfig:
     BIRD_CLASS_ID: int = 14              # YOLO 模型中鸟类的类别 ID
     TARGET_IMAGE_SIZE: int = 1024        # 图像预处理目标尺寸（保持1024以维持锐度值一致性）
     CENTER_THRESHOLD: float = 0.15       # 鸟类位置中心阈值
-    
+
+    # 锐度计算配置
+    SHARPNESS_NORMALIZATION: str = None  # 锐度归一化方法：None(推荐), 'sqrt', 'linear', 'log', 'gentle'
+
     def get_model_path(self) -> str:
         """获取模型文件完整路径"""
         return resource_path(self.MODEL_FILE)

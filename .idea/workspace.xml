@@ -8,301 +8,31 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="620992e9-a1fe-4912-911a-e1e6e312c7a0" name="Changes" comment="增加了 内容修改记录">
-      <change afterPath="$PROJECT_DIR$/.claude/settings.local.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.gitattributes" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/shelf/Changes.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/shelf/Changes/shelved.patch" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/shelf/Uncommitted_changes_before_Update_at_23_12_2023,_10_22 pm_[Changes]/shelved.patch" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/shelf/Uncommitted_changes_before_Update_at_23_12_2023__10_22pm__Changes_.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/BUILD_README.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/ai_model.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/build_and_notarize.sh" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/config.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/core/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/core/bird_detector.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/core/config_manager.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/core/file_manager.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/entitlements.plist" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/exiftool" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/File/RandomAccess.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/File/RandomAccess.pod" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool.pod" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/7Z.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/AAC.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/AES.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/AFCP.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/AIFF.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/APE.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/APP12.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/ASF.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Apple.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Audible.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/BMP.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/BPG.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/BZZ.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/BigTIFF.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/BuildTagLookup.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/CBOR.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Canon.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/CanonCustom.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/CanonRaw.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/CanonVRD.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/CaptureOne.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Casio.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Charset.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Charset/Arabic.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Charset/Baltic.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Charset/Cyrillic.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Charset/DOSCyrillic.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Charset/DOSLatin1.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Charset/DOSLatinUS.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Charset/Greek.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Charset/Hebrew.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Charset/JIS.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Charset/Latin.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Charset/Latin2.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Charset/MacArabic.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Charset/MacChineseCN.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Charset/MacChineseTW.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Charset/MacCroatian.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Charset/MacCyrillic.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Charset/MacGreek.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Charset/MacHebrew.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Charset/MacIceland.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Charset/MacJapanese.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Charset/MacKorean.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Charset/MacLatin2.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Charset/MacRSymbol.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Charset/MacRoman.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Charset/MacRomanian.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Charset/MacThai.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Charset/MacTurkish.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Charset/PDFDoc.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Charset/ShiftJIS.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Charset/Symbol.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Charset/Thai.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Charset/Turkish.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Charset/Vietnam.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/DICOM.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/DJI.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/DNG.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/DPX.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/DSF.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/DV.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/DarwinCore.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/DjVu.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/EXE.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Exif.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/FITS.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/FLAC.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/FLIF.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/FLIR.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Fixup.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Flash.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/FlashPix.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Font.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/FotoStation.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/FujiFilm.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/GE.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/GIF.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/GIMP.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/GM.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/GPS.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/GeoTiff.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Geolocation.dat" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Geolocation.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Geotag.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/GoPro.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Google.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/H264.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/HP.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/HTML.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/HtmlDump.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/ICC_Profile.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/ICO.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/ID3.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/IPTC.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/ISO.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/ITC.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Import.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/InDesign.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/InfiRay.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/JPEG.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/JPEGDigest.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/JSON.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/JVC.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Jpeg2000.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Kodak.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/KyoceraRaw.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/LIF.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/LNK.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Lang/cs.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Lang/de.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Lang/en_ca.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Lang/en_gb.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Lang/es.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Lang/fi.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Lang/fr.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Lang/it.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Lang/ja.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Lang/ko.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Lang/nl.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Lang/pl.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Lang/ru.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Lang/sk.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Lang/sv.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Lang/tr.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Lang/zh_cn.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Lang/zh_tw.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Leaf.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/LigoGPS.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Lytro.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/M2TS.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/MIE.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/MIEUnits.pod" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/MIFF.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/MISB.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/MNG.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/MOI.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/MPC.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/MPEG.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/MPF.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/MRC.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/MWG.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/MXF.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/MacOS.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/MakerNotes.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Matroska.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Microsoft.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Minolta.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/MinoltaRaw.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Motorola.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Nikon.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/NikonCapture.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/NikonCustom.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/NikonSettings.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Nintendo.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/OOXML.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Ogg.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Olympus.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/OpenEXR.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Opus.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Other.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/PCAP.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/PCX.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/PDF.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/PGF.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/PICT.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/PLIST.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/PLUS.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/PNG.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/PPM.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/PSP.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Palm.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Panasonic.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/PanasonicRaw.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Parrot.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Pentax.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/PhaseOne.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/PhotoCD.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/PhotoMechanic.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Photoshop.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Plot.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/PostScript.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/PrintIM.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Protobuf.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Qualcomm.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/QuickTime.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/QuickTimeStream.pl" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/README" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/RIFF.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/RSRC.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/RTF.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Radiance.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Rawzor.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Real.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Reconyx.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Red.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Ricoh.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Samsung.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Sanyo.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Scalado.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Shift.pl" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Shortcuts.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Sigma.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/SigmaRaw.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Sony.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/SonyIDC.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Stim.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/TNEF.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/TagInfoXML.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/TagLookup.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/TagNames.pod" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Text.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Theora.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Torrent.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Trailer.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Unknown.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/VCard.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Validate.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Vorbis.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/WPG.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/WTV.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/WavPack.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/WriteCanonRaw.pl" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/WriteExif.pl" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/WriteIPTC.pl" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/WritePDF.pl" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/WritePNG.pl" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/WritePhotoshop.pl" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/WritePostScript.pl" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/WriteQuickTime.pl" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/WriteRIFF.pl" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/WriteXMP.pl" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/Writer.pl" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/XISF.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/XMP.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/XMP2.pl" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/XMPStruct.pl" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/ZIP.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/ZISRAW.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/lib/Image/ExifTool/iWork.pm" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_bundle/run_exiftool.sh" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/exiftool_manager.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/img/Crop__Z9W0960.jpg" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/img/SuperPicky-V0.02.icns" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/img/_Z9W0960.jpg" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/img/icon.png" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/models/yolo11l_segment.pt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/models/yolo11m-seg.pt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/requirements.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/services/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/services/algorithm_comparison_service.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/services/image_processing_service.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/sharpness.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/temp_file_manager.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/utils.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/IQA_INTEGRATION_COMPLETE.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/SHARPNESS_NORMALIZATION_INTEGRATION_GUIDE.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/analyze_iqa_results.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/analyze_raw_sharpness.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/analyze_report.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/analyze_sharpness_bias.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/build_log.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/iqa_scorer.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/run_batch.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/慧眼选鸟.dmgcanvas/Contents/Chinese - Simplified.rtf" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/慧眼选鸟.dmgcanvas/Contents/backgroundImage.png" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/慧眼选鸟.dmgcanvas/Contents/volumeIcon.png" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/慧眼选鸟.dmgcanvas/Disk Image" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/慧眼选鸟.dmgcanvas/QuickLook/Preview.jpg" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.claude/settings.local.json" beforeDir="false" afterPath="$PROJECT_DIR$/.claude/settings.local.json" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/SuperPickyV0.02.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/SuperPickyV0.02.iml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/misc.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/DALL·E 2023-12-22 17.20.36 - a detailed and colorful portrait of a rainbow lorikeet with a magnifying glass focused on the bird's eye, with a smaller and more detailed hand partia.png" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/Main.ui" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/MainWindow.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/README - Fix issue" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/README - dev problems" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/shelf/Changes/README - dev problems" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Stream.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/SuperPicky.icns" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/SuperPicky.spec" beforeDir="false" afterPath="$PROJECT_DIR$/SuperPicky.spec" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Worker.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/find_bird_util.py" beforeDir="false" afterPath="$PROJECT_DIR$/find_bird_util.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/ai_model.py" beforeDir="false" afterPath="$PROJECT_DIR$/ai_model.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/config.py" beforeDir="false" afterPath="$PROJECT_DIR$/config.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/exiftool_manager.py" beforeDir="false" afterPath="$PROJECT_DIR$/exiftool_manager.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/main_ui.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/output_filename.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/packaging_command.txt" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/personal access token" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/sharpness.py" beforeDir="false" afterPath="$PROJECT_DIR$/sharpness.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/utils.py" beforeDir="false" afterPath="$PROJECT_DIR$/utils.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -428,7 +158,16 @@
       <workItem from="1706304341121" duration="4582000" />
       <workItem from="1759973905085" duration="14636000" />
       <workItem from="1759994975716" duration="80000" />
-      <workItem from="1760000960653" duration="11220000" />
+      <workItem from="1760000960653" duration="11970000" />
+      <workItem from="1760141616717" duration="30000" />
+      <workItem from="1760155365479" duration="8197000" />
+      <workItem from="1760258469765" duration="89000" />
+      <workItem from="1760349080926" duration="2864000" />
+      <workItem from="1760436312116" duration="2023000" />
+      <workItem from="1760533760357" duration="289000" />
+      <workItem from="1760608168488" duration="8024000" />
+      <workItem from="1760646170579" duration="6819000" />
+      <workItem from="1760694698090" duration="12682000" />
     </task>
     <task id="LOCAL-00001" summary="增加了 内容修改记录">
       <option name="closed" value="true" />
@@ -512,6 +251,6 @@
     <SUITE FILE_PATH="coverage/SuperPicky_SandBox$main_tkinter.coverage" NAME="main_tkinter Coverage Results" MODIFIED="1759893219661" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/SuperPicky_SandBox$sharpness.coverage" NAME="sharpness Coverage Results" MODIFIED="1759895199651" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/SuperPicky_SandBox$main_simple.coverage" NAME="main_simple Coverage Results" MODIFIED="1759893153692" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
-    <SUITE FILE_PATH="coverage/SuperPicky_SandBox$main.coverage" NAME="main Coverage Results" MODIFIED="1760014339864" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/SuperPicky_SandBox$main.coverage" NAME="main Coverage Results" MODIFIED="1760744374495" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
   </component>
 </project>

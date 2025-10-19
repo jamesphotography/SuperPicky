@@ -69,37 +69,35 @@ def _get_iqa_scorer():
 
 
 def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, crop_temp_dir=None, center_threshold=None, preview_callback=None):
-    """检测并标记鸟类"""
-    # 从 ui_settings 获取参数
-    ai_confidence = ui_settings[0] / 100  # AI置信度：0-100 -> 0.0-1.0
-    area_threshold = ui_settings[1] / 100  # 鸟类占比：0.5-10 -> 0.005-0.1
-    sharpness_threshold = ui_settings[2]   # 锐度阈值：0-300
+    """
+    检测并标记鸟类（V3.1）
 
-    # 居中阈值：优先使用 ui_settings，否则使用参数或默认值
-    if len(ui_settings) >= 4:
-        center_threshold = ui_settings[3] / 100  # 5-40 -> 0.05-0.4
-    elif center_threshold is None:
-        center_threshold = config.ai.CENTER_THRESHOLD
+    Args:
+        ui_settings: [ai_confidence, sharpness_threshold, nima_threshold, save_crop, normalization_mode]
+    """
+    # V3.1: 从 ui_settings 获取参数
+    ai_confidence = ui_settings[0] / 100  # AI置信度：50-100 -> 0.5-1.0（仅用于过滤）
+    sharpness_threshold = ui_settings[1]  # 锐度阈值：6000-9000
+    nima_threshold = ui_settings[2]       # NIMA美学阈值：5.0-6.0
 
     # 是否保存Crop图片（预览时总是临时保存）
-    save_crop = ui_settings[4] if len(ui_settings) >= 5 else False
+    save_crop = ui_settings[3] if len(ui_settings) >= 4 else False
     # 如果有预览回调，强制生成crop图片（用于预览）
     if preview_callback:
         save_crop = True
 
-    # 锐度归一化模式（新增）
-    normalization_mode = ui_settings[5] if len(ui_settings) >= 6 else None
+    # 锐度归一化模式（V3.1默认log_compression）
+    normalization_mode = ui_settings[4] if len(ui_settings) >= 5 else 'log_compression'
 
     # 根据用户选择的归一化模式创建锐度计算器
     sharpness_calculator = _get_sharpness_calculator(normalization_mode)
 
-    bird_dominant = False
     found_bird = False
     bird_sharp = False
-    bird_centred = False
     bird_result = False
     nima_score = None  # 美学评分（全图）
     brisque_score = None  # 技术质量评分（crop图）
+    # V3.1: 移除 bird_dominant, bird_centred（不再使用）
 
     # 使用配置检查文件类型
     if not config.is_jpg_file(image_path):
@@ -124,7 +122,7 @@ def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, crop
             results = model(image, device='cpu')
         except Exception as cpu_error:
             log_message(f"❌ AI推理完全失败: {cpu_error}", dir)
-            # 返回"无鸟"结果
+            # 返回"无鸟"结果（V3.1）
             data = {
                 "文件名": os.path.splitext(os.path.basename(image_path))[0],
                 "是否有鸟": "否",
@@ -138,9 +136,7 @@ def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, crop
                 "NIMA美学": "-",
                 "BRISQUE技术": "-",
                 "星等": "❌",
-                "面积达标": "否",
-                "居中": "否",
-                "锐度达标": "否",
+                "评分": -1,
                 "类别ID": "-"
             }
             write_to_csv(data, dir, False)
@@ -167,7 +163,7 @@ def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, crop
                 max_area = area
                 bird_idx = idx
 
-    # 如果没有找到鸟，记录到CSV并返回
+    # 如果没有找到鸟，记录到CSV并返回（V3.1）
     if bird_idx == -1:
         data = {
             "文件名": os.path.splitext(os.path.basename(image_path))[0],
@@ -182,9 +178,7 @@ def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, crop
             "NIMA美学": "-",
             "BRISQUE技术": "-",
             "星等": "❌",
-            "面积达标": "否",
-            "居中": "否",
-            "锐度达标": "否",
+            "评分": -1,
             "类别ID": "-"
         }
         write_to_csv(data, dir, False)
@@ -306,48 +300,60 @@ def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, crop
 
             cv2.rectangle(image, (x, y), (x + w, y + h), (0, 0, 255), 2)
 
-            bird_sharp = sharpness >= sharpness_threshold
-            bird_dominant = area_ratio >= area_threshold
-
+            # V3.1: 新的评分逻辑
+            # 计算中心坐标（仅用于日志输出）
             center_x = (x + w / 2) / width
             center_y = (y + h / 2) / height
 
-            is_center_x_in_range = center_threshold <= center_x <= (1 - center_threshold)
-            is_center_y_in_range = center_threshold <= center_y <= (1 - center_threshold)
-
-            bird_centred = is_center_x_in_range and is_center_y_in_range
-
-            if conf >= ai_confidence:  # 使用 >= 确保等于阈值时也能通过
-                if bird_centred and bird_dominant and bird_sharp:
-                    bird_result = True
-
-            # 日志输出（新算法使用方差，数值较小）
+            # 日志输出
+            nima_str = f"{nima_score:.2f}" if nima_score is not None else "-"
+            brisque_str = f"{brisque_score:.2f}" if brisque_score is not None else "-"
             log_message(f" AI: {conf:.2f} - Class: {class_id} "
                         f"- Sharpness:{real_sharpness:.2f} (Norm:{sharpness:.2f}) "
                         f"- Area:{area_ratio * 100:.2f}% - Pixels:{effective_pixels:,d}"
+                        f" - NIMA:{nima_str}"
+                        f" - BRISQUE:{brisque_str}"
                         f" - Center_x:{center_x:.2f} - Center_y:{center_y:.2f}", dir)
 
-            # 计算星级（根据用户设置的阈值判断）
-            # ui_settings[0] = AI置信度阈值 (%)
-            # ui_settings[2] = 锐度阈值
-            # 3星：满足所有优选条件（bird_result=True）
-            # 2星：有鸟 + 置信度≥50% + 锐度≥50
-            # 1星：有鸟但不满足2星条件
-            if bird_result:
-                rating_stars = "⭐⭐⭐"
-            elif found_bird and conf >= 0.5 and sharpness >= 50:
-                rating_stars = "⭐⭐"
-            elif found_bird:
-                rating_stars = "⭐"
-            else:
+            # V3.1 星级评定规则：
+            # 1. 置信度 < 50% → -1星（Rejected）
+            # 2. BRISQUE > 30 或 NIMA < 4.0 或 锐度 < 4000 → 0星（技术质量差）
+            # 3. 锐度 ≥ 阈值 且 NIMA ≥ 阈值 → 3星（优选）
+            # 4. 锐度 ≥ 阈值 或 NIMA ≥ 阈值 → 2星（良好）
+            # 5. 其他 → 1星（普通）
+
+            if conf < 0.5:
+                # 置信度太低，标记为拒绝
                 rating_stars = "❌"
+                rating_value = -1
+            elif (brisque_score is not None and brisque_score > 30) or \
+                 (nima_score is not None and nima_score < 4.0) or \
+                 sharpness < 4000:
+                # 技术质量太差
+                rating_stars = "0星"
+                rating_value = 0
+            elif sharpness >= sharpness_threshold and \
+                 (nima_score is not None and nima_score >= nima_threshold):
+                # 同时满足锐度和美学标准
+                rating_stars = "⭐⭐⭐"
+                rating_value = 3
+                bird_result = True  # 标记为优选
+            elif sharpness >= sharpness_threshold or \
+                 (nima_score is not None and nima_score >= nima_threshold):
+                # 满足锐度或美学标准之一
+                rating_stars = "⭐⭐"
+                rating_value = 2
+            else:
+                # 普通照片
+                rating_stars = "⭐"
+                rating_value = 1
 
             data = {
                 "文件名": os.path.splitext(os.path.basename(image_path))[0],
                 "是否有鸟": "是" if found_bird else "否",
                 "置信度": f"{conf:.2f}",
-                "X坐标": f"{(x + w / 2) / width:.2f}",
-                "Y坐标": f"{(y + h / 2) / height:.2f}",
+                "X坐标": f"{center_x:.2f}",
+                "Y坐标": f"{center_y:.2f}",
                 "鸟占比": f"{area_ratio * 100:.2f}%",
                 "像素数": f"{effective_pixels}",
                 "原始锐度": f"{real_sharpness:.2f}",
@@ -355,9 +361,7 @@ def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, crop
                 "NIMA美学": f"{nima_score:.2f}" if nima_score is not None else "-",
                 "BRISQUE技术": f"{brisque_score:.2f}" if brisque_score is not None else "-",
                 "星等": rating_stars,
-                "面积达标": "是" if bird_dominant else "否",
-                "居中": "是" if bird_centred else "否",
-                "锐度达标": "是" if bird_sharp else "否",
+                "评分": rating_value,
                 "类别ID": class_id
             }
 
@@ -368,15 +372,16 @@ def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, crop
                 # 直接使用原始JPG路径，不复制（节省50-150ms/张）
                 jpg_preview_path = image_path
 
-                # 准备元数据
+                # 准备元数据（V3.1）
                 metadata = {
                     'filename': os.path.basename(image_path),
                     'confidence': float(conf),
                     'sharpness': sharpness,
                     'area_ratio': area_ratio,
-                    'centered': bird_centred,
-                    'rating': 3 if bird_result else (2 if (conf >= 0.5 and sharpness >= 50) else 1),
-                    'pick': 1 if bird_result else 0
+                    'nima': nima_score if nima_score is not None else 0.0,
+                    'brisque': brisque_score if brisque_score is not None else 0.0,
+                    'rating': rating_value,
+                    'pick': 1 if rating_value == 3 else 0
                 }
                 # 传递crop路径和jpg路径
                 preview_callback(crop_path, jpg_preview_path, metadata)

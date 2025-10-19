@@ -51,7 +51,7 @@ def write_to_csv(data: dict, directory: str, header: bool = False):
     # 定义CSV列顺序
     fieldnames = [
         "文件名", "是否有鸟", "置信度", "X坐标", "Y坐标",
-        "鸟占比", "像素数", "原始锐度", "归一化锐度", "星等",
+        "鸟占比", "像素数", "原始锐度", "归一化锐度", "NIMA美学", "BRISQUE技术", "星等",
         "面积达标", "居中", "锐度达标", "类别ID"
     ]
 

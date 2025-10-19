@@ -1,13 +1,10 @@
-[0;34m[INFO][0m 步骤1：清理旧的build和dist目录...
-[0;32m[SUCCESS][0m 清理完成
-[0;34m[INFO][0m 步骤2：使用PyInstaller打包应用...
-46 WARNING: Assuming this is not an Anaconda environment or an additional venv/pipenv/... environment manager is being used on top, because the conda-meta folder /Users/jameszhenyu/SuperPicky3/venv/conda-meta does not exist.
-56 INFO: PyInstaller: 6.16.0, contrib hooks: 2025.9
-56 INFO: Python: 3.12.8 (conda)
-62 INFO: Platform: macOS-26.1-arm64-arm-64bit
-62 INFO: Python environment: /Users/jameszhenyu/SuperPicky3/venv
-64 INFO: Removing temporary files and cleaning cache in /Users/jameszhenyu/Library/Application Support/pyinstaller
-137 INFO: Module search paths (PYTHONPATH):
+90 WARNING: Assuming this is not an Anaconda environment or an additional venv/pipenv/... environment manager is being used on top, because the conda-meta folder /Users/jameszhenyu/SuperPicky3/venv/conda-meta does not exist.
+105 INFO: PyInstaller: 6.16.0, contrib hooks: 2025.9
+105 INFO: Python: 3.12.8 (conda)
+114 INFO: Platform: macOS-26.1-arm64-arm-64bit
+114 INFO: Python environment: /Users/jameszhenyu/SuperPicky3/venv
+117 INFO: Removing temporary files and cleaning cache in /Users/jameszhenyu/Library/Application Support/pyinstaller
+175 INFO: Module search paths (PYTHONPATH):
 ['/opt/miniconda3/lib/python312.zip',
  '/opt/miniconda3/lib/python3.12',
  '/opt/miniconda3/lib/python3.12/lib-dynload',
@@ -15,100 +12,237 @@
  '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/setuptools/_vendor',
  '/Users/jameszhenyu/PycharmProjects/SuperPicky_SandBox',
  '/Users/jameszhenyu/PycharmProjects/SuperPicky_SandBox']
-41 WARNING: Assuming this is not an Anaconda environment or an additional venv/pipenv/... environment manager is being used on top, because the conda-meta folder /Users/jameszhenyu/SuperPicky3/venv/conda-meta does not exist.
-276 INFO: Appending 'datas' from .spec
-279 INFO: checking Analysis
-279 INFO: Building Analysis because Analysis-00.toc is non existent
-279 INFO: Looking for Python shared library...
-280 INFO: Using Python shared library: /opt/miniconda3/lib/libpython3.12.dylib
-280 INFO: Running Analysis Analysis-00.toc
-280 INFO: Target bytecode optimization level: 0
-280 INFO: Initializing module dependency graph...
-280 INFO: Initializing module graph hook caches...
-284 INFO: Analyzing modules for base_library.zip ...
-37 WARNING: Assuming this is not an Anaconda environment or an additional venv/pipenv/... environment manager is being used on top, because the conda-meta folder /Users/jameszhenyu/SuperPicky3/venv/conda-meta does not exist.
-39 WARNING: Assuming this is not an Anaconda environment or an additional venv/pipenv/... environment manager is being used on top, because the conda-meta folder /Users/jameszhenyu/SuperPicky3/venv/conda-meta does not exist.
-39 WARNING: Assuming this is not an Anaconda environment or an additional venv/pipenv/... environment manager is being used on top, because the conda-meta folder /Users/jameszhenyu/SuperPicky3/venv/conda-meta does not exist.
-609 INFO: Processing standard module hook 'hook-encodings.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
 40 WARNING: Assuming this is not an Anaconda environment or an additional venv/pipenv/... environment manager is being used on top, because the conda-meta folder /Users/jameszhenyu/SuperPicky3/venv/conda-meta does not exist.
-1400 INFO: Processing standard module hook 'hook-pickle.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
-1750 INFO: Processing standard module hook 'hook-heapq.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
-1926 INFO: Caching module dependency graph...
-1944 INFO: Analyzing /Users/jameszhenyu/PycharmProjects/SuperPicky_SandBox/main.py
-1964 INFO: Processing pre-find-module-path hook 'hook-tkinter.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/pre_find_module_path'
-1965 INFO: TclTkInfo: initializing cached Tcl/Tk info...
-2052 INFO: Processing standard module hook 'hook-_tkinter.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
-2117 INFO: Processing standard module hook 'hook-multiprocessing.util.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
-2197 INFO: Processing standard module hook 'hook-xml.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
-2293 INFO: Processing standard module hook 'hook-_ctypes.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
-2306 INFO: Processing standard module hook 'hook-rawpy.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
-2308 INFO: Processing standard module hook 'hook-imageio.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
+341 INFO: Appending 'datas' from .spec
+349 INFO: checking Analysis
+349 INFO: Building Analysis because Analysis-00.toc is non existent
+349 INFO: Looking for Python shared library...
+349 INFO: Using Python shared library: /opt/miniconda3/lib/libpython3.12.dylib
+349 INFO: Running Analysis Analysis-00.toc
+349 INFO: Target bytecode optimization level: 0
+349 INFO: Initializing module dependency graph...
+349 INFO: Initializing module graph hook caches...
+357 INFO: Analyzing modules for base_library.zip ...
+37 WARNING: Assuming this is not an Anaconda environment or an additional venv/pipenv/... environment manager is being used on top, because the conda-meta folder /Users/jameszhenyu/SuperPicky3/venv/conda-meta does not exist.
+40 WARNING: Assuming this is not an Anaconda environment or an additional venv/pipenv/... environment manager is being used on top, because the conda-meta folder /Users/jameszhenyu/SuperPicky3/venv/conda-meta does not exist.
+39 WARNING: Assuming this is not an Anaconda environment or an additional venv/pipenv/... environment manager is being used on top, because the conda-meta folder /Users/jameszhenyu/SuperPicky3/venv/conda-meta does not exist.
+758 INFO: Processing standard module hook 'hook-encodings.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+40 WARNING: Assuming this is not an Anaconda environment or an additional venv/pipenv/... environment manager is being used on top, because the conda-meta folder /Users/jameszhenyu/SuperPicky3/venv/conda-meta does not exist.
+1433 INFO: Processing standard module hook 'hook-pickle.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+1847 INFO: Processing standard module hook 'hook-heapq.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+2018 INFO: Caching module dependency graph...
+2036 INFO: Analyzing /Users/jameszhenyu/PycharmProjects/SuperPicky_SandBox/main.py
+2057 INFO: Processing pre-find-module-path hook 'hook-tkinter.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/pre_find_module_path'
+2058 INFO: TclTkInfo: initializing cached Tcl/Tk info...
+2164 INFO: Processing standard module hook 'hook-_tkinter.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+2236 INFO: Processing standard module hook 'hook-multiprocessing.util.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+2322 INFO: Processing standard module hook 'hook-xml.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+2427 INFO: Processing standard module hook 'hook-_ctypes.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+2442 INFO: Processing standard module hook 'hook-rawpy.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
+2444 INFO: Processing standard module hook 'hook-imageio.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
 38 WARNING: Assuming this is not an Anaconda environment or an additional venv/pipenv/... environment manager is being used on top, because the conda-meta folder /Users/jameszhenyu/SuperPicky3/venv/conda-meta does not exist.
-2523 INFO: Processing standard module hook 'hook-numpy.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
-2647 INFO: Processing standard module hook 'hook-platform.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
-2711 INFO: Processing standard module hook 'hook-sysconfig.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
-2717 INFO: Processing standard module hook 'hook-_osx_support.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
-3105 INFO: Processing standard module hook 'hook-difflib.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
-3393 INFO: Processing standard module hook 'hook-psutil.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
-3885 INFO: Processing standard module hook 'hook-charset_normalizer.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
-3926 INFO: Processing pre-safe-import-module hook 'hook-typing_extensions.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/pre_safe_import_module'
-3926 INFO: SetuptoolsInfo: initializing cached setuptools info...
-64 WARNING: Assuming this is not an Anaconda environment or an additional venv/pipenv/... environment manager is being used on top, because the conda-meta folder /Users/jameszhenyu/SuperPicky3/venv/conda-meta does not exist.
-5586 INFO: Processing standard module hook 'hook-pkg_resources.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
-37 WARNING: Assuming this is not an Anaconda environment or an additional venv/pipenv/... environment manager is being used on top, because the conda-meta folder /Users/jameszhenyu/SuperPicky3/venv/conda-meta does not exist.
-5678 INFO: Processing pre-safe-import-module hook 'hook-packaging.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/pre_safe_import_module'
-5718 INFO: Processing pre-safe-import-module hook 'hook-jaraco.text.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/pre_safe_import_module'
-5718 INFO: Setuptools: 'jaraco.text' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.jaraco.text'!
-5721 INFO: Processing standard module hook 'hook-setuptools.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
-5726 INFO: Processing pre-safe-import-module hook 'hook-distutils.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/pre_safe_import_module'
-5737 INFO: Processing pre-safe-import-module hook 'hook-jaraco.functools.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/pre_safe_import_module'
-5737 INFO: Setuptools: 'jaraco.functools' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.jaraco.functools'!
-5740 INFO: Processing pre-safe-import-module hook 'hook-more_itertools.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/pre_safe_import_module'
-5740 INFO: Setuptools: 'more_itertools' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.more_itertools'!
-5864 INFO: Processing pre-safe-import-module hook 'hook-importlib_metadata.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/pre_safe_import_module'
-5864 INFO: Setuptools: 'importlib_metadata' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.importlib_metadata'!
-5888 INFO: Processing standard module hook 'hook-setuptools._vendor.importlib_metadata.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
-5889 INFO: Processing pre-safe-import-module hook 'hook-zipp.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/pre_safe_import_module'
-5889 INFO: Setuptools: 'zipp' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.zipp'!
-6081 INFO: Processing pre-safe-import-module hook 'hook-tomli.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/pre_safe_import_module'
-6081 INFO: Setuptools: 'tomli' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.tomli'!
-6268 INFO: Processing pre-safe-import-module hook 'hook-wheel.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/pre_safe_import_module'
-6268 INFO: Setuptools: 'wheel' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.wheel'!
-6338 INFO: Processing standard module hook 'hook-setuptools._vendor.jaraco.text.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
-6339 INFO: Processing pre-safe-import-module hook 'hook-importlib_resources.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/pre_safe_import_module'
-6339 INFO: Processing pre-safe-import-module hook 'hook-jaraco.context.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/pre_safe_import_module'
-6339 INFO: Setuptools: 'jaraco.context' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.jaraco.context'!
-6342 INFO: Processing pre-safe-import-module hook 'hook-backports.tarfile.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/pre_safe_import_module'
-6342 INFO: Setuptools: 'backports.tarfile' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.backports.tarfile'!
-6377 INFO: Processing standard module hook 'hook-backports.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
-6377 INFO: Processing pre-safe-import-module hook 'hook-platformdirs.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/pre_safe_import_module'
-6381 INFO: Processing standard module hook 'hook-platformdirs.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
-6455 INFO: Processing standard module hook 'hook-cv2.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
-37 WARNING: Assuming this is not an Anaconda environment or an additional venv/pipenv/... environment manager is being used on top, because the conda-meta folder /Users/jameszhenyu/SuperPicky3/venv/conda-meta does not exist.
-6618 INFO: Processing standard module hook 'hook-ultralytics.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
-6686 INFO: Processing standard module hook 'hook-torch.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
-37 WARNING: Assuming this is not an Anaconda environment or an additional venv/pipenv/... environment manager is being used on top, because the conda-meta folder /Users/jameszhenyu/SuperPicky3/venv/conda-meta does not exist.
-493 WARNING: Failed to collect submodules for 'torch.utils.tensorboard' because importing 'torch.utils.tensorboard' raised: ModuleNotFoundError: No module named 'tensorboard'
-W1011 15:40:20.471000 96278 torch/distributed/elastic/multiprocessing/redirects.py:29] NOTE: Redirects are currently not supported in Windows or MacOs.
+2657 INFO: Processing standard module hook 'hook-numpy.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+2793 INFO: Processing standard module hook 'hook-platform.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+2856 INFO: Processing standard module hook 'hook-sysconfig.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+2862 INFO: Processing standard module hook 'hook-_osx_support.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+3254 INFO: Processing standard module hook 'hook-difflib.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+3576 INFO: Processing standard module hook 'hook-psutil.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
+4152 INFO: Processing standard module hook 'hook-charset_normalizer.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
+4201 INFO: Processing pre-safe-import-module hook 'hook-typing_extensions.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/pre_safe_import_module'
+4202 INFO: SetuptoolsInfo: initializing cached setuptools info...
+78 WARNING: Assuming this is not an Anaconda environment or an additional venv/pipenv/... environment manager is being used on top, because the conda-meta folder /Users/jameszhenyu/SuperPicky3/venv/conda-meta does not exist.
+5969 INFO: Processing standard module hook 'hook-pkg_resources.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+41 WARNING: Assuming this is not an Anaconda environment or an additional venv/pipenv/... environment manager is being used on top, because the conda-meta folder /Users/jameszhenyu/SuperPicky3/venv/conda-meta does not exist.
+6082 INFO: Processing pre-safe-import-module hook 'hook-packaging.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/pre_safe_import_module'
+6128 INFO: Processing pre-safe-import-module hook 'hook-jaraco.text.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/pre_safe_import_module'
+6128 INFO: Setuptools: 'jaraco.text' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.jaraco.text'!
+6131 INFO: Processing standard module hook 'hook-setuptools.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+6138 INFO: Processing pre-safe-import-module hook 'hook-distutils.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/pre_safe_import_module'
+6150 INFO: Processing pre-safe-import-module hook 'hook-jaraco.functools.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/pre_safe_import_module'
+6151 INFO: Setuptools: 'jaraco.functools' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.jaraco.functools'!
+6154 INFO: Processing pre-safe-import-module hook 'hook-more_itertools.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/pre_safe_import_module'
+6155 INFO: Setuptools: 'more_itertools' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.more_itertools'!
+6282 INFO: Processing pre-safe-import-module hook 'hook-importlib_metadata.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/pre_safe_import_module'
+6282 INFO: Setuptools: 'importlib_metadata' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.importlib_metadata'!
+6305 INFO: Processing standard module hook 'hook-setuptools._vendor.importlib_metadata.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+6306 INFO: Processing pre-safe-import-module hook 'hook-zipp.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/pre_safe_import_module'
+6306 INFO: Setuptools: 'zipp' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.zipp'!
+6520 INFO: Processing pre-safe-import-module hook 'hook-tomli.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/pre_safe_import_module'
+6520 INFO: Setuptools: 'tomli' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.tomli'!
+6719 INFO: Processing pre-safe-import-module hook 'hook-wheel.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/pre_safe_import_module'
+6719 INFO: Setuptools: 'wheel' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.wheel'!
+6793 INFO: Processing standard module hook 'hook-setuptools._vendor.jaraco.text.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+6794 INFO: Processing pre-safe-import-module hook 'hook-importlib_resources.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/pre_safe_import_module'
+6794 INFO: Processing pre-safe-import-module hook 'hook-jaraco.context.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/pre_safe_import_module'
+6795 INFO: Setuptools: 'jaraco.context' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.jaraco.context'!
+6798 INFO: Processing pre-safe-import-module hook 'hook-backports.tarfile.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/pre_safe_import_module'
+6798 INFO: Setuptools: 'backports.tarfile' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.backports.tarfile'!
+6833 INFO: Processing standard module hook 'hook-backports.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
+6834 INFO: Processing pre-safe-import-module hook 'hook-platformdirs.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/pre_safe_import_module'
+6838 INFO: Processing standard module hook 'hook-platformdirs.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
+6923 INFO: Processing standard module hook 'hook-cv2.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
+40 WARNING: Assuming this is not an Anaconda environment or an additional venv/pipenv/... environment manager is being used on top, because the conda-meta folder /Users/jameszhenyu/SuperPicky3/venv/conda-meta does not exist.
+7102 INFO: Processing standard module hook 'hook-ultralytics.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
+7177 INFO: Processing standard module hook 'hook-torch.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
+40 WARNING: Assuming this is not an Anaconda environment or an additional venv/pipenv/... environment manager is being used on top, because the conda-meta folder /Users/jameszhenyu/SuperPicky3/venv/conda-meta does not exist.
+617 WARNING: Failed to collect submodules for 'torch.utils.tensorboard' because importing 'torch.utils.tensorboard' raised: ModuleNotFoundError: No module named 'tensorboard'
+W1013 21:11:58.117000 46152 torch/distributed/elastic/multiprocessing/redirects.py:29] NOTE: Redirects are currently not supported in Windows or MacOs.
 /Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/utils/hooks/__init__.py:665: DeprecationWarning: `torch.distributed._sharding_spec` will be deprecated, use `torch.distributed._shard.sharding_spec` instead
   __import__(name)
 /Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/utils/hooks/__init__.py:665: DeprecationWarning: `torch.distributed._sharded_tensor` will be deprecated, use `torch.distributed._shard.sharded_tensor` instead
   __import__(name)
 /Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/utils/hooks/__init__.py:665: DeprecationWarning: `torch.distributed._shard.checkpoint` will be deprecated, use `torch.distributed.checkpoint` instead
   __import__(name)
-/opt/miniconda3/lib/python3.12/tempfile.py:936: ResourceWarning: Implicitly cleaning up <TemporaryDirectory '/var/folders/2q/m4l5_c056vq3nvxwrjd8t0cm0000gn/T/tmpr1k9y0dt'>
+/opt/miniconda3/lib/python3.12/tempfile.py:936: ResourceWarning: Implicitly cleaning up <TemporaryDirectory '/var/folders/2q/m4l5_c056vq3nvxwrjd8t0cm0000gn/T/tmp3zke5oxo'>
   _warnings.warn(warn_message, ResourceWarning)
-10679 INFO: Processing standard module hook 'hook-matplotlib.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
-10830 INFO: Processing pre-safe-import-module hook 'hook-gi.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/pre_safe_import_module'
-10920 INFO: Processing standard module hook 'hook-matplotlib.backend_bases.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
-10977 INFO: Processing standard module hook 'hook-PIL.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
-11016 INFO: Processing standard module hook 'hook-PIL.Image.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+11934 INFO: Processing standard module hook 'hook-matplotlib.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+12110 INFO: Processing pre-safe-import-module hook 'hook-gi.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/pre_safe_import_module'
+12207 INFO: Processing standard module hook 'hook-matplotlib.backend_bases.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+12270 INFO: Processing standard module hook 'hook-PIL.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+12313 INFO: Processing standard module hook 'hook-PIL.Image.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+40 WARNING: Assuming this is not an Anaconda environment or an additional venv/pipenv/... environment manager is being used on top, because the conda-meta folder /Users/jameszhenyu/SuperPicky3/venv/conda-meta does not exist.
+12448 INFO: Processing standard module hook 'hook-xml.etree.cElementTree.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+12487 INFO: Processing standard module hook 'hook-xml.dom.domreg.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+12628 INFO: Processing standard module hook 'hook-PIL.ImageFilter.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+12988 INFO: Processing standard module hook 'hook-jinja2.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
+13204 INFO: Processing standard module hook 'hook-matplotlib.backends.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+13245 INFO: Processing standard module hook 'hook-matplotlib.pyplot.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+13690 INFO: Processing standard module hook 'hook-dateutil.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
+13757 INFO: Processing pre-safe-import-module hook 'hook-six.moves.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/pre_safe_import_module'
+14711 INFO: Processing standard module hook 'hook-certifi.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
+18069 INFO: Processing standard module hook 'hook-scipy.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+42 WARNING: Assuming this is not an Anaconda environment or an additional venv/pipenv/... environment manager is being used on top, because the conda-meta folder /Users/jameszhenyu/SuperPicky3/venv/conda-meta does not exist.
+18419 INFO: Processing standard module hook 'hook-pycparser.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
+18870 INFO: Processing standard module hook 'hook-scipy.linalg.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+19309 INFO: Processing standard module hook 'hook-scipy.sparse.csgraph.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+19347 INFO: Processing standard module hook 'hook-scipy.special._ufuncs.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+19407 INFO: Processing standard module hook 'hook-scipy.special._ellip_harm_2.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+19590 INFO: Processing standard module hook 'hook-scipy.spatial._ckdtree.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+19773 INFO: Processing standard module hook 'hook-scipy.spatial.transform.rotation.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+20200 INFO: Processing standard module hook 'hook-scipy.stats._stats.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+22667 INFO: Processing standard module hook 'hook-IPython.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
+23358 INFO: Processing standard module hook 'hook-pygments.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
 39 WARNING: Assuming this is not an Anaconda environment or an additional venv/pipenv/... environment manager is being used on top, because the conda-meta folder /Users/jameszhenyu/SuperPicky3/venv/conda-meta does not exist.
-11137 INFO: Processing standard module hook 'hook-xml.etree.cElementTree.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
-11172 INFO: Processing standard module hook 'hook-xml.dom.domreg.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
-11297 INFO: Processing standard module hook 'hook-PIL.ImageFilter.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
-11631 INFO: Processing standard module hook 'hook-jinja2.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
-11824 INFO: Processing standard module hook 'hook-matplotlib.backends.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
-11862 INFO: Processing standard module hook 'hook-matplotlib.pyplot.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
-12276 INFO: Processing standard module hook 'hook-dateutil.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
-12340 INFO: Processing pre-safe-import-module hook 'hook-six.moves.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/pre_safe_import_module'
+37 WARNING: Assuming this is not an Anaconda environment or an additional venv/pipenv/... environment manager is being used on top, because the conda-meta folder /Users/jameszhenyu/SuperPicky3/venv/conda-meta does not exist.
+37 WARNING: Assuming this is not an Anaconda environment or an additional venv/pipenv/... environment manager is being used on top, because the conda-meta folder /Users/jameszhenyu/SuperPicky3/venv/conda-meta does not exist.
+24278 INFO: Processing standard module hook 'hook-wcwidth.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+24675 INFO: Processing standard module hook 'hook-jedi.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
+24957 INFO: Processing standard module hook 'hook-parso.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
+25464 INFO: Processing standard module hook 'hook-sqlite3.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+38 WARNING: Assuming this is not an Anaconda environment or an additional venv/pipenv/... environment manager is being used on top, because the conda-meta folder /Users/jameszhenyu/SuperPicky3/venv/conda-meta does not exist.
+25590 INFO: Processing standard module hook 'hook-nbformat.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
+25667 INFO: Processing standard module hook 'hook-jsonschema.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
+25890 INFO: Processing standard module hook 'hook-lark.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/lark/__pyinstaller'
+26206 INFO: Processing standard module hook 'hook-jsonschema_specifications.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
+26233 INFO: Processing standard module hook 'hook-urllib3.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
+26354 INFO: Processing standard module hook 'hook-cryptography.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
+39 WARNING: Assuming this is not an Anaconda environment or an additional venv/pipenv/... environment manager is being used on top, because the conda-meta folder /Users/jameszhenyu/SuperPicky3/venv/conda-meta does not exist.
+38 WARNING: Assuming this is not an Anaconda environment or an additional venv/pipenv/... environment manager is being used on top, because the conda-meta folder /Users/jameszhenyu/SuperPicky3/venv/conda-meta does not exist.
+26709 INFO: hook-cryptography: cryptography does not seem to be using dynamically linked OpenSSL.
+27047 INFO: Processing standard module hook 'hook-zmq.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
+39 WARNING: Assuming this is not an Anaconda environment or an additional venv/pipenv/... environment manager is being used on top, because the conda-meta folder /Users/jameszhenyu/SuperPicky3/venv/conda-meta does not exist.
+27516 INFO: Processing standard module hook 'hook-PySide6.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+27649 INFO: Processing standard module hook 'hook-shiboken6.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+27710 INFO: Processing standard module hook 'hook-PySide6.QtNetwork.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+28199 INFO: Processing standard module hook 'hook-PySide6.QtCore.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+29631 INFO: Processing standard module hook 'hook-torchvision.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
+29684 INFO: Processing standard module hook 'hook-pandas.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+38 WARNING: Assuming this is not an Anaconda environment or an additional venv/pipenv/... environment manager is being used on top, because the conda-meta folder /Users/jameszhenyu/SuperPicky3/venv/conda-meta does not exist.
+30415 INFO: Processing standard module hook 'hook-pytz.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+31310 INFO: Processing standard module hook 'hook-pandas.io.formats.style.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+32292 INFO: Processing standard module hook 'hook-pandas.plotting.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+32710 INFO: Processing standard module hook 'hook-pandas.io.clipboard.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+32835 INFO: Processing standard module hook 'hook-fsspec.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
+37 WARNING: Assuming this is not an Anaconda environment or an additional venv/pipenv/... environment manager is being used on top, because the conda-meta folder /Users/jameszhenyu/SuperPicky3/venv/conda-meta does not exist.
+37076 INFO: Processing pre-safe-import-module hook 'hook-win32com.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/pre_safe_import_module'
+40899 INFO: Processing standard module hook 'hook-torchvision.io.image.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
+41255 INFO: Processing standard module hook 'hook-scipy.io.matlab.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+43297 INFO: Processing pre-safe-import-module hook 'hook-tensorflow.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/pre_safe_import_module'
+43749 INFO: Processing standard module hook 'hook-ttkthemes.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/stdhooks'
+43948 INFO: Analyzing hidden import 'PIL._tkinter_finder'
+43948 INFO: Processing module hooks (post-graph stage)...
+47246 WARNING: Hidden import "scipy.special._cdflib" not found!
+47246 INFO: Processing standard module hook 'hook-_tkinter.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+47509 INFO: Processing standard module hook 'hook-PIL.SpiderImagePlugin.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+47524 INFO: Processing standard module hook 'hook-matplotlib.backends.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+47524 INFO: Matplotlib backend selection method: automatic discovery of used backends
+47539 INFO: Discovered Matplotlib backend(s) via `matplotlib.use()` call in module 'sympy.testing.runtests': ['Agg', 'Agg']
+47587 INFO: Discovered Matplotlib backend(s) via `matplotlib.use()` call in module 'imageio.plugins._tifffile': ['TkAgg']
+47592 INFO: The following Matplotlib backends were discovered by scanning for `matplotlib.use()` calls: ['Agg', 'TkAgg']. If your backend of choice is not in this list, either add a `matplotlib.use()` call to your code, or configure the backend collection via hook options (see: https://pyinstaller.org/en/stable/hooks-config.html#matplotlib-hooks).
+47592 INFO: Selected matplotlib backends: ['Agg', 'TkAgg']
+48531 INFO: Performing binary vs. data reclassification (6427 entries)
+49266 INFO: Looking for ctypes DLLs
+49285 WARNING: Library user32 required via ctypes not found
+49365 WARNING: Library msvcrt required via ctypes not found
+49394 WARNING: Ignoring /usr/lib64/libgomp.so.1 imported from /Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/torch/_inductor/codecache.py - only basenames are supported with ctypes imports!
+49415 WARNING: Library libnvidia-ml.so.1 required via ctypes not found
+49427 WARNING: Library libc.so.6 required via ctypes not found
+49459 INFO: Analyzing run-time hooks ...
+49471 INFO: Including run-time hook 'pyi_rth_inspect.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/rthooks'
+49474 INFO: Including run-time hook 'pyi_rth_pkgutil.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/rthooks'
+49475 INFO: Including run-time hook 'pyi_rth_mplconfig.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/rthooks'
+49475 INFO: Processing pre-find-module-path hook 'hook-_pyi_rth_utils.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/pre_find_module_path'
+49476 INFO: Processing standard module hook 'hook-_pyi_rth_utils.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks'
+49477 INFO: Including run-time hook 'pyi_rth_cryptography_openssl.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/rthooks'
+49478 INFO: Including run-time hook 'pyi_rth_setuptools.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/rthooks'
+49478 INFO: Including run-time hook 'pyi_rth_pkgres.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/rthooks'
+49480 INFO: Including run-time hook 'pyi_rth_traitlets.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/_pyinstaller_hooks_contrib/rthooks'
+49481 INFO: Including run-time hook 'pyi_rth_pyside6.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/rthooks'
+49483 INFO: Including run-time hook 'pyi_rth_multiprocessing.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/rthooks'
+49484 INFO: Including run-time hook 'pyi_rth__tkinter.py' from '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/hooks/rthooks'
+49587 INFO: Creating base_library.zip...
+49598 INFO: Looking for dynamic libraries
+50872 INFO: Warnings written to /Users/jameszhenyu/PycharmProjects/SuperPicky_SandBox/build/SuperPicky/warn-SuperPicky.txt
+51038 INFO: Graph cross-reference written to /Users/jameszhenyu/PycharmProjects/SuperPicky_SandBox/build/SuperPicky/xref-SuperPicky.html
+51214 WARNING: Found one or more binaries with invalid or incompatible macOS SDK version:
+51214 WARNING:  * '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/scipy/interpolate/_dfitpack.cpython-312-darwin.so', collected as 'scipy/interpolate/_dfitpack.cpython-312-darwin.so'; version: (0, 0, 0)
+51214 WARNING:  * '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/scipy/interpolate/_fitpack.cpython-312-darwin.so', collected as 'scipy/interpolate/_fitpack.cpython-312-darwin.so'; version: (0, 0, 0)
+51214 WARNING:  * '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/scipy/optimize/_slsqp.cpython-312-darwin.so', collected as 'scipy/optimize/_slsqp.cpython-312-darwin.so'; version: (0, 0, 0)
+51214 WARNING:  * '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/scipy/optimize/_cobyla.cpython-312-darwin.so', collected as 'scipy/optimize/_cobyla.cpython-312-darwin.so'; version: (0, 0, 0)
+51214 WARNING:  * '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/scipy/integrate/_lsoda.cpython-312-darwin.so', collected as 'scipy/integrate/_lsoda.cpython-312-darwin.so'; version: (0, 0, 0)
+51214 WARNING:  * '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/scipy/integrate/_dop.cpython-312-darwin.so', collected as 'scipy/integrate/_dop.cpython-312-darwin.so'; version: (0, 0, 0)
+51214 WARNING:  * '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/scipy/integrate/_vode.cpython-312-darwin.so', collected as 'scipy/integrate/_vode.cpython-312-darwin.so'; version: (0, 0, 0)
+51214 WARNING:  * '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/scipy/integrate/_odepack.cpython-312-darwin.so', collected as 'scipy/integrate/_odepack.cpython-312-darwin.so'; version: (0, 0, 0)
+51214 WARNING:  * '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/scipy/sparse/linalg/_propack/_zpropack.cpython-312-darwin.so', collected as 'scipy/sparse/linalg/_propack/_zpropack.cpython-312-darwin.so'; version: (0, 0, 0)
+51214 WARNING:  * '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/scipy/sparse/linalg/_propack/_cpropack.cpython-312-darwin.so', collected as 'scipy/sparse/linalg/_propack/_cpropack.cpython-312-darwin.so'; version: (0, 0, 0)
+51214 WARNING:  * '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/scipy/sparse/linalg/_propack/_dpropack.cpython-312-darwin.so', collected as 'scipy/sparse/linalg/_propack/_dpropack.cpython-312-darwin.so'; version: (0, 0, 0)
+51214 WARNING:  * '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/scipy/sparse/linalg/_propack/_spropack.cpython-312-darwin.so', collected as 'scipy/sparse/linalg/_propack/_spropack.cpython-312-darwin.so'; version: (0, 0, 0)
+51214 WARNING:  * '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/scipy/sparse/linalg/_eigen/arpack/_arpack.cpython-312-darwin.so', collected as 'scipy/sparse/linalg/_eigen/arpack/_arpack.cpython-312-darwin.so'; version: (0, 0, 0)
+51214 WARNING:  * '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/scipy/stats/_mvn.cpython-312-darwin.so', collected as 'scipy/stats/_mvn.cpython-312-darwin.so'; version: (0, 0, 0)
+51214 WARNING:  * '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/scipy/.dylibs/libquadmath.0.dylib', collected as 'scipy/.dylibs/libquadmath.0.dylib'; version: (0, 0, 0)
+51214 WARNING:  * '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/scipy/.dylibs/libgfortran.5.dylib', collected as 'scipy/.dylibs/libgfortran.5.dylib'; version: (0, 0, 0)
+51214 WARNING:  * '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/scipy/.dylibs/libgcc_s.1.1.dylib', collected as 'scipy/.dylibs/libgcc_s.1.1.dylib'; version: (0, 0, 0)
+51214 WARNING: These binaries will likely cause issues with code-signing and hardened runtime!
+51336 INFO: checking PYZ
+51336 INFO: Building PYZ because PYZ-00.toc is non existent
+51336 INFO: Building PYZ (ZlibArchive) /Users/jameszhenyu/PycharmProjects/SuperPicky_SandBox/build/SuperPicky/PYZ-00.pyz
+54387 INFO: Building PYZ (ZlibArchive) /Users/jameszhenyu/PycharmProjects/SuperPicky_SandBox/build/SuperPicky/PYZ-00.pyz completed successfully.
+54430 INFO: EXE target arch: arm64
+54430 INFO: Code signing identity: Developer ID Application: James Zhen Yu (JWR6FDB52H)
+54430 INFO: checking PKG
+54430 INFO: Building PKG because PKG-00.toc is non existent
+54430 INFO: Building PKG (CArchive) SuperPicky-v3.0.1.pkg
+54470 INFO: Building PKG (CArchive) SuperPicky-v3.0.1.pkg completed successfully.
+54470 INFO: Bootloader /Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages/PyInstaller/bootloader/Darwin-64bit/runw
+54470 INFO: checking EXE
+54470 INFO: Building EXE because EXE-00.toc is non existent
+54470 INFO: Building EXE from EXE-00.toc
+54470 INFO: Copying bootloader EXE to /Users/jameszhenyu/PycharmProjects/SuperPicky_SandBox/build/SuperPicky/SuperPicky-v3.0.1
+54472 INFO: Converting EXE to target arch (arm64)
+55401 INFO: Removing signature(s) from EXE
+55422 INFO: Modifying Mach-O image UUID(s) in EXE
+55447 INFO: Appending PKG archive to EXE
+55466 INFO: Fixing EXE headers for code signing
+55468 INFO: Rewriting the executable's macOS SDK version (15.5.0) to match the SDK version of the Python library (11.1.0) in order to avoid inconsistent behavior and potential UI issues in the frozen application.
+55469 INFO: Re-signing the EXE
+59314 INFO: Building EXE from EXE-00.toc completed successfully.
+59361 INFO: checking COLLECT
+59361 INFO: Building COLLECT because COLLECT-00.toc is non existent
+59362 INFO: Building COLLECT COLLECT-00.toc
+258124 INFO: Building COLLECT COLLECT-00.toc completed successfully.
+258310 INFO: checking BUNDLE
+258310 INFO: Building BUNDLE because BUNDLE-00.toc is non existent
+258310 INFO: Building BUNDLE BUNDLE-00.toc
+354332 INFO: Signing the BUNDLE...
+382616 INFO: Building BUNDLE BUNDLE-00.toc completed successfully.
+382694 INFO: Build complete! The results are available in: /Users/jameszhenyu/PycharmProjects/SuperPicky_SandBox/dist

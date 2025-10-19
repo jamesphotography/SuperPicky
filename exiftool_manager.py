@@ -67,8 +67,8 @@ class ExifToolManager:
             rating: 评分 (-1=拒绝, 0=无评分, 1-5=星级)
             pick: 旗标 (-1=排除旗标, 0=无旗标, 1=精选旗标)
             sharpness: 锐度值（可选，写入IPTC:City字段，用于Lightroom排序）
-            nima_score: NIMA美学评分（可选，写入IPTC:Country-PrimaryLocationName字段）
-            brisque_score: BRISQUE技术质量评分（可选，写入IPTC:Province-State字段）
+            nima_score: NIMA美学评分（可选，写入IPTC:Province-State字段）
+            brisque_score: BRISQUE技术质量评分（可选，写入IPTC:Country-PrimaryLocationName字段）
 
         Returns:
             是否成功
@@ -90,17 +90,17 @@ class ExifToolManager:
             sharpness_str = f'{sharpness:06.2f}'  # 6位总宽度，2位小数，前面补零
             cmd.append(f'-IPTC:City={sharpness_str}')
 
-        # 如果提供了NIMA美学评分，写入IPTC:Country-PrimaryLocationName字段
+        # V3.1: NIMA美学评分 → IPTC:Province-State（省/州）
         # 格式：00.00 到 10.00（NIMA范围0-10）
         if nima_score is not None:
             nima_str = f'{nima_score:05.2f}'  # 5位总宽度，2位小数，前面补零
-            cmd.append(f'-IPTC:Country-PrimaryLocationName={nima_str}')
+            cmd.append(f'-IPTC:Province-State={nima_str}')
 
-        # 如果提供了BRISQUE技术质量评分，写入IPTC:Province-State字段
+        # V3.1: BRISQUE技术质量评分 → IPTC:Country-PrimaryLocationName（国家）
         # 格式：000.00 到 100.00（BRISQUE范围0-100，越低越好）
         if brisque_score is not None:
             brisque_str = f'{brisque_score:06.2f}'  # 6位总宽度，2位小数，前面补零
-            cmd.append(f'-IPTC:Province-State={brisque_str}')
+            cmd.append(f'-IPTC:Country-PrimaryLocationName={brisque_str}')
 
         cmd.extend(['-overwrite_original', file_path])
 
@@ -180,15 +180,15 @@ class ExifToolManager:
                 sharpness_str = f'{sharpness:06.2f}'  # 6位总宽度，2位小数，前面补零
                 cmd.append(f'-IPTC:City={sharpness_str}')
 
-            # 如果提供了NIMA美学评分，写入IPTC:Country-PrimaryLocationName字段
+            # V3.1: NIMA美学评分 → IPTC:Province-State（省/州）
             if nima_score is not None:
                 nima_str = f'{nima_score:05.2f}'
-                cmd.append(f'-IPTC:Country-PrimaryLocationName={nima_str}')
+                cmd.append(f'-IPTC:Province-State={nima_str}')
 
-            # 如果提供了BRISQUE技术质量评分，写入IPTC:Province-State字段
+            # V3.1: BRISQUE技术质量评分 → IPTC:Country-PrimaryLocationName（国家）
             if brisque_score is not None:
                 brisque_str = f'{brisque_score:06.2f}'
-                cmd.append(f'-IPTC:Province-State={brisque_str}')
+                cmd.append(f'-IPTC:Country-PrimaryLocationName={brisque_str}')
 
             cmd.append(file_path)
 
