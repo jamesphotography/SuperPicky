@@ -60,7 +60,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='SuperPicky-v3.0.1',
+    name='SuperPicky',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -81,12 +81,12 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='SuperPicky-v3.0.1',
+    name='SuperPicky',
 )
 
 app = BUNDLE(
     coll,
-    name='SuperPicky-v3.0.1.app',
+    name='SuperPicky.app',
     icon='img/SuperPicky-V0.02.icns',
     bundle_identifier='com.jamesphotography.superpicky',
     info_plist={
@@ -94,8 +94,8 @@ app = BUNDLE(
         'NSHighResolutionCapable': 'True',
         'CFBundleName': 'SuperPicky',
         'CFBundleDisplayName': 'SuperPicky - 慧眼选鸟',
-        'CFBundleVersion': '3.0.1',
-        'CFBundleShortVersionString': '3.0.1',
+        'CFBundleVersion': '3.1.2',
+        'CFBundleShortVersionString': '3.1.2',
         'NSHumanReadableCopyright': 'Copyright © 2025 James Zhen Yu. All rights reserved.',
         'LSMinimumSystemVersion': '10.15',
         'NSRequiresAquaSystemAppearance': False,
