@@ -7,7 +7,7 @@ from pathlib import Path
 base_path = os.path.abspath('.')
 
 # Python虚拟环境路径
-venv_path = '/Users/jameszhenyu/SuperPicky3/venv/lib/python3.12/site-packages'
+venv_path = '/Users/jameszhenyu/PycharmProjects/SuperPicky_SandBox/.venv/lib/python3.12/site-packages'
 
 a = Analysis(
     ['main.py'],
@@ -28,6 +28,15 @@ a = Analysis(
         (os.path.join(venv_path, 'ultralytics/cfg/default.yaml'), 'ultralytics/cfg'),
         (os.path.join(venv_path, 'ultralytics/utils'), 'ultralytics/utils'),
         (os.path.join(venv_path, 'ultralytics/nn'), 'ultralytics/nn'),
+
+        # PyIQA 完整目录结构（修复 FileNotFoundError）
+        (os.path.join(venv_path, 'pyiqa/models'), 'pyiqa/models'),
+        (os.path.join(venv_path, 'pyiqa/archs'), 'pyiqa/archs'),
+        (os.path.join(venv_path, 'pyiqa/data'), 'pyiqa/data'),
+        (os.path.join(venv_path, 'pyiqa/utils'), 'pyiqa/utils'),
+        (os.path.join(venv_path, 'pyiqa/metrics'), 'pyiqa/metrics'),
+        (os.path.join(venv_path, 'pyiqa/losses'), 'pyiqa/losses'),
+        (os.path.join(venv_path, 'pyiqa/matlab_utils'), 'pyiqa/matlab_utils'),
     ],
     hiddenimports=[
         'ultralytics',
@@ -44,6 +53,15 @@ a = Analysis(
         'matplotlib',
         'matplotlib.pyplot',
         'matplotlib.backends.backend_agg',
+        # PyIQA 隐藏导入（修复 FileNotFoundError）
+        'pyiqa',
+        'pyiqa.models',
+        'pyiqa.archs',
+        'pyiqa.data',
+        'pyiqa.utils',
+        'pyiqa.metrics',
+        'pyiqa.losses',
+        'pyiqa.matlab_utils',
     ],
     hookspath=[],
     hooksconfig={},
@@ -94,8 +112,8 @@ app = BUNDLE(
         'NSHighResolutionCapable': 'True',
         'CFBundleName': 'SuperPicky',
         'CFBundleDisplayName': 'SuperPicky - 慧眼选鸟',
-        'CFBundleVersion': '3.1.2',
-        'CFBundleShortVersionString': '3.1.2',
+        'CFBundleVersion': '3.1.3',
+        'CFBundleShortVersionString': '3.1.3',
         'NSHumanReadableCopyright': 'Copyright © 2025 James Zhen Yu. All rights reserved.',
         'LSMinimumSystemVersion': '10.15',
         'NSRequiresAquaSystemAppearance': False,

@@ -8,31 +8,18 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="620992e9-a1fe-4912-911a-e1e6e312c7a0" name="Changes" comment="增加了 内容修改记录">
-      <change afterPath="$PROJECT_DIR$/IQA_INTEGRATION_COMPLETE.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/SHARPNESS_NORMALIZATION_INTEGRATION_GUIDE.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/analyze_iqa_results.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/analyze_raw_sharpness.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/analyze_report.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/analyze_sharpness_bias.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/build_log.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/iqa_scorer.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/run_batch.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/慧眼选鸟.dmgcanvas/Contents/Chinese - Simplified.rtf" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/慧眼选鸟.dmgcanvas/Contents/backgroundImage.png" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/慧眼选鸟.dmgcanvas/Contents/volumeIcon.png" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/慧眼选鸟.dmgcanvas/Disk Image" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/慧眼选鸟.dmgcanvas/QuickLook/Preview.jpg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/BUGFIX_V3.1.3.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/BUILD_COMPLETE_V3.1.3.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/QUICK_FIX_GUIDE.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/RELEASE_NOTES_V3.1.3.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.claude/settings.local.json" beforeDir="false" afterPath="$PROJECT_DIR$/.claude/settings.local.json" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/SuperPickyV0.02.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/SuperPickyV0.02.iml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/misc.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/SuperPicky.spec" beforeDir="false" afterPath="$PROJECT_DIR$/SuperPicky.spec" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/ai_model.py" beforeDir="false" afterPath="$PROJECT_DIR$/ai_model.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/config.py" beforeDir="false" afterPath="$PROJECT_DIR$/config.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/exiftool_manager.py" beforeDir="false" afterPath="$PROJECT_DIR$/exiftool_manager.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/USER_MANUAL_CN.md" beforeDir="false" afterPath="$PROJECT_DIR$/USER_MANUAL_CN.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/build_and_notarize.sh" beforeDir="false" afterPath="$PROJECT_DIR$/build_and_notarize.sh" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/build_log.txt" beforeDir="false" afterPath="$PROJECT_DIR$/build_log.txt" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/sharpness.py" beforeDir="false" afterPath="$PROJECT_DIR$/sharpness.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/utils.py" beforeDir="false" afterPath="$PROJECT_DIR$/utils.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -73,7 +60,7 @@
 }</component>
   <component name="GithubPullRequestsUISettings">{
   &quot;selectedUrlAndAccountId&quot;: {
-    &quot;url&quot;: &quot;https://github.com/jamesphotography/SuperPicker.git&quot;,
+    &quot;url&quot;: &quot;https://github.com/jamesphotography/SuperPicky.git&quot;,
     &quot;accountId&quot;: &quot;a9979b2e-ae55-4255-8daf-f45c1428795f&quot;
   }
 }</component>
@@ -168,6 +155,9 @@
       <workItem from="1760608168488" duration="8024000" />
       <workItem from="1760646170579" duration="6819000" />
       <workItem from="1760694698090" duration="12682000" />
+      <workItem from="1760763531460" duration="44838000" />
+      <workItem from="1760935235929" duration="2565000" />
+      <workItem from="1760940770002" duration="4850000" />
     </task>
     <task id="LOCAL-00001" summary="增加了 内容修改记录">
       <option name="closed" value="true" />
@@ -251,6 +241,6 @@
     <SUITE FILE_PATH="coverage/SuperPicky_SandBox$main_tkinter.coverage" NAME="main_tkinter Coverage Results" MODIFIED="1759893219661" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/SuperPicky_SandBox$sharpness.coverage" NAME="sharpness Coverage Results" MODIFIED="1759895199651" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/SuperPicky_SandBox$main_simple.coverage" NAME="main_simple Coverage Results" MODIFIED="1759893153692" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
-    <SUITE FILE_PATH="coverage/SuperPicky_SandBox$main.coverage" NAME="main Coverage Results" MODIFIED="1760744374495" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/SuperPicky_SandBox$main.coverage" NAME="main Coverage Results" MODIFIED="1760878607041" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
   </component>
 </project>

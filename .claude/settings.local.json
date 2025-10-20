@@ -135,7 +135,8 @@
       "Read(//Users/jameszhenyu/Documents/SuperPicky/**)",
       "Read(//Users/jameszhenyu/Desktop/**)",
       "Read(//Volumes/990PRO4TB/2025/2025-08-19/**)",
-      "Bash(xargs -I {} basename {})"
+      "Bash(xargs -I {} basename {})",
+      "Bash(git remote set-url origin https://github.com/jamesphotography/SuperPicky.git)"
     ],
     "deny": [],
     "ask": []

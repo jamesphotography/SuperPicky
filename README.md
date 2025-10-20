@@ -1,6 +1,6 @@
 # SuperPicky - 慧眼选鸟 🦅
 
-[![Version](https://img.shields.io/badge/version-3.1.2-blue.svg)](https://github.com/jamesphotography/SuperPicky)
+[![Version](https://img.shields.io/badge/version-3.1.3-blue.svg)](https://github.com/jamesphotography/SuperPicky)
 [![Platform](https://img.shields.io/badge/platform-macOS-lightgrey.svg)](https://www.apple.com/macos)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
@@ -180,6 +180,11 @@ pyinstaller SuperPicky.spec --clean --noconfirm
 ---
 
 ## 📝 开发日志
+
+### v3.1.3 (2025-10-20)
+- 🐛 修复 PyIQA 打包问题，解决应用在其他 Mac 上无法启动的问题
+- 📦 在 SuperPicky.spec 中添加 PyIQA 完整目录结构
+- 📝 更新所有文档版本号到 V3.1.3
 
 ### v3.1.2 (2025-10-19)
 - ✨ 添加About窗口，显示版本和版权信息
