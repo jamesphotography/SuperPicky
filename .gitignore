@@ -16,9 +16,34 @@ build/
 
 # 测试和临时文件
 test_*.py
+analyze_*.py
+add_*.py
+write_*.py
+find_bird_util.py
+run_batch.py
+config.py
+temp_file_manager.py
+iqa_scorer.py
+sharpness.py
 *.csv
 .DS_Store
 .env
+
+# 开发和调试文档
+BUILD_README.md
+IQA_*.md
+SHARPNESS_*.md
+V3.1_*.md
+V3.1.2_*.md
+ADVANCED_*.md
+ISSUE_*.md
+PREPROCESSING_*.md
+TIMING_*.md
+ABOUT_DRAFT.md
+PREVENT_*.md
+CAFFEINATE_*.md
+TEST_*.md
+TESTING_*.md
 
 # 临时目录
 temp/
