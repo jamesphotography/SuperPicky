@@ -4,6 +4,7 @@ import imageio
 from utils import log_message
 from exiftool_manager import get_exiftool_manager
 import glob
+import shutil
 
 def raw_to_jpeg(raw_file_path):
     filename = os.path.basename(raw_file_path)
@@ -58,9 +59,18 @@ def reset(directory, log_callback=None):
 
     # 1. 清理临时文件、日志和Crop图片
     log("\n📁 清理临时文件...")
-    files_to_clean = [".report.csv", ".process_log.txt"]
 
-    # 清理日志和CSV
+    # 1.1 清理 _tmp 目录（包含所有临时文件、日志、crop图片等）
+    tmp_dir = os.path.join(directory, "_tmp")
+    if os.path.exists(tmp_dir) and os.path.isdir(tmp_dir):
+        try:
+            shutil.rmtree(tmp_dir)
+            log(f"  ✅ 已删除 _tmp 目录及其所有内容")
+        except Exception as e:
+            log(f"  ❌ 删除 _tmp 目录失败: {e}")
+
+    # 1.2 清理旧版本的日志和CSV文件（如果存在于根目录）
+    files_to_clean = [".report.csv", ".process_log.txt"]
     for name in files_to_clean:
         path = os.path.join(directory, name)
         if os.path.exists(path) and os.path.isfile(path):
@@ -70,8 +80,21 @@ def reset(directory, log_callback=None):
             except Exception as e:
                 log(f"  ❌ 删除失败 {name}: {e}")
 
-    # Crop图片现在保存在~/Documents/SuperPicky/目录，不在源目录
-    # 所以这里不需要清理Crop文件了
+    # 1.3 清理临时JPEG文件（tmp_*.jpg，如果有遗留在根目录的）
+    tmp_jpg_pattern = os.path.join(directory, "tmp_*.jpg")
+    tmp_jpg_files = glob.glob(tmp_jpg_pattern)
+    tmp_jpg_files = [f for f in tmp_jpg_files if not os.path.basename(f).startswith('.')]
+    if tmp_jpg_files:
+        log(f"  发现 {len(tmp_jpg_files)} 个临时JPEG文件（tmp_*.jpg），正在删除...")
+        deleted_tmp = 0
+        for tmp_file in tmp_jpg_files:
+            try:
+                os.remove(tmp_file)
+                deleted_tmp += 1
+            except Exception as e:
+                log(f"  ❌ 删除失败 {os.path.basename(tmp_file)}: {e}")
+        if deleted_tmp > 0:
+            log(f"  ✅ 临时JPEG删除完成: {deleted_tmp} 成功")
 
     # 2. 删除所有XMP侧车文件（Lightroom会优先读取XMP）
     log("\n🗑️  删除XMP侧车文件...")
