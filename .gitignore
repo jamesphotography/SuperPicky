@@ -52,3 +52,7 @@ temp/
 # 虚拟环境
 .venv/
 venv/
+
+# 模型文件（太大，不上传到GitHub）
+temp_models/
+*.pth
