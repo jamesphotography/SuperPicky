@@ -298,7 +298,7 @@ class PostAdjustmentDialog:
         self._on_threshold_changed()
 
     def _get_original_statistics(self) -> Dict[str, int]:
-        """获取原始统计"""
+        """获取原始统计（包括重新计算picked）"""
         stats = {
             'star_0': 0,
             'star_1': 0,
@@ -307,6 +307,8 @@ class PostAdjustmentDialog:
             'picked': 0,
             'total': len(self.original_photos)
         }
+
+        star_3_photos = []
 
         for photo in self.original_photos:
             rating_str = photo.get('评分', '0')
@@ -320,6 +322,14 @@ class PostAdjustmentDialog:
                 stats['star_2'] += 1
             elif rating == 3:
                 stats['star_3'] += 1
+                star_3_photos.append(photo)
+
+        # 基于当前配置重新计算精选旗标数量
+        picked_files = self.engine.recalculate_picked(
+            star_3_photos,
+            self.picked_percentage_var.get()
+        )
+        stats['picked'] = len(picked_files)
 
         return stats
 
