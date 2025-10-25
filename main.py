@@ -694,21 +694,21 @@ class SuperPickyApp:
         sharp_frame = ttk.Frame(settings_frame)
         sharp_frame.pack(fill=tk.X, pady=5)
         ttk.Label(sharp_frame, text="鸟锐度阈值:", width=14, font=("Arial", 11)).pack(side=tk.LEFT)
-        self.sharp_var = tk.IntVar(value=8000)
+        self.sharp_var = tk.IntVar(value=7500)
         self.sharp_slider = ttk.Scale(sharp_frame, from_=6000, to=9000, variable=self.sharp_var, orient=tk.HORIZONTAL)
         self.sharp_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        self.sharp_label = ttk.Label(sharp_frame, text="8000", width=6, font=("Arial", 11))
+        self.sharp_label = ttk.Label(sharp_frame, text="7500", width=6, font=("Arial", 11))
         self.sharp_label.pack(side=tk.LEFT)
         self.sharp_slider.configure(command=lambda v: self._update_sharp_label(v))
 
-        # 摄影美学阈值（NIMA）- V3.1: 范围4.5-5.5，默认5.0
+        # 摄影美学阈值（NIMA）- V3.1: 范围4.5-5.5，默认4.8
         nima_frame = ttk.Frame(settings_frame)
         nima_frame.pack(fill=tk.X, pady=5)
         ttk.Label(nima_frame, text="摄影美学阈值:", width=14, font=("Arial", 11)).pack(side=tk.LEFT)
-        self.nima_var = tk.DoubleVar(value=5.0)
+        self.nima_var = tk.DoubleVar(value=4.8)
         self.nima_slider = ttk.Scale(nima_frame, from_=4.5, to=5.5, variable=self.nima_var, orient=tk.HORIZONTAL)
         self.nima_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        self.nima_label = ttk.Label(nima_frame, text="5.0", width=6, font=("Arial", 11))
+        self.nima_label = ttk.Label(nima_frame, text="4.8", width=6, font=("Arial", 11))
         self.nima_label.pack(side=tk.LEFT)
         self.nima_slider.configure(command=lambda v: self.nima_label.configure(text=f"{float(v):.1f}"))
 
