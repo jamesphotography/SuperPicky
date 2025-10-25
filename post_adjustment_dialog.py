@@ -102,13 +102,17 @@ class PostAdjustmentDialog:
         stats_frame_style.configure('Stats.TLabelframe.Label', font=('PingFang SC', 16))
         stats_frame.configure(style='Stats.TLabelframe')
 
-        # 使用Label而非Text
-        self.current_stats_label = ttk.Label(
+        # 使用Text组件以支持行间距设置
+        self.current_stats_label = tk.Text(
             stats_frame,
-            text="加载中...",
+            height=7,
             font=("Arial", 14),
-            justify=tk.LEFT,
-            anchor="w"
+            spacing1=4,
+            spacing2=2,
+            spacing3=4,
+            relief=tk.FLAT,
+            wrap=tk.WORD,
+            state='disabled'
         )
         self.current_stats_label.pack(fill=tk.BOTH)
 
@@ -176,14 +180,17 @@ class PostAdjustmentDialog:
         preview_frame_style.configure('Preview.TLabelframe.Label', font=('PingFang SC', 16))
         preview_frame.configure(style='Preview.TLabelframe')
 
-        # 使用Label而非Text
-        self.preview_stats_label = ttk.Label(
+        # 使用Text组件以支持行间距设置
+        self.preview_stats_label = tk.Text(
             preview_frame,
-            text="调整阈值后，这里将显示新的星级分布...",
+            height=7,
             font=("Arial", 14),
-            justify=tk.LEFT,
-            anchor="w",
-            foreground="#666"
+            spacing1=4,
+            spacing2=2,
+            spacing3=4,
+            relief=tk.FLAT,
+            wrap=tk.WORD,
+            state='disabled'
         )
         self.preview_stats_label.pack(fill=tk.BOTH)
 
@@ -334,7 +341,10 @@ class PostAdjustmentDialog:
         text += f"⭐ 1星: {stats['star_1']} 张 ({stats['star_1']/total*100:.1f}%)\n"
         text += f"0星: {stats['star_0']} 张 ({stats['star_0']/total*100:.1f}%)"
 
-        self.current_stats_label.config(text=text)
+        self.current_stats_label.config(state=tk.NORMAL)
+        self.current_stats_label.delete("1.0", tk.END)
+        self.current_stats_label.insert("1.0", text)
+        self.current_stats_label.config(state=tk.DISABLED)
 
     def _on_threshold_changed(self):
         """阈值改变回调（防抖）"""
@@ -416,7 +426,10 @@ class PostAdjustmentDialog:
         text += f"⭐ 1星: {format_diff(old['star_1'], new['star_1'], total)}\n"
         text += f"0星: {format_diff(old['star_0'], new['star_0'], total)}"
 
-        self.preview_stats_label.config(text=text, foreground="#000")
+        self.preview_stats_label.config(state=tk.NORMAL)
+        self.preview_stats_label.delete("1.0", tk.END)
+        self.preview_stats_label.insert("1.0", text)
+        self.preview_stats_label.config(state=tk.DISABLED)
 
     def _apply_new_ratings(self):
         """应用新评分"""
