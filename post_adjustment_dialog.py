@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SuperPicky V3.2 - Post Digital Adjustment Dialog V2
-二次选鸟对话框 - 优化UI，适合年长用户
+SuperPicky V3.2 - Post Digital Adjustment Dialog
+二次选鸟对话框 - 简洁专业风格
 """
 
 import tkinter as tk
@@ -14,7 +14,7 @@ from advanced_config import get_advanced_config
 
 
 class PostAdjustmentDialog:
-    """二次选鸟对话框 - 大字体版本"""
+    """二次选鸟对话框"""
 
     def __init__(self, parent, directory: str, current_sharpness: int = 7500,
                  current_nima: float = 4.8, on_complete_callback=None):
@@ -29,8 +29,8 @@ class PostAdjustmentDialog:
             on_complete_callback: 完成后的回调函数
         """
         self.window = tk.Toplevel(parent)
-        self.window.title("二次选鸟 - 重新调整评分标准")
-        self.window.geometry("750x700")  # 与主界面风格一致
+        self.window.title("二次选鸟 - 调整评分标准")
+        self.window.geometry("600x650")
         self.window.resizable(False, False)
 
         self.directory = directory
@@ -75,57 +75,58 @@ class PostAdjustmentDialog:
         self._center_window()
 
     def _create_widgets(self):
-        """创建UI组件 - 大字体、清晰布局"""
+        """创建UI组件 - 简洁专业风格"""
 
         # ===== 1. 顶部说明 =====
-        desc_frame = ttk.Frame(self.window, padding=(10, 10, 10, 5))
+        desc_frame = ttk.Frame(self.window, padding=15)
         desc_frame.pack(fill=tk.X)
 
         desc_text = "基于已有AI分析结果，快速调整评分标准（无需重新运行AI）"
         ttk.Label(
             desc_frame,
             text=desc_text,
-            font=("Arial", 11)
+            font=("Arial", 10),
+            foreground="#666"
         ).pack()
 
         # ===== 2. 当前统计区域 =====
         stats_frame = ttk.LabelFrame(
             self.window,
             text="当前星级分布",
-            padding=10
+            padding=15
         )
-        stats_frame.pack(fill=tk.X, padx=10, pady=5)
+        stats_frame.pack(fill=tk.X, padx=15, pady=(0, 10))
 
-        self.current_stats_label = tk.Text(
+        # 使用Label而非Text，设置合适的背景色
+        self.current_stats_label = ttk.Label(
             stats_frame,
-            height=5,
-            font=("Arial", 11),
-            relief=tk.FLAT,
-            wrap=tk.WORD
+            text="加载中...",
+            font=("Arial", 12),
+            justify=tk.LEFT,
+            anchor="w"
         )
         self.current_stats_label.pack(fill=tk.BOTH)
-        self.current_stats_label.insert("1.0", "加载中...")
-        self.current_stats_label.config(state=tk.DISABLED)
 
         # ===== 3. 阈值调整区域 =====
         threshold_frame = ttk.LabelFrame(
             self.window,
             text="调整评分阈值",
-            padding=10
+            padding=15
         )
-        threshold_frame.pack(fill=tk.X, padx=10, pady=5)
+        threshold_frame.pack(fill=tk.X, padx=15, pady=(0, 10))
 
         # 说明
         ttk.Label(
             threshold_frame,
-            text="拖动滑块调整阈值，下方实时预览变化",
-            font=("Arial", 10)
-        ).pack(pady=(0, 10))
+            text="拖动滑块调整阈值，实时预览变化",
+            font=("Arial", 10),
+            foreground="#666"
+        ).pack(pady=(0, 12))
 
         # 锐度阈值
-        self._create_large_slider(
+        self._create_slider(
             threshold_frame,
-            "锐度阈值 (2/3星):",
+            "鸟锐度阈值 (2/3星):",
             self.sharpness_threshold_var,
             from_=6000, to=9000,
             step=100,
@@ -133,9 +134,9 @@ class PostAdjustmentDialog:
         )
 
         # 美学阈值
-        self._create_large_slider(
+        self._create_slider(
             threshold_frame,
-            "美学阈值 (2/3星):",
+            "摄影美学阈值 (2/3星):",
             self.nima_threshold_var,
             from_=4.5, to=5.5,
             step=0.1,
@@ -143,7 +144,7 @@ class PostAdjustmentDialog:
         )
 
         # 精选百分比
-        self._create_large_slider(
+        self._create_slider(
             threshold_frame,
             "精选旗标百分比:",
             self.picked_percentage_var,
@@ -156,20 +157,20 @@ class PostAdjustmentDialog:
         preview_frame = ttk.LabelFrame(
             self.window,
             text="调整后预览",
-            padding=10
+            padding=15
         )
-        preview_frame.pack(fill=tk.BOTH, padx=10, pady=5, expand=True)
+        preview_frame.pack(fill=tk.BOTH, padx=15, pady=(0, 10), expand=True)
 
-        self.preview_stats_text = tk.Text(
+        # 使用Label而非Text
+        self.preview_stats_label = ttk.Label(
             preview_frame,
-            height=6,
-            font=("Arial", 11),
-            relief=tk.FLAT,
-            wrap=tk.WORD
+            text="调整阈值后，这里将显示新的星级分布...",
+            font=("Arial", 12),
+            justify=tk.LEFT,
+            anchor="nw",
+            foreground="#666"
         )
-        self.preview_stats_text.pack(fill=tk.BOTH, expand=True)
-        self.preview_stats_text.insert("1.0", "调整阈值后，这里将显示新的星级分布...")
-        self.preview_stats_text.config(state=tk.DISABLED)
+        self.preview_stats_label.pack(fill=tk.BOTH, expand=True)
 
         # ===== 5. 进度区域（隐藏）=====
         self.progress_frame = ttk.Frame(self.window, padding=10)
@@ -178,12 +179,12 @@ class PostAdjustmentDialog:
         self.progress_label = ttk.Label(
             self.progress_frame,
             text="",
-            font=("Arial", 11)
+            font=("Arial", 12)
         )
         self.progress_label.pack()
 
         # ===== 6. 底部按钮 =====
-        btn_frame = ttk.Frame(self.window, padding=10)
+        btn_frame = ttk.Frame(self.window, padding=15)
         btn_frame.pack(fill=tk.X, side=tk.BOTTOM)
 
         # 左侧取消按钮
@@ -204,17 +205,17 @@ class PostAdjustmentDialog:
         )
         self.apply_btn.pack(side=tk.RIGHT, padx=5)
 
-    def _create_large_slider(self, parent, label_text, variable, from_, to, step, format_func):
-        """创建滑块组件（与主界面风格一致），支持步进"""
+    def _create_slider(self, parent, label_text, variable, from_, to, step, format_func):
+        """创建滑块组件，支持步进"""
         container = ttk.Frame(parent)
-        container.pack(fill=tk.X, pady=5)
+        container.pack(fill=tk.X, pady=6)
 
         # 标签（左侧）
         label = ttk.Label(
             container,
             text=label_text,
-            width=14,
-            font=("Arial", 11)
+            width=18,
+            font=("Arial", 12)
         )
         label.pack(side=tk.LEFT)
 
@@ -233,8 +234,8 @@ class PostAdjustmentDialog:
         value_label = ttk.Label(
             container,
             text=format_func(variable.get()),
-            width=6,
-            font=("Arial", 11)
+            width=8,
+            font=("Arial", 12)
         )
         value_label.pack(side=tk.LEFT)
 
@@ -311,17 +312,14 @@ class PostAdjustmentDialog:
         text = f"总共: {total} 张有鸟照片\n\n"
 
         if stats.get('picked', 0) > 0:
-            text += f"🏆 精选旗标: {stats['picked']} 张\n\n"
+            text += f"精选旗标: {stats['picked']} 张\n\n"
 
-        text += f"⭐⭐⭐ 3星: {stats['star_3']} 张 ({stats['star_3']/total*100:.1f}%)\n"
-        text += f"⭐⭐ 2星: {stats['star_2']} 张 ({stats['star_2']/total*100:.1f}%)\n"
-        text += f"⭐ 1星: {stats['star_1']} 张 ({stats['star_1']/total*100:.1f}%)\n"
-        text += f"0星: {stats['star_0']} 张 ({stats['star_0']/total*100:.1f}%)"
+        text += f"★★★ 3星: {stats['star_3']} 张 ({stats['star_3']/total*100:.1f}%)\n"
+        text += f"★★  2星: {stats['star_2']} 张 ({stats['star_2']/total*100:.1f}%)\n"
+        text += f"★   1星: {stats['star_1']} 张 ({stats['star_1']/total*100:.1f}%)\n"
+        text += f"    0星: {stats['star_0']} 张 ({stats['star_0']/total*100:.1f}%)"
 
-        self.current_stats_label.config(state=tk.NORMAL)
-        self.current_stats_label.delete("1.0", tk.END)
-        self.current_stats_label.insert("1.0", text)
-        self.current_stats_label.config(state=tk.DISABLED)
+        self.current_stats_label.config(text=text)
 
     def _on_threshold_changed(self):
         """阈值改变回调（防抖）"""
@@ -373,11 +371,11 @@ class PostAdjustmentDialog:
             pct = new_val / total * 100 if total > 0 else 0
 
             if diff > 0:
-                return f"{new_val} 张 ({pct:.1f}%)  [↑ +{diff}]"
+                return f"{new_val} 张 ({pct:.1f}%)  [+{diff}]"
             elif diff < 0:
-                return f"{new_val} 张 ({pct:.1f}%)  [↓ {diff}]"
+                return f"{new_val} 张 ({pct:.1f}%)  [{diff}]"
             else:
-                return f"{new_val} 张 ({pct:.1f}%)  [→ 无变化]"
+                return f"{new_val} 张 ({pct:.1f}%)  [无变化]"
 
         total = new['total']
         text = ""
@@ -390,23 +388,20 @@ class PostAdjustmentDialog:
             old_picked = old.get('picked', 0)
             picked_diff = picked_count - old_picked
             if picked_diff > 0:
-                text += f"🏆 精选旗标: {picked_count} 张 ({picked_pct:.1f}% of 3星)  [↑ +{picked_diff}]\n\n"
+                text += f"精选旗标: {picked_count} 张 ({picked_pct:.1f}% of 3星)  [+{picked_diff}]\n\n"
             elif picked_diff < 0:
-                text += f"🏆 精选旗标: {picked_count} 张 ({picked_pct:.1f}% of 3星)  [↓ {picked_diff}]\n\n"
+                text += f"精选旗标: {picked_count} 张 ({picked_pct:.1f}% of 3星)  [{picked_diff}]\n\n"
             else:
-                text += f"🏆 精选旗标: {picked_count} 张 ({picked_pct:.1f}% of 3星)  [→ 无变化]\n\n"
+                text += f"精选旗标: {picked_count} 张 ({picked_pct:.1f}% of 3星)  [无变化]\n\n"
         else:
-            text += f"🏆 精选旗标: 0 张 (无3星照片)\n\n"
+            text += f"精选旗标: 0 张 (无3星照片)\n\n"
 
-        text += f"⭐⭐⭐ 3星: {format_diff(old['star_3'], new['star_3'], total)}\n"
-        text += f"⭐⭐ 2星: {format_diff(old['star_2'], new['star_2'], total)}\n"
-        text += f"⭐ 1星: {format_diff(old['star_1'], new['star_1'], total)}\n"
-        text += f"0星: {format_diff(old['star_0'], new['star_0'], total)}"
+        text += f"★★★ 3星: {format_diff(old['star_3'], new['star_3'], total)}\n"
+        text += f"★★  2星: {format_diff(old['star_2'], new['star_2'], total)}\n"
+        text += f"★   1星: {format_diff(old['star_1'], new['star_1'], total)}\n"
+        text += f"    0星: {format_diff(old['star_0'], new['star_0'], total)}"
 
-        self.preview_stats_text.config(state=tk.NORMAL, foreground="#000")
-        self.preview_stats_text.delete("1.0", tk.END)
-        self.preview_stats_text.insert("1.0", text)
-        self.preview_stats_text.config(state=tk.DISABLED)
+        self.preview_stats_label.config(text=text, foreground="#000")
 
     def _apply_new_ratings(self):
         """应用新评分"""
