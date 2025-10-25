@@ -29,7 +29,7 @@ class PostAdjustmentDialog:
             on_complete_callback: 完成后的回调函数
         """
         self.window = tk.Toplevel(parent)
-        self.window.title("二次选鸟 - 调整评分标准")
+        self.window.title("二次选鸟 - 优化评分标准")
         self.window.geometry("750x700")  # 与主界面一致
         self.window.resizable(False, False)
 
@@ -85,7 +85,7 @@ class PostAdjustmentDialog:
         ttk.Label(
             desc_frame,
             text=desc_text,
-            font=("Arial", 11),
+            font=("PingFang SC", 16),
             foreground="#666"
         ).pack()
 
@@ -95,13 +95,18 @@ class PostAdjustmentDialog:
             text="当前星级分布",
             padding=15
         )
-        stats_frame.pack(fill=tk.X, padx=15, pady=(0, 10))
+        stats_frame.pack(fill=tk.X, padx=15, pady=(15, 10))
+
+        # 配置LabelFrame标题字体
+        stats_frame_style = ttk.Style()
+        stats_frame_style.configure('Stats.TLabelframe.Label', font=('PingFang SC', 16))
+        stats_frame.configure(style='Stats.TLabelframe')
 
         # 使用Label而非Text
         self.current_stats_label = ttk.Label(
             stats_frame,
             text="加载中...",
-            font=("Arial", 13),
+            font=("Arial", 14),
             justify=tk.LEFT,
             anchor="w"
         )
@@ -115,11 +120,16 @@ class PostAdjustmentDialog:
         )
         threshold_frame.pack(fill=tk.X, padx=15, pady=(0, 10))
 
+        # 配置LabelFrame标题字体
+        threshold_frame_style = ttk.Style()
+        threshold_frame_style.configure('Threshold.TLabelframe.Label', font=('PingFang SC', 16))
+        threshold_frame.configure(style='Threshold.TLabelframe')
+
         # 说明
         ttk.Label(
             threshold_frame,
             text="拖动滑块调整阈值，实时预览变化",
-            font=("Arial", 11),
+            font=("PingFang SC", 11),
             foreground="#666"
         ).pack(pady=(0, 12))
 
@@ -159,18 +169,23 @@ class PostAdjustmentDialog:
             text="调整后预览",
             padding=15
         )
-        preview_frame.pack(fill=tk.BOTH, padx=15, pady=(0, 10), expand=True)
+        preview_frame.pack(fill=tk.X, padx=15, pady=(0, 10))
+
+        # 配置LabelFrame标题字体
+        preview_frame_style = ttk.Style()
+        preview_frame_style.configure('Preview.TLabelframe.Label', font=('PingFang SC', 16))
+        preview_frame.configure(style='Preview.TLabelframe')
 
         # 使用Label而非Text
         self.preview_stats_label = ttk.Label(
             preview_frame,
             text="调整阈值后，这里将显示新的星级分布...",
-            font=("Arial", 13),
+            font=("Arial", 14),
             justify=tk.LEFT,
-            anchor="nw",
+            anchor="w",
             foreground="#666"
         )
-        self.preview_stats_label.pack(fill=tk.BOTH, expand=True)
+        self.preview_stats_label.pack(fill=tk.BOTH)
 
         # ===== 5. 进度区域（隐藏）=====
         self.progress_frame = ttk.Frame(self.window, padding=10)
