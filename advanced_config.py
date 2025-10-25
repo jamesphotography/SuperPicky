@@ -22,7 +22,7 @@ class AdvancedConfig:
         "max_brisque": 30,          # BRISQUE噪点最高阈值 (20-50) - 高于此值判定为0星
 
         # 精选设置
-        "picked_top_percentage": 10, # 精选旗标Top百分比 (5-20) - 3星照片中美学+锐度双排名在此百分比内的设为精选
+        "picked_top_percentage": 25, # 精选旗标Top百分比 (10-50) - 3星照片中美学+锐度双排名在此百分比内的设为精选
 
         # 输出设置
         "save_csv": True,           # 是否保存CSV报告
@@ -116,8 +116,8 @@ class AdvancedConfig:
         self.config["max_brisque"] = max(20, min(50, int(value)))
 
     def set_picked_top_percentage(self, value):
-        """设置精选旗标Top百分比 (5-20)"""
-        self.config["picked_top_percentage"] = max(5, min(20, int(value)))
+        """设置精选旗标Top百分比 (10-50)"""
+        self.config["picked_top_percentage"] = max(10, min(50, int(value)))
 
     def set_save_csv(self, value):
         """设置是否保存CSV"""

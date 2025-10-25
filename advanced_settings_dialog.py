@@ -114,8 +114,8 @@ class AdvancedSettingsDialog:
             key="picked_top_percentage",
             label="精选旗标Top百分比:",
             description="3星照片中，美学+锐度双排名都在此百分比内的设为精选",
-            from_=5, to=20, resolution=5,
-            default=10,
+            from_=10, to=50, resolution=5,
+            default=25,
             format_func=lambda v: f"{int(v)}%"
         )
 
