@@ -802,10 +802,12 @@ class SuperPickyApp:
             messagebox.showwarning("提示", "未找到分析报告，请先运行'开始处理'")
             return
 
-        # 打开对话框
+        # 打开对话框，传递当前UI的阈值设置
         PostAdjustmentDialog(
             self.root,
             self.directory_path,
+            current_sharpness=self.sharp_var.get(),
+            current_nima=self.nima_var.get(),
             on_complete_callback=self._on_post_adjustment_complete
         )
 

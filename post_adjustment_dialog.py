@@ -16,13 +16,16 @@ from advanced_config import get_advanced_config
 class PostAdjustmentDialog:
     """二次选鸟对话框"""
 
-    def __init__(self, parent, directory: str, on_complete_callback=None):
+    def __init__(self, parent, directory: str, current_sharpness: int = 7500,
+                 current_nima: float = 4.8, on_complete_callback=None):
         """
         初始化对话框
 
         Args:
             parent: 父窗口
             directory: 照片目录
+            current_sharpness: 当前UI设置的锐度阈值
+            current_nima: 当前UI设置的美学阈值
             on_complete_callback: 完成后的回调函数
         """
         self.window = tk.Toplevel(parent)
@@ -45,9 +48,9 @@ class PostAdjustmentDialog:
         self.min_nima_var = tk.DoubleVar(value=self.config.min_nima)
         self.max_brisque_var = tk.IntVar(value=self.config.max_brisque)
 
-        # 2/3星阈值变量（从UI默认值加载 - main.py:697, 708）
-        self.sharpness_threshold_var = tk.IntVar(value=7500)
-        self.nima_threshold_var = tk.DoubleVar(value=4.8)
+        # 2/3星阈值变量（从主界面当前设置加载）
+        self.sharpness_threshold_var = tk.IntVar(value=current_sharpness)
+        self.nima_threshold_var = tk.DoubleVar(value=current_nima)
         self.picked_percentage_var = tk.IntVar(value=self.config.picked_top_percentage)
 
         # 数据
@@ -119,7 +122,7 @@ class PostAdjustmentDialog:
             "锐度阈值 (2/3星):",
             self.sharpness_threshold_var,
             from_=6000, to=9000,
-            resolution=500,
+            resolution=100,
             format_str="{:.0f}"
         )
 
@@ -280,6 +283,9 @@ class PostAdjustmentDialog:
         total = stats['total']
 
         text = f"总共: {total} 张有鸟照片\n"
+        # 精选旗标放在最顶上
+        if stats.get('picked', 0) > 0:
+            text += f"🏆 精选旗标: {stats['picked']} 张\n"
         text += f"⭐⭐⭐ 3星: {stats['star_3']} 张 ({stats['star_3']/total*100:.1f}%)\n"
         text += f"⭐⭐ 2星: {stats['star_2']} 张 ({stats['star_2']/total*100:.1f}%)\n"
         text += f"⭐ 1星: {stats['star_1']} 张 ({stats['star_1']/total*100:.1f}%)\n"
@@ -357,19 +363,27 @@ class PostAdjustmentDialog:
         total = new['total']
 
         text = "调整后的新星级分布:\n\n"
-        text += f"⭐⭐⭐ 3星: {format_diff(old['star_3'], new['star_3'], total)}\n"
-        text += f"⭐⭐ 2星: {format_diff(old['star_2'], new['star_2'], total)}\n"
-        text += f"⭐ 1星: {format_diff(old['star_1'], new['star_1'], total)}\n"
-        text += f"0星: {format_diff(old['star_0'], new['star_0'], total)}\n"
 
-        # 精选旗标（特殊处理，因为原始数据中picked=0）
+        # 精选旗标放在最顶上
         picked_count = new['picked']
         star_3_count = new['star_3']
         if star_3_count > 0:
             picked_pct = picked_count / star_3_count * 100
-            text += f"\n🏆 精选旗标: {picked_count} 张 ({picked_pct:.1f}% of 3星)"
+            old_picked = old.get('picked', 0)
+            picked_diff = picked_count - old_picked
+            if picked_diff > 0:
+                text += f"🏆 精选旗标: {picked_count} 张 ({picked_pct:.1f}% of 3星) [+{picked_diff}]\n\n"
+            elif picked_diff < 0:
+                text += f"🏆 精选旗标: {picked_count} 张 ({picked_pct:.1f}% of 3星) [{picked_diff}]\n\n"
+            else:
+                text += f"🏆 精选旗标: {picked_count} 张 ({picked_pct:.1f}% of 3星) [无变化]\n\n"
         else:
-            text += f"\n🏆 精选旗标: 0 张 (无3星照片)"
+            text += f"🏆 精选旗标: 0 张 (无3星照片)\n\n"
+
+        text += f"⭐⭐⭐ 3星: {format_diff(old['star_3'], new['star_3'], total)}\n"
+        text += f"⭐⭐ 2星: {format_diff(old['star_2'], new['star_2'], total)}\n"
+        text += f"⭐ 1星: {format_diff(old['star_1'], new['star_1'], total)}\n"
+        text += f"0星: {format_diff(old['star_0'], new['star_0'], total)}"
 
         self.preview_stats_label.config(text=text, foreground="#000")
 
@@ -387,12 +401,14 @@ class PostAdjustmentDialog:
         if not messagebox.askyesno("确认应用", msg):
             return
 
-        # 禁用按钮
+        # 禁用按钮和窗口关闭
         self.apply_btn.config(state='disabled')
+        self.window.protocol("WM_DELETE_WINDOW", lambda: None)  # 禁止关闭窗口
 
         # 显示进度
         self.progress_frame.pack(fill=tk.X, padx=10, pady=5)
-        self.progress_label.config(text="正在应用新评分...")
+        self.progress_label.config(text=f"正在准备 {len(self.updated_photos)} 张照片的数据...")
+        self.window.update()  # 强制更新UI
 
         # 准备批量数据
         batch_data = []
@@ -422,9 +438,13 @@ class PostAdjustmentDialog:
 
         if not_found_count > 0:
             self.progress_label.config(text=f"警告: {not_found_count} 张照片未找到文件，已跳过")
+            self.window.update()
 
         # 批量写入EXIF
         try:
+            self.progress_label.config(text=f"⏳ 正在批量写入 {len(batch_data)} 张照片的EXIF元数据...\n这可能需要几秒到几十秒，请耐心等待...")
+            self.window.update()  # 强制更新UI，让用户看到进度
+
             exiftool_mgr = get_exiftool_manager()
             stats = exiftool_mgr.batch_set_metadata(batch_data)
 
