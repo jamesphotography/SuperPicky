@@ -30,7 +30,7 @@ class PostAdjustmentDialog:
         """
         self.window = tk.Toplevel(parent)
         self.window.title("二次选鸟 - 重新调整评分标准")
-        self.window.geometry("900x750")  # 增大窗口
+        self.window.geometry("750x700")  # 与主界面风格一致
         self.window.resizable(False, False)
 
         self.directory = directory
@@ -78,33 +78,29 @@ class PostAdjustmentDialog:
         """创建UI组件 - 大字体、清晰布局"""
 
         # ===== 1. 顶部说明 =====
-        desc_frame = ttk.Frame(self.window, padding=(15, 15, 15, 10))
+        desc_frame = ttk.Frame(self.window, padding=(10, 10, 10, 5))
         desc_frame.pack(fill=tk.X)
 
         desc_text = "基于已有AI分析结果，快速调整评分标准（无需重新运行AI）"
         ttk.Label(
             desc_frame,
             text=desc_text,
-            font=("Arial", 12, "bold"),
-            foreground="#0066cc"
+            font=("Arial", 11)
         ).pack()
 
         # ===== 2. 当前统计区域 =====
         stats_frame = ttk.LabelFrame(
             self.window,
-            text=" 📊 当前星级分布 ",
-            padding=15
+            text="当前星级分布",
+            padding=10
         )
-        stats_frame.pack(fill=tk.X, padx=15, pady=10)
+        stats_frame.pack(fill=tk.X, padx=10, pady=5)
 
         self.current_stats_label = tk.Text(
             stats_frame,
-            height=6,
-            font=("Arial", 13),
-            bg="#f0f8ff",
+            height=5,
+            font=("Arial", 11),
             relief=tk.FLAT,
-            padx=10,
-            pady=10,
             wrap=tk.WORD
         )
         self.current_stats_label.pack(fill=tk.BOTH)
@@ -114,18 +110,17 @@ class PostAdjustmentDialog:
         # ===== 3. 阈值调整区域 =====
         threshold_frame = ttk.LabelFrame(
             self.window,
-            text=" ⚙️  调整评分阈值 ",
-            padding=15
+            text="调整评分阈值",
+            padding=10
         )
-        threshold_frame.pack(fill=tk.X, padx=15, pady=10)
+        threshold_frame.pack(fill=tk.X, padx=10, pady=5)
 
         # 说明
         ttk.Label(
             threshold_frame,
             text="拖动滑块调整阈值，下方实时预览变化",
-            font=("Arial", 11),
-            foreground="#666"
-        ).pack(pady=(0, 15))
+            font=("Arial", 10)
+        ).pack(pady=(0, 10))
 
         # 锐度阈值
         self._create_large_slider(
@@ -160,24 +155,21 @@ class PostAdjustmentDialog:
         # ===== 4. 预览区域 =====
         preview_frame = ttk.LabelFrame(
             self.window,
-            text=" 📈 调整后预览 ",
-            padding=15
+            text="调整后预览",
+            padding=10
         )
-        preview_frame.pack(fill=tk.BOTH, padx=15, pady=10, expand=True)
+        preview_frame.pack(fill=tk.BOTH, padx=10, pady=5, expand=True)
 
         self.preview_stats_text = tk.Text(
             preview_frame,
-            height=7,
-            font=("Arial", 13),
-            bg="#fff9e6",
+            height=6,
+            font=("Arial", 11),
             relief=tk.FLAT,
-            padx=10,
-            pady=10,
             wrap=tk.WORD
         )
         self.preview_stats_text.pack(fill=tk.BOTH, expand=True)
         self.preview_stats_text.insert("1.0", "调整阈值后，这里将显示新的星级分布...")
-        self.preview_stats_text.config(state=tk.DISABLED, foreground="#999")
+        self.preview_stats_text.config(state=tk.DISABLED)
 
         # ===== 5. 进度区域（隐藏）=====
         self.progress_frame = ttk.Frame(self.window, padding=10)
@@ -186,54 +178,45 @@ class PostAdjustmentDialog:
         self.progress_label = ttk.Label(
             self.progress_frame,
             text="",
-            font=("Arial", 12, "bold"),
-            foreground="#ff6600"
+            font=("Arial", 11)
         )
         self.progress_label.pack()
 
         # ===== 6. 底部按钮 =====
-        btn_frame = ttk.Frame(self.window, padding=15)
+        btn_frame = ttk.Frame(self.window, padding=10)
         btn_frame.pack(fill=tk.X, side=tk.BOTTOM)
 
         # 左侧取消按钮
         ttk.Button(
             btn_frame,
-            text="✖ 取消",
+            text="取消",
             command=self.window.destroy,
-            width=18
+            width=15
         ).pack(side=tk.LEFT, padx=5)
 
         # 右侧应用按钮
         self.apply_btn = ttk.Button(
             btn_frame,
-            text="✓ 应用新评分",
+            text="应用新评分",
             command=self._apply_new_ratings,
-            width=18,
+            width=15,
             state='disabled'
         )
         self.apply_btn.pack(side=tk.RIGHT, padx=5)
 
-        # 中间提示
-        ttk.Label(
-            btn_frame,
-            text="→ 调整满意后点击右侧按钮",
-            font=("Arial", 11),
-            foreground="#666"
-        ).pack(side=tk.RIGHT, padx=20)
-
     def _create_large_slider(self, parent, label_text, variable, from_, to, step, format_func):
-        """创建大字体滑块组件，支持步进"""
+        """创建滑块组件（与主界面风格一致），支持步进"""
         container = ttk.Frame(parent)
-        container.pack(fill=tk.X, pady=8)
+        container.pack(fill=tk.X, pady=5)
 
         # 标签（左侧）
         label = ttk.Label(
             container,
             text=label_text,
-            width=20,
-            font=("Arial", 13, "bold")
+            width=14,
+            font=("Arial", 11)
         )
-        label.pack(side=tk.LEFT, padx=(0, 10))
+        label.pack(side=tk.LEFT)
 
         # 滑块（中间）
         slider = ttk.Scale(
@@ -250,14 +233,10 @@ class PostAdjustmentDialog:
         value_label = ttk.Label(
             container,
             text=format_func(variable.get()),
-            width=10,
-            font=("Arial", 14, "bold"),
-            foreground="#0066cc",
-            relief=tk.SOLID,
-            borderwidth=1,
-            padding=5
+            width=6,
+            font=("Arial", 11)
         )
-        value_label.pack(side=tk.LEFT, padx=(10, 0))
+        value_label.pack(side=tk.LEFT)
 
         # 初始化标签
         self._snap_to_step(variable, variable.get(), step)
