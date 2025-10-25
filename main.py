@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 SuperPicky - 简化版 (Pure Tkinter, 无PyQt依赖)
-Version: 3.1.4 - 临时文件清理 + 术语优化
+Version: 3.2.0 - 二次选鸟功能 (Post-DA)
 """
 
 import tkinter as tk
@@ -504,7 +504,7 @@ class AboutWindow:
         """填充关于窗口的内容"""
         content = """慧眼选鸟 (SuperPicky)
 
-版本: V3.1.4
+版本: V3.2.0
 发布日期: 2025-10-25
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -632,7 +632,7 @@ YouTube: youtube.com/@JamesZhenYu
 class SuperPickyApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("SuperPicky V3.1.4 - 慧眼选鸟")
+        self.root.title("SuperPicky V3.2.0 - 慧眼选鸟")
         self.root.geometry("750x700")  # V3.1: 增加窗口高度，确保所有控件可见
         self.root.minsize(700, 650)  # 设置最小尺寸
         # 允许窗口调整大小（默认行为）
@@ -743,7 +743,7 @@ class SuperPickyApp:
         button_container = ttk.Frame(btn_frame)
         button_container.pack(side=tk.RIGHT)
 
-        ttk.Label(button_container, text="V3.1.4 - EXIF标记模式", font=("Arial", 9)).pack(side=tk.RIGHT, padx=10)
+        ttk.Label(button_container, text="V3.2.0 - EXIF标记模式", font=("Arial", 9)).pack(side=tk.RIGHT, padx=10)
 
         self.reset_btn = ttk.Button(button_container, text="🔄 重置目录", command=self.reset_directory, width=15, state='disabled')
         self.reset_btn.pack(side=tk.RIGHT, padx=5)
@@ -1063,7 +1063,7 @@ class SuperPickyApp:
     def show_initial_help(self):
         """显示初始帮助信息"""
         help_text = f"""━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  欢迎使用 SuperPicky V3.1.4 - 慧眼选鸟 | 比你更聪明的选片工具
+  欢迎使用 SuperPicky V3.2.0 - 慧眼选鸟 | 比你更聪明的选片工具
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 使用步骤：
   1️⃣ 点击"浏览"选择照片目录（支持RAW/JPG）
