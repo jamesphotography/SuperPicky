@@ -19,6 +19,7 @@ from utils import write_to_csv, log_message
 from exiftool_manager import get_exiftool_manager
 from advanced_config import get_advanced_config
 from advanced_settings_dialog import AdvancedSettingsDialog
+from post_adjustment_dialog import PostAdjustmentDialog
 
 # 尝试导入主题和图片库
 try:
@@ -747,6 +748,9 @@ class SuperPickyApp:
         self.reset_btn = ttk.Button(button_container, text="🔄 重置目录", command=self.reset_directory, width=15, state='disabled')
         self.reset_btn.pack(side=tk.RIGHT, padx=5)
 
+        self.post_da_btn = ttk.Button(button_container, text="📊 二次选鸟", command=self.open_post_adjustment, width=15, state='disabled')
+        self.post_da_btn.pack(side=tk.RIGHT, padx=5)
+
         self.start_btn = ttk.Button(button_container, text="▶️  开始处理", command=self.start_processing, width=15)
         self.start_btn.pack(side=tk.RIGHT, padx=5)
 
@@ -773,6 +777,41 @@ class SuperPickyApp:
     def show_about(self):
         """显示关于窗口"""
         AboutWindow(self.root)
+
+    def _check_report_csv(self):
+        """检测目录中是否存在 report.csv，控制二次选鸟按钮状态"""
+        if not self.directory_path:
+            self.post_da_btn.config(state='disabled')
+            return
+
+        report_path = os.path.join(self.directory_path, "_tmp", "report.csv")
+        if os.path.exists(report_path):
+            self.post_da_btn.config(state='normal')
+            self.log("📊 检测到历史分析数据，可使用'二次选鸟'功能\n")
+        else:
+            self.post_da_btn.config(state='disabled')
+
+    def open_post_adjustment(self):
+        """打开二次选鸟对话框"""
+        if not self.directory_path:
+            messagebox.showwarning("提示", "请先选择照片目录")
+            return
+
+        report_path = os.path.join(self.directory_path, "_tmp", "report.csv")
+        if not os.path.exists(report_path):
+            messagebox.showwarning("提示", "未找到分析报告，请先运行'开始处理'")
+            return
+
+        # 打开对话框
+        PostAdjustmentDialog(
+            self.root,
+            self.directory_path,
+            on_complete_callback=self._on_post_adjustment_complete
+        )
+
+    def _on_post_adjustment_complete(self):
+        """二次选鸟完成后的回调"""
+        self.log("✅ 二次选鸟完成！评分已更新到EXIF元数据\n")
 
     def _update_sharp_label(self, value):
         """更新锐度滑块标签（步长500）"""
@@ -804,6 +843,9 @@ class SuperPickyApp:
         self.dir_entry.insert(0, directory)
         self.reset_btn.config(state='normal')
         self.log(f"📂 已选择目录: {directory}\n")
+
+        # 检测是否存在 report.csv，启用/禁用"二次选鸟"按钮
+        self._check_report_csv()
 
     def reset_directory(self):
         """重置目录"""
@@ -896,6 +938,7 @@ class SuperPickyApp:
         """处理完成回调"""
         self.start_btn.config(state='normal')
         self.reset_btn.config(state='normal')
+        self.post_da_btn.config(state='normal')  # 启用二次选鸟
         self.progress_bar['value'] = 100
 
         # V3.1: 清空日志窗口，然后显示最终报告（方便查看，无需滚动）
