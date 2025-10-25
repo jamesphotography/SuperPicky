@@ -30,7 +30,7 @@ class PostAdjustmentDialog:
         """
         self.window = tk.Toplevel(parent)
         self.window.title("二次选鸟 - 优化评分标准")
-        self.window.geometry("750x700")  # 与主界面一致
+        self.window.geometry("750x800")  # 高度增加100
         self.window.resizable(False, False)
 
         self.directory = directory
