@@ -30,7 +30,7 @@ class PostAdjustmentDialog:
         """
         self.window = tk.Toplevel(parent)
         self.window.title("二次选鸟 - 调整评分标准")
-        self.window.geometry("600x650")
+        self.window.geometry("750x700")  # 与主界面一致
         self.window.resizable(False, False)
 
         self.directory = directory
@@ -75,17 +75,17 @@ class PostAdjustmentDialog:
         self._center_window()
 
     def _create_widgets(self):
-        """创建UI组件 - 简洁专业风格"""
+        """创建UI组件 - 与主界面风格一致"""
 
         # ===== 1. 顶部说明 =====
         desc_frame = ttk.Frame(self.window, padding=15)
         desc_frame.pack(fill=tk.X)
 
-        desc_text = "基于已有AI分析结果，快速调整评分标准（无需重新运行AI）"
+        desc_text = "📊 基于已有AI分析结果，快速调整评分标准（无需重新运行AI）"
         ttk.Label(
             desc_frame,
             text=desc_text,
-            font=("Arial", 10),
+            font=("Arial", 11),
             foreground="#666"
         ).pack()
 
@@ -97,11 +97,11 @@ class PostAdjustmentDialog:
         )
         stats_frame.pack(fill=tk.X, padx=15, pady=(0, 10))
 
-        # 使用Label而非Text，设置合适的背景色
+        # 使用Label而非Text
         self.current_stats_label = ttk.Label(
             stats_frame,
             text="加载中...",
-            font=("Arial", 12),
+            font=("Arial", 13),
             justify=tk.LEFT,
             anchor="w"
         )
@@ -119,7 +119,7 @@ class PostAdjustmentDialog:
         ttk.Label(
             threshold_frame,
             text="拖动滑块调整阈值，实时预览变化",
-            font=("Arial", 10),
+            font=("Arial", 11),
             foreground="#666"
         ).pack(pady=(0, 12))
 
@@ -165,7 +165,7 @@ class PostAdjustmentDialog:
         self.preview_stats_label = ttk.Label(
             preview_frame,
             text="调整阈值后，这里将显示新的星级分布...",
-            font=("Arial", 12),
+            font=("Arial", 13),
             justify=tk.LEFT,
             anchor="nw",
             foreground="#666"
@@ -179,7 +179,7 @@ class PostAdjustmentDialog:
         self.progress_label = ttk.Label(
             self.progress_frame,
             text="",
-            font=("Arial", 12)
+            font=("Arial", 13)
         )
         self.progress_label.pack()
 
@@ -215,7 +215,7 @@ class PostAdjustmentDialog:
             container,
             text=label_text,
             width=18,
-            font=("Arial", 12)
+            font=("Arial", 13)
         )
         label.pack(side=tk.LEFT)
 
@@ -235,7 +235,7 @@ class PostAdjustmentDialog:
             container,
             text=format_func(variable.get()),
             width=8,
-            font=("Arial", 12)
+            font=("Arial", 13)
         )
         value_label.pack(side=tk.LEFT)
 
@@ -312,12 +312,12 @@ class PostAdjustmentDialog:
         text = f"总共: {total} 张有鸟照片\n\n"
 
         if stats.get('picked', 0) > 0:
-            text += f"精选旗标: {stats['picked']} 张\n\n"
+            text += f"🏆 精选旗标: {stats['picked']} 张\n\n"
 
-        text += f"★★★ 3星: {stats['star_3']} 张 ({stats['star_3']/total*100:.1f}%)\n"
-        text += f"★★  2星: {stats['star_2']} 张 ({stats['star_2']/total*100:.1f}%)\n"
-        text += f"★   1星: {stats['star_1']} 张 ({stats['star_1']/total*100:.1f}%)\n"
-        text += f"    0星: {stats['star_0']} 张 ({stats['star_0']/total*100:.1f}%)"
+        text += f"⭐⭐⭐ 3星: {stats['star_3']} 张 ({stats['star_3']/total*100:.1f}%)\n"
+        text += f"⭐⭐ 2星: {stats['star_2']} 张 ({stats['star_2']/total*100:.1f}%)\n"
+        text += f"⭐ 1星: {stats['star_1']} 张 ({stats['star_1']/total*100:.1f}%)\n"
+        text += f"0星: {stats['star_0']} 张 ({stats['star_0']/total*100:.1f}%)"
 
         self.current_stats_label.config(text=text)
 
@@ -388,18 +388,18 @@ class PostAdjustmentDialog:
             old_picked = old.get('picked', 0)
             picked_diff = picked_count - old_picked
             if picked_diff > 0:
-                text += f"精选旗标: {picked_count} 张 ({picked_pct:.1f}% of 3星)  [+{picked_diff}]\n\n"
+                text += f"🏆 精选旗标: {picked_count} 张 ({picked_pct:.1f}% of 3星)  [+{picked_diff}]\n\n"
             elif picked_diff < 0:
-                text += f"精选旗标: {picked_count} 张 ({picked_pct:.1f}% of 3星)  [{picked_diff}]\n\n"
+                text += f"🏆 精选旗标: {picked_count} 张 ({picked_pct:.1f}% of 3星)  [{picked_diff}]\n\n"
             else:
-                text += f"精选旗标: {picked_count} 张 ({picked_pct:.1f}% of 3星)  [无变化]\n\n"
+                text += f"🏆 精选旗标: {picked_count} 张 ({picked_pct:.1f}% of 3星)  [无变化]\n\n"
         else:
-            text += f"精选旗标: 0 张 (无3星照片)\n\n"
+            text += f"🏆 精选旗标: 0 张 (无3星照片)\n\n"
 
-        text += f"★★★ 3星: {format_diff(old['star_3'], new['star_3'], total)}\n"
-        text += f"★★  2星: {format_diff(old['star_2'], new['star_2'], total)}\n"
-        text += f"★   1星: {format_diff(old['star_1'], new['star_1'], total)}\n"
-        text += f"    0星: {format_diff(old['star_0'], new['star_0'], total)}"
+        text += f"⭐⭐⭐ 3星: {format_diff(old['star_3'], new['star_3'], total)}\n"
+        text += f"⭐⭐ 2星: {format_diff(old['star_2'], new['star_2'], total)}\n"
+        text += f"⭐ 1星: {format_diff(old['star_1'], new['star_1'], total)}\n"
+        text += f"0星: {format_diff(old['star_0'], new['star_0'], total)}"
 
         self.preview_stats_label.config(text=text, foreground="#000")
 
