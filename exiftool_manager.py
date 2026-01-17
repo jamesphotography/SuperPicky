@@ -115,24 +115,28 @@ class ExifToolManager:
             print(f"   ❌ ExifTool 验证异常: {type(e).__name__}: {e}")
             return False
 
-    def set_rating_and_pick(
-        self,
-        file_path: str,
-        rating: int,
-        pick: int = 0,
-        sharpness: float = None,
-        nima_score: float = None
-    ) -> bool:
+    def _escape_arg(self, arg: str) -> str:
         """
-        设置照片评分和旗标 (Lightroom标准)
+        V4.2: 为 ExifTool -E 模式转义参数。
+        将特殊字符转义为 HTML 实体，特别是将换行符转义为 &#10;，
+        从而允许在 stdin (-@ -) 模式的单行中传递多行文本。
+        """
+        if arg is None:
+            return ""
+        # 必须转义 & 为 &amp; 因为我们开启了 -E 模式
+        return str(arg).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "&#10;").replace("\r", "&#13;")
+
+    def set_rating_and_pick(self, file_path: str, rating: int, pick: int = 0, sharpness: float = None,
+                          nima_score: float = None) -> bool:
+        """
+        设置照片的评分和旗标
 
         Args:
             file_path: 文件路径
-            rating: 评分 (-1=拒绝, 0=无评分, 1-5=星级)
-            pick: 旗标 (-1=排除旗标, 0=无旗标, 1=精选旗标)
-            sharpness: 锐度值（可选，写入IPTC:City字段，用于Lightroom排序）
-            nima_score: NIMA美学评分（可选，写入IPTC:Province-State字段）
-            # V3.2: 移除 brisque_score 参数
+            rating: 评分 (0-5)
+            pick: 旗标 (1=精选, 0=无, -1=排除)
+            sharpness: 锐度分数 (可选)
+            nima_score: NIMA评分 (可选)
 
         Returns:
             是否成功
@@ -141,59 +145,17 @@ class ExifToolManager:
             print(f"❌ 文件不存在: {file_path}")
             return False
 
-        # 构建exiftool命令
-        cmd = [
-            self.exiftool_path,
-            f'-Rating={rating}',
-            f'-XMP:Pick={pick}',
-        ]
+        # V4.2: 通过 batch_set_metadata 统一入口，获取 stdin 模式的稳定性
+        # 将单文件封装为列表进行批量处理（底层使用 stdin 模式）
+        result_stats = self.batch_set_metadata([{
+            'file': file_path,
+            'rating': rating,
+            'pick': pick,
+            'sharpness': sharpness,
+            'nima_score': nima_score
+        }])
 
-        # V3.9.1: 改用 XMP 字段代替 IPTC，原生支持 UTF-8 中文
-        # 兼容性最好的是 XMP:City, XMP:State, XMP:Country
-        if sharpness is not None:
-            sharpness_str = f'{sharpness:06.2f}'
-            cmd.append(f'-XMP:City={sharpness_str}')
-
-        if nima_score is not None:
-            nima_str = f'{nima_score:05.2f}'
-            cmd.append(f'-XMP:State={nima_str}')
-
-        # 强制使用 UTF-8 编码
-        cmd.insert(1, '-charset')
-        cmd.insert(2, 'utf8')
-
-        cmd.extend(['-overwrite_original', file_path])
-
-        try:
-            # V3.9.4: 在 Windows 上隐藏控制台窗口
-            creationflags = subprocess.CREATE_NO_WINDOW if sys.platform.startswith('win') else 0
-            
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=30,
-                encoding='utf-8',
-                creationflags=creationflags
-            )
-
-            if result.returncode == 0:
-                filename = os.path.basename(file_path)
-                pick_desc = {-1: "排除旗标", 0: "无旗标", 1: "精选旗标"}.get(pick, str(pick))
-                sharpness_info = f", 锐度={sharpness:06.2f}" if sharpness is not None else ""
-                nima_info = f", NIMA={nima_score:05.2f}" if nima_score is not None else ""
-                print(f"✅ EXIF已更新: {filename} (Rating={rating}, Pick={pick_desc}{sharpness_info}{nima_info})")
-                return True
-            else:
-                print(f"❌ ExifTool错误: {result.stderr}")
-                return False
-
-        except subprocess.TimeoutExpired:
-            print(f"❌ ExifTool超时: {file_path}")
-            return False
-        except Exception as e:
-            print(f"❌ ExifTool异常: {e}")
-            return False
+        return result_stats['success'] > 0
 
     def batch_set_metadata(
         self,
@@ -220,90 +182,81 @@ class ExifToolManager:
         # ExifTool批量模式：使用 -execute 分隔符为每个文件单独设置参数
         # V3.9.1: 改用 XMP 字段，XMP 原生支持 UTF-8 中文
         # V3.9.4: 强制指定编码为 utf8 解决 Windows/Mac 的中文乱码问题
-        cmd = [self.exiftool_path, '-charset', 'utf8']
+        # V4.2: 改用 stdin (-@ -) 模式彻底解决 Windows 命令行编码破坏中文的问题
+        # 同时增加 -E 参数以支持转义字符（如多行题注中的换行符）
+        cmd = [self.exiftool_path, '-charset', 'utf8', '-E', '-@', '-']
 
+        arg_lines = []
         for item in files_metadata:
             file_path = item['file']
-            # V4.1: 只在明确提供 rating/pick 时才写入，避免覆盖已有值
-            rating = item.get('rating', None)  # None 表示不写入
-            pick = item.get('pick', None)      # None 表示不写入
+            rating = item.get('rating', None)
+            pick = item.get('pick', None)
             sharpness = item.get('sharpness', None)
             nima_score = item.get('nima_score', None)
-            label = item.get('label', None)  # V3.4: 颜色标签
-            focus_status = item.get('focus_status', None)  # V3.9: 对焦状态
-            caption = item.get('caption', None)  # V4.0: 详细评分说明
+            label = item.get('label', None)
+            focus_status = item.get('focus_status', None)
+            caption = item.get('caption', None)
 
             if not os.path.exists(file_path):
                 print(f"⏭️  跳过不存在的文件: {file_path}")
                 stats['failed'] += 1
                 continue
 
-            # 为这个文件添加命令参数
-            # V4.1: 只在明确提供时才写入 Rating/Pick
+            # V4.2: 参数通过 arg_lines 传递，不再直接拼在 cmd 中
             if rating is not None:
-                cmd.append(f'-Rating={rating}')
+                arg_lines.append(f'-Rating={rating}')
             if pick is not None:
-                cmd.append(f'-XMP:Pick={pick}')
+                arg_lines.append(f'-XMP:Pick={pick}')
 
-            # V3.9.1: 改用 XMP 字段代替 IPTC，解决 Canon CR3 等格式不支持 IPTC 问题
-            # XMP 字段在 Lightroom 中同样可以按 City/State/Country 排序
-            
-            # 锐度值 → XMP:City（补零到6位，确保文本排序正确）
-            # 格式：000.00 到 999.99，例如：004.68, 100.50
             if sharpness is not None:
-                sharpness_str = f'{sharpness:06.2f}'  # 6位总宽度，2位小数，前面补零
-                cmd.append(f'-XMP:City={sharpness_str}')
+                sharpness_str = f'{sharpness:06.2f}'
+                arg_lines.append(f'-XMP:City={sharpness_str}')
 
-            # NIMA/TOPIQ美学评分 → XMP:State（省/州）
             if nima_score is not None:
                 nima_str = f'{nima_score:05.2f}'
-                cmd.append(f'-XMP:State={nima_str}')
+                arg_lines.append(f'-XMP:State={nima_str}')
 
-            # V3.4: 颜色标签（如 'Green' 用于飞鸟）
             if label is not None:
-                cmd.append(f'-XMP:Label={label}')
+                arg_lines.append(f'-XMP:Label={label}')
             
-            # V3.9: 对焦状态 → XMP:Country（国家）
             if focus_status is not None:
-                cmd.append(f'-XMP:Country={focus_status}')
+                arg_lines.append(f'-XMP:Country={self._escape_arg(focus_status)}')
             
-            # V4.0: 详细评分说明 → XMP:Description（题注）
             if caption is not None:
-                # V4.2: 恢复换行符支持，并在 Windows 下通过 -charset utf8 保证正确写入
-                cmd.append(f'-XMP:Description={caption}')
+                arg_lines.append(f'-XMP:Description={self._escape_arg(caption)}')
 
-            cmd.append(file_path)
-            cmd.append('-overwrite_original')  # 放在每个文件之后
+            arg_lines.append(file_path)
+            arg_lines.append('-overwrite_original')
+            arg_lines.append('-execute')
 
-            # 添加 -execute 分隔符（除了最后一个文件）
-            cmd.append('-execute')
+        if not arg_lines:
+            return stats
 
         # 执行批量命令
         try:
-            # V3.1.2: 只在处理多个文件时显示消息（单文件处理不显示，避免刷屏）
             if len(files_metadata) > 1:
-                print(f"📦 批量处理 {len(files_metadata)} 个文件...")
+                print(f"📦 批量处理 {len(files_metadata)} 个文件 (Stdin 模式)...")
 
             # V3.9.4: 在 Windows 上隐藏控制台窗口
             creationflags = subprocess.CREATE_NO_WINDOW if sys.platform.startswith('win') else 0
             
+            # 将参数列表转换为换行符分隔的字符串
+            arg_text = "\n".join(arg_lines) + "\n"
+            
             result = subprocess.run(
                 cmd,
+                input=arg_text,
                 capture_output=True,
                 text=True,
                 encoding='utf-8',
-                timeout=300,  # 5分钟超时
+                timeout=300,
                 creationflags=creationflags
             )
 
             if result.returncode == 0:
                 stats['success'] = len(files_metadata) - stats['failed']
-                # V3.1.2: 只在处理多个文件时显示完成消息
                 if len(files_metadata) > 1:
                     print(f"✅ 批量处理完成: {stats['success']} 成功, {stats['failed']} 失败")
-                
-                # V3.9.2: 为 RAF/ORF 文件创建 XMP 侧车文件
-                # Lightroom 无法读取嵌入在这些格式中的 XMP，需要侧车文件
                 self._create_xmp_sidecars_for_raf(files_metadata)
             else:
                 print(f"❌ 批量处理失败: {result.stderr}")
@@ -365,24 +318,30 @@ class ExifToolManager:
         if not os.path.exists(file_path):
             return None
 
-        cmd = [
-            self.exiftool_path,
+        # V3.9.1: 使用 XMP 字段
+        # V3.9.4: 增加 UTF-8 支持
+        # V4.2: 改用 stdin 模式，防止 Windows 路径编码导致的读取失败
+        cmd = [self.exiftool_path, '-charset', 'utf8', '-@', '-']
+        
+        arg_lines = [
+            '-j',
+            '-n',
             '-Rating',
             '-XMP:Pick',
             '-XMP:Label',
-            '-IPTC:City',
-            '-IPTC:Country-PrimaryLocationName',
-            '-IPTC:Province-State',
-            '-json',
+            '-XMP:City',
+            '-XMP:State',
+            '-XMP:Country',
+            '-XMP:Description',
             file_path
         ]
 
         try:
-            # V3.9.4: 在 Windows 上隐藏控制台窗口
             creationflags = subprocess.CREATE_NO_WINDOW if sys.platform.startswith('win') else 0
             
             result = subprocess.run(
                 cmd,
+                input="\n".join(arg_lines) + "\n",
                 capture_output=True,
                 text=True,
                 encoding='utf-8',
@@ -419,16 +378,22 @@ class ExifToolManager:
             return False
 
         # 删除Rating、Pick、City、Country和Province-State字段
-        cmd = [
-            self.exiftool_path,
+        # V4.2: 通过 stdin 模式重置
+        cmd = [self.exiftool_path, '-charset', 'utf8', '-@', '-']
+        arg_lines = [
             '-Rating=',
             '-XMP:Pick=',
             '-XMP:Label=',
             '-IPTC:City=',
             '-IPTC:Country-PrimaryLocationName=',
             '-IPTC:Province-State=',
+            '-XMP:City=',           # V4.0: 锐度
+            '-XMP:State=',          # V4.0: TOPIQ美学
+            '-XMP:Country=',        # V4.0: 对焦状态
+            '-XMP:Description=',    # V4.0: 详细评分说明
+            file_path,
             '-overwrite_original',
-            file_path
+            '-execute'
         ]
 
         try:
@@ -437,6 +402,7 @@ class ExifToolManager:
             
             result = subprocess.run(
                 cmd,
+                input="\n".join(arg_lines) + "\n",
                 capture_output=True,
                 text=True,
                 timeout=30,
@@ -500,11 +466,11 @@ class ExifToolManager:
             if not valid_files:
                 continue
 
-            # 构建ExifTool命令（移除-if条件，强制重置）
-            # V4.0: 添加 XMP 字段清除（City/State/Country/Description）
-            cmd = [
-                self.exiftool_path,
-                '-charset', 'utf8',
+            # 构建ExifTool参数列表
+            # V4.2: 通过 stdin 模式重置，同时增加 -E 支持转义
+            cmd = [self.exiftool_path, '-charset', 'utf8', '-E', '-@', '-']
+            
+            arg_lines = [
                 '-Rating=',
                 '-XMP:Pick=',
                 '-XMP:Label=',
@@ -516,14 +482,22 @@ class ExifToolManager:
                 '-IPTC:Country-PrimaryLocationName=',
                 '-IPTC:Province-State=',
                 '-overwrite_original'
-            ] + valid_files
+            ]
+            # 添加所有有效文件路径
+            arg_lines.extend(valid_files)
+            # 添加执行命令
+            arg_lines.append('-execute')
 
             try:
                 # V3.9.4: 在 Windows 上隐藏控制台窗口
                 creationflags = subprocess.CREATE_NO_WINDOW if sys.platform.startswith('win') else 0
                 
+                # 将参数列表转换为换行符分隔的字符串
+                arg_text = "\n".join(arg_lines) + "\n"
+                
                 result = subprocess.run(
                     cmd,
+                    input=arg_text,
                     capture_output=True,
                     text=True,
                     encoding='utf-8',
