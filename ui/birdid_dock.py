@@ -305,6 +305,49 @@ class ResultCard(QFrame):
         self.clicked.emit(self.rank)
         super().mousePressEvent(event)
 
+    def contextMenuEvent(self, event):
+        """右键菜单：复制鸟名"""
+        from PySide6.QtWidgets import QMenu
+        is_en = self.i18n.current_lang.startswith('en')
+        name = self.en_name if is_en else self.cn_name
+
+        menu = QMenu(self)
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background-color: {COLORS['bg_card']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 6px;
+                padding: 4px;
+                color: {COLORS['text_primary']};
+                font-size: 13px;
+            }}
+            QMenu::item {{
+                padding: 6px 16px;
+                border-radius: 4px;
+            }}
+            QMenu::item:selected {{
+                background-color: {COLORS['accent']};
+                color: {COLORS['bg_void']};
+            }}
+            QMenu::separator {{
+                height: 1px;
+                background: {COLORS['border_subtle']};
+                margin: 4px 8px;
+            }}
+        """)
+
+        copy_label = f'Copy "{name}"' if is_en else f'复制 "{name}"'
+        menu.addAction(copy_label, lambda: QApplication.clipboard().setText(name))
+
+        menu.addSeparator()
+
+        full = f"{self.cn_name} / {self.en_name} ({self.confidence:.0f}%)"
+        full_label = "Copy full info" if is_en else "复制完整信息"
+        menu.addAction(full_label, lambda: QApplication.clipboard().setText(full))
+
+        menu.exec(event.globalPos())
+
+
 
 class BirdIDDockWidget(QDockWidget):
     """鸟类识别停靠面板 - 深色主题"""
