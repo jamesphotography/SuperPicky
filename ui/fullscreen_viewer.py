@@ -233,9 +233,12 @@ class _FullscreenImageLabel(QLabel):
 
     # ── 公共接口 ────────────────────────────────────────────
 
-    def set_pixmap(self, pixmap: QPixmap):
-        """设置图片，重置为适配模式。"""
-        self._pixmap = pixmap
+    def set_pixmap(self, pixmap_or_image):
+        """设置图片（可以是 QPixmap 或 QImage），重置为适配模式。"""
+        if isinstance(pixmap_or_image, QImage):
+            self._pixmap = QPixmap.fromImage(pixmap_or_image)
+        else:
+            self._pixmap = pixmap_or_image
         self._fit_mode = True
         self._drag_active = False
         self._zoom_anim_timer.stop()  # 停止上一张图的动画
@@ -458,11 +461,19 @@ class _FullscreenImageLabel(QLabel):
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setRenderHint(QPainter.SmoothPixmapTransform)
 
+        if self._pixmap is None:
+            painter.end()
+            return
+
         # 方案C：用 painter transform 绘制，让 Qt/GPU 做缩放
         painter.save()
         painter.translate(ox, oy)
         painter.scale(scale, scale)
-        painter.drawPixmap(0, 0, self._pixmap)
+        # 确保绘制的是 QPixmap；如果 self._pixmap 依然是 QImage（防御性检查），转为 QPixmap
+        pix = self._pixmap
+        if isinstance(pix, QImage):
+            pix = QPixmap.fromImage(pix)
+        painter.drawPixmap(0, 0, pix)
         painter.restore()
 
         # 焦点叠加（仅在可见且坐标/状态有效时绘制）
