@@ -123,8 +123,8 @@ class _PreloadWorker(QThread):
 # ============================================================
 
 class _ImageLoader(QThread):
-    """后台线程加载 QPixmap，避免主线程阻塞。"""
-    ready = Signal(object)   # QPixmap
+    """后台线程加载 QImage，避免主线程 QPixmap 线程安全问题。"""
+    ready = Signal(object)   # QImage
 
     def __init__(self, path: str, parent=None):
         super().__init__(parent)
@@ -138,12 +138,12 @@ class _ImageLoader(QThread):
         if self._cancelled:
             return
         if self._path and os.path.exists(self._path):
-            px = QPixmap(self._path)
+            img = QImage(self._path)
             if not self._cancelled:
-                self.ready.emit(px)
+                self.ready.emit(img)
         else:
             if not self._cancelled:
-                self.ready.emit(QPixmap())
+                self.ready.emit(QImage())
 
 
 # ============================================================
@@ -1065,13 +1065,15 @@ class FullscreenViewer(QWidget):
         return None
 
     @Slot(object)
-    def _on_image_ready(self, pixmap: QPixmap, path: str = ""):
-        """后台加载完成：转存为 QImage 进高清缓存，并更新图片显示。"""
-        if not pixmap.isNull():
+    def _on_image_ready(self, img: QImage, path: str = ""):
+        """后台加载完成：转存进高清缓存，并更新图片显示。"""
+        if not img.isNull():
             if path:
-                # QPixmap.toImage() 在主线程执行，线程安全
-                _hd_cache.put(path, pixmap.toImage())
-            self._img_label.set_pixmap(pixmap)
+                _hd_cache.put(path, img)
+            
+            # 主线程中转换为 QPixmap
+            px = QPixmap.fromImage(img)
+            self._img_label.set_pixmap(px)
             # 功能2：后台高清图加载完成后也还原锁定的缩放和位置
             if self._zoom_locked:
                 self._img_label.restore_zoom(

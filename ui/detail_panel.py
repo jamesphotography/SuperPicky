@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QSizePolicy
 )
 from PySide6.QtCore import Qt, Signal, QSize, QThread, Slot, QTimer
-from PySide6.QtGui import QPixmap, QFont, QGuiApplication
+from PySide6.QtGui import QPixmap, QFont, QGuiApplication, QImage
 
 from ui.styles import COLORS, FONTS
 
@@ -38,12 +38,12 @@ class _ImageLoader(QThread):
         if self._cancelled:
             return
         if self._path and os.path.exists(self._path):
-            px = QPixmap(self._path)
+            img = QImage(self._path)
             if not self._cancelled:
-                self.ready.emit(px)
+                self.ready.emit(img)
         else:
             if not self._cancelled:
-                self.ready.emit(QPixmap())
+                self.ready.emit(QImage())
 
 
 # 对焦状态显示颜色（与缩略图圆点、筛选面板保持一致）
@@ -618,9 +618,10 @@ class DetailPanel(QWidget):
         return path if path and os.path.exists(path) else None
 
     @Slot(object)
-    def _on_image_ready(self, pixmap: QPixmap):
+    def _on_image_ready(self, img: QImage):
         """后台加载完成，更新图片显示。"""
-        self._img_label.set_pixmap(pixmap)
+        px = QPixmap.fromImage(img)
+        self._img_label.set_pixmap(px)
 
     @staticmethod
     def _format_shutter(val) -> str:

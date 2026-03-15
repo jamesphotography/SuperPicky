@@ -14,8 +14,8 @@ from PySide6.QtWidgets import (
     QScrollArea, QWidget, QGridLayout, QLabel, QFrame,
     QVBoxLayout, QSizePolicy
 )
-from PySide6.QtCore import Qt, Signal, QThread, QObject, Slot, QSize, QTimer
-from PySide6.QtGui import QPixmap, QColor, QPainter, QPen, QFont, QBrush
+from PySide6.QtCore import Qt, Signal, QThread, QObject, Slot, QSize, QTimer, QPoint
+from PySide6.QtGui import QPixmap, QColor, QPainter, QPen, QFont, QBrush, QImage
 
 from ui.styles import COLORS, FONTS
 
@@ -51,13 +51,13 @@ class _LRUCache:
         self._cache: OrderedDict = OrderedDict()
         self._maxsize = maxsize
 
-    def get(self, key) -> Optional[QPixmap]:
+    def get(self, key) -> Optional[QImage]:
         if key not in self._cache:
             return None
         self._cache.move_to_end(key)
         return self._cache[key]
 
-    def put(self, key, value: QPixmap):
+    def put(self, key, value: QImage):
         if key in self._cache:
             self._cache.move_to_end(key)
         self._cache[key] = value
@@ -76,7 +76,7 @@ _thumb_cache = _LRUCache(500)
 # ============================================================
 
 class _LoaderSignals(QObject):
-    thumbnail_ready = Signal(str, object)   # filename, QPixmap
+    thumbnail_ready = Signal(str, object)   # filename, QImage
     load_error = Signal(str)
 
 
@@ -130,13 +130,75 @@ class ThumbnailLoader(QThread):
                     x = (pixmap.width() - self._thumb_size) // 2
                     y = (pixmap.height() - self._thumb_size) // 2
                     pixmap = pixmap.copy(x, y, self._thumb_size, self._thumb_size)
+
+                # V4.2 OPT: 后台绘制静态叠加层 (评分 + 对焦状态 + burst)
+                self._draw_static_overlays(pixmap, photo)
+
                 _thumb_cache.put(filename, pixmap)
                 self.signals.thumbnail_ready.emit(filename, pixmap)
             else:
-                self.signals.thumbnail_ready.emit(filename, QPixmap())
+                self.signals.thumbnail_ready.emit(filename, QImage())
 
-    def _load_pixmap(self, photo: dict) -> Optional[QPixmap]:
-        """按优先级查找可用图片文件并加载。"""
+    def _draw_static_overlays(self, image: QImage, photo: dict):
+        """在 QImage 上预先绘制静态叠加层（评分、对焦状态等），减轻 UI 线程负担。"""
+        painter = QPainter(image)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        rating = photo.get("rating", 0)
+        focus = photo.get("focus_status")
+
+        # 右上角：评分星标
+        if rating and rating > 0:
+            if rating >= 4:
+                stars = f"{rating}★"
+            else:
+                stars = "★" * rating
+            color = _RATING_COLORS.get(rating, QColor(COLORS['text_muted']))
+            bg = QColor(0, 0, 0, 160)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(bg)
+            rect_w = 40 if rating >= 4 else 36
+            rect_h = 16
+            x = image.width() - rect_w - 4
+            painter.drawRoundedRect(x, 4, rect_w, rect_h, 4, 4)
+            painter.setPen(color)
+            font = QFont()
+            font.setPixelSize(10)
+            painter.setFont(font)
+            painter.drawText(x, 4, rect_w, rect_h, Qt.AlignCenter, stars)
+
+        # 右下角：对焦状态圆点
+        if focus and focus in _FOCUS_DOT_COLORS:
+            dot_color = _FOCUS_DOT_COLORS[focus]
+            cx = image.width() - 10
+            cy = image.height() - 10
+            painter.setPen(QPen(QColor(255, 255, 255, 180), 1.5))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawEllipse(cx - 6, cy - 6, 12, 12)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(dot_color)
+            painter.drawEllipse(cx - 4, cy - 4, 8, 8)
+
+        # 左下角：burst 编号
+        burst_total = photo.get("burst_total")
+        burst_pos = photo.get("burst_position")
+        if burst_total is not None and burst_pos is not None:
+            burst_text = f"B{burst_total}/{burst_pos}"
+            bg = QColor(0, 0, 0, 160)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(bg)
+            rect_w, rect_h = 38, 16
+            painter.drawRoundedRect(4, image.height() - rect_h - 4, rect_w, rect_h, 4, 4)
+            painter.setPen(QColor(220, 220, 220))
+            font = QFont()
+            font.setPixelSize(9)
+            painter.setFont(font)
+            painter.drawText(4, image.height() - rect_h - 4, rect_w, rect_h, Qt.AlignCenter, burst_text)
+
+        painter.end()
+
+    def _load_pixmap(self, photo: dict) -> Optional[QImage]:
+        """按优先级查找可用图片文件并加载到 QImage。"""
         candidates = []
 
         # 1. yolo_debug_path（全图 + 检测框，构图感更好）
@@ -162,9 +224,9 @@ class ThumbnailLoader(QThread):
                 candidates.append(op)
 
         for path in candidates:
-            px = QPixmap(path)
-            if not px.isNull():
-                return px
+            img = QImage(path)
+            if not img.isNull():
+                return img
 
         return None
 
@@ -191,7 +253,8 @@ class ThumbnailCard(QFrame):
         self._thumb_size = thumb_size
         self._selected = False
         self._multi_selected_state = False
-        self._raw_pixmap: Optional[QPixmap] = None  # 原始未叠加 pixmap
+        self._raw_image: Optional[QImage] = None  # 存储带静态叠加层的 QImage
+        self._final_pixmap: Optional[QPixmap] = None # 最终显示的 QPixmap
 
         self.setFixedSize(thumb_size + 8, thumb_size + 32)
         self.setStyleSheet(self._normal_style())
@@ -214,11 +277,13 @@ class ThumbnailCard(QFrame):
                 font-size: 11px;
             }}
         """)
-        self.img_label.setText("...")
+        # 移除 "..." 文字，改用背景色以减少视觉闪烁
+        self.img_label.setText("") 
         layout.addWidget(self.img_label)
 
         # 文件名 label
-        self.name_label = QLabel(photo.get("filename", ""))
+        fn = photo.get("filename", "")
+        self.name_label = QLabel(fn)
         self.name_label.setAlignment(Qt.AlignCenter)
         self.name_label.setStyleSheet(f"""
             QLabel {{
@@ -230,81 +295,29 @@ class ThumbnailCard(QFrame):
         self.name_label.setMaximumWidth(thumb_size + 4)
         layout.addWidget(self.name_label)
 
-    def set_pixmap(self, pixmap: QPixmap):
-        if pixmap.isNull():
-            self._raw_pixmap = None
+    def set_pixmap(self, image: QImage):
+        if image.isNull():
+            self._raw_image = None
+            self._final_pixmap = None
             self.img_label.setText("—")
         else:
-            self._raw_pixmap = pixmap  # 存原始，供 _draw_overlays 每次从头绘制
+            self._raw_image = image
+            self._final_pixmap = QPixmap.fromImage(image)
             self.img_label.setText("")
-        # 在图片上绘制叠加层（评分 + 对焦状态 + 选中边框）
+        # 在图片上绘制动态叠加层（选中边框、多选勾选）
         self._draw_overlays()
 
     def _draw_overlays(self):
-        """在 img_label 的 pixmap 上绘制评分角标、对焦指示点和选中边框。"""
-        base = self._raw_pixmap
-        if base is None or base.isNull():
+        """在 img_label 的 pixmap 上绘制动态叠加层（选中边框、多选勾选）。"""
+        if self._final_pixmap is None or self._final_pixmap.isNull():
             return
 
-        overlay = QPixmap(base)
+        # 始终从 raw_image 转换后的 pixmap 开始，避免反复叠加
+        overlay = QPixmap(self._final_pixmap)
         painter = QPainter(overlay)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        rating = self.photo.get("rating", 0)
-        focus = self.photo.get("focus_status")
-
-        # 右上角：评分星标（小圆角矩形）
-        if rating and rating > 0:
-            # 4/5★ 用简洁标记避免超出角标
-            if rating >= 4:
-                stars = f"{rating}★"
-            else:
-                stars = "★" * rating
-            color = _RATING_COLORS.get(rating, QColor(COLORS['text_muted']))
-            bg = QColor(0, 0, 0, 160)
-            painter.setPen(Qt.NoPen)
-            painter.setBrush(bg)
-            rect_w = 40 if rating >= 4 else 36
-            rect_h = 16
-            x = overlay.width() - rect_w - 4
-            painter.drawRoundedRect(x, 4, rect_w, rect_h, 4, 4)
-            painter.setPen(color)
-            font = QFont()
-            font.setPixelSize(10)
-            painter.setFont(font)
-            painter.drawText(x, 4, rect_w, rect_h, Qt.AlignCenter, stars)
-
-        # 右下角：对焦状态圆点（2b：10px + 白色描边）
-        if focus and focus in _FOCUS_DOT_COLORS:
-            dot_color = _FOCUS_DOT_COLORS[focus]
-            cx = overlay.width() - 10
-            cy = overlay.height() - 10
-            # 外白环
-            painter.setPen(QPen(QColor(255, 255, 255, 180), 1.5))
-            painter.setBrush(Qt.NoBrush)
-            painter.drawEllipse(cx - 6, cy - 6, 12, 12)
-            # 内彩色填充
-            painter.setPen(Qt.NoPen)
-            painter.setBrush(dot_color)
-            painter.drawEllipse(cx - 4, cy - 4, 8, 8)
-
-        # 左下角：burst 编号角标
-        burst_total = self.photo.get("burst_total")
-        burst_pos = self.photo.get("burst_position")
-        if burst_total is not None and burst_pos is not None:
-            burst_text = f"B{burst_total}/{burst_pos}"
-            bg = QColor(0, 0, 0, 160)
-            painter.setPen(Qt.NoPen)
-            painter.setBrush(bg)
-            rect_w, rect_h = 38, 16
-            painter.drawRoundedRect(4, overlay.height() - rect_h - 4, rect_w, rect_h, 4, 4)
-            painter.setPen(QColor(220, 220, 220))
-            font = QFont()
-            font.setPixelSize(9)
-            painter.setFont(font)
-            painter.drawText(4, overlay.height() - rect_h - 4, rect_w, rect_h, Qt.AlignCenter, burst_text)
-
-        # 多选勾选标记（C3 中使用，多选时在左上角绘制）
+        # 1. 多选勾选标记
         if getattr(self, '_multi_selected_state', False):
             # 蓝色勾选圆圈
             painter.setPen(Qt.NoPen)
@@ -407,6 +420,11 @@ class ThumbnailGrid(QScrollArea):
         self._last_clicked_idx: int = -1        # Shift 范围选起点
         self._anchor_photo: Optional[dict] = None  # 单选锚点（对比视图左侧）
         self._pending_photos: Optional[list] = None  # 延迟构建用
+        # 分批构建定时器
+        self._batch_timer = QTimer(self)
+        self._batch_timer.timeout.connect(self._build_batch)
+        self._current_batch_idx = 0
+        self._current_col_count = 1  # 记录当前批次使用的列数，保持一致
 
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -464,68 +482,98 @@ class ThumbnailGrid(QScrollArea):
         # 清空缩略图缓存
         _thumb_cache.clear()
 
+        # 彻底重置状态
         self._cards.clear()
         self._selected_filename = ""
         self._multi_selected.clear()
         self._last_clicked_idx = -1
         self._anchor_photo = None
 
-        # 清空旧卡片（保留 _loading_label 避免被 deleteLater 销毁）
-        while self._grid.count():
-            item = self._grid.takeAt(0)
-            w = item.widget()
-            if w and w is not self._loading_label:
-                w.deleteLater()
-
-        if not photos:
-            self._photos = []
-            self._empty_label = QLabel(self.i18n.t("browser.no_results"))
-            self._empty_label.setAlignment(Qt.AlignCenter)
-            self._empty_label.setStyleSheet(
-                f"color: {COLORS['text_muted']}; font-size: 14px; background: transparent;"
-            )
-            self._grid.addWidget(self._empty_label, 0, 0, 1, 1)
-            return
-
-        # 显示加载提示 + 延迟构建（等布局稳定后用正确宽度计算列数）
-        self._loading_label.show()
-        self._grid.addWidget(self._loading_label, 0, 0, 1, 1)
+        # 移除旧卡片的清理逻辑到 _deferred_build 中执行，减少 load_photos 瞬间的白屏/空屏感
+        
+        # 移除加载提示，改为渐进式渲染
         self._pending_photos = photos
         self._build_timer.start()
 
     def _deferred_build(self):
-        """延迟构建网格（布局稳定后执行，列数计算精准）。"""
+        """延迟构建网格开始（布局稳定后执行）。"""
         photos = self._pending_photos
         if photos is None:
             return
         self._pending_photos = None
         self._photos = photos
 
-        # 移除 loading label
-        self._loading_label.hide()
+        # 1. 计算列数
+        self._current_col_count = max(1, (self.width() - 32) // (self._thumb_size + 8))
+        
+        # 2. 彻底清空网格
         while self._grid.count():
             item = self._grid.takeAt(0)
             w = item.widget()
-            if w and w is not self._loading_label:
-                w.deleteLater()
+            if w: w.deleteLater()
+        
+        for r in range(self._grid.rowCount()):
+            self._grid.setRowStretch(r, 0)
+            self._grid.setRowMinimumHeight(r, 0)
 
-        # 动态计算列数（此时布局已稳定）
-        col_count = max(1, (self.width() - 32) // (self._thumb_size + 8))
+        # 3. 准备开始分批
+        self._batch_timer.stop()
+        self._current_batch_idx = 0
+        
+        # 4. 【关键优化】立即渲染第一批，避免跳转
+        self._build_batch() 
 
-        # 创建所有卡片
-        for idx, photo in enumerate(photos):
+        # 5. 启动后续分批
+        if self._current_batch_idx < len(self._photos):
+            self._batch_timer.start(5)
+
+    def _build_batch(self):
+        """分批构建卡片，防止 UI 假死。"""
+        if not self._photos:
+            self._batch_timer.stop()
+            return
+
+        batch_size = 60  # 稍微加大批次，平衡响应速度与首屏加载速度
+        total = len(self._photos)
+        end_idx = min(self._current_batch_idx + batch_size, total)
+
+        col_count = self._current_col_count
+        last_row = 0
+
+        for idx in range(self._current_batch_idx, end_idx):
+            photo = self._photos[idx]
             row, col = divmod(idx, col_count)
+            last_row = row
             card = ThumbnailCard(photo, self._thumb_size)
             card.clicked.connect(self._on_card_clicked)
             card.double_clicked.connect(lambda p: self.photo_double_clicked.emit(p))
             card.context_menu_requested.connect(self._on_context_menu_requested)
-            self._cards[photo.get("filename", "")] = card
+            filename = photo.get("filename", "")
+            self._cards[filename] = card
             self._grid.addWidget(card, row, col)
+            
+            # 强制设置行最小高度，确保布满高度，防止 squashing
+            self._grid.setRowMinimumHeight(row, self._thumb_size + 32)
 
-        # 启动异步加载
-        self._loader = ThumbnailLoader(photos, self._thumb_size, self)
-        self._loader.signals.thumbnail_ready.connect(self._on_thumbnail_ready)
-        self._loader.start()
+            # 如果该照片在缓存中已有 Ready 的 QImage，顺便刷上（避免等 Loader）
+            cached = _thumb_cache.get(filename)
+            if cached:
+                card.set_pixmap(cached)
+
+        self._current_batch_idx = end_idx
+
+        if self._current_batch_idx >= total:
+            self._batch_timer.stop()
+            # 补一个尾部弹簧，将所有行推到顶部
+            self._grid.setRowStretch(last_row + 1, 1)
+
+            # 启动异步 Loader（处理未命中的图片）
+            if self._loader and self._loader.isRunning():
+                self._loader.cancel()
+                self._loader.wait(500)
+            self._loader = ThumbnailLoader(self._photos, self._thumb_size, self)
+            self._loader.signals.thumbnail_ready.connect(self._on_thumbnail_ready)
+            self._loader.start()
 
     def set_thumb_size(self, size: int):
         """调整缩略图尺寸并重新加载。"""
@@ -613,10 +661,10 @@ class ThumbnailGrid(QScrollArea):
         return None
 
     @Slot(str, object)
-    def _on_thumbnail_ready(self, filename: str, pixmap):
+    def _on_thumbnail_ready(self, filename: str, image: QImage):
         card = self._cards.get(filename)
         if card:
-            card.set_pixmap(pixmap)
+            card.set_pixmap(image)
 
     def _on_card_clicked(self, photo: dict):
         """处理卡片点击，支持 Ctrl/Shift 多选（C3）。"""
@@ -700,5 +748,8 @@ class ThumbnailGrid(QScrollArea):
         super().resizeEvent(event)
         # 窗口改变大小时延迟重排网格（复用 _build_timer 防抖）
         if self._photos and not self._pending_photos:
-            self._pending_photos = self._photos
-            self._build_timer.start()
+            # 计算新列数，如果没变就跳过重排，极大减少闪烁
+            new_col_count = max(1, (self.width() - 32) // (self._thumb_size + 8))
+            if new_col_count != self._current_col_count:
+                self._pending_photos = self._photos
+                self._build_timer.start()
