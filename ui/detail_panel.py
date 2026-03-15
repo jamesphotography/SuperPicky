@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QSizePolicy
 )
 from PySide6.QtCore import Qt, Signal, QSize, QThread, Slot, QTimer
-from PySide6.QtGui import QPixmap, QFont, QGuiApplication
+from PySide6.QtGui import QPixmap, QFont, QGuiApplication, QImage
 
 from ui.styles import COLORS, FONTS
 
@@ -38,12 +38,12 @@ class _ImageLoader(QThread):
         if self._cancelled:
             return
         if self._path and os.path.exists(self._path):
-            px = QPixmap(self._path)
+            img = QImage(self._path)
             if not self._cancelled:
-                self.ready.emit(px)
+                self.ready.emit(img)
         else:
             if not self._cancelled:
-                self.ready.emit(QPixmap())
+                self.ready.emit(QImage())
 
 
 # 对焦状态显示颜色（与缩略图圆点、筛选面板保持一致）
@@ -618,9 +618,10 @@ class DetailPanel(QWidget):
         return path if path and os.path.exists(path) else None
 
     @Slot(object)
-    def _on_image_ready(self, pixmap: QPixmap):
+    def _on_image_ready(self, img: QImage):
         """后台加载完成，更新图片显示。"""
-        self._img_label.set_pixmap(pixmap)
+        px = QPixmap.fromImage(img)
+        self._img_label.set_pixmap(px)
 
     @staticmethod
     def _format_shutter(val) -> str:
@@ -722,7 +723,15 @@ class DetailPanel(QWidget):
         self._val_confidence.setText(f"{conf*100:.1f}%" if conf else _unknown)
 
         # 文件名
-        self._val_filename.setText(p.get("filename") or _unknown)
+        fn = p.get("filename") or _unknown
+        burst_pos = p.get("burst_position_index")
+        burst_total = p.get("burst_total_count")
+        if burst_pos and burst_total:
+            fn = f"{fn} ({burst_pos}/{burst_total})"
+        elif p.get("is_burst_group") and p.get("burst_count", 1) > 1:
+            fn = f"{fn} (1/{p.get('burst_count')})"
+            
+        self._val_filename.setText(fn)
 
         # 拍摄时间
         dt = p.get("date_time_original") or _unknown

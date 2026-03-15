@@ -63,7 +63,6 @@ jobs:
         Get-ChildItem -Path output -Recurse -Filter "SuperPicky_Setup_Win64*.exe" | ForEach-Object {
           Copy-Item -Path $_.FullName -Destination release_assets\
         }
-        Copy-Item -Path ChangeLog.md -Destination release_assets\
 
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v2

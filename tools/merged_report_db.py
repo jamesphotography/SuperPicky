@@ -74,12 +74,59 @@ class MergedReportDB:
         
         return sql, params
     
-    def get_all_photos(self) -> List[dict]:
-        """获取所有目录的照片记录"""
+    def update_burst_ids(self, burst_map: dict) -> int:
+        """
+        跨数据库批量更新 burst_id。
+        因为 merged_db 是用多数据库联合挂载的，所以要分配给对应的子数据库更新。
+        
+        Args:
+            burst_map: 字典，格式为 {filename: (burst_id, burst_position)}
+        """
+        if not burst_map:
+            return 0
+            
+        total_updated = 0
+        from .report_db import _now_iso
+        now = _now_iso()
+        
         with self._lock:
-            sql, params = self._build_union_sql()
-            cursor = self._conn.execute(sql, params)
-            return [dict(row) for row in cursor.fetchall()]
+            # Group updates by alias
+            updates_by_alias = {alias: [] for alias in self._db_aliases}
+            
+            # Find which alias each filename belongs to
+            # This is slow if done one by one, better to query all at once
+            for alias in self._db_aliases:
+                cursor = self._conn.execute(f"SELECT filename FROM {alias}.photos")
+                filenames = {row[0] for row in cursor.fetchall()}
+                for filename in burst_map:
+                    if filename in filenames:
+                        bid, pos = burst_map[filename]
+                        updates_by_alias[alias].append((bid, pos, now, filename))
+            
+            for alias, updates in updates_by_alias.items():
+                if updates:
+                    sql = f"""
+                    UPDATE {alias}.photos 
+                    SET burst_id = ?, burst_position = ?, updated_at = ? 
+                    WHERE filename = ?
+                    """
+                    cursor = self._conn.executemany(sql, updates)
+                    total_updated += cursor.rowcount
+            
+            self._safe_commit()
+            
+        return total_updated
+
+    def _safe_commit(self):
+        if not self._conn:
+            return
+        try:
+            if self._conn.in_transaction:
+                self._conn.commit()
+        except sqlite3.OperationalError as e:
+            if "no transaction is active" in str(e).lower():
+                return
+            raise
     
     def get_photos_by_filters(self, filters: Optional[dict] = None) -> List[dict]:
         """按筛选条件查询（兼容 ReportDB 接口）"""

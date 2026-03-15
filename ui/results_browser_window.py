@@ -256,11 +256,12 @@ class ResultsBrowserWindow(QMainWindow):
         self._directory: str = ""
         self._all_photos: list = []
         self._filtered_photos: list = []
+        self._raw_filtered_photos: list = [] # V5: Store unfiltered sorted photos
+        self._expanded_bursts: set = set()   # V5: Track expanded burst IDs
         self._is_merged: bool = False
         self._sub_dirs: list = []
 
         self._setup_window()
-        self._setup_menu()
         self._setup_ui()
         self._setup_statusbar()
 
@@ -340,6 +341,7 @@ class ResultsBrowserWindow(QMainWindow):
         self._thumb_grid.photo_selected.connect(self._on_photo_selected)
         self._thumb_grid.photo_double_clicked.connect(self._enter_fullscreen)
         self._thumb_grid.multi_selection_changed.connect(self._on_multi_selection_changed)
+        self._thumb_grid.burst_badge_clicked.connect(self._toggle_burst)
         center_layout.addWidget(self._thumb_grid, 1)
 
         main_h.addWidget(center_widget, 1)
@@ -556,6 +558,7 @@ class ResultsBrowserWindow(QMainWindow):
         self._dir_label.setText(short_name)
         self._dir_label.setToolTip(directory)
         self._all_photos = self._db.get_all_photos()
+        self._compute_burst_ids()
         self._filter_panel.reset_all()
         species = self._db.get_distinct_species(use_en=self.i18n.current_lang.startswith('en'))
         self._filter_panel.update_species_list(species)
@@ -573,6 +576,7 @@ class ResultsBrowserWindow(QMainWindow):
             return
         self._directory = root_dir
         self._all_photos = self._db.get_all_photos()
+        self._compute_burst_ids()
         self._filter_panel.reset_all()
         species = self._db.get_distinct_species(use_en=self.i18n.current_lang.startswith('en'))
         self._filter_panel.update_species_list(species)
@@ -589,6 +593,66 @@ class ResultsBrowserWindow(QMainWindow):
             self._load_merged(self._directory, self._sub_dirs)
         else:
             self._load_single(value)
+
+    def _compute_burst_ids(self):
+        """基于 date_time_original 做秒级 burst 分组，写回 DB。"""
+        if not self._db:
+            return
+
+        photos = self._db.get_all_photos()
+        # 只处理有时间戳且尚未分配 burst_id 的照片
+        untagged = [p for p in photos if p.get("burst_id") is None and p.get("date_time_original")]
+        if not untagged:
+            # 构建 {burst_id: total_count} 供角标显示用
+            from collections import Counter
+            self._burst_totals = Counter(
+                p["burst_id"] for p in self._all_photos if p.get("burst_id") is not None
+            )
+            return
+
+        # 按时间戳排序
+        def _ts(p):
+            return p.get("date_time_original", "") or ""
+
+        untagged.sort(key=_ts)
+
+        # 秒级分组（≤1 秒时间差视为同一 burst）
+        burst_map = {}   # {filename: (burst_id, burst_position)}
+        # 找到当前最大 burst_id
+        max_bid = max([p.get("burst_id") or 0 for p in photos] + [0])
+        burst_id = max_bid + 1 if max_bid > 0 else 0
+        group: list = []
+
+        def _flush_group(grp, bid):
+            if len(grp) > 1:
+                for pos, photo in enumerate(grp, 1):
+                    burst_map[photo["filename"]] = (bid, pos)
+
+        prev_ts = None
+        for photo in untagged:
+            ts = photo.get("date_time_original", "")
+            if prev_ts is None or ts != prev_ts:
+                if group:
+                    _flush_group(group, burst_id)
+                    burst_id += 1
+                group = [photo]
+            else:
+                group.append(photo)
+            prev_ts = ts
+
+        if group:
+            _flush_group(group, burst_id)
+
+        if burst_map:
+            self._db.update_burst_ids(burst_map)
+            # 重新加载（含 burst 字段）
+            self._all_photos = self._db.get_all_photos()
+
+        # 构建 {burst_id: total_count} 供角标显示用
+        from collections import Counter
+        self._burst_totals = Counter(
+            p["burst_id"] for p in self._all_photos if p.get("burst_id") is not None
+        )
 
     # ------------------------------------------------------------------
     #  私有槽
@@ -620,30 +684,111 @@ class ResultsBrowserWindow(QMainWindow):
 
     @Slot(dict)
     def _apply_filters(self, filters: dict):
-        """根据过滤面板的条件刷新缩略图网格。"""
         if not self._db:
             self._thumb_grid.load_photos([])
             self._update_status(0, 0)
             return
 
         raw_photos = self._db.get_photos_by_filters(filters)
-        self._filtered_photos = [self._resolve_photo_paths(p) for p in raw_photos]
-        self._thumb_grid.load_photos(self._filtered_photos)
-        self._fullscreen.set_photo_list(self._filtered_photos)
+        resolved_photos = [self._resolve_photo_paths(p) for p in raw_photos]
+        self._raw_filtered_photos = resolved_photos
 
         total = len(self._all_photos)
-        filtered = len(self._filtered_photos)
+        filtered = len(resolved_photos)
         self._update_status(total, filtered)
         self._filter_panel.update_count(filtered)
+        
+        self._update_display_list()
 
-        # 自动选中第一张
+    def _update_display_list(self):
+        """Flattens the filtered photos list considering the expanded state of burst groups."""
+        # Group by burst_id to find the "best" representative photo for each group
+        burst_map = {}
+        for p in self._raw_filtered_photos:
+            bid = p.get("burst_id")
+            if bid is not None:
+                if bid not in burst_map:
+                    burst_map[bid] = []
+                burst_map[bid].append(p)
+
+        best_burst_photos = {}
+        for bid, photos in burst_map.items():
+            best_photo = max(photos, key=lambda x: (x.get("rating", 0), x.get("composite_score", 0.0)))
+            best_burst_photos[bid] = best_photo.get("filename")
+
+        grouped_photos = []
+        processed_bursts = set()
+        
+        for p in self._raw_filtered_photos:
+            bid = p.get("burst_id")
+            
+            if bid is None:
+                # Normal photo
+                grouped_photos.append(dict(p))
+            else:
+                # It's part of a burst
+                if bid in processed_bursts:
+                    continue # Already handled this burst
+                    
+                processed_bursts.add(bid)
+                burst_photos = burst_map[bid]
+                
+                # Sort the burst internally by filename to ensure sequential order
+                def get_sort_key(x): return x.get("filename", "")
+                burst_photos.sort(key=get_sort_key)
+                
+                if bid in self._expanded_bursts:
+                    # Expanded: add all photos in chronological order
+                    for i, bp in enumerate(burst_photos, 1):
+                        expanded_photo = dict(bp)
+                        expanded_photo["is_expanded_burst_member"] = True
+                        expanded_photo["burst_position_index"] = i
+                        expanded_photo["burst_total_count"] = len(burst_photos)
+                        expanded_photo["burst_id"] = bid
+                        grouped_photos.append(expanded_photo)
+                else:
+                    # Collapsed: add only the representative photo
+                    best_fn = best_burst_photos[bid]
+                    best_p = next(x for x in burst_photos if x.get("filename") == best_fn)
+                    
+                    group_photo = dict(best_p)
+                    group_photo["is_burst_group"] = True
+                    group_photo["burst_count"] = len(burst_photos)
+                    group_photo["burst_photos"] = burst_photos
+                    group_photo["burst_id"] = bid
+                    grouped_photos.append(group_photo)
+
+        # Do NOT sort grouped_photos here. We want them in the exact order they appeared in _raw_filtered_photos,
+        # which preserves the sorting (rating, time, etc.) applied by the database!
+        # When a burst group is encountered, it is placed at the position of its first appearing member.
+        
+        self._filtered_photos = grouped_photos
+        
+        # Save selection state to try and restore it
+        current_selection = self._thumb_grid._selected_filename
+        
+        self._thumb_grid.load_photos(self._filtered_photos, keep_scroll=True)
+        self._fullscreen.set_photo_list(self._filtered_photos)
+
         if self._filtered_photos:
-            first = self._filtered_photos[0]
-            fn = first.get("filename", "")
-            self._thumb_grid.select_photo(fn)
-            self._detail_panel.show_photo(first)
+            target_fn = current_selection if current_selection else self._filtered_photos[0].get("filename", "")
+            # Verify target still exists
+            if not any(p.get("filename") == target_fn for p in self._filtered_photos):
+                target_fn = self._filtered_photos[0].get("filename", "")
+                
+            self._thumb_grid.select_photo(target_fn)
+            selected_photo = next(p for p in self._filtered_photos if p.get("filename") == target_fn)
+            self._detail_panel.show_photo(selected_photo)
         else:
             self._detail_panel.clear()
+            
+    @Slot(int)
+    def _toggle_burst(self, burst_id: int):
+        if burst_id in self._expanded_bursts:
+            self._expanded_bursts.remove(burst_id)
+        else:
+            self._expanded_bursts.add(burst_id)
+        self._update_display_list()
 
     @Slot(dict)
     def _on_photo_selected(self, photo: dict):
@@ -930,6 +1075,8 @@ class ResultsBrowserWidget(QWidget):
         self._directory: str = ""
         self._all_photos: list = []
         self._filtered_photos: list = []
+        self._raw_filtered_photos: list = [] # V5: Store unfiltered sorted photos
+        self._expanded_bursts: set = set()   # V5: Track expanded burst IDs
         self._is_merged: bool = False
         self._sub_dirs: list = []
 
@@ -977,6 +1124,7 @@ class ResultsBrowserWidget(QWidget):
         self._thumb_grid.photo_selected.connect(self._on_photo_selected)
         self._thumb_grid.photo_double_clicked.connect(self._enter_fullscreen)
         self._thumb_grid.multi_selection_changed.connect(self._on_multi_selection_changed)
+        self._thumb_grid.burst_badge_clicked.connect(self._toggle_burst)
         center_layout.addWidget(self._thumb_grid, 1)
 
         main_h.addWidget(center_widget, 1)
@@ -1211,6 +1359,7 @@ class ResultsBrowserWidget(QWidget):
             return
         self._directory = root_dir
         self._all_photos = self._db.get_all_photos()
+        self._compute_burst_ids()
         self._filter_panel.reset_all()
         species = self._db.get_distinct_species(use_en=self.i18n.current_lang.startswith('en'))
         self._filter_panel.update_species_list(species)
@@ -1235,6 +1384,11 @@ class ResultsBrowserWidget(QWidget):
         # 只处理有时间戳且尚未分配 burst_id 的照片
         untagged = [p for p in photos if p.get("burst_id") is None and p.get("date_time_original")]
         if not untagged:
+            # 构建 {burst_id: total_count} 供角标显示用
+            from collections import Counter
+            self._burst_totals = Counter(
+                p["burst_id"] for p in self._all_photos if p.get("burst_id") is not None
+            )
             return
 
         # 按时间戳排序
@@ -1245,7 +1399,9 @@ class ResultsBrowserWidget(QWidget):
 
         # 秒级分组（≤1 秒时间差视为同一 burst）
         burst_map = {}   # {filename: (burst_id, burst_position)}
-        burst_id = 0
+        # 找到当前最大 burst_id
+        max_bid = max([p.get("burst_id") or 0 for p in photos] + [0])
+        burst_id = max_bid + 1 if max_bid > 0 else 0
         group: list = []
 
         def _flush_group(grp, bid):
@@ -1275,7 +1431,7 @@ class ResultsBrowserWidget(QWidget):
 
         # 构建 {burst_id: total_count} 供角标显示用
         from collections import Counter
-        self._burst_totals: dict = Counter(
+        self._burst_totals = Counter(
             p["burst_id"] for p in self._all_photos if p.get("burst_id") is not None
         )
 
@@ -1318,7 +1474,7 @@ class ResultsBrowserWidget(QWidget):
             return
         raw_photos = self._db.get_photos_by_filters(filters)
         self._filtered_photos = [self._resolve_photo_paths(p) for p in raw_photos]
-        self._thumb_grid.load_photos(self._filtered_photos)
+        self._thumb_grid.load_photos(self._filtered_photos, keep_scroll=True)
         self._fullscreen.set_photo_list(self._filtered_photos)
         total = len(self._all_photos)
         filtered = len(self._filtered_photos)

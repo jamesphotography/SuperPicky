@@ -123,8 +123,8 @@ class _PreloadWorker(QThread):
 # ============================================================
 
 class _ImageLoader(QThread):
-    """后台线程加载 QPixmap，避免主线程阻塞。"""
-    ready = Signal(object)   # QPixmap
+    """后台线程加载 QImage，避免主线程 QPixmap 线程安全问题。"""
+    ready = Signal(object)   # QImage
 
     def __init__(self, path: str, parent=None):
         super().__init__(parent)
@@ -138,12 +138,12 @@ class _ImageLoader(QThread):
         if self._cancelled:
             return
         if self._path and os.path.exists(self._path):
-            px = QPixmap(self._path)
+            img = QImage(self._path)
             if not self._cancelled:
-                self.ready.emit(px)
+                self.ready.emit(img)
         else:
             if not self._cancelled:
-                self.ready.emit(QPixmap())
+                self.ready.emit(QImage())
 
 
 # ============================================================
@@ -233,9 +233,12 @@ class _FullscreenImageLabel(QLabel):
 
     # ── 公共接口 ────────────────────────────────────────────
 
-    def set_pixmap(self, pixmap: QPixmap):
-        """设置图片，重置为适配模式。"""
-        self._pixmap = pixmap
+    def set_pixmap(self, pixmap_or_image):
+        """设置图片（可以是 QPixmap 或 QImage），重置为适配模式。"""
+        if isinstance(pixmap_or_image, QImage):
+            self._pixmap = QPixmap.fromImage(pixmap_or_image)
+        else:
+            self._pixmap = pixmap_or_image
         self._fit_mode = True
         self._drag_active = False
         self._zoom_anim_timer.stop()  # 停止上一张图的动画
@@ -458,11 +461,19 @@ class _FullscreenImageLabel(QLabel):
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setRenderHint(QPainter.SmoothPixmapTransform)
 
+        if self._pixmap is None:
+            painter.end()
+            return
+
         # 方案C：用 painter transform 绘制，让 Qt/GPU 做缩放
         painter.save()
         painter.translate(ox, oy)
         painter.scale(scale, scale)
-        painter.drawPixmap(0, 0, self._pixmap)
+        # 确保绘制的是 QPixmap；如果 self._pixmap 依然是 QImage（防御性检查），转为 QPixmap
+        pix = self._pixmap
+        if isinstance(pix, QImage):
+            pix = QPixmap.fromImage(pix)
+        painter.drawPixmap(0, 0, pix)
         painter.restore()
 
         # 焦点叠加（仅在可见且坐标/状态有效时绘制）
@@ -1065,13 +1076,15 @@ class FullscreenViewer(QWidget):
         return None
 
     @Slot(object)
-    def _on_image_ready(self, pixmap: QPixmap, path: str = ""):
-        """后台加载完成：转存为 QImage 进高清缓存，并更新图片显示。"""
-        if not pixmap.isNull():
+    def _on_image_ready(self, img: QImage, path: str = ""):
+        """后台加载完成：转存进高清缓存，并更新图片显示。"""
+        if not img.isNull():
             if path:
-                # QPixmap.toImage() 在主线程执行，线程安全
-                _hd_cache.put(path, pixmap.toImage())
-            self._img_label.set_pixmap(pixmap)
+                _hd_cache.put(path, img)
+            
+            # 主线程中转换为 QPixmap
+            px = QPixmap.fromImage(img)
+            self._img_label.set_pixmap(px)
             # 功能2：后台高清图加载完成后也还原锁定的缩放和位置
             if self._zoom_locked:
                 self._img_label.restore_zoom(

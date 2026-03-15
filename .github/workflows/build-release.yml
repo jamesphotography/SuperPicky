@@ -73,10 +73,5 @@ jobs:
       uses: softprops/action-gh-release@v2
       with:
         tag_name: ${{ github.event.inputs.version || github.ref_name }}
-        name: SuperPicky ${{ github.event.inputs.version || github.ref_name }}
-        body: |
-          Release of SuperPicky ${{ github.event.inputs.version || github.ref_name }}
-        draft: false
-        prerelease: false
         files: |
           release_assets/*
