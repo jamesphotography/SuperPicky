@@ -15,13 +15,34 @@ import os
 import sqlite3
 import time
 import threading
+import uuid
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from .file_utils import ensure_hidden_directory
 
 
 # Schema 版本，用于未来升级
-SCHEMA_VERSION = "5"
+SCHEMA_VERSION = "6"
+
+JOB_STATUS_IDLE = "idle"
+JOB_STATUS_RUNNING = "running"
+JOB_STATUS_COMPLETED = "completed"
+JOB_STATUS_FAILED = "failed"
+
+JOB_STAGE_SCAN = "scan"
+JOB_STAGE_ANALYZE = "analyze"
+JOB_STAGE_PICKED = "picked"
+JOB_STAGE_ORGANIZE = "organize"
+JOB_STAGE_CLEANUP = "cleanup"
+JOB_STAGE_COMPLETED = "completed"
+
+PHOTO_STATE_PENDING = "pending"
+PHOTO_STATE_RUNNING = "running"
+PHOTO_STATE_DONE = "done"
+
+METADATA_STATE_PENDING = "pending"
+METADATA_STATE_QUEUED = "queued"
+METADATA_STATE_DONE = "done"
 
 # 所有列定义（有序），用于 CREATE TABLE 和数据验证
 PHOTO_COLUMNS = [
@@ -85,6 +106,11 @@ PHOTO_COLUMNS = [
     # V5: 连拍分组
     ("burst_id",         "INTEGER", None),
     ("burst_position",   "INTEGER", None),
+
+    ("analysis_state",   "TEXT", PHOTO_STATE_PENDING),
+    ("metadata_state",   "TEXT", METADATA_STATE_PENDING),
+    ("session_id",       "TEXT", None),
+    ("last_error",       "TEXT", None),
     
     ("created_at",    "TEXT", None),
     ("updated_at",    "TEXT", None),
@@ -185,6 +211,30 @@ class ReportDB:
                 self._conn.execute(
                     "INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)",
                     ("directory_path", self.directory)
+                )
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)",
+                    ("job_status", JOB_STATUS_IDLE)
+                )
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)",
+                    ("job_stage", JOB_STAGE_SCAN)
+                )
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)",
+                    ("job_session_id", "")
+                )
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)",
+                    ("job_settings_hash", "")
+                )
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)",
+                    ("job_started_at", "")
+                )
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)",
+                    ("job_updated_at", "")
                 )
 
         # Schema 升级在独立事务中执行，避免嵌套 commit 冲突
@@ -302,6 +352,39 @@ class ReportDB:
                     self._update_schema_version("5")
                 current_version = "5"
                 print("✅ Database schema upgraded to v5")
+
+            if current_version == "5":
+                print("Upgrading database schema from v5 to v6...")
+                new_columns_v6 = [
+                    ("analysis_state", "TEXT"),
+                    ("metadata_state", "TEXT"),
+                    ("session_id", "TEXT"),
+                    ("last_error", "TEXT"),
+                ]
+                with self._conn:
+                    for col_name, col_type in new_columns_v6:
+                        try:
+                            self._conn.execute(
+                                f"ALTER TABLE photos ADD COLUMN {col_name} {col_type}"
+                            )
+                        except sqlite3.OperationalError:
+                            pass
+                    self._conn.execute(
+                        "UPDATE photos SET analysis_state = ? "
+                        "WHERE analysis_state IS NULL OR TRIM(analysis_state) = ''",
+                        (PHOTO_STATE_PENDING,)
+                    )
+                    self._conn.execute(
+                        "UPDATE photos SET metadata_state = ? "
+                        "WHERE metadata_state IS NULL OR TRIM(metadata_state) = ''",
+                        (METADATA_STATE_PENDING,)
+                    )
+                    for key, value in self._default_meta_items().items():
+                        self._conn.execute(
+                            "INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)",
+                            (key, value)
+                        )
+                    self._update_schema_version("6")
 
     def _update_schema_version(self, version):
         """更新数据库中的版本号（由调用方负责提交事务）"""
@@ -831,6 +914,137 @@ class ReportDB:
     #  同步预留
     # ==========================================================================
 
+    def get_resume_snapshot(self) -> Dict[str, Any]:
+        """Return persisted resume state for the current directory."""
+        keys = (
+            "job_status",
+            "job_stage",
+            "job_session_id",
+            "job_settings_hash",
+            "job_started_at",
+            "job_updated_at",
+        )
+        snapshot = {key: self.get_meta(key) or "" for key in keys}
+        snapshot["incomplete_photos"] = self.get_incomplete_photo_prefixes()
+        snapshot["can_resume"] = (
+            snapshot["job_status"] == JOB_STATUS_RUNNING
+            and bool(snapshot["job_session_id"])
+            and len(snapshot["incomplete_photos"]) > 0
+        )
+        return snapshot
+
+    def begin_session(self, settings_hash: str, resume: bool = False) -> Dict[str, str]:
+        """Create or continue a processing session."""
+        now = _now_iso()
+        snapshot = self.get_resume_snapshot()
+        session_id = snapshot.get("job_session_id") if resume and snapshot.get("job_session_id") else uuid.uuid4().hex
+        started_at = snapshot.get("job_started_at") if resume and snapshot.get("job_started_at") else now
+        values = {
+            "job_status": JOB_STATUS_RUNNING,
+            "job_stage": snapshot.get("job_stage") or JOB_STAGE_SCAN,
+            "job_session_id": session_id,
+            "job_settings_hash": settings_hash or "",
+            "job_started_at": started_at,
+            "job_updated_at": now,
+        }
+        with self._lock:
+            self._set_meta_items(values)
+        return {"session_id": session_id, "started_at": started_at, "updated_at": now}
+
+    def set_job_stage(self, stage: str) -> None:
+        with self._lock:
+            self._set_meta_items({
+                "job_stage": stage,
+                "job_updated_at": _now_iso(),
+            })
+
+    def finish_session(self, status: str) -> None:
+        stage = JOB_STAGE_COMPLETED if status == JOB_STATUS_COMPLETED else self.get_meta("job_stage") or JOB_STAGE_SCAN
+        with self._lock:
+            self._set_meta_items({
+                "job_status": status,
+                "job_stage": stage,
+                "job_updated_at": _now_iso(),
+            })
+
+    def mark_photo_running(self, prefix: str, session_id: str) -> None:
+        self._mark_photo_state(
+            prefix,
+            analysis_state=PHOTO_STATE_RUNNING,
+            metadata_state=METADATA_STATE_PENDING,
+            session_id=session_id,
+            last_error=None,
+        )
+
+    def mark_photo_analysis_done(self, prefix: str, session_id: str) -> None:
+        self._mark_photo_state(
+            prefix,
+            analysis_state=PHOTO_STATE_DONE,
+            session_id=session_id,
+            last_error=None,
+        )
+
+    def mark_photo_error(self, prefix: str, session_id: str, error: str) -> None:
+        self._mark_photo_state(
+            prefix,
+            analysis_state=PHOTO_STATE_PENDING,
+            metadata_state=METADATA_STATE_PENDING,
+            session_id=session_id,
+            last_error=error,
+        )
+
+    def mark_photos_metadata_queued(self, prefixes: List[str], session_id: str) -> None:
+        self._mark_photos_metadata_state(prefixes, METADATA_STATE_QUEUED, session_id)
+
+    def mark_photos_metadata_done(self, prefixes: List[str], session_id: str) -> None:
+        self._mark_photos_metadata_state(prefixes, METADATA_STATE_DONE, session_id)
+
+    def get_incomplete_photo_prefixes(self) -> List[str]:
+        with self._lock:
+            cursor = self._conn.execute(
+                "SELECT filename FROM photos "
+                "WHERE analysis_state IS NULL OR analysis_state != ? "
+                "OR metadata_state IS NULL OR metadata_state != ? "
+                "ORDER BY filename",
+                (PHOTO_STATE_DONE, METADATA_STATE_DONE)
+            )
+            return [row[0] for row in cursor.fetchall()]
+
+    def load_processing_summary(self) -> Dict[str, Any]:
+        with self._lock:
+            cursor = self._conn.execute(
+                "SELECT filename, rating, adj_topiq, adj_sharpness, nima_score, head_sharp, "
+                "bird_species_cn, bird_species_en, current_path, original_path, temp_jpeg_path "
+                "FROM photos WHERE analysis_state = ? ORDER BY filename",
+                (PHOTO_STATE_DONE,)
+            )
+            photos = [dict(row) for row in cursor.fetchall()]
+
+        file_ratings: Dict[str, int] = {}
+        star_3_photos: List[Dict[str, Any]] = []
+        bird_species: Dict[str, Dict[str, Any]] = {}
+        for photo in photos:
+            prefix = photo["filename"]
+            rating = photo.get("rating")
+            if rating is not None:
+                file_ratings[prefix] = int(rating)
+            if int(photo.get("rating") or 0) == 3:
+                star_3_photos.append({
+                    "file": photo.get("current_path") or photo.get("original_path") or photo.get("temp_jpeg_path") or prefix,
+                    "nima": photo.get("adj_topiq") if photo.get("adj_topiq") is not None else photo.get("nima_score"),
+                    "sharpness": photo.get("adj_sharpness") if photo.get("adj_sharpness") is not None else photo.get("head_sharp"),
+                })
+            cn_name = photo.get("bird_species_cn")
+            en_name = photo.get("bird_species_en")
+            if cn_name or en_name:
+                bird_species[prefix] = {"cn_name": cn_name, "en_name": en_name}
+
+        return {
+            "file_ratings": file_ratings,
+            "star_3_photos": star_3_photos,
+            "bird_species": bird_species,
+        }
+
     def get_updated_since(self, since: str) -> List[dict]:
         """
         获取指定时间之后更新的记录（增量同步用）。
@@ -869,6 +1083,59 @@ class ReportDB:
     # ==========================================================================
     #  内部方法
     # ==========================================================================
+
+    @staticmethod
+    def _default_meta_items() -> Dict[str, str]:
+        return {
+            "job_status": JOB_STATUS_IDLE,
+            "job_stage": JOB_STAGE_SCAN,
+            "job_session_id": "",
+            "job_settings_hash": "",
+            "job_started_at": "",
+            "job_updated_at": "",
+        }
+
+    def _set_meta_items(self, values: Dict[str, str]) -> None:
+        for key, value in values.items():
+            self._conn.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+                (key, value)
+            )
+        self._safe_commit()
+
+    def _mark_photo_state(
+        self,
+        prefix: str,
+        analysis_state: Optional[str] = None,
+        metadata_state: Optional[str] = None,
+        session_id: Optional[str] = None,
+        last_error: Optional[str] = None,
+    ) -> None:
+        data: Dict[str, Any] = {}
+        if analysis_state is not None:
+            data["analysis_state"] = analysis_state
+        if metadata_state is not None:
+            data["metadata_state"] = metadata_state
+        if session_id is not None:
+            data["session_id"] = session_id
+        data["last_error"] = last_error
+        self.update_photo(prefix, data)
+
+    def _mark_photos_metadata_state(self, prefixes: List[str], state: str, session_id: str) -> None:
+        prefixes = [prefix for prefix in prefixes if prefix]
+        if not prefixes:
+            return
+        now = _now_iso()
+        placeholders = ", ".join(["?"] * len(prefixes))
+        values: List[Any] = [state, session_id, now]
+        values.extend(prefixes)
+        with self._lock:
+            self._conn.execute(
+                f"UPDATE photos SET metadata_state = ?, session_id = ?, updated_at = ? "
+                f"WHERE filename IN ({placeholders})",
+                values
+            )
+            self._safe_commit()
 
     def _safe_commit(self) -> None:
         """仅在存在活动事务时提交，兼容 autocommit 场景。"""
@@ -939,6 +1206,10 @@ class ReportDB:
             # shutter_speed, aperture, camera_model, lens_model,
             # title, caption, city, state_province, country,
             # date_time_original, bird_species_cn, bird_species_en, exposure_status
+            if key in ("analysis_state", "metadata_state", "session_id", "last_error"):
+                cleaned[key] = str(value)
+                continue
+
             cleaned[key] = value
 
         return cleaned

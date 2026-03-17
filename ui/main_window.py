@@ -85,12 +85,13 @@ class WorkerSignals(QObject):
 class WorkerThread(threading.Thread):
     """处理线程"""
 
-    def __init__(self, dir_path, ui_settings, signals, i18n=None):
+    def __init__(self, dir_path, ui_settings, signals, i18n=None, resume=False):
         super().__init__(daemon=True)
         self.dir_path = dir_path
         self.ui_settings = ui_settings
         self.signals = signals
         self.i18n = i18n
+        self.resume = resume
         self._stop_event = threading.Event()
         self.caffeinate_process = None
 
@@ -357,7 +358,8 @@ class WorkerThread(threading.Thread):
 
             result = processor.process(
                 organize_files=True,
-                cleanup_temp=not adv_config.keep_temp_files
+                cleanup_temp=not adv_config.keep_temp_files,
+                resume=self.resume
             )
 
             burst_groups = result.stats.get('burst_groups', 0)
@@ -439,7 +441,8 @@ class WorkerThread(threading.Thread):
                 try:
                     result = processor.process(
                         organize_files=True,
-                        cleanup_temp=not adv_config.keep_temp_files
+                        cleanup_temp=not adv_config.keep_temp_files,
+                        resume=self.resume
                     )
                     s = result.stats
                     for key in ('total', 'star_3', 'picked', 'star_2', 'star_1',
@@ -1505,6 +1508,14 @@ class SuperPickyMainWindow(QMainWindow):
         """打开/切换结果浏览器窗口，并隐藏主窗口。"""
         if not self.directory_path:
             return
+
+        try:
+            from tools.report_db import ReportDB
+            resume_snapshot = ReportDB(self.directory_path).get_resume_snapshot()
+            if resume_snapshot.get("job_status") == "running":
+                return
+        except Exception:
+            pass
         from ui.results_browser_window import ResultsBrowserWindow
         if not hasattr(self, '_results_browser') or self._results_browser is None:
             self._results_browser = ResultsBrowserWindow(parent=None)
@@ -1674,7 +1685,18 @@ class SuperPickyMainWindow(QMainWindow):
 
         report_path = os.path.join(self.directory_path, ".superpicky", "report.db")
         if os.path.exists(report_path):
+            resume_snapshot = None
+            try:
+                from tools.report_db import ReportDB
+                resume_snapshot = ReportDB(self.directory_path).get_resume_snapshot()
+            except Exception:
+                resume_snapshot = None
+
             counts = self._load_result_counts()
+            if resume_snapshot and resume_snapshot.get("job_status") == "running":
+                self._update_status_banner("ready", counts)
+                self._update_action_buttons("ready")
+                return
             self._update_status_banner("has_results", counts)
             self._update_action_buttons("has_results")
             # 只有保留预览图时才自动弹出浏览器（无预览图时浏览器无内容）
@@ -1766,6 +1788,30 @@ class SuperPickyMainWindow(QMainWindow):
         if reply != StyledMessageBox.Yes:
             return
 
+        resume_processing = False
+        try:
+            from tools.report_db import ReportDB
+            resume_db = ReportDB(self.directory_path)
+            try:
+                snapshot = resume_db.get_resume_snapshot()
+            finally:
+                resume_db.close()
+            if snapshot.get('can_resume'):
+                resume_reply = StyledMessageBox.question(
+                    self,
+                    "检测到未完成任务",
+                    "这个目录有一次未完成的处理任务。选择“是”继续上次处理，选择“否”先恢复目录后重新开始。",
+                    yes_text="继续处理",
+                    no_text="重新开始"
+                )
+                if resume_reply == StyledMessageBox.Yes:
+                    resume_processing = True
+                else:
+                    self._quick_restore_directory()
+                    return
+        except Exception as resume_err:
+            self._log(f"⚠️ 恢复状态检查失败: {resume_err}", "warning")
+
         # 清空日志和进度
         self.log_text.clear()
         self.progress_bar.setValue(0)
@@ -1807,7 +1853,8 @@ class SuperPickyMainWindow(QMainWindow):
             self.directory_path,
             ui_settings,
             self.worker_signals,
-            self.i18n
+            self.i18n,
+            resume=resume_processing
         )
         self.worker.start()
 

@@ -17,6 +17,7 @@ import sys
 import time
 import json
 import math
+import hashlib
 import subprocess
 import shutil
 import threading
@@ -174,6 +175,10 @@ class PhotoProcessor:
         self.burst_map = {}  # V4.0.4: Track burst group IDs: {filepath: group_id}, 0 = not a burst
         # SQLite 报告数据库（替代 CSV 缓存）
         self.report_db = None  # 在 _run_ai_detection 中初始化
+        self._session_id = None
+        self._resume_snapshot = {}
+        self._resume_active = False
+        self._settings_hash = None
         
         # 性能日志开关（支持 settings 和环境变量）
         env_perf = os.getenv("SUPERPICKY_PERF_LOG", "").strip().lower() in {"1", "true", "yes", "on"}
@@ -467,7 +472,8 @@ class PhotoProcessor:
     def process(
         self,
         organize_files: bool = True,
-        cleanup_temp: bool = True
+        cleanup_temp: bool = True,
+        resume: bool = False
     ) -> ProcessingResult:
         """
         主处理流程
@@ -481,8 +487,14 @@ class PhotoProcessor:
         """
         start_time = time.time()
         self.stats['start_time'] = start_time
+        if self.report_db is None:
+            self.report_db = ReportDB(self.dir_path)
+        self._settings_hash = self._build_settings_hash(organize_files, cleanup_temp)
+        self._resume_snapshot = self.report_db.get_resume_snapshot()
+        self._prepare_session(resume=resume)
         
         # 阶段1: 文件扫描
+        self.report_db.set_job_stage('scan')
         raw_dict, jpg_dict, files_tbr = self._scan_files()
         
         # 阶段1.5: V4.0.4 早期连拍检测（只基于时间戳）
@@ -495,13 +507,19 @@ class PhotoProcessor:
             self._convert_raws(raw_files_to_convert, files_tbr)
         
         # 阶段3: AI检测与评分
+        self.report_db.set_job_stage('analyze')
+        files_tbr = self._filter_files_for_resume(files_tbr)
         self._process_images(files_tbr, raw_dict)
         
         # 阶段4: 精选旗标计算（metadata_write_mode=none 时跳过）
+        self.report_db.set_job_stage('picked')
+        self._restore_runtime_state()
         if get_advanced_config().get_metadata_write_mode() != "none":
             self._calculate_picked_flags()
         
         # 阶段5: 文件组织
+        self.report_db.set_job_stage('organize')
+        self._restore_runtime_state()
         if organize_files:
             self._move_files_to_rating_folders(raw_dict)
         
@@ -512,6 +530,7 @@ class PhotoProcessor:
             self.stats['burst_moved'] = burst_stats.get('moved', 0)
         
         # 阶段7: 临时文件处理
+        self.report_db.set_job_stage('cleanup')
         if cleanup_temp:
             self._cleanup_temp_files(files_tbr, raw_dict)
         else:
@@ -529,6 +548,8 @@ class PhotoProcessor:
             self.stats['total_time'] / self.stats['total']
             if self.stats['total'] > 0 else 0
         )
+        self.report_db.set_job_stage('completed')
+        self.report_db.finish_session('completed')
         
         # 关闭数据库连接（在所有阶段完成后）
         if hasattr(self, 'report_db') and self.report_db:
@@ -541,6 +562,69 @@ class PhotoProcessor:
             total_time=self.stats['total_time'],
             avg_time=self.stats['avg_time']
         )
+
+    def _build_settings_hash(self, organize_files: bool, cleanup_temp: bool) -> str:
+        payload = {
+            'dir_path': os.path.abspath(self.dir_path),
+            'settings': self.settings.__dict__.copy(),
+            'organize_files': bool(organize_files),
+            'cleanup_temp': bool(cleanup_temp),
+        }
+        encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode('utf-8')
+        return hashlib.sha256(encoded).hexdigest()
+
+    def _prepare_session(self, resume: bool) -> None:
+        snapshot = self._resume_snapshot or {}
+        if snapshot.get('can_resume'):
+            existing_hash = snapshot.get('job_settings_hash') or ''
+            if existing_hash and existing_hash != self._settings_hash:
+                raise RuntimeError("发现未完成任务，但当前参数与上次处理不一致。请先重置目录后重跑。")
+            if not resume:
+                self._log("⏯️ 检测到未完成任务，自动切换为继续上次处理。", "warning")
+                resume = True
+
+        session = self.report_db.begin_session(self._settings_hash, resume=bool(resume and snapshot.get('can_resume')))
+        self._session_id = session['session_id']
+        self._resume_active = bool(resume and snapshot.get('can_resume'))
+
+    def _filter_files_for_resume(self, files_tbr: List[str]) -> List[str]:
+        if not self.report_db:
+            return files_tbr
+        incomplete = set(self.report_db.get_incomplete_photo_prefixes())
+        if not incomplete:
+            return files_tbr
+        filtered = [filename for filename in files_tbr if os.path.splitext(os.path.basename(filename))[0] in incomplete]
+        if self._resume_active:
+            skipped = len(files_tbr) - len(filtered)
+            self._log(f"⏯️ Resume active: skipping {skipped} completed photos")
+        return filtered
+
+    def _restore_runtime_state(self):
+        if not self.report_db:
+            return
+        summary = self.report_db.load_processing_summary()
+        self.file_ratings = summary.get('file_ratings', {})
+        self.star_3_photos = summary.get('star_3_photos', [])
+        for photo in self.star_3_photos:
+            file_ref = photo.get('file')
+            if file_ref and not os.path.isabs(file_ref):
+                photo['file'] = os.path.join(self.dir_path, file_ref)
+        self.file_bird_species = summary.get('bird_species', {})
+        self.stats['bird_species'] = list(summary.get('bird_species', {}).values())
+        self._recalculate_stats_from_db()
+
+    def _recalculate_stats_from_db(self):
+        if not self.report_db:
+            return
+        stats = self.report_db.get_statistics()
+        by_rating = stats.get('by_rating', {})
+        self.stats['total'] = stats.get('total', 0)
+        self.stats['no_bird'] = by_rating.get(-1, 0)
+        self.stats['star_0'] = by_rating.get(0, 0)
+        self.stats['star_1'] = by_rating.get(1, 0)
+        self.stats['star_2'] = by_rating.get(2, 0)
+        self.stats['star_3'] = by_rating.get(3, 0)
+        self.stats['flying'] = stats.get('flying', 0)
     
     def _scan_files(self) -> Tuple[dict, dict, list]:
         """扫描目录文件"""
@@ -884,7 +968,8 @@ class PhotoProcessor:
         model = load_yolo_model()
         
         # 初始化 SQLite 报告数据库
-        self.report_db = ReportDB(self.dir_path)
+        if self.report_db is None:
+            self.report_db = ReportDB(self.dir_path)
         
         # 获取关键点检测模型
         keypoint_detector = get_keypoint_detector()
@@ -912,6 +997,7 @@ class PhotoProcessor:
         
         exiftool_mgr = get_exiftool_manager()
         metadata_batch: List[Dict] = []
+        metadata_batch_prefixes: List[str] = []
         metadata_batch_size = 64
         env_exif_batch = os.getenv("SUPERPICKY_EXIF_BATCH_SIZE", "").strip()
         if env_exif_batch.isdigit():
@@ -932,13 +1018,19 @@ class PhotoProcessor:
         if metadata_async_enabled:
             def metadata_writer_worker():
                 while True:
-                    batch = metadata_queue.get()
-                    if batch is None:
+                    batch_item = metadata_queue.get()
+                    if batch_item is None:
                         metadata_queue.task_done()
                         break
+                    if isinstance(batch_item, tuple):
+                        batch, batch_prefixes = batch_item
+                    else:
+                        batch, batch_prefixes = batch_item, []
                     exif_start = time.time()
                     try:
                         exiftool_mgr.batch_set_metadata(batch)
+                        if self.report_db and batch_prefixes:
+                            self.report_db.mark_photos_metadata_done(batch_prefixes, self._session_id or "")
                     except Exception as e:
                         metadata_writer_errors.append(e)
                     finally:
@@ -964,7 +1056,11 @@ class PhotoProcessor:
             if not metadata_batch:
                 return
             batch = metadata_batch.copy()
+            batch_prefixes = metadata_batch_prefixes.copy()
             metadata_batch.clear()
+            metadata_batch_prefixes.clear()
+            if self.report_db and batch_prefixes:
+                self.report_db.mark_photos_metadata_queued(batch_prefixes, self._session_id or "")
             if metadata_async_enabled and metadata_queue is not None:
                 enqueue_start = time.time()
                 metadata_queue.put(batch)  # 队列满时会背压，避免内存无限增长
@@ -974,6 +1070,8 @@ class PhotoProcessor:
                 return
             exif_start = time.time()
             exiftool_mgr.batch_set_metadata(batch)
+            if self.report_db and batch_prefixes:
+                self.report_db.mark_photos_metadata_done(batch_prefixes, self._session_id or "")
             exif_ms = (time.time() - exif_start) * 1000
             self._perf_add_stage('exif_flush', exif_ms)
             self._perf_stats['exif_flush_count'] += 1
@@ -982,6 +1080,11 @@ class PhotoProcessor:
             if not item or not item.get('file'):
                 return
             metadata_batch.append(item)
+            prefix = item.get('db_prefix')
+            if not prefix and item.get('file'):
+                prefix = os.path.splitext(os.path.basename(item['file']))[0]
+            if prefix:
+                metadata_batch_prefixes.append(prefix)
             if len(metadata_batch) >= metadata_batch_size:
                 flush_metadata_batch()
         
@@ -1383,6 +1486,8 @@ class PhotoProcessor:
             file_prefix = yolo_item['file_prefix']
             file_prefix = yolo_item['file_prefix']
             original_prefix = yolo_item['original_prefix']
+            if self.report_db:
+                self.report_db.mark_photo_running(original_prefix, self._session_id or "")
             
             # V4.1: 更新路径信息到数据库
             path_update_data = {}
@@ -1426,6 +1531,12 @@ class PhotoProcessor:
             result = yolo_item.get('result')
             if result is None:
                 self._log(yolo_item.get('error') or self.i18n.t("logs.cannot_process", filename=filename), "error")
+                if self.report_db:
+                    self.report_db.mark_photo_error(
+                        original_prefix,
+                        self._session_id or "",
+                        yolo_item.get('error') or self.i18n.t("logs.cannot_process", filename=filename)
+                    )
                 continue
             
             # V4.2: 解构 AI 结果（现在有 9 个返回值，包含 bird_count）
@@ -1474,6 +1585,8 @@ class PhotoProcessor:
                 
                 # 记录评分（用于文件移动）- V4.0.4: 使用 original_prefix 确保匹配 NEF
                 self.file_ratings[original_prefix] = rating_value
+                if self.report_db:
+                    self.report_db.mark_photo_analysis_done(original_prefix, self._session_id or "")
                 
                 # 写入简化 EXIF
                 if original_prefix in raw_dict:

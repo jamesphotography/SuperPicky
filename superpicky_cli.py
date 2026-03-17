@@ -142,6 +142,7 @@ def cmd_process(args):
     from tools.cli_processor import CLIProcessor
     from core.photo_processor import ProcessingSettings
     from advanced_config import get_advanced_config
+    from tools.report_db import ReportDB
     
     print_banner()
     print(t("cli.target_dir", directory=args.directory))
@@ -207,6 +208,31 @@ def cmd_process(args):
         verbose=not args.quiet,
         settings=settings
     )
+    
+    resume = False
+    resume_db = ReportDB(args.directory)
+    try:
+        snapshot = resume_db.get_resume_snapshot()
+    finally:
+        resume_db.close()
+
+    if snapshot.get('can_resume'):
+        if args.restart:
+            print("\n⚠️ 检测到未完成任务。`--restart` 不会自动回滚目录，请先执行 `reset` 后再重新处理。")
+            return 1
+        if args.resume:
+            resume = True
+        elif sys.stdin.isatty():
+            confirm = input("\n检测到未完成任务，是否继续上次处理? [y/N]: ")
+            if confirm.lower() in ['y', 'yes']:
+                resume = True
+            else:
+                print("已取消。若要重跑，请先执行 reset 后再重新处理。")
+                return 1
+        else:
+            print("\n⚠️ 检测到未完成任务。请显式传入 --resume 继续，或先执行 reset 后重跑。")
+            return 1
+    processor.resume = resume
     
     # 执行处理（PhotoProcessor 内部会处理自动识鸟）
     # 执行处理（PhotoProcessor 内部会处理自动识鸟）
@@ -1004,7 +1030,11 @@ Examples:
                           
     # V3.9: 使用 set_defaults 确保 flight, burst 默认为 True
     # V4.1: keep_temp 默认为 True
-    p_process.set_defaults(organize=True, cleanup=True, burst=True, flight=True, auto_identify=False, xmp=False, keep_temp=True)
+    p_process.add_argument('--resume', action='store_true',
+                          help='缁х画鏈畬鎴愮殑澶勭悊浠诲姟')
+    p_process.add_argument('--restart', action='store_true',
+                          help='涓嶈嚜鍔ㄥ洖婊氾紝闇€鍏堟墽琛?reset 鍚庡啀閲嶆柊澶勭悊')
+    p_process.set_defaults(organize=True, cleanup=True, burst=True, flight=True, auto_identify=False, xmp=False, keep_temp=True, resume=False, restart=False)
     
     # ===== reset 命令 =====
     p_reset = subparsers.add_parser('reset', help=t("cli.cmd_reset"))

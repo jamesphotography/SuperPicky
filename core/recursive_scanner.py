@@ -7,6 +7,7 @@
 """
 
 import os
+import sqlite3
 from typing import List, Set
 
 from constants import RAW_EXTENSIONS, JPG_EXTENSIONS, HEIF_EXTENSIONS, RATING_FOLDER_NAMES, RATING_FOLDER_NAMES_EN
@@ -46,7 +47,20 @@ def has_photos(dir_path: str) -> bool:
 
 def is_processed(dir_path: str) -> bool:
     """判断目录是否已被 SuperPicky 处理过（存在 report.db）"""
-    return os.path.exists(os.path.join(dir_path, '.superpicky', 'report.db'))
+    db_path = os.path.join(dir_path, '.superpicky', 'report.db')
+    if not os.path.exists(db_path):
+        return False
+    try:
+        conn = sqlite3.connect(db_path)
+        try:
+            row = conn.execute("SELECT value FROM meta WHERE key = 'job_status'").fetchone()
+            if row and row[0] == 'running':
+                return False
+        finally:
+            conn.close()
+    except Exception:
+        pass
+    return True
 
 
 def scan_recursive(root: str, max_depth: int = 10) -> List[str]:

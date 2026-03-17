@@ -100,7 +100,7 @@ class CLIProcessor:
         # 目前不显示，避免输出过多
         pass
     
-    def process(self, organize_files: bool = True, cleanup_temp: bool = True) -> Dict:
+    def process(self, organize_files: bool = True, cleanup_temp: bool = True, resume: bool = None) -> Dict:
         """
         主处理流程
         
@@ -115,9 +115,13 @@ class CLIProcessor:
         self._print_banner()
         
         # 调用核心处理器
+        if resume is None:
+            resume = getattr(self, "resume", False)
+
         result = self.processor.process(
             organize_files=organize_files,
-            cleanup_temp=cleanup_temp
+            cleanup_temp=cleanup_temp,
+            resume=resume
         )
         
         # 打印摘要
