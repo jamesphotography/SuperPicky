@@ -43,6 +43,21 @@ from tools.i18n import t
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
+def _configure_cli_stdio():
+    """Use UTF-8-capable stdio in consoles to avoid help/error print crashes."""
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is None or not hasattr(stream, "reconfigure"):
+            continue
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
+_configure_cli_stdio()
+
+
 def print_banner():
     """打印 CLI 横幅"""
     print("\n" + "━" * 60)
@@ -1031,9 +1046,9 @@ Examples:
     # V3.9: 使用 set_defaults 确保 flight, burst 默认为 True
     # V4.1: keep_temp 默认为 True
     p_process.add_argument('--resume', action='store_true',
-                          help='缁х画鏈畬鎴愮殑澶勭悊浠诲姟')
+                          help='继续未完成的处理任务')
     p_process.add_argument('--restart', action='store_true',
-                          help='涓嶈嚜鍔ㄥ洖婊氾紝闇€鍏堟墽琛?reset 鍚庡啀閲嶆柊澶勭悊')
+                          help='不自动回滚，请先执行 reset 后再重新处理')
     p_process.set_defaults(organize=True, cleanup=True, burst=True, flight=True, auto_identify=False, xmp=False, keep_temp=True, resume=False, restart=False)
     
     # ===== reset 命令 =====
