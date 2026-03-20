@@ -85,13 +85,15 @@ class WorkerSignals(QObject):
 class WorkerThread(threading.Thread):
     """处理线程"""
 
-    def __init__(self, dir_path, ui_settings, signals, i18n=None):
+    def __init__(self, dir_path, ui_settings, signals, i18n=None, resume=False):
         super().__init__(daemon=True)
         self.dir_path = dir_path
         self.ui_settings = ui_settings
         self.signals = signals
         self.i18n = i18n
+        self.resume = resume
         self._stop_event = threading.Event()
+        self._active_processor = None
         self.caffeinate_process = None
 
         self.stats = {
@@ -115,9 +117,20 @@ class WorkerThread(threading.Thread):
             self.process_files()
             self.signals.finished.emit(self.stats)
         except Exception as e:
-            self.signals.error.emit(str(e))
+            if e.__class__.__name__ == "ProcessingCancelled":
+                self.signals.log.emit("Processing cancelled.", "warning")
+            else:
+                self.signals.error.emit(str(e))
         finally:
             self._stop_caffeinate()
+
+    def request_stop(self):
+        self._stop_event.set()
+        if self._active_processor is not None:
+            try:
+                self._active_processor.request_stop()
+            except Exception:
+                pass
 
     def _start_caffeinate(self):
         """启动防休眠"""
@@ -337,6 +350,7 @@ class WorkerThread(threading.Thread):
         callbacks = ProcessingCallbacks(
             log=log_callback,
             progress=progress_callback,
+            should_stop=self._stop_event.is_set,
             crop_preview=crop_preview_callback
         )
 
@@ -351,24 +365,29 @@ class WorkerThread(threading.Thread):
                 settings=settings,
                 callbacks=callbacks
             )
+            self._active_processor = processor
 
             from advanced_config import get_advanced_config
             adv_config = get_advanced_config()
 
-            result = processor.process(
-                organize_files=True,
-                cleanup_temp=not adv_config.keep_temp_files
-            )
+            try:
+                result = processor.process(
+                    organize_files=True,
+                    cleanup_temp=not adv_config.keep_temp_files,
+                    resume=self.resume
+                )
 
-            burst_groups = result.stats.get('burst_groups', 0)
-            burst_moved = result.stats.get('burst_moved', 0)
+                burst_groups = result.stats.get('burst_groups', 0)
+                burst_moved = result.stats.get('burst_moved', 0)
 
-            if burst_groups > 0:
-                log_callback(self.i18n.t("logs.burst_complete", groups=burst_groups, moved=burst_moved), "success")
-            elif settings.detect_burst:
-                log_callback(self.i18n.t("logs.burst_none_detected"), "info")
+                if burst_groups > 0:
+                    log_callback(self.i18n.t("logs.burst_complete", groups=burst_groups, moved=burst_moved), "success")
+                elif settings.detect_burst:
+                    log_callback(self.i18n.t("logs.burst_none_detected"), "info")
 
-            self.stats = result.stats
+                self.stats = result.stats
+            finally:
+                self._active_processor = None
         else:
             # Batch mode: process each subdirectory
             from advanced_config import get_advanced_config
@@ -427,6 +446,7 @@ class WorkerThread(threading.Thread):
                 sub_callbacks = ProcessingCallbacks(
                     log=log_callback,
                     progress=make_progress_cb(dir_base, dir_count),
+                    should_stop=self._stop_event.is_set,
                     crop_preview=crop_preview_callback
                 )
 
@@ -435,11 +455,13 @@ class WorkerThread(threading.Thread):
                     settings=settings,
                     callbacks=sub_callbacks
                 )
+                self._active_processor = processor
 
                 try:
                     result = processor.process(
                         organize_files=True,
-                        cleanup_temp=not adv_config.keep_temp_files
+                        cleanup_temp=not adv_config.keep_temp_files,
+                        resume=self.resume
                     )
                     s = result.stats
                     for key in ('total', 'star_3', 'picked', 'star_2', 'star_1',
@@ -461,6 +483,8 @@ class WorkerThread(threading.Thread):
                     )
                 except Exception as e:
                     log_callback(f"  \u274c Error: {e}", "error")
+                finally:
+                    self._active_processor = None
 
                 processed_so_far += dir_count
 
@@ -626,6 +650,8 @@ class SuperPickyMainWindow(QMainWindow):
         self._setup_system_tray()
         self._really_quit = False  # 标记是否真正退出
         self._background_mode = False  # V4.0: 标记是否进入后台模式（不停止服务器）
+        self._suppress_results_browser_once = False
+        self._resume_prompt_handled = False
         
         # osk flex,countly.com 63fda2e
         self._startup_prompts_ran = False
@@ -941,6 +967,12 @@ class SuperPickyMainWindow(QMainWindow):
         无论通过 X按鈕 / Cmd+Q / 托盘退出，都会经过此处。
         Mac 和 Windows 均适用。
         """
+        if self.worker and self.worker.is_alive():
+            try:
+                self.worker.request_stop()
+                self.worker.join(timeout=5)
+            except Exception:
+                pass
         if hasattr(self, '_results_browser') and self._results_browser:
             try:
                 self._results_browser.cleanup()
@@ -1475,9 +1507,36 @@ class SuperPickyMainWindow(QMainWindow):
 
         # 状态条 + 按钮由 _check_report_csv 根据是否有历史数据决定
         # 重置弹窗移到「重新处理」按钮点击时再询问（_reset_directory 保留确认逻辑）
+        self._resume_prompt_handled = False
         self._check_report_csv()
+        self._maybe_prompt_resume_after_selection()
 
     # ========== 状态条 + 结果浏览器辅助 ==========
+
+    def _maybe_prompt_resume_after_selection(self):
+        if self._resume_prompt_handled or not self.directory_path:
+            return
+        self._resume_prompt_handled = True
+        try:
+            from tools.resume_state import ResumeStateManager
+            resume_state = ResumeStateManager(self.directory_path)
+            if not resume_state.exists():
+                return
+            resume_reply = StyledMessageBox.question(
+                self,
+                "检测到未完成任务",
+                "这个目录存在未完成的处理记录。选择“继续处理”会从上次中断的位置继续；选择“重新开始”会先恢复目录，再重新处理。",
+                yes_text="继续处理",
+                no_text="重新开始"
+            )
+            if resume_reply == StyledMessageBox.Yes:
+                self._start_processing()
+            else:
+                resume_state.clear()
+                self._suppress_results_browser_once = True
+                self._quick_restore_directory()
+        except Exception as resume_err:
+            self._log(f"⚠️ 恢复状态检查失败: {resume_err}", "warning")
 
     def _load_result_counts(self) -> dict:
         """从 report.db 读取评分统计，供状态条显示。"""
@@ -1672,6 +1731,15 @@ class SuperPickyMainWindow(QMainWindow):
         if not self.directory_path:
             return
 
+        try:
+            from tools.resume_state import ResumeStateManager
+            if ResumeStateManager(self.directory_path).exists():
+                self._update_status_banner("ready")
+                self._update_action_buttons("ready")
+                return
+        except Exception:
+            pass
+
         report_path = os.path.join(self.directory_path, ".superpicky", "report.db")
         if os.path.exists(report_path):
             counts = self._load_result_counts()
@@ -1766,6 +1834,32 @@ class SuperPickyMainWindow(QMainWindow):
         if reply != StyledMessageBox.Yes:
             return
 
+        resume_processing = False
+        try:
+            from tools.resume_state import ResumeStateManager
+            resume_state = ResumeStateManager(self.directory_path)
+            if resume_state.exists() and self._resume_prompt_handled:
+                resume_processing = True
+            elif resume_state.exists():
+                resume_reply = StyledMessageBox.question(
+                    self,
+                    "检测到未完成任务",
+                    "这个目录存在未完成的处理记录。选择“继续处理”会从上次中断的位置继续；选择“重新开始”会先恢复目录，再重新处理。",
+                    yes_text="继续处理",
+                    no_text="重新开始"
+                )
+                if resume_reply == StyledMessageBox.Yes:
+                    resume_processing = True
+                else:
+                    resume_state.clear()
+                    self._suppress_results_browser_once = True
+                    self._quick_restore_directory()
+                    return
+        except Exception as resume_err:
+            self._log(f"⚠️ 恢复状态检查失败: {resume_err}", "warning")
+        finally:
+            self._resume_prompt_handled = False
+
         # 清空日志和进度
         self.log_text.clear()
         self.progress_bar.setValue(0)
@@ -1807,7 +1901,8 @@ class SuperPickyMainWindow(QMainWindow):
             self.directory_path,
             ui_settings,
             self.worker_signals,
-            self.i18n
+            self.i18n,
+            resume=resume_processing
         )
         self.worker.start()
 
@@ -2165,6 +2260,11 @@ class SuperPickyMainWindow(QMainWindow):
         else:
             self._update_status(self.i18n.t("labels.error"), COLORS['error'])
             self._log(self.i18n.t("messages.reset_failed_log"))
+        if self._suppress_results_browser_once:
+            self._suppress_results_browser_once = False
+            self._update_status_banner("ready")
+            self._update_action_buttons("ready")
+            return
 
         self._check_report_csv()
 
@@ -2521,9 +2621,10 @@ class SuperPickyMainWindow(QMainWindow):
             )
 
             if reply == StyledMessageBox.No:  # 用户点击"是"退出
-                self.worker._stop_event.set()
+                self.worker.request_stop()
                 self.worker._stop_caffeinate()  # V3.8.1: 确保终止 caffeinate 进程
                 self._stop_birdid_server()  # V4.0: 停止识鸟 API 服务
+                self._quit_app()
                 event.accept()
             else:
                 event.ignore()
