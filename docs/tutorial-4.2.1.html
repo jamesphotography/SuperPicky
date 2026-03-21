@@ -1,0 +1,1628 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>使用教程 4.2.1 beta - SuperPicky 慧眼选鸟</title>
+    <meta name="description" content="SuperPicky 4.2.1 beta 使用教程：不看图片也能一步步学会选鸟、结果浏览器、鸟种识别与重置流程。">
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="icon" href="img/icon.png" type="image/png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        .tutorial-hero .container,
+        .tutorial-toc .container,
+        .tutorial-part .container,
+        .tutorial-end .container,
+        footer .container {
+            max-width: 980px;
+        }
+
+        .tutorial-hero h1 {
+            font-size: clamp(38px, 6vw, 58px);
+            line-height: 1.1;
+        }
+
+        .tutorial-intro {
+            font-size: 18px;
+            max-width: 760px;
+            line-height: 1.85;
+        }
+
+        .version-pill {
+            display: inline-block;
+            margin-top: 12px;
+            padding: 7px 14px;
+            border-radius: 999px;
+            background: rgba(0, 212, 170, 0.12);
+            border: 1px solid rgba(0, 212, 170, 0.22);
+            color: var(--accent);
+            font-size: 13px;
+            font-family: var(--font-mono);
+        }
+
+        .outline-list {
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+        }
+
+        .outline-card {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            padding: 22px 24px;
+        }
+
+        .outline-top {
+            display: flex;
+            align-items: baseline;
+            gap: 14px;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+        }
+
+        .outline-num {
+            font-family: var(--font-mono);
+            font-size: 13px;
+            color: var(--accent);
+        }
+
+        .outline-title {
+            font-size: 22px;
+            font-weight: 600;
+            color: var(--text-primary);
+            text-decoration: none;
+        }
+
+        .outline-title .sec-no,
+        .outline-links .sec-no,
+        .step-text h3 .sec-no {
+            font-family: var(--font-mono);
+            color: var(--accent);
+            margin-right: 8px;
+            white-space: nowrap;
+        }
+
+        .outline-desc {
+            font-size: 15px;
+            line-height: 1.75;
+            color: var(--text-secondary);
+            margin-bottom: 12px;
+        }
+
+        .outline-links {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px 12px;
+        }
+
+        .outline-links a {
+            display: inline-flex;
+            align-items: center;
+            padding: 8px 12px;
+            border-radius: 999px;
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-card);
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 14px;
+            line-height: 1.5;
+            transition: all 0.2s ease;
+        }
+
+        .outline-links a:hover {
+            border-color: var(--accent);
+            color: var(--text-primary);
+            transform: translateY(-1px);
+        }
+
+        .part-desc {
+            font-size: 17px;
+            line-height: 1.75;
+            max-width: 760px;
+            margin: 0 auto;
+        }
+
+        .tutorial-step {
+            grid-template-columns: 1fr;
+            gap: 20px;
+            margin-bottom: var(--space-2xl);
+        }
+
+        .tutorial-step.reverse {
+            direction: ltr;
+        }
+
+        .step-content {
+            display: grid;
+            grid-template-columns: 60px 1fr;
+            gap: 18px;
+            align-items: start;
+        }
+
+        .step-number {
+            width: 52px;
+            min-width: 52px;
+            height: 52px;
+            font-size: 24px;
+            margin-top: 2px;
+        }
+
+        .step-kicker {
+            display: inline-block;
+            margin-bottom: 10px;
+            color: var(--accent);
+            font-size: 12px;
+            font-family: var(--font-mono);
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+
+        .step-text h3 {
+            font-size: 28px;
+            line-height: 1.25;
+            margin-bottom: 12px;
+        }
+
+        .step-text p {
+            font-size: 16px;
+            line-height: 1.9;
+            margin-bottom: 12px;
+        }
+
+        .step-lead {
+            font-size: 18px;
+            color: var(--text-primary);
+            line-height: 1.9;
+            margin-bottom: 16px;
+        }
+
+        .step-subtitle {
+            font-size: 13px;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            color: var(--text-muted);
+            margin: 20px 0 10px;
+            text-transform: uppercase;
+        }
+
+        .step-guide {
+            margin: 0;
+            padding-left: 24px;
+        }
+
+        .step-guide li {
+            color: var(--text-secondary);
+            font-size: 16px;
+            line-height: 1.9;
+            margin-bottom: 8px;
+        }
+
+        .step-tip {
+            margin-top: 18px;
+            padding: 14px 16px;
+            font-size: 15px;
+            line-height: 1.75;
+        }
+
+        .step-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+            padding: 24px 26px;
+            border-radius: var(--radius-md);
+            border: 1px solid var(--border-subtle);
+            background:
+                radial-gradient(circle at top right, rgba(0, 212, 170, 0.08), transparent 35%),
+                var(--bg-card);
+        }
+
+        .panel-block h4 {
+            font-size: 15px;
+            color: var(--text-primary);
+            margin-bottom: 10px;
+        }
+
+        .panel-block p {
+            font-size: 15px;
+            line-height: 1.75;
+            color: var(--text-secondary);
+            margin: 0;
+        }
+
+        .panel-checklist {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+        }
+
+        .panel-checklist li {
+            position: relative;
+            padding-left: 18px;
+            margin-bottom: 10px;
+            font-size: 15px;
+            line-height: 1.75;
+            color: var(--text-secondary);
+        }
+
+        .panel-checklist li::before {
+            content: "•";
+            position: absolute;
+            left: 0;
+            color: var(--accent);
+        }
+
+        .tutorial-end-card .next-step {
+            margin-top: 12px;
+            font-size: 15px;
+            color: var(--text-muted);
+        }
+
+        @media (max-width: 768px) {
+            .outline-card {
+                padding: 18px;
+            }
+
+            .outline-title {
+                font-size: 20px;
+            }
+
+            .outline-desc {
+                font-size: 14px;
+            }
+
+            .outline-links a {
+                font-size: 13px;
+            }
+
+            .step-content {
+                grid-template-columns: 42px 1fr;
+                gap: 14px;
+            }
+
+            .step-number {
+                width: 40px;
+                min-width: 40px;
+                height: 40px;
+                font-size: 18px;
+            }
+
+            .step-text h3 {
+                font-size: 22px;
+            }
+
+            .step-text p,
+            .step-guide li,
+            .panel-block p,
+            .panel-checklist li,
+            .step-tip {
+                font-size: 15px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="grain"></div>
+
+    <header>
+        <div class="header-inner">
+            <a href="index.html" class="logo">
+                <img src="img/icon.png" alt="SuperPicky">
+                <span>SuperPicky</span>
+            </a>
+        </div>
+    </header>
+
+    <section class="tutorial-hero">
+        <div class="container">
+            <div class="section-header">
+                <span class="section-label">使用教程</span>
+            </div>
+            <h1>从入门到能独立上手</h1>
+            <p class="tutorial-intro">
+                这是一份给观鸟摄影师准备的 4.2.1 beta 教程。整页按实际使用顺序编排，不依赖截图，您只要跟着文字一步一步做，就能完成选鸟、查看结果、识鸟、批量处理和重置。
+            </p>
+            <div class="version-pill">Tutorial for 4.2.1-beta</div>
+        </div>
+    </section>
+
+    <section class="tutorial-toc">
+        <div class="container">
+            <div class="section-header" style="margin-bottom: 24px;">
+                <span class="section-label">快速提纲</span>
+            </div>
+            <div class="outline-list">
+                <div class="outline-card">
+                    <div class="outline-top">
+                        <span class="outline-num">01</span>
+                        <a href="#part1" class="outline-title">快速开始</a>
+                    </div>
+                    <p class="outline-desc">先把第一批照片顺利跑完，知道软件是怎么工作的，再开始往下学。</p>
+                    <div class="outline-links">
+                        <a href="#p1-overview"><span class="sec-no">1.1</span>软件能帮你做什么</a>
+                        <a href="#p1-prepare"><span class="sec-no">1.2</span>开始前需要准备什么</a>
+                        <a href="#p1-launch"><span class="sec-no">1.3</span>安装与第一次打开</a>
+                        <a href="#p1-main-ui"><span class="sec-no">1.4</span>主界面快速认识</a>
+                        <a href="#p1-first-run"><span class="sec-no">1.5</span>第一次完整跑一遍选鸟</a>
+                    </div>
+                </div>
+                <div class="outline-card">
+                    <div class="outline-top">
+                        <span class="outline-num">02</span>
+                        <a href="#part2" class="outline-title">如何设置与开始选鸟</a>
+                    </div>
+                    <p class="outline-desc">先学会用对默认思路，再决定哪些参数和开关值得调整。</p>
+                    <div class="outline-links">
+                        <a href="#p2-skill"><span class="sec-no">2.1</span>摄影水平怎么选</a>
+                        <a href="#p2-params"><span class="sec-no">2.2</span>常用参数怎么理解</a>
+                        <a href="#p2-toggles"><span class="sec-no">2.3</span>飞版、连拍、识鸟什么时候开启</a>
+                        <a href="#p2-progress"><span class="sec-no">2.4</span>处理过程中常见提示怎么看</a>
+                        <a href="#p2-defaults"><span class="sec-no">2.5</span>新手最推荐的默认用法</a>
+                    </div>
+                </div>
+                <div class="outline-card">
+                    <div class="outline-top">
+                        <span class="outline-num">03</span>
+                        <a href="#part3" class="outline-title">如何看懂选鸟结果</a>
+                    </div>
+                    <p class="outline-desc">学会读星级、读标记、读目录结构，才知道下一步要先看什么。</p>
+                    <div class="outline-links">
+                        <a href="#p3-ratings"><span class="sec-no">3.1</span>0 星到 3 星分别代表什么</a>
+                        <a href="#p3-flags"><span class="sec-no">3.2</span>Pick、飞版、精焦等标记怎么看</a>
+                        <a href="#p3-bursts"><span class="sec-no">3.3</span>连拍分组结果怎么看</a>
+                        <a href="#p3-folders"><span class="sec-no">3.4</span>处理后的文件夹结构怎么看</a>
+                        <a href="#p3-history"><span class="sec-no">3.5</span>再次打开旧目录时为什么会提示历史记录</a>
+                    </div>
+                </div>
+                <div class="outline-card">
+                    <div class="outline-top">
+                        <span class="outline-num">04</span>
+                        <a href="#part4" class="outline-title">结果浏览器的使用</a>
+                    </div>
+                    <p class="outline-desc">这是新版工作流最重要的一部分，学会后选片会快很多。</p>
+                    <div class="outline-links">
+                        <a href="#p4-browser"><span class="sec-no">4.1</span>什么是结果浏览器</a>
+                        <a href="#p4-layout"><span class="sec-no">4.2</span>三栏布局怎么理解</a>
+                        <a href="#p4-filtering"><span class="sec-no">4.3</span>如何筛选、排序和快速挑片</a>
+                        <a href="#p4-details"><span class="sec-no">4.4</span>如何查看大图、详情和 EXIF 信息</a>
+                        <a href="#p4-adjust"><span class="sec-no">4.5</span>如何在浏览器里改星、定位原图和使用右键菜单</a>
+                        <a href="#p4-compare"><span class="sec-no">4.6</span>全屏查看器与对比查看器怎么用</a>
+                    </div>
+                </div>
+                <div class="outline-card">
+                    <div class="outline-top">
+                        <span class="outline-num">05</span>
+                        <a href="#part5" class="outline-title">鸟种识别</a>
+                    </div>
+                    <p class="outline-desc">把“拍得好不好”和“拍到了什么”结合起来，整理会完整很多。</p>
+                    <div class="outline-links">
+                        <a href="#p5-overview"><span class="sec-no">5.1</span>鸟种识别功能总览</a>
+                        <a href="#p5-panel"><span class="sec-no">5.2</span>识鸟面板怎么用</a>
+                        <a href="#p5-region"><span class="sec-no">5.3</span>国家与地区怎么设置</a>
+                        <a href="#p5-confidence"><span class="sec-no">5.4</span>识别结果和置信度怎么看</a>
+                        <a href="#p5-standards"><span class="sec-no">5.5</span>鸟名显示标准怎么选</a>
+                        <a href="#p5-screenshot"><span class="sec-no">5.6</span>截图识鸟怎么用</a>
+                    </div>
+                </div>
+                <div class="outline-card">
+                    <div class="outline-top">
+                        <span class="outline-num">06</span>
+                        <a href="#part6" class="outline-title">批量处理、重置与常见问题</a>
+                    </div>
+                    <p class="outline-desc">照片一多，最重要的就是流程要稳、目录要清楚、重跑时不容易乱。</p>
+                    <div class="outline-links">
+                        <a href="#p6-recursive"><span class="sec-no">6.1</span>递归处理子目录怎么用</a>
+                        <a href="#p6-recent"><span class="sec-no">6.2</span>最近目录与重复处理怎么管理</a>
+                        <a href="#p6-reset"><span class="sec-no">6.3</span>什么情况下需要重置</a>
+                        <a href="#p6-reprocess"><span class="sec-no">6.4</span>重置后如何重新处理</a>
+                        <a href="#p6-tray"><span class="sec-no">6.5</span>系统托盘与后台运行</a>
+                        <a href="#p6-scenarios"><span class="sec-no">6.6</span>新手常见场景推荐设置</a>
+                        <a href="#p6-troubleshooting"><span class="sec-no">6.7</span>常见问题与排查方法</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="tutorial-part" id="part1">
+        <div class="container">
+            <div class="part-header">
+                <span class="part-num">01</span>
+                <h2>快速开始</h2>
+                <p class="part-desc">先把第一批照片顺利跑完，再慢慢学会更高级的功能。</p>
+            </div>
+
+            <div class="tutorial-step" id="p1-overview">
+                <div class="step-content">
+                    <div class="step-number">1</div>
+                    <div class="step-text">
+                        <span class="step-kicker">Overview</span>
+                        <h3><span class="sec-no">1.1</span>软件能帮你做什么</h3>
+                        <p class="step-lead">慧眼选鸟最核心的作用，是把大量鸟片先快速初筛，再把结果整理得更清楚，最后在需要时帮你识别鸟种。它不是替你做最后决定，而是先把最耗时间的第一轮工作做掉。</p>
+                        <p>对大多数观鸟摄影师来说，最费时间的通常不是拍摄，而是回家后面对几百张甚至上千张相似照片不知道从哪里开始。慧眼选鸟的目标，就是先把这些照片分出优先级，让你先看最值得看的那部分。</p>
+                        <div class="step-subtitle">操作步骤</div>
+                        <ol class="step-guide">
+                            <li>先把软件理解成“帮你初筛”的工具，而不是“代替你审美”的工具。</li>
+                            <li>处理完成后，优先查看高星照片和重点标记照片。</li>
+                            <li>把它当作第一轮整理助手，最后保留哪张仍由你决定。</li>
+                        </ol>
+                        <div class="step-tip">
+                            <span class="tip-icon">💡</span>
+                            第一次使用时，不要想着把所有功能一次学完，先做到“能顺利跑完一批照片”就已经足够。
+                        </div>
+                    </div>
+                </div>
+                <div class="step-panel">
+                    <div class="panel-block">
+                        <h4>这一节学完后，你应该知道</h4>
+                        <p>软件负责先缩小范围，你负责最后判断哪张最值得留下。</p>
+                    </div>
+                    <div class="panel-block">
+                        <h4>最适合的使用场景</h4>
+                        <ul class="panel-checklist">
+                            <li>一次拍了很多张，不知道从哪里开始删。</li>
+                            <li>连拍很多，很多照片看起来差不多。</li>
+                            <li>既想选片，也想顺便知道拍到的是什么鸟。</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tutorial-step reverse" id="p1-prepare">
+                <div class="step-content">
+                    <div class="step-number">2</div>
+                    <div class="step-text">
+                        <span class="step-kicker">Prepare</span>
+                        <h3><span class="sec-no">1.2</span>开始前需要准备什么</h3>
+                        <p class="step-lead">第一次练习时，请先准备一个内容比较单纯的照片文件夹，比如同一天、同一地点或同一次短途外拍的照片。这样最容易看懂结果，也不容易被复杂目录搞乱。</p>
+                        <p>软件支持常见的 RAW、JPG，以及部分 HEIF、HEIC、HIF 格式。第一次不建议直接处理整趟旅行总目录，更不建议一上来就选一个层级很多的大目录，因为这样出问题时不容易排查。</p>
+                        <div class="step-subtitle">操作步骤</div>
+                        <ol class="step-guide">
+                            <li>先找一批你最近拍的鸟片，数量适中即可。</li>
+                            <li>优先选择同一次拍摄的照片目录，不要混太多无关内容。</li>
+                            <li>确认里面主要是你想处理的照片，而不是混着视频、文档或其他杂项。</li>
+                            <li>如果目录很大，先从一个子目录开始练习。</li>
+                        </ol>
+                        <div class="step-tip">
+                            <span class="tip-icon">📁</span>
+                            第一遍建议拿“你不怕试错”的照片练习，不要一上来就处理最重要的正式成片目录。
+                        </div>
+                    </div>
+                </div>
+                <div class="step-panel">
+                    <div class="panel-block">
+                        <h4>推荐第一次练习的目录</h4>
+                        <ul class="panel-checklist">
+                            <li>一个拍摄日期的文件夹。</li>
+                            <li>一个机位或一个早晨拍到的照片。</li>
+                            <li>数量在自己能接受的范围内，不必追求多。</li>
+                        </ul>
+                    </div>
+                    <div class="panel-block">
+                        <h4>先不要做的事</h4>
+                        <p>先不要直接选整个硬盘、整趟旅行总目录，或层级特别深的大目录。</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tutorial-step" id="p1-launch">
+                <div class="step-content">
+                    <div class="step-number">3</div>
+                    <div class="step-text">
+                        <span class="step-kicker">Launch</span>
+                        <h3><span class="sec-no">1.3</span>安装与第一次打开</h3>
+                        <p class="step-lead">安装完成后，第一次打开软件可能会遇到系统安全提示或权限提示，这些都属于正常情况。首次启动如果弹出“摄影水平”选择，先选“初级”即可。</p>
+                        <p>第一次启动时，软件通常会比普通软件慢一点，因为它要完成第一次加载。只要软件还在正常启动，就先不要急着关闭重开。</p>
+                        <div class="step-subtitle">操作步骤</div>
+                        <ol class="step-guide">
+                            <li>双击打开软件。</li>
+                            <li>如果系统询问是否允许打开，按提示继续。</li>
+                            <li>如果出现摄影水平选择窗口，先选“初级”。</li>
+                            <li>进入主界面后，先不要急着改参数，先熟悉界面位置。</li>
+                        </ol>
+                        <div class="step-tip">
+                            <span class="tip-icon">⏳</span>
+                            第一次启动慢一点通常是正常的，特别是新安装后的首次运行。
+                        </div>
+                    </div>
+                </div>
+                <div class="step-panel">
+                    <div class="panel-block">
+                        <h4>第一次只要确认两件事</h4>
+                        <ul class="panel-checklist">
+                            <li>软件能正常进入主界面。</li>
+                            <li>你知道下一步该去哪里选目录。</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tutorial-step reverse" id="p1-main-ui">
+                <div class="step-content">
+                    <div class="step-number">4</div>
+                    <div class="step-text">
+                        <span class="step-kicker">Main UI</span>
+                        <h3><span class="sec-no">1.4</span>主界面快速认识</h3>
+                        <p class="step-lead">主界面最重要的区域有三个：照片目录输入框、设置开关区、日志区。只要先会用这三块，你就已经能完成第一次选鸟。</p>
+                        <p>照片目录输入框负责告诉软件你要处理哪一批照片；设置开关区负责决定这次用什么标准；日志区则会告诉你软件现在正在做什么，以及处理是否顺利。</p>
+                        <div class="step-subtitle">操作步骤</div>
+                        <ol class="step-guide">
+                            <li>先找到照片目录输入框，这是每次开始处理的入口。</li>
+                            <li>再看参数和功能开关区域，这是决定这次怎么选片的地方。</li>
+                            <li>最后看下方日志区，后面处理时主要靠它判断软件是否正常工作。</li>
+                            <li>记住三个按钮：开始处理、查看结果、重置。</li>
+                        </ol>
+                        <div class="step-tip">
+                            <span class="tip-icon">🧭</span>
+                            一开始只要记住三个动作：选目录、开始处理、查看结果。
+                        </div>
+                    </div>
+                </div>
+                <div class="step-panel">
+                    <div class="panel-block">
+                        <h4>三个最重要的按钮</h4>
+                        <ul class="panel-checklist">
+                            <li><strong>开始处理</strong>：正式开始分析照片。</li>
+                            <li><strong>查看结果</strong>：打开结果浏览器看结果。</li>
+                            <li><strong>重置</strong>：把目录恢复到重新处理前的状态。</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tutorial-step" id="p1-first-run">
+                <div class="step-content">
+                    <div class="step-number">5</div>
+                    <div class="step-text">
+                        <span class="step-kicker">First Run</span>
+                        <h3><span class="sec-no">1.5</span>第一次完整跑一遍选鸟</h3>
+                        <p class="step-lead">第一次正式操作时，请尽量简单。先用默认参数跑一遍，看看软件的判断风格，再决定后面要不要微调。</p>
+                        <p>大多数新手第一次出问题，不是因为软件太难，而是因为一开始就改了太多设置，导致自己也不知道哪里改坏了。先跑通默认流程，后面会轻松很多。</p>
+                        <div class="step-subtitle">操作步骤</div>
+                        <ol class="step-guide">
+                            <li>把照片文件夹拖进目录输入框，或点击“浏览”手动选择。</li>
+                            <li>摄影水平先用“初级”。</li>
+                            <li>有很多相似连拍时打开“连拍”。</li>
+                            <li>飞鸟很多时打开“飞版”。</li>
+                            <li>想顺便识别鸟种时打开“识鸟”。</li>
+                            <li>其他参数先不动，直接点击“开始处理”。</li>
+                            <li>处理结束后点击“查看结果”。</li>
+                        </ol>
+                        <div class="step-tip">
+                            <span class="tip-icon">✅</span>
+                            第一次的目标不是把设置调到最完美，而是先顺利得到一套能看懂的结果。
+                        </div>
+                    </div>
+                </div>
+                <div class="step-panel">
+                    <div class="panel-block">
+                        <h4>第一遍最推荐的设置</h4>
+                        <ul class="panel-checklist">
+                            <li>摄影水平：初级。</li>
+                            <li>连拍：开。</li>
+                            <li>飞版：按内容决定。</li>
+                            <li>识鸟：按兴趣决定。</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="tutorial-part alt" id="part2">
+        <div class="container">
+            <div class="part-header">
+                <span class="part-num">02</span>
+                <h2>如何设置与开始选鸟</h2>
+                <p class="part-desc">先用对思路，再谈调参数。绝大多数结果问题，都能在这一章找到原因。</p>
+            </div>
+
+            <div class="tutorial-step" id="p2-skill">
+                <div class="step-content">
+                    <div class="step-number">1</div>
+                    <div class="step-text">
+                        <span class="step-kicker">Skill Level</span>
+                        <h3><span class="sec-no">2.1</span>摄影水平怎么选</h3>
+                        <p class="step-lead">摄影水平本质上是几套不同的默认标准。它不是在评价你的技术，而是在决定这次选片要宽松一点，还是严格一点。</p>
+                        <p>新手模式会保留更多照片；初级模式最平衡，适合大多数用户；大师模式更严格，更适合已经非常清楚自己想留下什么的人。</p>
+                        <div class="step-subtitle">操作步骤</div>
+                        <ol class="step-guide">
+                            <li>如果你刚开始拍鸟，或不想删得太狠，选“新手”。</li>
+                            <li>如果你想用最稳妥的默认方案，选“初级”。</li>
+                            <li>如果你本来删片就很严格，只想快速留下精品，选“大师”。</li>
+                            <li>跑完一批后，再根据结果多少决定下次是否要更严格或更宽松。</li>
+                        </ol>
+                        <div class="step-tip">
+                            <span class="tip-icon">🎯</span>
+                            如果你拿不准，优先选“初级”。绝大多数用户第一次都适合从这里开始。
+                        </div>
+                    </div>
+                </div>
+                <div class="step-panel">
+                    <div class="panel-block">
+                        <h4>怎么判断要不要改档</h4>
+                        <ul class="panel-checklist">
+                            <li>留下来的太多，下次就更严格一点。</li>
+                            <li>留下来的太少，下次就更宽松一点。</li>
+                            <li>第一次先别频繁来回切换。</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tutorial-step reverse" id="p2-params">
+                <div class="step-content">
+                    <div class="step-number">2</div>
+                    <div class="step-text">
+                        <span class="step-kicker">Thresholds</span>
+                        <h3><span class="sec-no">2.2</span>常用参数怎么理解</h3>
+                        <p class="step-lead">最重要的几个参数，核心都在决定一件事：软件认为什么算“足够好”。参数高，不代表更高级，只代表更严格。</p>
+                        <p>锐度阈值主要影响清晰度标准，美学阈值主要影响整体观感标准，AI 检测敏感度会影响软件判断目标时的门槛。第一次如果还不知道自己到底不满意什么，就先不要急着改。</p>
+                        <div class="step-subtitle">操作步骤</div>
+                        <ol class="step-guide">
+                            <li>把锐度阈值理解成“清晰度门槛”。</li>
+                            <li>把美学阈值理解成“整体画面门槛”。</li>
+                            <li>把 AI 检测敏感度理解成“软件判断目标的门槛”。</li>
+                            <li>先看默认结果，再决定是不是要微调。</li>
+                        </ol>
+                        <div class="step-tip">
+                            <span class="tip-icon">⚙️</span>
+                            如果你还说不清“这次结果哪里不满意”，就先不要调参数。
+                        </div>
+                    </div>
+                </div>
+                <div class="step-panel">
+                    <div class="panel-block">
+                        <h4>三个最常见误区</h4>
+                        <ul class="panel-checklist">
+                            <li>参数越高不代表越专业。</li>
+                            <li>第一次就大幅修改参数，通常更容易迷糊。</li>
+                            <li>不满意时先判断是结果太多，还是太少，再动参数。</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tutorial-step" id="p2-toggles">
+                <div class="step-content">
+                    <div class="step-number">3</div>
+                    <div class="step-text">
+                        <span class="step-kicker">Feature Toggles</span>
+                        <h3><span class="sec-no">2.3</span>飞版、连拍、识鸟什么时候开启</h3>
+                        <p class="step-lead">这三个功能不需要每次都全开。最好的方法，是根据你这批照片的内容来决定，而不是为了“功能更全”而全部打开。</p>
+                        <p>飞版适合飞鸟很多的拍摄；连拍适合相似照片很多的拍摄；识鸟适合你希望顺便知道鸟种，或者后面想按鸟种筛选和整理的情况。</p>
+                        <div class="step-subtitle">操作步骤</div>
+                        <ol class="step-guide">
+                            <li>静栖鸟为主，可以先不开飞版。</li>
+                            <li>飞鸟很多，建议开飞版。</li>
+                            <li>一组动作经常拍出很多相似照片，建议开连拍。</li>
+                            <li>只想先快速初筛，可以先不开识鸟。</li>
+                            <li>想知道拍到什么鸟，或后面想按鸟种看结果，打开识鸟。</li>
+                        </ol>
+                        <div class="step-tip">
+                            <span class="tip-icon">🧩</span>
+                            开关不是越多越好，而是越贴近这批照片的实际内容越好。
+                        </div>
+                    </div>
+                </div>
+                <div class="step-panel">
+                    <div class="panel-block">
+                        <h4>最常见的三种组合</h4>
+                        <ul class="panel-checklist">
+                            <li>静栖鸟：连拍按需开，识鸟按需开。</li>
+                            <li>飞鸟多：飞版 + 连拍。</li>
+                            <li>想完整整理：连拍 + 识鸟，再按情况加飞版。</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tutorial-step reverse" id="p2-progress">
+                <div class="step-content">
+                    <div class="step-number">4</div>
+                    <div class="step-text">
+                        <span class="step-kicker">Progress</span>
+                        <h3><span class="sec-no">2.4</span>处理过程中常见提示怎么看</h3>
+                        <p class="step-lead">处理时最重要的，不是看懂每一条日志，而是判断软件是否在正常往前走。大多数时候，你只需要看日志是不是持续刷新。</p>
+                        <p>日志区会显示当前正在检测、分析、整理、识别等信息。照片越多、功能越多，处理时间越长，这是正常现象，不代表出问题。</p>
+                        <div class="step-subtitle">操作步骤</div>
+                        <ol class="step-guide">
+                            <li>点击开始处理后，先看日志区是否持续出现新内容。</li>
+                            <li>看到“检测”“分析”“整理”等词，说明流程在继续。</li>
+                            <li>如果中间某一步停留稍久，先不要急着关掉。</li>
+                            <li>只有在长时间完全没有变化时，再考虑是否卡住。</li>
+                        </ol>
+                        <div class="step-tip">
+                            <span class="tip-icon">⏱️</span>
+                            你不需要逐字看懂日志，只要知道“它还在动，而且没有报错”就够了。
+                        </div>
+                    </div>
+                </div>
+                <div class="step-panel">
+                    <div class="panel-block">
+                        <h4>先不要慌的情况</h4>
+                        <ul class="panel-checklist">
+                            <li>照片很多。</li>
+                            <li>连拍和识鸟都开了。</li>
+                            <li>某一步暂时花的时间比较长。</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tutorial-step" id="p2-defaults">
+                <div class="step-content">
+                    <div class="step-number">5</div>
+                    <div class="step-text">
+                        <span class="step-kicker">Recommended Defaults</span>
+                        <h3><span class="sec-no">2.5</span>新手最推荐的默认用法</h3>
+                        <p class="step-lead">如果你不想一开始被设置搞复杂，这里有一套最稳妥的起步方案。它不是唯一正确答案，但通常最适合第一次真正上手。</p>
+                        <div class="step-subtitle">操作步骤</div>
+                        <ol class="step-guide">
+                            <li>目录只选一个不大的拍摄文件夹。</li>
+                            <li>摄影水平选“初级”。</li>
+                            <li>打开“连拍”。</li>
+                            <li>飞鸟很多就开“飞版”。</li>
+                            <li>想知道鸟种就开“识鸟”，否则先不开也可以。</li>
+                            <li>其他参数先保持默认。</li>
+                            <li>跑完以后，先看高星结果，再决定下次要不要微调。</li>
+                        </ol>
+                        <div class="step-tip">
+                            <span class="tip-icon">👍</span>
+                            先把默认流程跑熟，再谈个性化设置，效率最高。
+                        </div>
+                    </div>
+                </div>
+                <div class="step-panel">
+                    <div class="panel-block">
+                        <h4>为什么推荐这样用</h4>
+                        <p>这样最容易分清：到底是软件判断的问题，还是你还没习惯它的工作方式。</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="tutorial-part" id="part3">
+        <div class="container">
+            <div class="part-header">
+                <span class="part-num">03</span>
+                <h2>如何看懂选鸟结果</h2>
+                <p class="part-desc">先学会“怎么读结果”，再决定“怎么改结果”，效率会高很多。</p>
+            </div>
+
+            <div class="tutorial-step" id="p3-ratings">
+                <div class="step-content">
+                    <div class="step-number">1</div>
+                    <div class="step-text">
+                        <span class="step-kicker">Ratings</span>
+                        <h3><span class="sec-no">3.1</span>0 星到 3 星分别代表什么</h3>
+                        <p class="step-lead">星级是软件给你的第一轮筛选结果。最简单的理解方法是：3 星优先看，2 星值得保留候选，1 星是普通记录片，0 星通常不建议优先保留。</p>
+                        <p>看结果时，不要从全部照片重新翻起，而是先从高星往下看。这样最符合这款软件的使用逻辑，也最省时间。</p>
+                        <div class="step-subtitle">操作步骤</div>
+                        <ol class="step-guide">
+                            <li>先把 3 星理解成“优先重点看”。</li>
+                            <li>再把 2 星理解成“质量不错，值得复查”。</li>
+                            <li>1 星放在后面看，通常作为记录片参考。</li>
+                            <li>0 星最后再看，先不要在这里花太多时间。</li>
+                        </ol>
+                        <div class="step-tip">
+                            <span class="tip-icon">⭐</span>
+                            星级的意义是帮你省时间，不是强迫你接受结果。自己特别喜欢的片子，当然可以留。
+                        </div>
+                    </div>
+                </div>
+                <div class="step-panel">
+                    <div class="panel-block">
+                        <h4>最实用的浏览顺序</h4>
+                        <ul class="panel-checklist">
+                            <li>先看 3 星。</li>
+                            <li>再看 2 星。</li>
+                            <li>最后才看 1 星和 0 星。</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tutorial-step reverse" id="p3-flags">
+                <div class="step-content">
+                    <div class="step-number">2</div>
+                    <div class="step-text">
+                        <span class="step-kicker">Flags</span>
+                        <h3><span class="sec-no">3.2</span>Pick、飞版、精焦等标记怎么看</h3>
+                        <p class="step-lead">除了星级，软件还会给部分照片加上额外标记，用来帮助你更快找到高价值照片。这些标记的作用，是让你复查时更聚焦，而不是替你做最终结论。</p>
+                        <div class="step-subtitle">操作步骤</div>
+                        <ol class="step-guide">
+                            <li>看到 Pick 时，先把它当作重点片。</li>
+                            <li>看到飞版时，重点看姿态、翼位和瞬间。</li>
+                            <li>看到精焦时，重点看头部、眼部和细节是否真的更理想。</li>
+                            <li>把这些标记和星级一起看，不要只单独看某一个。</li>
+                        </ol>
+                        <div class="step-tip">
+                            <span class="tip-icon">🚩</span>
+                            这些标记最有用的地方，是帮你更快把注意力集中到最可能出片的照片上。
+                        </div>
+                    </div>
+                </div>
+                <div class="step-panel">
+                    <div class="panel-block">
+                        <h4>一个简单判断顺序</h4>
+                        <p>先看星级，再看有没有 Pick，再看飞版和精焦，这样最不容易乱。</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tutorial-step" id="p3-bursts">
+                <div class="step-content">
+                    <div class="step-number">3</div>
+                    <div class="step-text">
+                        <span class="step-kicker">Bursts</span>
+                        <h3><span class="sec-no">3.3</span>连拍分组结果怎么看</h3>
+                        <p class="step-lead">连拍分组的目标，不是让你每组每张都慢慢纠结，而是先快速找出组里最好的一张。观鸟摄影里，很多时间浪费就在一组相似照片来回比较上。</p>
+                        <div class="step-subtitle">操作步骤</div>
+                        <ol class="step-guide">
+                            <li>先找到同一组的连拍照片。</li>
+                            <li>先比较姿态，看看哪张瞬间最好。</li>
+                            <li>再比较清晰度和头部细节。</li>
+                            <li>如果还难分高下，再看背景和构图。</li>
+                            <li>先选出第一名，再决定第二张是否值得保留。</li>
+                        </ol>
+                        <div class="step-tip">
+                            <span class="tip-icon">📸</span>
+                            连拍组里最容易浪费时间。先挑最好的一张，效率通常会高很多。
+                        </div>
+                    </div>
+                </div>
+                <div class="step-panel">
+                    <div class="panel-block">
+                        <h4>连拍组里最常看的三个点</h4>
+                        <ul class="panel-checklist">
+                            <li>姿态是不是最好。</li>
+                            <li>头部和眼睛是不是最清楚。</li>
+                            <li>背景和构图是不是更舒服。</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tutorial-step reverse" id="p3-folders">
+                <div class="step-content">
+                    <div class="step-number">4</div>
+                    <div class="step-text">
+                        <span class="step-kicker">Folders</span>
+                        <h3><span class="sec-no">3.4</span>处理后的文件夹结构怎么看</h3>
+                        <p class="step-lead">处理后目录结构变了是正常的。软件会按照结果把照片整理到不同目录里，目的是帮助你复查，而不是把照片弄乱。</p>
+                        <p>第一次看到目录变化时，先不要急着手动拖动文件。更好的做法是先在结果浏览器里看懂逻辑，再决定要不要自己进一步整理。</p>
+                        <div class="step-subtitle">操作步骤</div>
+                        <ol class="step-guide">
+                            <li>先找到按星级分出的结果目录。</li>
+                            <li>如果开了连拍，再看是否出现 `burst_xxx` 一类的分组目录。</li>
+                            <li>不要第一时间人工移动文件，先理解软件整理后的结构。</li>
+                            <li>不确定时，先回结果浏览器里看，而不是在文件夹里猜。</li>
+                        </ol>
+                        <div class="step-tip">
+                            <span class="tip-icon">🗂️</span>
+                            这些目录的目的，是让你后面看高价值照片更快，而不是要求你完全按它做最终归档。
+                        </div>
+                    </div>
+                </div>
+                <div class="step-panel">
+                    <div class="panel-block">
+                        <h4>第一次看目录时先问自己</h4>
+                        <ul class="panel-checklist">
+                            <li>高星照片在哪。</li>
+                            <li>连拍组在哪。</li>
+                            <li>我要不要先回浏览器里看，而不是直接在文件夹里动手。</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tutorial-step" id="p3-history">
+                <div class="step-content">
+                    <div class="step-number">5</div>
+                    <div class="step-text">
+                        <span class="step-kicker">History</span>
+                        <h3><span class="sec-no">3.5</span>再次打开旧目录时为什么会提示历史记录</h3>
+                        <p class="step-lead">软件会记住它之前处理过的目录，这是为了避免同一批照片被反复整理得越来越乱。看到历史记录提示时，请先停一下确认目标。</p>
+                        <div class="step-subtitle">操作步骤</div>
+                        <ol class="step-guide">
+                            <li>再次打开旧目录时，先认真看软件提示。</li>
+                            <li>如果你只是想继续看旧结果，不必重置。</li>
+                            <li>如果你是想按新标准重新来一遍，再考虑重置。</li>
+                            <li>点确定前先确认：这是不是你真要重跑的那批照片。</li>
+                        </ol>
+                        <div class="step-tip">
+                            <span class="tip-icon">🛑</span>
+                            历史记录提示出现时，先确认目标，比直接点下一步更安全。
+                        </div>
+                    </div>
+                </div>
+                <div class="step-panel">
+                    <div class="panel-block">
+                        <h4>一个最简单的判断标准</h4>
+                        <p>想继续看旧结果，就别重置；想真正重新处理，就先重置。</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="tutorial-part alt" id="part4">
+        <div class="container">
+            <div class="part-header">
+                <span class="part-num">04</span>
+                <h2>结果浏览器的使用</h2>
+                <p class="part-desc">这是 4.2.1 beta 最值得学会的工作流，学会后会比只看文件夹高效很多。</p>
+            </div>
+
+            <div class="tutorial-step" id="p4-browser">
+                <div class="step-content">
+                    <div class="step-number">1</div>
+                    <div class="step-text">
+                        <span class="step-kicker">Browser</span>
+                        <h3><span class="sec-no">4.1</span>什么是结果浏览器</h3>
+                        <p class="step-lead">结果浏览器是软件内部专门用来筛选、复查、比较和修正选片结果的地方。它不是普通看图窗口，而是你后续精挑和复查的主要工作区。</p>
+                        <div class="step-subtitle">操作步骤</div>
+                        <ol class="step-guide">
+                            <li>处理完成后，点击“查看结果”。</li>
+                            <li>以后复查这批照片时，优先从结果浏览器开始，而不是先回文件夹。</li>
+                            <li>把它当成“正式挑片”的地方，而不是只用来看一眼统计数字。</li>
+                        </ol>
+                        <div class="step-tip">
+                            <span class="tip-icon">📋</span>
+                            如果你以前只习惯翻系统文件夹，建议这次先用浏览器试一遍，会轻松很多。
+                        </div>
+                    </div>
+                </div>
+                <div class="step-panel">
+                    <div class="panel-block">
+                        <h4>结果浏览器最适合做什么</h4>
+                        <ul class="panel-checklist">
+                            <li>先筛高星照片。</li>
+                            <li>再缩小到更具体的条件。</li>
+                            <li>最后比较难选的几张。</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tutorial-step reverse" id="p4-layout">
+                <div class="step-content">
+                    <div class="step-number">2</div>
+                    <div class="step-text">
+                        <span class="step-kicker">Layout</span>
+                        <h3><span class="sec-no">4.2</span>三栏布局怎么理解</h3>
+                        <p class="step-lead">结果浏览器通常分成左、中、右三部分。左边是筛选，中间是缩略图，右边是详情。只要先理解这三栏各管什么，就已经能开始用了。</p>
+                        <div class="step-subtitle">操作步骤</div>
+                        <ol class="step-guide">
+                            <li>左边先看筛选条件，这里决定你现在只看哪一类照片。</li>
+                            <li>中间看缩略图，这是浏览结果的主区域。</li>
+                            <li>右边看详情，这是判断当前照片值不值得留的地方。</li>
+                            <li>使用时记住一句话：左边缩范围，中间找照片，右边做判断。</li>
+                        </ol>
+                        <div class="step-tip">
+                            <span class="tip-icon">🧭</span>
+                            先理解结构，再研究细节按钮，会更容易上手。
+                        </div>
+                    </div>
+                </div>
+                <div class="step-panel">
+                    <div class="panel-block">
+                        <h4>最容易记住的用法</h4>
+                        <p>左边选范围，中间看结果，右边做决定。</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tutorial-step" id="p4-filtering">
+                <div class="step-content">
+                    <div class="step-number">3</div>
+                    <div class="step-text">
+                        <span class="step-kicker">Filtering</span>
+                        <h3><span class="sec-no">4.3</span>如何筛选、排序和快速挑片</h3>
+                        <p class="step-lead">结果浏览器最实用的地方，不是“能看图”，而是“能让你少看很多没必要看的图”。高效挑片的关键，是先缩小范围，再开始细看。</p>
+                        <div class="step-subtitle">操作步骤</div>
+                        <ol class="step-guide">
+                            <li>先筛出 3 星。</li>
+                            <li>如果 3 星很多，再加上对焦状态、飞版状态或鸟种等条件。</li>
+                            <li>如果 3 星太少，再把 2 星也加进来。</li>
+                            <li>再用排序功能，把更值得先看的照片排到前面。</li>
+                            <li>从最有希望的一批开始复查，而不是全量重看。</li>
+                        </ol>
+                        <div class="step-tip">
+                            <span class="tip-icon">🎯</span>
+                            真正高效的选片，永远是先缩小范围，再开始细看。
+                        </div>
+                    </div>
+                </div>
+                <div class="step-panel">
+                    <div class="panel-block">
+                        <h4>最常见的筛选顺序</h4>
+                        <ul class="panel-checklist">
+                            <li>先按星级。</li>
+                            <li>再按飞版或对焦状态。</li>
+                            <li>最后按鸟种或其他更细条件。</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tutorial-step reverse" id="p4-details">
+                <div class="step-content">
+                    <div class="step-number">4</div>
+                    <div class="step-text">
+                        <span class="step-kicker">Details</span>
+                        <h3><span class="sec-no">4.4</span>如何查看大图、详情和 EXIF 信息</h3>
+                        <p class="step-lead">缩略图适合快速扫，大图和详情适合做最终判断。第一次不需要把所有信息字段都搞懂，只要先抓住重点信息看就够了。</p>
+                        <div class="step-subtitle">操作步骤</div>
+                        <ol class="step-guide">
+                            <li>在中间缩略图区点击一张照片。</li>
+                            <li>去右边详情区看这张照片的主要信息。</li>
+                            <li>如果你觉得“差不多可以”，继续下一张。</li>
+                            <li>如果你觉得“拿不准”，进入更大的查看模式再确认。</li>
+                            <li>对特别在意的照片，重点看清晰度、结果说明和识鸟信息。</li>
+                        </ol>
+                        <div class="step-tip">
+                            <span class="tip-icon">🔍</span>
+                            第一次不必研究所有字段，先学会看最影响决策的那几项。
+                        </div>
+                    </div>
+                </div>
+                <div class="step-panel">
+                    <div class="panel-block">
+                        <h4>优先看哪几项</h4>
+                        <ul class="panel-checklist">
+                            <li>当前星级。</li>
+                            <li>是否有 Pick、飞版、精焦等标记。</li>
+                            <li>识鸟结果是否可靠。</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tutorial-step" id="p4-adjust">
+                <div class="step-content">
+                    <div class="step-number">5</div>
+                    <div class="step-text">
+                        <span class="step-kicker">Adjust</span>
+                        <h3><span class="sec-no">4.5</span>如何在浏览器里改星、定位原图和使用右键菜单</h3>
+                        <p class="step-lead">结果浏览器不只是看结果，也能让你继续修正和处理结果。少量照片的人工修正，直接在这里做最方便。</p>
+                        <div class="step-subtitle">操作步骤</div>
+                        <ol class="step-guide">
+                            <li>如果某张照片明显被低估，直接改高一档。</li>
+                            <li>如果某张照片你觉得不值那么高，也可以降档。</li>
+                            <li>想知道原图在哪，使用右键菜单定位原图。</li>
+                            <li>想交给其他软件处理，也可通过右键菜单直接打开。</li>
+                            <li>改完以后，继续在浏览器里筛选和复查，不必退出重来。</li>
+                        </ol>
+                        <div class="step-tip">
+                            <span class="tip-icon">✍️</span>
+                            软件先帮你做第一轮判断，你只需要对少数特别在意的照片做人工修正。
+                        </div>
+                    </div>
+                </div>
+                <div class="step-panel">
+                    <div class="panel-block">
+                        <h4>最适合人工改星的情况</h4>
+                        <ul class="panel-checklist">
+                            <li>你个人非常喜欢某个瞬间。</li>
+                            <li>两张很接近，但你更偏好其中一张。</li>
+                            <li>某张照片有特殊记录价值。</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tutorial-step reverse" id="p4-compare">
+                <div class="step-content">
+                    <div class="step-number">6</div>
+                    <div class="step-text">
+                        <span class="step-kicker">Compare</span>
+                        <h3><span class="sec-no">4.6</span>全屏查看器与对比查看器怎么用</h3>
+                        <p class="step-lead">真正难选的照片，通常不是“好不好”，而是“这两张谁更好”。这时不要只看缩略图，全屏和对比查看会更有效。</p>
+                        <div class="step-subtitle">操作步骤</div>
+                        <ol class="step-guide">
+                            <li>单张拿不准时，进入全屏查看。</li>
+                            <li>在全屏里重点看头部、眼睛、羽毛细节和姿态。</li>
+                            <li>需要看细节时，使用放大查看。</li>
+                            <li>两张很像、难分高下时，进入对比查看。</li>
+                            <li>先决定谁是第一名，再考虑第二张要不要留。</li>
+                        </ol>
+                        <div class="step-tip">
+                            <span class="tip-icon">🆚</span>
+                            不要把“二选一”这种问题交给缩略图来解决。
+                        </div>
+                    </div>
+                </div>
+                <div class="step-panel">
+                    <div class="panel-block">
+                        <h4>最适合用对比查看的照片</h4>
+                        <ul class="panel-checklist">
+                            <li>姿态很像的连拍。</li>
+                            <li>动作瞬间差别很小的飞鸟。</li>
+                            <li>你一眼看不出谁更清楚的两张片子。</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="tutorial-part" id="part5">
+        <div class="container">
+            <div class="part-header">
+                <span class="part-num">05</span>
+                <h2>鸟种识别</h2>
+                <p class="part-desc">把“拍得好不好”和“拍到了什么”结合起来，照片整理会完整很多。</p>
+            </div>
+
+            <div class="tutorial-step" id="p5-overview">
+                <div class="step-content">
+                    <div class="step-number">1</div>
+                    <div class="step-text">
+                        <span class="step-kicker">Bird ID</span>
+                        <h3><span class="sec-no">5.1</span>鸟种识别功能总览</h3>
+                        <p class="step-lead">识鸟功能帮助你回答“这是什么鸟”，但它不代替选鸟。最适合的使用方式，是把识鸟作为选鸟的补充信息，而不是单独依赖它做全部判断。</p>
+                        <div class="step-subtitle">操作步骤</div>
+                        <ol class="step-guide">
+                            <li>开始处理前，先想清楚这次要不要开识鸟。</li>
+                            <li>如果你更在意“拍到什么鸟”，就开。</li>
+                            <li>如果这次只想快速初筛，也可以先不开。</li>
+                            <li>处理完成后，把识鸟结果作为辅助信息使用。</li>
+                        </ol>
+                        <div class="step-tip">
+                            <span class="tip-icon">🐦</span>
+                            识鸟最适合和选鸟一起使用，而不是完全单独看。
+                        </div>
+                    </div>
+                </div>
+                <div class="step-panel">
+                    <div class="panel-block">
+                        <h4>什么时候开识鸟最划算</h4>
+                        <ul class="panel-checklist">
+                            <li>这次很在意拍到的鸟种。</li>
+                            <li>后面想按鸟种筛选结果。</li>
+                            <li>想顺便把物种信息整理进工作流。</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tutorial-step reverse" id="p5-panel">
+                <div class="step-content">
+                    <div class="step-number">2</div>
+                    <div class="step-text">
+                        <span class="step-kicker">Bird ID Panel</span>
+                        <h3><span class="sec-no">5.2</span>识鸟面板怎么用</h3>
+                        <p class="step-lead">识鸟开启后，你会看到候选结果和相关信息。看识鸟结果时，不要只看名字，也要看它是不是足够可信。</p>
+                        <div class="step-subtitle">操作步骤</div>
+                        <ol class="step-guide">
+                            <li>打开“识鸟”功能。</li>
+                            <li>处理时留意识鸟面板或结果区域里的候选鸟名。</li>
+                            <li>先看排在前面的结果。</li>
+                            <li>再看它的置信度高不高。</li>
+                            <li>如果结果明显不符合常识，再结合拍摄地点和外形自己判断。</li>
+                        </ol>
+                        <div class="step-tip">
+                            <span class="tip-icon">🧠</span>
+                            识鸟结果是高质量参考，不是绝对答案。尤其在低置信度时，更要人工复查。
+                        </div>
+                    </div>
+                </div>
+                <div class="step-panel">
+                    <div class="panel-block">
+                        <h4>先看什么</h4>
+                        <ul class="panel-checklist">
+                            <li>第一候选结果。</li>
+                            <li>它的置信度。</li>
+                            <li>它是不是符合拍摄地点常识。</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tutorial-step" id="p5-region">
+                <div class="step-content">
+                    <div class="step-number">3</div>
+                    <div class="step-text">
+                        <span class="step-kicker">Region</span>
+                        <h3><span class="sec-no">5.3</span>国家与地区怎么设置</h3>
+                        <p class="step-lead">地点设置非常重要，因为它会直接影响候选范围。地点越接近真实拍摄位置，识别结果通常越稳定。</p>
+                        <div class="step-subtitle">操作步骤</div>
+                        <ol class="step-guide">
+                            <li>如果知道拍摄国家，尽量先选对国家。</li>
+                            <li>如果知道更具体的地区，也尽量设置到地区。</li>
+                            <li>如果完全不确定，才用更宽松的范围。</li>
+                            <li>地点设好后，再开始识别。</li>
+                        </ol>
+                        <div class="step-tip">
+                            <span class="tip-icon">🌍</span>
+                            地点设得越贴近真实拍摄地，通常越容易排除不可能出现的鸟种。
+                        </div>
+                    </div>
+                </div>
+                <div class="step-panel">
+                    <div class="panel-block">
+                        <h4>最简单的原则</h4>
+                        <p>知道拍摄地，就尽量告诉软件；不知道，才让它在更大的范围里猜。</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tutorial-step reverse" id="p5-confidence">
+                <div class="step-content">
+                    <div class="step-number">4</div>
+                    <div class="step-text">
+                        <span class="step-kicker">Confidence</span>
+                        <h3><span class="sec-no">5.4</span>识别结果和置信度怎么看</h3>
+                        <p class="step-lead">识别结果不只是看“叫什么”，还要看“软件有多确定”。高置信度更值得参考，低置信度更适合当候选提示。</p>
+                        <div class="step-subtitle">操作步骤</div>
+                        <ol class="step-guide">
+                            <li>先看第一候选结果。</li>
+                            <li>再看它的置信度是否明显偏高。</li>
+                            <li>高置信度时，可以优先参考。</li>
+                            <li>低置信度时，不要马上当成最终答案。</li>
+                            <li>结合拍摄地点、外形和你自己的经验一起判断。</li>
+                        </ol>
+                        <div class="step-tip">
+                            <span class="tip-icon">📊</span>
+                            记住一句话：高置信度更值得信，低置信度更值得查。
+                        </div>
+                    </div>
+                </div>
+                <div class="step-panel">
+                    <div class="panel-block">
+                        <h4>低置信度时别急着做的事</h4>
+                        <ul class="panel-checklist">
+                            <li>别马上把它写进正式记录。</li>
+                            <li>别因为排第一就完全相信。</li>
+                            <li>先结合地点和外形再看一遍。</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tutorial-step reverse" id="p5-standards">
+                <div class="step-content">
+                    <div class="step-number">5</div>
+                    <div class="step-text">
+                        <span class="step-kicker">Naming Standards</span>
+                        <h3><span class="sec-no">5.5</span>鸟名显示标准怎么选</h3>
+                        <p class="step-lead">同一种鸟，在不同标准里可能有不同英文名。软件支持多种显示标准，是为了让不同习惯的用户都能按自己的体系工作。</p>
+                        <div class="step-subtitle">操作步骤</div>
+                        <ol class="step-guide">
+                            <li>如果你没有固定在用哪套标准，先用默认。</li>
+                            <li>如果你平时做正式名录或投稿，再切换到你习惯的标准。</li>
+                            <li>切换后观察是否更符合你的使用习惯。</li>
+                            <li>长期使用时尽量保持一致，不要频繁切换。</li>
+                        </ol>
+                        <div class="step-tip">
+                            <span class="tip-icon">📚</span>
+                            普通用户长期用默认最省心，真正需要统一名录时再切换即可。
+                        </div>
+                    </div>
+                </div>
+                <div class="step-panel">
+                    <div class="panel-block">
+                        <h4>选择标准时最重要的事</h4>
+                        <p>不是选“哪一个最好”，而是选“你以后一直想沿用哪一个”。</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tutorial-step" id="p5-screenshot">
+                <div class="step-content">
+                    <div class="step-number">6</div>
+                    <div class="step-text">
+                        <span class="step-kicker">Screenshot ID</span>
+                        <h3><span class="sec-no">5.6</span>截图识鸟怎么用</h3>
+                        <p class="step-lead">截图识鸟适合你临时看到一只鸟，想快速试试识别，但手上没有原始照片的时候使用。它更适合做快速参考，不如直接处理原图稳定。</p>
+                        <div class="step-subtitle">操作步骤</div>
+                        <ol class="step-guide">
+                            <li>打开截图识鸟功能。</li>
+                            <li>按提示框选你要识别的鸟。</li>
+                            <li>等待软件给出候选结果。</li>
+                            <li>如果结果不理想，换一张更清楚、更完整的截图再试。</li>
+                            <li>在 macOS 上，如果用不了，先检查屏幕录制权限是否已开启。</li>
+                        </ol>
+                        <div class="step-tip">
+                            <span class="tip-icon">🖼️</span>
+                            截图识鸟适合快速参考，不适合替代完整原图识别流程。
+                        </div>
+                    </div>
+                </div>
+                <div class="step-panel">
+                    <div class="panel-block">
+                        <h4>什么时候截图识鸟最有用</h4>
+                        <ul class="panel-checklist">
+                            <li>在网页上看到一张鸟图想试着认。</li>
+                            <li>别人发来一张图，想快速有个参考答案。</li>
+                            <li>暂时没有原始照片，只想先看看候选结果。</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="tutorial-part alt" id="part6">
+        <div class="container">
+            <div class="part-header">
+                <span class="part-num">06</span>
+                <h2>批量处理、重置与常见问题</h2>
+                <p class="part-desc">照片一多，真正重要的不是更复杂，而是更稳、更清楚、更不容易把目录弄乱。</p>
+            </div>
+
+            <div class="tutorial-step" id="p6-recursive">
+                <div class="step-content">
+                    <div class="step-number">1</div>
+                    <div class="step-text">
+                        <span class="step-kicker">Recursive Batch</span>
+                        <h3><span class="sec-no">6.1</span>递归处理子目录怎么用</h3>
+                        <p class="step-lead">如果你的照片不是都放在一个文件夹里，而是按日期、地点或机位分了很多层目录，递归处理会很省时间。但第一次用时，范围一定要保守一点。</p>
+                        <div class="step-subtitle">操作步骤</div>
+                        <ol class="step-guide">
+                            <li>先找到这次要处理的总目录。</li>
+                            <li>确认它下面确实就是你这次想处理的那些子目录。</li>
+                            <li>启用递归处理，让软件自动往下扫描。</li>
+                            <li>第一次先小范围试，不要直接扫太大的总目录。</li>
+                            <li>确认流程没问题后，再扩大范围。</li>
+                        </ol>
+                        <div class="step-tip">
+                            <span class="tip-icon">🌲</span>
+                            第一次用递归处理时，宁可少一点，也不要一下选太大。
+                        </div>
+                    </div>
+                </div>
+                <div class="step-panel">
+                    <div class="panel-block">
+                        <h4>最适合用递归处理的情况</h4>
+                        <ul class="panel-checklist">
+                            <li>照片按日期分了很多文件夹。</li>
+                            <li>一趟旅行分成很多小目录。</li>
+                            <li>你不想一个个目录手动重复操作。</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tutorial-step reverse" id="p6-recent">
+                <div class="step-content">
+                    <div class="step-number">2</div>
+                    <div class="step-text">
+                        <span class="step-kicker">Recent Directories</span>
+                        <h3><span class="sec-no">6.2</span>最近目录与重复处理怎么管理</h3>
+                        <p class="step-lead">软件会记住最近处理过的目录，这样你下次可以很快回到之前的工作位置。但每次再次打开时，都要先确认是不是你真正想处理的目录。</p>
+                        <div class="step-subtitle">操作步骤</div>
+                        <ol class="step-guide">
+                            <li>通过最近目录快速回到之前的工作位置。</li>
+                            <li>每次点开前，先确认路径是不是这次真正要处理的目录。</li>
+                            <li>如果只是继续看旧结果，不要重复开始处理。</li>
+                            <li>如果你想换标准重新来，再考虑重置。</li>
+                        </ol>
+                        <div class="step-tip">
+                            <span class="tip-icon">📌</span>
+                            养成“先确认目录再动手”的习惯，可以避免很多重复整理带来的混乱。
+                        </div>
+                    </div>
+                </div>
+                <div class="step-panel">
+                    <div class="panel-block">
+                        <h4>最容易出错的地方</h4>
+                        <p>不是软件本身，而是你以为自己打开的是新目录，其实又点回了旧目录。</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tutorial-step" id="p6-reset">
+                <div class="step-content">
+                    <div class="step-number">3</div>
+                    <div class="step-text">
+                        <span class="step-kicker">Reset</span>
+                        <h3><span class="sec-no">6.3</span>什么情况下需要重置</h3>
+                        <p class="step-lead">重置不是每次都要用。它只适合你想“重新来过”的时候，比如想换一套标准重新处理，或者觉得当前目录结果已经不适合继续沿用。</p>
+                        <div class="step-subtitle">操作步骤</div>
+                        <ol class="step-guide">
+                            <li>先问自己：我是只是想继续看，还是想真正重新处理。</li>
+                            <li>如果只是继续看旧结果，就先不要重置。</li>
+                            <li>如果想换标准重新来一遍，再执行重置。</li>
+                            <li>执行前先确认，这确实是你要重来的那批照片。</li>
+                        </ol>
+                        <div class="step-tip">
+                            <span class="tip-icon">♻️</span>
+                            不确定时，先不要重置，先看旧结果通常更安全。
+                        </div>
+                    </div>
+                </div>
+                <div class="step-panel">
+                    <div class="panel-block">
+                        <h4>可以先不重置的情况</h4>
+                        <ul class="panel-checklist">
+                            <li>你只是想再看一遍旧结果。</li>
+                            <li>你还没想清楚这次要改什么。</li>
+                            <li>你只是想确认目录当前状态。</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tutorial-step reverse" id="p6-reprocess">
+                <div class="step-content">
+                    <div class="step-number">4</div>
+                    <div class="step-text">
+                        <span class="step-kicker">Reprocess</span>
+                        <h3><span class="sec-no">6.4</span>重置后如何重新处理</h3>
+                        <p class="step-lead">重置的意义，是给你一个重新开始的机会。但重置以后，最好带着明确目标重新跑，而不是“什么都不改再来一遍”。</p>
+                        <div class="step-subtitle">操作步骤</div>
+                        <ol class="step-guide">
+                            <li>先完成重置。</li>
+                            <li>想清楚这次是要更严格、还是更宽松，或要不要加识鸟。</li>
+                            <li>重新设置摄影水平和功能开关。</li>
+                            <li>再开始新一轮处理。</li>
+                            <li>处理后重点看这次和上次差别最大的地方。</li>
+                        </ol>
+                        <div class="step-tip">
+                            <span class="tip-icon">🛠️</span>
+                            带着明确目的重新处理，效果通常比盲目重跑好得多。
+                        </div>
+                    </div>
+                </div>
+                <div class="step-panel">
+                    <div class="panel-block">
+                        <h4>最值得先改的通常是</h4>
+                        <ul class="panel-checklist">
+                            <li>摄影水平。</li>
+                            <li>识鸟开关。</li>
+                            <li>这次是否启用飞版或连拍。</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tutorial-step" id="p6-tray">
+                <div class="step-content">
+                    <div class="step-number">5</div>
+                    <div class="step-text">
+                        <span class="step-kicker">Tray</span>
+                        <h3><span class="sec-no">6.5</span>系统托盘与后台运行</h3>
+                        <p class="step-lead">后台运行适合你暂时不想关掉软件，但又不想让它一直占着桌面的时候。最小化到托盘不等于已经退出程序，这一点要特别注意。</p>
+                        <div class="step-subtitle">操作步骤</div>
+                        <ol class="step-guide">
+                            <li>如果只是暂时离开主窗口，可以最小化到托盘。</li>
+                            <li>需要继续使用时，再从托盘恢复主窗口。</li>
+                            <li>如果你彻底不用了，请正常退出程序。</li>
+                            <li>不要把“关窗口”和“退出程序”混为一谈。</li>
+                        </ol>
+                        <div class="step-tip">
+                            <span class="tip-icon">🖥️</span>
+                            新手最容易把“隐藏”和“退出”搞混，记住这两件事不是一回事。
+                        </div>
+                    </div>
+                </div>
+                <div class="step-panel">
+                    <div class="panel-block">
+                        <h4>一句话理解</h4>
+                        <p>最小化到托盘，软件还在；正常退出，软件才真正关闭。</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tutorial-step reverse" id="p6-scenarios">
+                <div class="step-content">
+                    <div class="step-number">6</div>
+                    <div class="step-text">
+                        <span class="step-kicker">Recommended Scenarios</span>
+                        <h3><span class="sec-no">6.6</span>新手常见场景推荐设置</h3>
+                        <p class="step-lead">最好的设置不是最复杂的，而是最适合你这批照片内容的。不同拍摄场景，适合的开关组合也不一样。</p>
+                        <div class="step-subtitle">操作步骤</div>
+                        <ol class="step-guide">
+                            <li>静栖鸟为主：先用默认设置，连拍按需开。</li>
+                            <li>飞鸟很多：打开飞版。</li>
+                            <li>连拍很多：打开连拍。</li>
+                            <li>想知道鸟种：打开识鸟，并尽量设好国家或地区。</li>
+                            <li>电脑性能一般：第一次不要所有功能全开。</li>
+                        </ol>
+                        <div class="step-tip">
+                            <span class="tip-icon">🧰</span>
+                            先按场景选开关，比一上来研究复杂参数更有效。
+                        </div>
+                    </div>
+                </div>
+                <div class="step-panel">
+                    <div class="panel-block">
+                        <h4>最省心的一套起点</h4>
+                        <ul class="panel-checklist">
+                            <li>初级。</li>
+                            <li>连拍开。</li>
+                            <li>飞版和识鸟按内容决定。</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tutorial-step" id="p6-troubleshooting">
+                <div class="step-content">
+                    <div class="step-number">7</div>
+                    <div class="step-text">
+                        <span class="step-kicker">Troubleshooting</span>
+                        <h3><span class="sec-no">6.7</span>常见问题与排查方法</h3>
+                        <p class="step-lead">遇到问题时，先把条件变简单，再排查，通常最有效。最怕的是一次改太多东西，结果自己也不知道问题从哪里来。</p>
+                        <div class="step-subtitle">操作步骤</div>
+                        <ol class="step-guide">
+                            <li>先看日志区有没有明显报错。</li>
+                            <li>确认目录是不是选对了。</li>
+                            <li>确认是不是一次开了太多功能。</li>
+                            <li>如果问题出在大目录，先拿一个小目录试。</li>
+                            <li>如果识鸟不准，先检查国家或地区设置。</li>
+                            <li>如果截图识鸟不能用，先检查权限。</li>
+                            <li>排查时先简化条件，不要一口气改很多设置。</li>
+                        </ol>
+                        <div class="step-tip">
+                            <span class="tip-icon">🧪</span>
+                            先把问题缩小，再去解决，通常会比“全都一起改”快得多。
+                        </div>
+                    </div>
+                </div>
+                <div class="step-panel">
+                    <div class="panel-block">
+                        <h4>一个最稳妥的排查顺序</h4>
+                        <ul class="panel-checklist">
+                            <li>先看日志。</li>
+                            <li>再看目录和开关。</li>
+                            <li>再用小目录复现。</li>
+                            <li>最后再动参数。</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="tutorial-end">
+        <div class="container">
+            <div class="tutorial-end-card">
+                <h3>现在你已经可以独立完成一次完整工作流</h3>
+                <p>如果你是第一次使用，建议先拿一个小目录完整练习一遍：选目录、开始处理、打开结果浏览器、筛出高星照片、对难选的照片做全屏或对比查看，再决定是否需要重置重跑。只要把这套流程跑顺，后面的高级功能都会自然变得容易。</p>
+                <p class="next-step">下一步最推荐的练习方式：拿一组你最近拍的照片，按本页顺序完整做一遍，不需要截图也能完成。</p>
+                <div class="tutorial-end-actions">
+                    <a href="faq.html" class="btn btn-primary">常见问题</a>
+                    <a href="index.html" class="btn btn-ghost">返回首页</a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <footer>
+        <div class="container">
+            <div class="footer-inner">
+                <div class="footer-brand">
+                    <img src="img/icon.png" alt="SuperPicky">
+                    <div class="footer-brand-text">
+                        <span>SuperPicky</span>
+                        <span class="footer-author">by James Yu (詹姆斯·于震)</span>
+                    </div>
+                </div>
+                <div class="footer-links">
+                    <a href="faq.html">常见问题</a>
+                    <a href="https://github.com/jamesphotography/SuperPicky">GitHub</a>
+                    <a href="mailto:james@jamesphotography.com.au">联系</a>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p class="credits">模型致谢：YOLO11 (Ultralytics) · TOPIQ (Chaofeng Chen et al.)</p>
+                <p class="copyright">
+                    © 2024-2026 James Yu ·
+                    <a href="https://github.com/jamesphotography/SuperPicky/blob/master/LICENSE" target="_blank"
+                        style="color: inherit; text-decoration: underline;">AGPL-3.0 License</a>
+                </p>
+            </div>
+        </div>
+    </footer>
+</body>
+
+</html>
