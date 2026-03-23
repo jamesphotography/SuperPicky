@@ -1,69 +1,83 @@
-# SuperPicky Nightly / v4.2.1-beta
+## What's New
 
-**整理范围**: `from tag 4.2.0 to nightly HEAD`
-**当前分支基线**: `nightly`
-**当前提交**: `d3eeca7e`
-**整理日期**: `2026-03-17`
+**Results Browser Enhancements**
+- Recursive subdirectory batch processing in both CLI and GUI
+- Directory switching and recent directory history in the browser
+- Star rating changes now sync back to EXIF Rating on the original file
+- Right-click to copy bird name from result cards
+- File size now shown in the detail panel
+- Fixed burst sequence looping in fullscreen viewer
+
+**Model Size Reduction**
+- Keypoint detection model reduced from ~283MB to ~95MB, significantly faster to load
+
+**IOC Bird Name Search**
+- New standalone Chinese/English bird name lookup powered by the IOC database
+
+**Bug Fixes**
+- Fixed Chinese path compatibility issues (cv2, rawpy)
+- Fixed non-UTF-8 console encoding on Windows
+- Fixed QComboBox interaction on macOS
+- Fixed birdname.db resource path missing after packaging
+- Improved ExifTool process cleanup on exit
+- Fixed resource path and launch directory issues in macOS app bundle
+
+**Windows CUDA Patch Support**
+- CPU base package + CUDA GPU patch are now distributed separately
 
 ---
 
-## 摘要 / Summary
+## New Sponsor
 
-这份更新日志整理的是 `4.2.0` 正式版之后，`nightly` 分支到当前为止的净变化。
-
-需要特别说明的是：中间曾经尝试过 ONNX 路线，但相关改动已经回滚，当前主线已经重新回到 **PyTorch**。因此，本日志只记录目前 `nightly` 真实保留下来的功能、修复与发布改进，不把已经撤回的 ONNX 方案写成现有能力。
+Thanks to **Juntao Zhang** for sponsoring one quarter of AI coding tools for this project.
 
 ---
 
-## 1. 主线架构与模型路线 / Architecture
+## Downloads
 
-- **回归 PyTorch 主线**：ONNX 推理路线已经撤回，当前 Nightly 再次以 PyTorch 为主线，避免文档与实际运行状态不一致。
-- **设备选择逻辑统一**：与推理设备选择相关的判断重新收敛到现行主线逻辑，减少不同入口之间的行为偏差。
-- **关键点模型瘦身**：关键点检测模型从约 `283MB` 精简到约 `95MB`，减轻包体与加载压力。
-- **模型与依赖清理**：清理一批无效依赖与错误排除项，修复部分打包后运行崩溃问题。
+| Platform | GitHub | Baidu | Quark |
+|---|---|---|---|
+| macOS ARM64 (Apple Silicon) | [Download](https://github.com/jamesphotography/SuperPicky/releases/download/v4.2.1-beta/SuperPicky_v4.2.1-beta_arm64_ec200340.dmg) | [Baidu (6s4k)](https://pan.baidu.com/s/1hJaHKGB7Rni1AoLddsTV1g?pwd=6s4k) | [Quark](https://pan.quark.cn/s/3d3652d53972) |
+| Windows CPU Only | [Download](https://github.com/jamesphotography/SuperPicky/releases/download/v4.2.1-beta/SuperPicky_Win64_4.2.1-beta_ec20034_cpu.zip) | [Baidu (39f1)](https://pan.baidu.com/s/1iEjbypJKQh34mrvAvHA82Q?pwd=39f1) | [Quark](https://pan.quark.cn/s/08065f16a8d1) |
+| Windows CUDA GPU Patch | [Download](https://github.com/jamesphotography/SuperPicky/releases/download/v4.2.1-beta/SuperPicky_Win64_4.2.1-beta_ec20034_cuda_patch.zip) | [Baidu (n2uj)](https://pan.baidu.com/s/1-JL4mn8cMKRJCSwXaQhB6Q?pwd=n2uj) | [Quark](https://pan.quark.cn/s/2caa4af00b1b) |
 
-## 2. 结果浏览器与批处理工作流 / Results Browser & Batch
+> This is a Beta release. For production use, please use v4.1.0 LTS.
 
-- **子目录递归批处理**：CLI 和 GUI 侧都补齐了对子目录递归扫描与批量处理的支持，遇到嵌套目录时可以更自然地进入 Batch 模式。
-- **Batch 模式目录切换**：结果浏览器新增目录切换能力，处理多批次结果时切换更顺手。
-- **最近目录历史**：菜单栏增加最近选鸟目录历史，方便快速回到最近处理过的文件夹。
-- **星级回写 EXIF**：在结果浏览器中修改星级时，可以同步写回原始照片的 EXIF `Rating`。
-- **右键复制鸟名**：结果卡片新增右键复制鸟名能力，便于后续整理与分享。
-- **浏览器稳定性加固**：围绕合并、筛选、显示刷新和状态同步做了一轮整合与加固，减少浏览器回归问题。
-- **全屏连拍循环修复**：修复连拍序列在全屏查看场景下的循环/切换问题。
-- **详情面板补充文件大小信息**：详情区域现在可以直接看到文件大小，便于快速判断资源占用与导出选择。
-- **清理 `burst_id` 分组残留**：修复部分连拍分组状态残留，降低批次切换后显示错乱的概率。
+---
 
-## 3. 鸟名检索与资源修复 / Bird Search & Resources
+## 更新内容
 
-- **新增 IOC 鸟名检索能力**：整合 IOC 数据库，支持独立的中英鸟名查询工作流。
-- **鸟名数据库打包修复**：修复打包后 `birdname.db` 资源路径问题，避免查询结果为空。
-- **冻结环境路径兼容**：在打包应用中改进数据库资源定位逻辑，提升 macOS / 打包环境下的一致性。
-- **清理重复数据库副本**：移除根目录重复副本，明确 `ioc/birdname.db` 为实际使用的数据源。
+**结果浏览器增强**
+- CLI 和 GUI 均支持子目录递归批处理
+- 结果浏览器新增目录切换与最近目录历史
+- 星级修改可同步写回原始文件的 EXIF Rating
+- 结果卡片支持右键复制鸟名
+- 详情面板新增文件大小显示
+- 修复全屏模式下连拍序列循环切换问题
 
-## 4. 稳定性与兼容性修复 / Stability & Compatibility
+**模型体积优化**
+- 关键点检测模型从约 283MB 精简至约 95MB，加载速度显著提升
 
-- **中文路径兼容修复**：修复包含中文路径时，传给 `cv2`、`rawpy` 及相关处理链路的兼容性问题。
-- **i18n 输出编码修复**：修复 Windows 非 UTF-8 控制台环境下的国际化输出编码问题。
-- **ExifTool 进程安全回收**：强化应用退出时的 ExifTool 常驻进程清理，减少后台残留。
-- **macOS 屏幕录制权限检查**：在截图链路前增加权限检查，降低因权限缺失导致的失败。
-- **macOS 截图线程处理优化**：将相关截图调用放到更合适的执行路径，减少界面阻塞风险。
-- **macOS 下拉框点击问题修复**：修复 `QComboBox` 在 macOS 上不可点击/交互异常的问题。
-- **macOS 打包资源路径修复**：修复 PyInstaller `BUNDLE` 环境中的资源路径识别问题。
-- **macOS GUI 启动目录修复**：将 GUI 启动目录调整到更安全的位置，避免运行期间写入失败。
-- **语言状态判断修复**：修正部分界面在 macOS 下依赖错误语言来源导致的显示异常。
+**IOC 鸟名检索**
+- 新增独立的中英文鸟名查询功能，基于 IOC 数据库
 
-## 5. 构建与发布改进 / Build & Packaging
+**问题修复**
+- 修复中文路径兼容问题（cv2、rawpy）
+- 修复 Windows 非 UTF-8 控制台编码问题
+- 修复 macOS 下 QComboBox 交互异常
+- 修复打包后 birdname.db 资源路径丢失
+- 加强 ExifTool 进程退出时的安全回收
+- 修复 macOS 打包资源路径与启动目录问题
 
-- **Windows CUDA Patch 构建支持**：补齐 Windows CUDA Patch 的构建链路，为 CPU 主包 + CUDA 补丁的交付方式打基础。
-- **安装包元数据与标记修复**：补强 Windows 安装流程中的版本、安装标记与提交信息写入逻辑。
-- **构建日志编码修复**：修复 Windows 构建日志在某些终端环境下的编码显示问题。
-- **`COMMIT_HASH` 获取优先级调整**：让发布脚本获取提交信息的行为更稳定，减少版本号或产物命名错位。
-- **新增 `pi-heif` 依赖**：补齐 HEIF 相关依赖，改进部分平台上的图像格式支持与打包兼容性。
-- **CI 与发布流程清理**：移除部分冗余发布字段，并新增安全扫描工作流，提升发布链路可维护性。
+**Windows CUDA 补丁包支持**
+- 新增 CPU 主包 + CUDA GPU 补丁包的独立分发方式
 
-## 6. 说明 / Notes
+---
 
-- 本日志按 **当前 Nightly 的最终保留状态** 整理，不逐条枚举所有提交。
-- 已被回滚或未最终保留的尝试性工作，例如 ONNX 主线切换、ONNX 专用打包链路，以及中途撤回的 resume tracking，不作为现有功能写入。
-- 如果后续确定新的正式版本号，可以在此基础上再整理成正式版 Release Notes。
+## 新增赞助商
+
+感谢 **张钧涛（Juntao Zhang）** 赞助支持本项目一个季度的 AI 编程工具使用费。
+
+---
+
+> 本版本为测试版，正式环境请使用 v4.1.0 LTS。
