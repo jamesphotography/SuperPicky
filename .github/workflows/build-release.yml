@@ -24,6 +24,13 @@ jobs:
           cache: 'pip'
           cache-dependency-path: requirements.txt
 
+      - name: Prepare telemetry build override
+        shell: pwsh
+        env:
+          COUNTLY_APP_KEY: ${{ secrets.COUNTLY_APP_KEY }}
+          COUNTLY_SERVER_URL: ${{ secrets.COUNTLY_SERVER_URL }}
+        run: python scripts/prepare_telemetry_build.py --output _telemetry_build.py
+
       - name: Resolve release metadata
         id: release_meta
         shell: pwsh
@@ -73,6 +80,11 @@ jobs:
             }
             Copy-Item -Path $matches[0].FullName -Destination release_assets/
           }
+
+      - name: Clean telemetry build override
+        if: always()
+        shell: pwsh
+        run: Remove-Item -Path _telemetry_build.py -Force -ErrorAction SilentlyContinue
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
