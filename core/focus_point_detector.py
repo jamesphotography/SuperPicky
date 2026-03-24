@@ -729,6 +729,11 @@ class FocusPointDetector:
         """读取指定的 EXIF 标签（使用常驻进程模式）"""
         global _exiftool_process
         
+        # -stay_open 模式按换行分割参数；文件名包含换行会导致参数注入
+        # 此时回退到单次调用（argv 列表）以保证文件名按原样传递
+        if any(ch in file_path for ch in ('\n', '\r')):
+            return self._read_exif_single(file_path, tags)
+        
         # 使用全局常驻进程
         if _exiftool_process is None or _exiftool_process.poll() is not None:
             _exiftool_process = _start_exiftool_process(self.exiftool_path)

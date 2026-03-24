@@ -11,7 +11,6 @@ V3.7: 切换到 TOPIQ 模型，更好的鸟类摄影美学评估
 """
 
 import os
-import sys
 import torch
 from typing import Tuple, Optional
 import numpy as np
@@ -21,6 +20,8 @@ import torchvision.transforms as T
 # 使用 TOPIQ 模型
 from topiq_model import CFANet, load_topiq_weights, get_topiq_weight_path
 from tools.i18n import t as _t
+
+from config import get_best_device
 
 
 class IQAScorer:
@@ -33,7 +34,7 @@ class IQAScorer:
         Args:
             device: 计算设备 ('mps', 'cuda', 'cpu')
         """
-        self.device = self._get_device(device)
+        self.device = get_best_device()
         print(f"🎨 IQA 评分器初始化中... (设备: {self.device})")
 
         # 延迟加载模型（第一次使用时才加载）
@@ -43,42 +44,6 @@ class IQAScorer:
         self._transform = T.ToTensor()
 
         print("✅ IQA 评分器已就绪 (TOPIQ模型将在首次使用时加载)")
-
-    def _get_device(self, preferred_device='mps'):
-        """
-        获取最佳计算设备
-
-        Args:
-            preferred_device: 首选设备
-
-        Returns:
-            可用的设备
-        """
-        # 使用统一的设备检测逻辑
-        try:
-            from config import get_best_device
-            device = get_best_device()
-            
-            # 如果首选设备是 MPS 但检测到的是 CUDA，保持 CUDA
-            # 如果首选设备是 CUDA 但检测到的是 MPS，保持 MPS
-            # 否则使用检测到的最佳设备
-            return device
-        except Exception:
-            # 如果导入失败，回退到原始逻辑
-            # 检查 MPS (Apple GPU)
-            if preferred_device == 'mps':
-                try:
-                    if torch.backends.mps.is_available():
-                        return torch.device('mps')
-                except:
-                    pass
-
-            # 检查 CUDA (NVIDIA GPU)
-            if preferred_device == 'cuda' or torch.cuda.is_available():
-                return torch.device('cuda')
-
-            # 默认使用 CPU
-            return torch.device('cpu')
 
     def _load_topiq(self):
         """延迟加载 TOPIQ 模型"""
@@ -103,19 +68,7 @@ class IQAScorer:
                 self._topiq_model.eval()
                 print("✅ TOPIQ 模型加载完成")
             except Exception as e:
-                print(f"⚠️  TOPIQ 模型加载失败: {e}")
-                print("   尝试使用 CPU 模式...")
-                try:
-                    weight_path = get_topiq_weight_path()
-                    self._topiq_model = CFANet()
-                    load_topiq_weights(self._topiq_model, weight_path, torch.device('cpu'))
-                    self._topiq_model.to(torch.device('cpu'))
-                    self._topiq_model.eval()
-                    self.device = torch.device('cpu')
-                    self._use_fp16 = False
-                    print("✅ TOPIQ 模型加载完成 (CPU模式)")
-                except Exception as e2:
-                    raise RuntimeError(f"TOPIQ 模型加载失败: {e2}")
+                raise RuntimeError(f"TOPIQ 模型加载失败: {e}")
         return self._topiq_model
 
     def calculate_nima(self, image_path: str) -> Optional[float]:

@@ -54,6 +54,7 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon
 
+from app_user_stat.telemetry import bootstrap_telemetry
 from ui.main_window import SuperPickyMainWindow
 from ui.styles import APP_TOOLTIP_STYLE
 
@@ -127,6 +128,7 @@ def main():
     if _main_window is None:
         _main_window = SuperPickyMainWindow()
         _main_window.show()
+        bootstrap_telemetry(_main_window, on_ready=_main_window.run_startup_prompts)
         # 统一退出清理：无论通过 X / 托盘 / Cmd+Q 退出，都会经由 aboutToQuit 信号
         app.aboutToQuit.connect(_main_window._cleanup_on_quit)
     else:

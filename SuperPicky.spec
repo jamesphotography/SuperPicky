@@ -106,7 +106,7 @@ a = Analysis(
         'multiprocessing',
         'multiprocessing.spawn',
         # V3.9.5: 更新检测模块
-        'update_checker',
+        'tools.update_checker',
         'packaging',
         'packaging.version',
         # V4.0.0: 鸟类识别模块
@@ -119,6 +119,15 @@ a = Analysis(
         'flask.json',
         'cryptography',
         'cryptography.fernet',
+        # V4.2.1: Countly telemetry build config (dynamically imported via importlib,
+        # PyInstaller cannot auto-discover it, must be listed explicitly)
+        '_telemetry_build',
+        'app_user_stat._telemetry_build',
+        'app_user_stat',
+        'app_user_stat.telemetry',
+        'app_user_stat.consent_texts',
+        'app_user_stat.consent_texts.en_US',
+        'app_user_stat.consent_texts.zh_CN',
     ],
     hookspath=[],
     hooksconfig={},

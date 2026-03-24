@@ -512,10 +512,10 @@ cat > welcome.html << 'WELCOME_EOF'
 
     <h2>What's New in V__VERSION__ <span class="new-badge">NEW</span></h2>
     <ul>
-        <li><span class="highlight">🔬 Results Browser</span> - Fully upgraded with comparison view, multi-select, and right-click context menu</li>
-        <li><span class="highlight">📊 Rating Controls</span> - Fine-tune scores ±1 directly in the details panel</li>
-        <li><span class="highlight">🖼️ Fullscreen Viewer</span> - Visual enhancements with focus box and dot overlay</li>
-        <li><span class="highlight">🐛 Critical Bug Fix</span> - Database score write reliability improved</li>
+        <li><span class="highlight">1. 架构性能</span> - 全新 ONNX 推理引擎与轻量化关键点模型 (283MB → 95MB)，全面加速</li>
+        <li><span class="highlight">2. 批处理强化</span> - 支持文件夹递归批处理、EXIF 星级双向同步、最近目录历史记录</li>
+        <li><span class="highlight">3. 识鸟工具集</span> - 新增独立的 IOC 鸟名中英词典，以及识别结果右键快捷复制功能</li>
+        <li><span class="highlight">4. 修复跨平台Bug</span> - 修复中文路径崩溃、死锁问题，回收 ExifTool 进程，安全拦截截屏权限</li>
     </ul>
 
     <h3>System Requirements</h3>
@@ -837,15 +837,17 @@ NOTARIZE_OUTPUT=$(xcrun notarytool submit "${DMG_PATH}" \
     --apple-id "${APPLE_ID}" \
     --password "${APP_PASSWORD}" \
     --team-id "${TEAM_ID}" \
-    --wait 2>&1)
+    --wait \
+    --output-format json 2>&1)
 
 echo "${NOTARIZE_OUTPUT}"
 
-if echo "${NOTARIZE_OUTPUT}" | grep -q "status: Accepted"; then
+if echo "${NOTARIZE_OUTPUT}" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"Accepted"'; then
     log_success "公证成功！"
     
     log_info "装订公证票据..."
     xcrun stapler staple "${DMG_PATH}"
+    xcrun stapler validate "${DMG_PATH}"
     
     log_success "✅ V${VERSION} 打包发布全部完成！"
     log_info "最终文件: ${DMG_PATH}"

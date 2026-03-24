@@ -7,7 +7,6 @@ Flight Detector - 飞版检测模块
 V3.4 新增功能
 """
 
-import os
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional, Union
@@ -17,6 +16,7 @@ import torch
 import torch.nn as nn
 from torchvision import models, transforms
 from PIL import Image
+from config import get_best_device
 
 
 @dataclass
@@ -103,13 +103,7 @@ class FlightDetector:
         if not self.model_path.exists():
             raise FileNotFoundError(f"飞版检测模型未找到: {self.model_path}")
         
-        # 确定设备
-        if torch.backends.mps.is_available():
-            self.device = torch.device("mps")
-        elif torch.cuda.is_available():
-            self.device = torch.device("cuda")
-        else:
-            self.device = torch.device("cpu")
+        self.device = get_best_device()
         
         # 构建并加载模型
         self.model = self._build_model()

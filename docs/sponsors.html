@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-lang="cn">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sponsors - SuperPicky.APP</title>
+    <meta name="description" content="SuperPicky 赞助者名单 - 感谢每一位支持开源鸟类摄影工具的朋友。">
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="icon" href="img/icon.png" type="image/png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        .sponsors-container {
+            max-width: 800px;
+            margin: 120px auto 80px;
+            padding: 0 24px;
+        }
+
+        .sponsors-header {
+            text-align: center;
+            margin-bottom: 60px;
+        }
+
+        .sponsors-header h1 {
+            font-size: clamp(32px, 6vw, 48px);
+            font-weight: 700;
+            letter-spacing: -1.5px;
+            margin-bottom: 16px;
+            background: linear-gradient(135deg, #fafafa 0%, #a1a1a1 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .sponsors-header p {
+            font-size: 15px;
+            color: var(--text-secondary);
+            line-height: 1.7;
+            max-width: 520px;
+            margin: 0 auto;
+        }
+
+        .sponsor-tier {
+            margin-bottom: 48px;
+        }
+
+        .tier-label {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+
+        .tier-label-text {
+            display: inline-block;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            color: var(--text-tertiary);
+            padding: 6px 14px;
+            background: var(--bg-elevated);
+            border-radius: var(--radius-sm);
+        }
+
+        .tier-line {
+            flex: 1;
+            height: 1px;
+            background: var(--border-subtle);
+        }
+
+        .sponsor-card {
+            display: flex;
+            align-items: center;
+            gap: 24px;
+            padding: 28px 32px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            transition: all 0.3s ease;
+        }
+
+        .sponsor-card:hover {
+            border-color: var(--accent);
+            background: linear-gradient(135deg, var(--bg-elevated), rgba(0, 212, 170, 0.04));
+            transform: translateY(-2px);
+            box-shadow: 0 8px 32px rgba(0, 212, 170, 0.08);
+        }
+
+        .sponsor-number {
+            font-family: var(--font-mono);
+            font-size: 28px;
+            font-weight: 700;
+            color: var(--accent);
+            opacity: 0.25;
+            min-width: 60px;
+            text-align: center;
+            line-height: 1;
+        }
+
+        .sponsor-info {
+            flex: 1;
+        }
+
+        .sponsor-name-cn {
+            font-size: 22px;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 4px;
+            letter-spacing: -0.3px;
+        }
+
+        .sponsor-name-en {
+            font-size: 14px;
+            color: var(--text-secondary);
+            font-family: var(--font-mono);
+            letter-spacing: 0.5px;
+        }
+
+        .sponsor-tag {
+            margin-top: 10px;
+            display: inline-block;
+            padding: 3px 10px;
+            background: var(--accent-dim);
+            border: 1px solid rgba(0, 212, 170, 0.15);
+            border-radius: 20px;
+            font-size: 11px;
+            color: var(--accent);
+            letter-spacing: 0.5px;
+        }
+
+        .sponsor-heart {
+            font-size: 28px;
+            opacity: 0.6;
+            transition: opacity 0.2s, transform 0.2s;
+        }
+
+        .sponsor-card:hover .sponsor-heart {
+            opacity: 1;
+            transform: scale(1.2);
+        }
+
+        /* CTA */
+        .sponsor-cta {
+            margin-top: 64px;
+            text-align: center;
+            padding: 40px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+        }
+
+        .sponsor-cta h2 {
+            font-size: 22px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            letter-spacing: -0.5px;
+        }
+
+        .sponsor-cta p {
+            font-size: 14px;
+            color: var(--text-secondary);
+            margin-bottom: 24px;
+            line-height: 1.6;
+        }
+
+        .sponsor-cta .btn {
+            margin: 0 8px;
+        }
+
+        /* Empty state styling within tiers */
+        .coming-soon {
+            padding: 24px;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 13px;
+            border: 1px dashed var(--border-subtle);
+            border-radius: var(--radius-md);
+            letter-spacing: 0.5px;
+        }
+
+        @media (max-width: 600px) {
+            .sponsor-card {
+                flex-direction: column;
+                text-align: center;
+                padding: 24px 20px;
+            }
+
+            .sponsor-number {
+                font-size: 20px;
+                min-width: auto;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="grain"></div>
+
+    <header>
+        <div class="header-inner">
+            <a href="index.html" class="logo">
+                <img src="img/icon.png" alt="SuperPicky">
+                <span>SuperPicky.APP</span>
+            </a>
+            <div class="lang-switch">
+                <button class="lang-btn active" onclick="setLang('cn')">中</button>
+                <button class="lang-btn" onclick="setLang('en')">EN</button>
+            </div>
+        </div>
+    </header>
+
+    <div class="sponsors-container">
+
+        <div class="sponsors-header">
+            <h1>
+                <span class="lang-cn">💛 感谢赞助者</span>
+                <span class="lang-en">💛 Our Sponsors</span>
+            </h1>
+            <p>
+                <span class="lang-cn">SuperPicky 是一款免费开源的 AI 鸟类摄影选片工具。正是有了这些朋友的支持，才让我们能够持续维护与改进它。</span>
+                <span class="lang-en">SuperPicky is a free and open-source AI bird photo culling tool. Our sponsors make continued development possible.</span>
+            </p>
+        </div>
+
+        <!-- Individual Sponsors -->
+        <div class="sponsor-tier">
+            <div class="tier-label">
+                <span class="tier-label-text">
+                    <span class="lang-cn">独立赞助者</span>
+                    <span class="lang-en">Individual Sponsors</span>
+                </span>
+                <div class="tier-line"></div>
+            </div>
+
+            <!-- Sponsor #001 -->
+            <div class="sponsor-card">
+                <div class="sponsor-number">001</div>
+                <div class="sponsor-info">
+                    <div class="sponsor-name-cn lang-cn">张钧涛</div>
+                    <div class="sponsor-name-en">Juntao Zhang</div>
+                    <span class="sponsor-tag">
+                        <span class="lang-cn">独立赞助者</span>
+                        <span class="lang-en">Individual Sponsor</span>
+                    </span>
+                </div>
+                <div class="sponsor-heart">❤️</div>
+            </div>
+        </div>
+
+        <!-- Become a Sponsor CTA -->
+        <div class="sponsor-cta">
+            <h2>
+                <span class="lang-cn">成为赞助者</span>
+                <span class="lang-en">Become a Sponsor</span>
+            </h2>
+            <p>
+                <span class="lang-cn">如果 SuperPicky 对你的拍鸟工作有帮助，欢迎通过赞助支持项目持续发展。您的名字将出现在此页面上。</span>
+                <span class="lang-en">If SuperPicky has been useful in your bird photography workflow, consider sponsoring the project. Your name will be listed on this page.</span>
+            </p>
+            <a href="mailto:james@jamesphotography.com.au" class="btn btn-primary">
+                <span class="lang-cn">📧 联系我</span>
+                <span class="lang-en">📧 Contact Me</span>
+            </a>
+            <a href="https://github.com/jamesphotography/SuperPicky" class="btn btn-ghost" target="_blank">
+                GitHub
+            </a>
+        </div>
+
+    </div>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <div class="footer-inner">
+                <div class="footer-brand">
+                    <img src="img/icon.png" alt="SuperPicky">
+                    <div class="footer-brand-text">
+                        <span>SuperPicky</span>
+                        <span class="footer-author">by James Yu (詹姆斯·于震)</span>
+                    </div>
+                </div>
+                <div class="footer-links">
+                    <a href="tutorial.html">
+                        <span class="lang-cn">使用教程</span>
+                        <span class="lang-en">Tutorial</span>
+                    </a>
+                    <a href="faq.html">
+                        <span class="lang-cn">常见问题</span>
+                        <span class="lang-en">FAQ</span>
+                    </a>
+                    <a href="sponsors.html">
+                        <span class="lang-cn">赞助者</span>
+                        <span class="lang-en">Sponsors</span>
+                    </a>
+                    <a href="https://github.com/jamesphotography/SuperPicky">GitHub</a>
+                    <a href="mailto:james@jamesphotography.com.au">
+                        <span class="lang-cn">联系</span>
+                        <span class="lang-en">Contact</span>
+                    </a>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p class="credits">
+                    <span class="lang-cn">模型致谢：YOLO11 (Ultralytics) · TOPIQ (Chaofeng Chen et al.)</span>
+                    <span class="lang-en">Credits: YOLO11 (Ultralytics) · TOPIQ (Chaofeng Chen et al.)</span>
+                </p>
+                <p class="copyright">
+                    © 2024-2026 James Yu · <a href="LICENSE" target="_blank"
+                        style="color: inherit; text-decoration: underline;">AGPL-3.0 License</a>
+                </p>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        function setLang(lang) {
+            document.documentElement.setAttribute('data-lang', lang);
+            document.querySelectorAll('.lang-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            if (window.event && window.event.target) {
+                window.event.target.classList.add('active');
+            }
+            localStorage.setItem('lang', lang);
+        }
+
+        // Load saved language
+        const savedLang = localStorage.getItem('lang') || 'cn';
+        document.documentElement.setAttribute('data-lang', savedLang);
+        document.addEventListener('DOMContentLoaded', () => {
+            document.querySelectorAll('.lang-btn').forEach(btn => {
+                const isCN = btn.textContent.includes('中');
+                if ((savedLang === 'cn' && isCN) || (savedLang === 'en' && !isCN)) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            });
+        });
+    </script>
+</body>
+
+</html>

@@ -30,6 +30,8 @@ from collections import OrderedDict
 import timm
 from tools.i18n import t as _t
 
+from config import get_best_device
+
 
 # ImageNet 标准化参数
 IMAGENET_DEFAULT_MEAN = [0.485, 0.456, 0.406]
@@ -438,7 +440,13 @@ def load_topiq_weights(model: CFANet, weight_path: str, device: torch.device) ->
         raise FileNotFoundError(f"权重文件不存在: {weight_path}")
     
     print(_t("logs.topiq_weight_loading", name=os.path.basename(weight_path)))
-    state_dict = torch.load(weight_path, map_location=device, weights_only=False)
+    try:
+        state_dict = torch.load(weight_path, map_location=device, weights_only=True)
+    except TypeError as exc:
+        raise RuntimeError(
+            "Current PyTorch version does not support safe weights_only loading. "
+            "Please upgrade PyTorch to load model weights securely."
+        ) from exc
     
     # pyiqa 权重格式: {'params': {...}}
     if 'params' in state_dict:
@@ -500,22 +508,9 @@ class TOPIQScorer:
         Args:
             device: 计算设备 ('mps', 'cuda', 'cpu')
         """
-        self.device = self._get_device(device)
+        self.device = get_best_device()
         self._model = None
         
-    def _get_device(self, preferred_device='mps'):
-        if preferred_device == 'mps':
-            try:
-                if torch.backends.mps.is_available():
-                    return torch.device('mps')
-            except:
-                pass
-        
-        if preferred_device == 'cuda' or torch.cuda.is_available():
-            return torch.device('cuda')
-        
-        return torch.device('cpu')
-    
     def _load_model(self):
         if self._model is None:
             print(f"🎨 初始化 TOPIQ 评分器 (设备: {self.device})...")

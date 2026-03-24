@@ -21,6 +21,7 @@ from typing import Dict, List, Optional, Set
 import torch
 from PIL import Image
 from torchvision import models, transforms
+from config import get_best_device
 
 
 def _torch_load_compat(path: str, *, map_location: str, weights_only: bool):
@@ -99,19 +100,8 @@ def _get_resource_path(relative_path: str) -> Path:
 
 # ==================== 设备配置 ====================
 
-def _get_device() -> torch.device:
-    """获取最佳计算设备"""
-    try:
-        if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-            return torch.device("mps")
-        if torch.cuda.is_available():
-            return torch.device("cuda")
-    except Exception:
-        pass
-    return torch.device("cpu")
 
-
-DEVICE = _get_device()
+DEVICE = get_best_device()
 
 
 # ==================== 预处理 transforms ====================

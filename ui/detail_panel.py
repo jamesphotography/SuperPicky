@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QSizePolicy
 )
 from PySide6.QtCore import Qt, Signal, QSize, QThread, Slot, QTimer
-from PySide6.QtGui import QPixmap, QFont, QGuiApplication
+from PySide6.QtGui import QPixmap, QFont, QGuiApplication, QImage
 
 from ui.styles import COLORS, FONTS
 
@@ -38,12 +38,12 @@ class _ImageLoader(QThread):
         if self._cancelled:
             return
         if self._path and os.path.exists(self._path):
-            px = QPixmap(self._path)
+            img = QImage(self._path)
             if not self._cancelled:
-                self.ready.emit(px)
+                self.ready.emit(img)
         else:
             if not self._cancelled:
-                self.ready.emit(QPixmap())
+                self.ready.emit(QImage())
 
 
 # 对焦状态显示颜色（与缩略图圆点、筛选面板保持一致）
@@ -67,6 +67,25 @@ def _make_section_label(text: str) -> QLabel:
         }}
     """)
     return lbl
+
+
+def _display_filename(photo: dict) -> str:
+    path = photo.get("current_path") or photo.get("original_path") or ""
+    if path:
+        return os.path.basename(path)
+    return photo.get("filename") or ""
+
+
+def _format_file_size(num_bytes: int) -> str:
+    units = ["B", "KB", "MB", "GB", "TB"]
+    size = float(max(num_bytes, 0))
+    for unit in units:
+        if size < 1024 or unit == units[-1]:
+            if unit == "B":
+                return f"{int(size)} {unit}"
+            return f"{size:.1f} {unit}"
+        size /= 1024.0
+    return "\u2014"
 
 
 def _make_value_label(text: str = "—") -> QLabel:
@@ -142,11 +161,11 @@ class DetailPanel(QWidget):
     信号:
         prev_requested()              用户点击"上一张"
         next_requested()              用户点击"下一张"
-        rating_change_requested(str, int)  用户点击 ▼/▲ 修改评分 (filename, new_rating)
+        rating_change_requested(object, int)  用户点击 ▼/▲ 修改评分 (photo, new_rating)
     """
     prev_requested = Signal()
     next_requested = Signal()
-    rating_change_requested = Signal(str, int)
+    rating_change_requested = Signal(object, int)
 
     def __init__(self, i18n, parent=None):
         super().__init__(parent)
@@ -315,6 +334,7 @@ class DetailPanel(QWidget):
         self._val_iso = _make_value_label()
         self._val_focal = _make_value_label()
         self._val_confidence = _make_value_label()
+        self._val_filesize = _make_value_label()
         self._val_filename = _make_value_label()
         self._val_datetime = _make_value_label()
         self._val_caption = _make_value_label()
@@ -333,6 +353,7 @@ class DetailPanel(QWidget):
             ("browser.meta_iso",        self._val_iso),
             ("browser.meta_focal",      self._val_focal),
             ("browser.meta_confidence", self._val_confidence),
+            ("browser.meta_filesize",   self._val_filesize),
             ("browser.meta_filename",   self._val_filename),
             ("browser.meta_datetime",   self._val_datetime),
         ]
@@ -420,7 +441,7 @@ class DetailPanel(QWidget):
             self._val_caption,
             self._val_camera, self._val_lens, self._val_shutter,
             self._val_iso, self._val_focal, self._val_confidence,
-            self._val_filename, self._val_datetime,
+            self._val_filesize, self._val_filename, self._val_datetime,
         ):
             val.setText("—")
         self._rating_label.setText("—")
@@ -452,8 +473,7 @@ class DetailPanel(QWidget):
             return
         self._current_photo["rating"] = new_val
         self._refresh_metadata()
-        fn = self._current_photo.get("filename", "")
-        self.rating_change_requested.emit(fn, new_val)
+        self.rating_change_requested.emit(dict(self._current_photo), new_val)
 
     def _on_rating_inc(self):
         """▲ 按钮：评分 +1（最高 5）。"""
@@ -465,8 +485,7 @@ class DetailPanel(QWidget):
             return
         self._current_photo["rating"] = new_val
         self._refresh_metadata()
-        fn = self._current_photo.get("filename", "")
-        self.rating_change_requested.emit(fn, new_val)
+        self.rating_change_requested.emit(dict(self._current_photo), new_val)
 
     def _on_copy_exif(self):
         """复制当前照片的 EXIF 信息到剪贴板。"""
@@ -596,6 +615,13 @@ class DetailPanel(QWidget):
         else:
             self._img_label.set_pixmap(QPixmap())
 
+    def cleanup(self):
+        if self._loader:
+            self._loader.cancel()
+            if self._loader.isRunning():
+                self._loader.wait(1000)
+            self._loader = None
+
     def _resolve_image_path(self) -> Optional[str]:
         """根据当前视图模式解析目标图片路径。"""
         p = self._current_photo
@@ -618,9 +644,10 @@ class DetailPanel(QWidget):
         return path if path and os.path.exists(path) else None
 
     @Slot(object)
-    def _on_image_ready(self, pixmap: QPixmap):
+    def _on_image_ready(self, img: QImage):
         """后台加载完成，更新图片显示。"""
-        self._img_label.set_pixmap(pixmap)
+        px = QPixmap.fromImage(img)
+        self._img_label.set_pixmap(px)
 
     @staticmethod
     def _format_shutter(val) -> str:
@@ -721,8 +748,25 @@ class DetailPanel(QWidget):
         conf = p.get("confidence")
         self._val_confidence.setText(f"{conf*100:.1f}%" if conf else _unknown)
 
+        file_path = p.get("current_path") or p.get("original_path") or ""
+        if file_path and os.path.exists(file_path):
+            try:
+                self._val_filesize.setText(_format_file_size(os.path.getsize(file_path)))
+            except OSError:
+                self._val_filesize.setText(_unknown)
+        else:
+            self._val_filesize.setText(_unknown)
+
         # 文件名
-        self._val_filename.setText(p.get("filename") or _unknown)
+        fn = _display_filename(p) or _unknown
+        burst_pos = p.get("burst_position_index")
+        burst_total = p.get("burst_total_count")
+        if burst_pos and burst_total:
+            fn = f"{fn} ({burst_pos}/{burst_total})"
+        elif p.get("is_burst_group") and p.get("burst_count", 1) > 1:
+            fn = f"{fn} (1/{p.get('burst_count')})"
+            
+        self._val_filename.setText(fn)
 
         # 拍摄时间
         dt = p.get("date_time_original") or _unknown

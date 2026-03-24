@@ -315,12 +315,13 @@ if [ "$MODE" = "release" ]; then
         --apple-id "${APPLE_ID}" \
         --password "${APP_PASSWORD}" \
         --team-id "${TEAM_ID}" \
-        --wait 2>&1)
+        --wait \
+        --output-format json 2>&1)
 
     echo "${NOTARIZE_OUTPUT}"
 
     # 检查公证结果
-    if echo "${NOTARIZE_OUTPUT}" | grep -q "status: Accepted"; then
+    if echo "${NOTARIZE_OUTPUT}" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"Accepted"'; then
         log_success "公证成功!"
 
         # 步骤8: 装订公证票据
@@ -332,7 +333,7 @@ if [ "$MODE" = "release" ]; then
         log_error "公证失败!"
 
         # 提取 RequestUUID 并获取详细日志
-        REQUEST_UUID=$(echo "${NOTARIZE_OUTPUT}" | grep "id:" | awk '{print $2}' | head -1)
+        REQUEST_UUID=$(echo "${NOTARIZE_OUTPUT}" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
         if [ -n "${REQUEST_UUID}" ]; then
             log_info "获取详细公证日志..."
             xcrun notarytool log "${REQUEST_UUID}" \

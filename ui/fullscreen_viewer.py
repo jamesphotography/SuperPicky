@@ -123,8 +123,8 @@ class _PreloadWorker(QThread):
 # ============================================================
 
 class _ImageLoader(QThread):
-    """后台线程加载 QPixmap，避免主线程阻塞。"""
-    ready = Signal(object)   # QPixmap
+    """后台线程加载 QImage，避免主线程 QPixmap 线程安全问题。"""
+    ready = Signal(object)   # QImage
 
     def __init__(self, path: str, parent=None):
         super().__init__(parent)
@@ -138,12 +138,12 @@ class _ImageLoader(QThread):
         if self._cancelled:
             return
         if self._path and os.path.exists(self._path):
-            px = QPixmap(self._path)
+            img = QImage(self._path)
             if not self._cancelled:
-                self.ready.emit(px)
+                self.ready.emit(img)
         else:
             if not self._cancelled:
-                self.ready.emit(QPixmap())
+                self.ready.emit(QImage())
 
 
 # ============================================================
@@ -233,9 +233,12 @@ class _FullscreenImageLabel(QLabel):
 
     # ── 公共接口 ────────────────────────────────────────────
 
-    def set_pixmap(self, pixmap: QPixmap):
-        """设置图片，重置为适配模式。"""
-        self._pixmap = pixmap
+    def set_pixmap(self, pixmap_or_image):
+        """设置图片（可以是 QPixmap 或 QImage），重置为适配模式。"""
+        if isinstance(pixmap_or_image, QImage):
+            self._pixmap = QPixmap.fromImage(pixmap_or_image)
+        else:
+            self._pixmap = pixmap_or_image
         self._fit_mode = True
         self._drag_active = False
         self._zoom_anim_timer.stop()  # 停止上一张图的动画
@@ -458,11 +461,19 @@ class _FullscreenImageLabel(QLabel):
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setRenderHint(QPainter.SmoothPixmapTransform)
 
+        if self._pixmap is None:
+            painter.end()
+            return
+
         # 方案C：用 painter transform 绘制，让 Qt/GPU 做缩放
         painter.save()
         painter.translate(ox, oy)
         painter.scale(scale, scale)
-        painter.drawPixmap(0, 0, self._pixmap)
+        # 确保绘制的是 QPixmap；如果 self._pixmap 依然是 QImage（防御性检查），转为 QPixmap
+        pix = self._pixmap
+        if isinstance(pix, QImage):
+            pix = QPixmap.fromImage(pix)
+        painter.drawPixmap(0, 0, pix)
         painter.restore()
 
         # 焦点叠加（仅在可见且坐标/状态有效时绘制）
@@ -695,6 +706,7 @@ class FullscreenViewer(QWidget):
     close_requested = Signal()
     prev_requested = Signal()
     next_requested = Signal()
+    burst_sequence_requested = Signal(dict)
     delete_requested = Signal(dict)   # 功能1：携带当前 photo dict
     context_menu_requested = Signal(dict, object)   # (photo, QPoint全局坐标)
 
@@ -778,6 +790,11 @@ class FullscreenViewer(QWidget):
         h.addWidget(self._lock_zoom_btn)
 
         h.addStretch()
+        self._burst_info_btn = QPushButton("")
+        self._burst_info_btn.setFixedHeight(30)
+        self._burst_info_btn.hide()
+        self._burst_info_btn.clicked.connect(self._on_burst_info_clicked)
+        h.addWidget(self._burst_info_btn)
 
         # 文件名标签
         self._filename_label = QLabel("")
@@ -882,6 +899,10 @@ class FullscreenViewer(QWidget):
         if self._current_photo:
             self.context_menu_requested.emit(self._current_photo, global_pos)
 
+    def _on_burst_info_clicked(self):
+        if self._current_photo and self._burst_info_btn.isEnabled():
+            self.burst_sequence_requested.emit(self._current_photo)
+
     # 功能2：锁定缩放
     def _toggle_zoom_lock(self):
         """切换锁定缩放开/关。"""
@@ -955,6 +976,17 @@ class FullscreenViewer(QWidget):
         """
         self._photos = photos
 
+    def cleanup(self):
+        if self._loader:
+            self._loader.cancel()
+            if self._loader.isRunning():
+                self._loader.wait(1000)
+            self._loader = None
+        if self._preload_worker:
+            self._preload_worker._cancelled = True
+            if self._preload_worker.isRunning():
+                self._preload_worker.wait(1000)
+
     def show_photo(self, photo: dict):
         """
         展示一张照片。流程：
@@ -975,8 +1007,9 @@ class FullscreenViewer(QWidget):
             self._locked_ox = lbl._draw_ox
             self._locked_oy = lbl._draw_oy
 
-        filename = photo.get("filename", "")
+        filename = os.path.basename(photo.get("current_path") or photo.get("original_path") or "") or photo.get("filename", "")
         self._filename_label.setText(filename)
+        self._update_burst_info(photo)
 
         rating = photo.get("rating", 0)
         _rating_text = {5: "★★★★★", 4: "★★★★", 3: "★★★", 2: "★★", 1: "★"}
@@ -1045,6 +1078,54 @@ class FullscreenViewer(QWidget):
         # 确保全屏 viewer 持有键盘焦点（切换照片后维持焦点）
         self.setFocus()
 
+    def _update_burst_info(self, photo: dict):
+        burst_pos = photo.get("burst_position_index")
+        burst_total = photo.get("burst_total_count")
+        burst_count = photo.get("burst_count", 1)
+        is_group = photo.get("is_burst_group") and burst_count > 1
+
+        if burst_pos and burst_total:
+            self._burst_info_btn.setText(f"{burst_pos}/{burst_total}")
+            self._burst_info_btn.setEnabled(True)
+            self._burst_info_btn.setCursor(Qt.PointingHandCursor)
+            self._burst_info_btn.setToolTip("\u70b9\u51fb\u6536\u56de\u8fde\u62cd\u5e8f\u5217" if not str(getattr(self.i18n, "current_lang", "")).startswith("en") else "Click to collapse burst sequence")
+            self._burst_info_btn.setStyleSheet(
+                f"QPushButton {{ background-color: {COLORS['bg_input']};"
+                f" border: 1px solid {COLORS['accent']};"
+                f" border-radius: 14px;"
+                f" color: {COLORS['accent']};"
+                f" font-size: 12px;"
+                f" font-weight: 600;"
+                f" padding: 2px 12px; }}"
+                f"QPushButton:hover {{ background-color: {COLORS['bg_card']};"
+                f" border-color: {COLORS['accent']};"
+                f" color: {COLORS['accent']}; }}"
+            )
+            self._burst_info_btn.show()
+            return
+
+        if is_group:
+            lang = getattr(self.i18n, "current_lang", "")
+            text = f"Burst Sequence ({burst_count})" if str(lang).startswith("en") else f"\u8fde\u62cd\u5e8f\u5217\uff08{burst_count}\u5f20\uff09"
+            self._burst_info_btn.setText(text)
+            self._burst_info_btn.setEnabled(True)
+            self._burst_info_btn.setCursor(Qt.PointingHandCursor)
+            self._burst_info_btn.setToolTip("")
+            self._burst_info_btn.setStyleSheet(
+                f"QPushButton {{ background-color: {COLORS['bg_card']};"
+                f" border: 1px solid {COLORS['border']};"
+                f" border-radius: 14px;"
+                f" color: {COLORS['text_secondary']};"
+                f" font-size: 12px;"
+                f" padding: 2px 12px; }}"
+                f"QPushButton:hover {{ border-color: {COLORS['accent']};"
+                f" color: {COLORS['accent']}; }}"
+            )
+            self._burst_info_btn.show()
+            return
+
+        self._burst_info_btn.hide()
+
     # ------------------------------------------------------------------
     #  内部
     # ------------------------------------------------------------------
@@ -1065,13 +1146,15 @@ class FullscreenViewer(QWidget):
         return None
 
     @Slot(object)
-    def _on_image_ready(self, pixmap: QPixmap, path: str = ""):
-        """后台加载完成：转存为 QImage 进高清缓存，并更新图片显示。"""
-        if not pixmap.isNull():
+    def _on_image_ready(self, img: QImage, path: str = ""):
+        """后台加载完成：转存进高清缓存，并更新图片显示。"""
+        if not img.isNull():
             if path:
-                # QPixmap.toImage() 在主线程执行，线程安全
-                _hd_cache.put(path, pixmap.toImage())
-            self._img_label.set_pixmap(pixmap)
+                _hd_cache.put(path, img)
+            
+            # 主线程中转换为 QPixmap
+            px = QPixmap.fromImage(img)
+            self._img_label.set_pixmap(px)
             # 功能2：后台高清图加载完成后也还原锁定的缩放和位置
             if self._zoom_locked:
                 self._img_label.restore_zoom(

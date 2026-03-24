@@ -73,13 +73,185 @@ class MergedReportDB:
             sql = f"SELECT * FROM ({union_sql}) AS merged {order}"
         
         return sql, params
-    
+
     def get_all_photos(self) -> List[dict]:
         """获取所有目录的照片记录"""
         with self._lock:
             sql, params = self._build_union_sql()
             cursor = self._conn.execute(sql, params)
             return [dict(row) for row in cursor.fetchall()]
+
+    def _resolve_photo_targets(self, photo_key) -> List[str]:
+        """将照片键解析为要更新的子数据库别名列表。"""
+        if isinstance(photo_key, tuple) and len(photo_key) >= 2:
+            source_dir, filename = photo_key[0], photo_key[1]
+            if not filename:
+                return []
+            rel_dir_to_alias = {
+                os.path.relpath(self._alias_to_dir[alias], self.root_dir): alias
+                for alias in self._db_aliases
+            }
+            alias = rel_dir_to_alias.get(source_dir)
+            return [alias] if alias else []
+
+        filename = photo_key
+        if not filename:
+            return []
+
+        aliases = []
+        for alias in self._db_aliases:
+            cursor = self._conn.execute(
+                f"SELECT 1 FROM {alias}.photos WHERE filename = ? LIMIT 1",
+                (filename,),
+            )
+            if cursor.fetchone():
+                aliases.append(alias)
+        return aliases if len(aliases) == 1 else []
+
+    def update_photo(self, photo_key, data: dict) -> bool:
+        """按稳定键更新记录，兼容 filename 或 (source_dir, filename)。"""
+        if not data:
+            return False
+
+        from .report_db import COLUMN_NAMES, _now_iso, ReportDB
+
+        cleaned = ReportDB._clean_data(data)
+        cleaned["updated_at"] = _now_iso()
+        columns = [k for k in cleaned if k in COLUMN_NAMES and k not in ("filename", "id")]
+        if not columns:
+            return False
+
+        targets = self._resolve_photo_targets(photo_key)
+        if not targets:
+            return False
+
+        values = [cleaned[k] for k in columns]
+        set_clause = ", ".join(f"{c} = ?" for c in columns)
+        filename = photo_key[1] if isinstance(photo_key, tuple) else photo_key
+        updated = False
+
+        with self._lock:
+            for alias in targets:
+                sql = f"UPDATE {alias}.photos SET {set_clause} WHERE filename = ?"
+                cursor = self._conn.execute(sql, values + [filename])
+                updated = updated or cursor.rowcount > 0
+            self._safe_commit()
+        return updated
+
+    def delete_photo(self, photo_key) -> bool:
+        """按稳定键删除记录，兼容 filename 或 (source_dir, filename)。"""
+        targets = self._resolve_photo_targets(photo_key)
+        if not targets:
+            return False
+
+        filename = photo_key[1] if isinstance(photo_key, tuple) else photo_key
+        deleted = False
+        with self._lock:
+            for alias in targets:
+                cursor = self._conn.execute(
+                    f"DELETE FROM {alias}.photos WHERE filename = ?",
+                    (filename,),
+                )
+                deleted = deleted or cursor.rowcount > 0
+            self._safe_commit()
+        return deleted
+    
+    def update_burst_ids(self, burst_map: dict) -> int:
+        """
+        跨数据库批量更新 burst_id。
+        因为 merged_db 是用多数据库联合挂载的，所以要分配给对应的子数据库更新。
+        
+        Args:
+            burst_map: 字典，格式为
+                {(source_dir, filename): (burst_id, burst_position)}，
+                兼容旧格式 {filename: (burst_id, burst_position)}。
+        """
+        if not burst_map:
+            return 0
+            
+        total_updated = 0
+        from .report_db import _now_iso
+        now = _now_iso()
+        
+        with self._lock:
+            # Group updates by alias
+            updates_by_alias = {alias: [] for alias in self._db_aliases}
+            rel_dir_to_alias = {
+                os.path.relpath(self._alias_to_dir[alias], self.root_dir): alias
+                for alias in self._db_aliases
+            }
+            
+            # 新格式：source_dir + filename，可安全定位到唯一子数据库。
+            # 旧格式：仅 filename，仅在全局唯一时更新，避免误写到同名文件。
+            legacy_pending = []
+            for photo_key, burst_info in burst_map.items():
+                if isinstance(photo_key, tuple) and len(photo_key) >= 2:
+                    source_dir, filename = photo_key[0], photo_key[1]
+                    alias = rel_dir_to_alias.get(source_dir)
+                    if alias and filename:
+                        bid, pos = burst_info
+                        updates_by_alias[alias].append((bid, pos, now, filename))
+                else:
+                    legacy_pending.append((photo_key, burst_info))
+
+            if legacy_pending:
+                filename_to_aliases: Dict[str, List[str]] = {}
+                for alias in self._db_aliases:
+                    cursor = self._conn.execute(f"SELECT filename FROM {alias}.photos")
+                    for row in cursor.fetchall():
+                        filename_to_aliases.setdefault(row[0], []).append(alias)
+
+                for filename, burst_info in legacy_pending:
+                    aliases = filename_to_aliases.get(filename, [])
+                    if len(aliases) != 1:
+                        continue
+                    bid, pos = burst_info
+                    updates_by_alias[aliases[0]].append((bid, pos, now, filename))
+            
+            for alias, updates in updates_by_alias.items():
+                if updates:
+                    sql = f"""
+                    UPDATE {alias}.photos 
+                    SET burst_id = ?, burst_position = ?, updated_at = ? 
+                    WHERE filename = ?
+                    """
+                    cursor = self._conn.executemany(sql, updates)
+                    total_updated += cursor.rowcount
+            
+            self._safe_commit()
+            
+        return total_updated
+
+    def clear_burst_ids(self) -> int:
+        """清空所有附加数据库里的连拍分组字段。"""
+        from .report_db import _now_iso
+
+        total_updated = 0
+        now = _now_iso()
+        with self._lock:
+            for alias in self._db_aliases:
+                cursor = self._conn.execute(
+                    f"""
+                    UPDATE {alias}.photos
+                    SET burst_id = NULL, burst_position = NULL, updated_at = ?
+                    WHERE burst_id IS NOT NULL OR burst_position IS NOT NULL
+                    """,
+                    (now,),
+                )
+                total_updated += cursor.rowcount
+            self._safe_commit()
+        return total_updated
+
+    def _safe_commit(self):
+        if not self._conn:
+            return
+        try:
+            if self._conn.in_transaction:
+                self._conn.commit()
+        except sqlite3.OperationalError as e:
+            if "no transaction is active" in str(e).lower():
+                return
+            raise
     
     def get_photos_by_filters(self, filters: Optional[dict] = None) -> List[dict]:
         """按筛选条件查询（兼容 ReportDB 接口）"""

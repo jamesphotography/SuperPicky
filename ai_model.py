@@ -136,10 +136,9 @@ def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, i18n
     try:
         from config import get_best_device
         device = get_best_device()
-        device_str = device.type if device.type != 'cuda' else 'cuda:0'
         
         # 使用最佳设备进行推理
-        results = model(image, device=device_str)
+        results = model(image, device=device.type)
     except Exception as device_error:
         # 设备推理失败，降级到CPU
         t = i18n.t if i18n else get_i18n().t

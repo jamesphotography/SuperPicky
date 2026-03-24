@@ -17,26 +17,11 @@ import os
 import sys
 from typing import Optional, List, Dict, Tuple, Set
 from tools.i18n import t as _t
+from config import get_best_device
 
 # ==================== 设备配置 ====================
-def get_classifier_device():
-    """获取分类器的最佳设备"""
-    try:
-        # 检查 MPS (Apple GPU)
-        if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-            return torch.device("mps")
-        
-        # 检查 CUDA (NVIDIA GPU)
-        if torch.cuda.is_available():
-            return torch.device("cuda")
-        
-        # 默认使用 CPU
-        return torch.device("cpu")
-    except Exception:
-        # 如果 torch 导入失败或其他异常，回退到 CPU
-        return torch.device("cpu")
 
-CLASSIFIER_DEVICE = get_classifier_device()
+CLASSIFIER_DEVICE = get_best_device()
 
 # ==================== 可选依赖检测 ====================
 

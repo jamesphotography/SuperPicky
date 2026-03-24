@@ -32,11 +32,11 @@ class ComparisonViewer(QWidget):
       Escape  : 退出对比视图
 
     信号：
-      close_requested()         请求退出对比视图
-      rating_changed(str, int)  (filename, new_rating)
+      close_requested()            请求退出对比视图
+      rating_changed(object, int)  (photo, new_rating)
     """
     close_requested = Signal()
-    rating_changed = Signal(str, int)
+    rating_changed = Signal(object, int)
 
     def __init__(self, i18n, parent=None):
         super().__init__(parent)
@@ -274,6 +274,15 @@ class ComparisonViewer(QWidget):
             self._name_b.setText(self._photo_b.get("filename", ""))
             self._rating_b.setText(_RATING_TEXT.get(self._photo_b.get("rating", 0), ""))
 
+    def cleanup(self):
+        for attr in ("_loader_a", "_loader_b"):
+            loader = getattr(self, attr, None)
+            if loader:
+                loader.cancel()
+                if loader.isRunning():
+                    loader.wait(1000)
+                setattr(self, attr, None)
+
     def _load_image(self, photo: dict, img_label: _FullscreenImageLabel, side: str):
         """加载图片到指定侧的 label。"""
         # 优先显示缩略图缓存
@@ -324,8 +333,7 @@ class ComparisonViewer(QWidget):
         if not self._photo_a:
             return
         self._photo_a["rating"] = stars
-        fn = self._photo_a.get("filename", "")
-        self.rating_changed.emit(fn, stars)
+        self.rating_changed.emit(dict(self._photo_a), stars)
         self._refresh_labels()
         self._refresh_star_buttons()
 
@@ -334,8 +342,7 @@ class ComparisonViewer(QWidget):
         if not self._photo_b:
             return
         self._photo_b["rating"] = stars
-        fn = self._photo_b.get("filename", "")
-        self.rating_changed.emit(fn, stars)
+        self.rating_changed.emit(dict(self._photo_b), stars)
         self._refresh_labels()
         self._refresh_star_buttons()
 

@@ -13,13 +13,27 @@ import subprocess
 
 def get_commit_hash():
     """
-    从 Python 代码读取 COMMIT_HASH（保证跨平台一致）
-    优先读 build_info_local.py，其次 build_info.py，最后 fallback 到 git
+    获取 COMMIT_HASH，优先通过 git 获取，其次从 Python 代码读取
     
     Returns:
         str: commit hash
     """
-    # 优先从 Python 代码读取（保证跨平台一致）
+    # 优先通过 git 获取
+    try:
+        result = subprocess.run(
+            ['git', 'rev-parse', '--short=7', 'HEAD'],
+            capture_output=True,
+            text=True,
+            cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        )
+        if result.returncode == 0:
+            commit_hash = result.stdout.strip()
+            print(f"Using COMMIT_HASH from git: {commit_hash}")
+            return commit_hash
+    except Exception as e:
+        print(f"Warning: could not get git commit hash: {e}")
+    
+    # Fallback: 从 Python 代码读取
     try:
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         sys.path.insert(0, base_dir)
@@ -37,18 +51,6 @@ def get_commit_hash():
     except Exception as e:
         print(f"Warning: could not read from build_info: {e}")
     
-    # Fallback: git
-    try:
-        result = subprocess.run(
-            ['git', 'rev-parse', '--short=7', 'HEAD'],
-            capture_output=True,
-            text=True,
-            cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        )
-        if result.returncode == 0:
-            return result.stdout.strip()
-    except Exception:
-        pass
     return "unknown"
 
 
@@ -99,7 +101,7 @@ def update_inno_version():
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     inno_paths = [
         os.path.join(base_dir, 'inno', 'SuperPicky.iss'),
-        os.path.join(base_dir, 'output', 'SuperPicky_Win64_CPU', 'SuperPicky.iss')
+        os.path.join(base_dir, 'inno', 'SuperPicky_CUDA_Patch.iss'),
     ]
     
     success = True
@@ -121,12 +123,19 @@ def update_inno_version():
                 content
             )
             
-            # Replace OutputBaseFilename
-            updated_content = re.sub(
-                r'OutputBaseFilename=SuperPicky_Setup_Win64',
-                f'OutputBaseFilename=SuperPicky_Setup_Win64_{app_version}_{commit_hash}',
-                updated_content
-            )
+            # Replace OutputBaseFilename based on file type
+            if 'SuperPicky_CUDA_Patch.iss' in inno_path:
+                updated_content = re.sub(
+                    r'OutputBaseFilename=SuperPicky_CUDA_Patch_Win64.*',
+                    f'OutputBaseFilename=SuperPicky_CUDA_Patch_Win64_{app_version}_{commit_hash}',
+                    updated_content
+                )
+            else:
+                updated_content = re.sub(
+                    r'OutputBaseFilename=SuperPicky_Setup_Win64.*',
+                    f'OutputBaseFilename=SuperPicky_Setup_Win64_{app_version}_{commit_hash}',
+                    updated_content
+                )
             
             # Write back to file
             with open(inno_path, 'w', encoding='utf-8') as f:

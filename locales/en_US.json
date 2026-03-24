@@ -1011,6 +1011,7 @@
     "meta_focal": "Focal Length",
     "meta_confidence": "Confidence",
     "meta_birdid_conf": "Bird ID Conf.",
+    "meta_filesize": "File Size",
     "meta_filename": "Filename",
     "meta_datetime": "Date/Time",
     "flying_yes": "Yes",

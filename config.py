@@ -4,9 +4,11 @@ SuperPicky 配置管理模块
 """
 import os
 import sys
+import platform
+import torch
 from dataclasses import dataclass
 from typing import List, Dict
-import torch
+
 
 
 def resource_path(relative_path):
@@ -55,7 +57,7 @@ class DirectoryConfig:
 @dataclass
 class AIConfig:
     """AI 模型相关配置"""
-    MODEL_FILE: str = "models/yolo11l-seg.pt"  # 使用 yolo11l-seg 分割模型（已打包）
+    MODEL_FILE: str = "models/yolo11l-seg.pt"  # pth 版本: yolo11l-seg 分割模型
     BIRD_CLASS_ID: int = 14              # YOLO 模型中鸟类的类别 ID
     TARGET_IMAGE_SIZE: int = 1024        # 图像预处理目标尺寸（保持1024以维持锐度值一致性）
     CENTER_THRESHOLD: float = 0.15       # 鸟类位置中心阈值
@@ -139,25 +141,24 @@ class Config:
 def get_best_device():
     """
     获取最佳计算设备
-    遵循用户期望的逻辑：
-    1. 先检测平台，MAC就用mps
-    2. Windows就先验证是否支持CUDA
-    3. 如果支持就使用CUDA
-    4. 如果不支持就用CPU
+    判断带torch的设备
     """
+    
     try:
-        # 检查 MPS (Apple GPU)
-        if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-            return torch.device("mps")
-        
-        # 检查 CUDA (NVIDIA GPU)
-        if torch.cuda.is_available():
-            return torch.device("cuda")
-        
-        # 默认使用 CPU
-        return torch.device("cpu")
+        system = platform.system()
+        if system == "Darwin":
+            # 检查 MPS (Apple GPU)
+            if torch.backends.mps.is_available():
+                return torch.device("mps")
+            else:
+                return torch.device("cpu")
+        else:
+            # linux/windows检查 CUDA (NVIDIA GPU)
+            if torch.cuda.is_available():
+                return torch.device("cuda")
+            else:
+                return torch.device("cpu")
     except Exception:
-        # 如果 torch 导入失败或其他异常，回退到 CPU
         return torch.device("cpu")
 
 

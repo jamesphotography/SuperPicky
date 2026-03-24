@@ -2,13 +2,22 @@ import os
 import sys
 import logging
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="strict")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="strict")
+
 try:
     from huggingface_hub import hf_hub_download
 except ImportError:
     print("Error: huggingface_hub is not installed. Please run `pip install huggingface_hub tqdm` first.")
     sys.exit(1)
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    stream=sys.stdout,
+)
 
 # Define the models and their destination directories relative to the project root
 MODELS_TO_DOWNLOAD = [

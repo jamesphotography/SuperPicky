@@ -377,6 +377,14 @@ def stop_server(log_callback=None):
     
     t = get_t()
     pid = read_pid()
+
+    def _send_signal(sig):
+        if sys.platform == 'win32':
+            return
+        try:
+            os.killpg(pid, sig)
+        except Exception:
+            os.kill(pid, sig)
     
     if pid and is_process_running(pid):
         log(t("server.stop_server", pid=pid))
@@ -394,18 +402,18 @@ def stop_server(log_callback=None):
                     pass
             else:
                 # Unix/Linux/macOS 平台使用信号
-                os.kill(pid, signal.SIGTERM)
+                _send_signal(signal.SIGTERM)
             
             # 等待进程退出
-            for i in range(10):
-                time.sleep(0.3)
+            for i in range(24):
+                time.sleep(0.25)
                 if not is_process_running(pid):
                     break
             
             # 如果还没退出，强制终止（仅限非Windows平台）
             if is_process_running(pid) and sys.platform != 'win32':
                 log(t("server.force_kill"))
-                os.kill(pid, signal.SIGKILL)
+                _send_signal(signal.SIGKILL)
                 time.sleep(0.5)
             
             remove_pid()

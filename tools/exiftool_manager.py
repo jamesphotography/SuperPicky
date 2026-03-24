@@ -18,6 +18,8 @@ import time
 import threading
 import queue
 
+import atexit
+
 class ExifToolManager:
     """ExifTool管理器 - 使用本地打包的exiftool"""
 
@@ -39,6 +41,11 @@ class ExifToolManager:
         self._stdout_queue = None
         self._reader_thread = None
         self._lock = threading.Lock()
+        self._shutdown_lock = threading.Lock()
+        self._is_shutdown = False
+        
+        # 注册退出清理
+        atexit.register(self.shutdown)
 
     def _get_exiftool_path(self) -> str:
         """获取exiftool可执行文件路径"""
@@ -237,26 +244,53 @@ class ExifToolManager:
             )
             self._reader_thread.start()
             
-            print("🚀 ExifTool persistent process started (threaded read)")
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 🚀 ExifTool persistent process started (PID: {self._process.pid}, threaded read)")
         except Exception as e:
-            print(f"❌ Failed to start ExifTool process: {e}")
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ❌ Failed to start ExifTool process: {e}")
             self._process = None
 
     def _stop_process(self):
         """停止常驻进程"""
         if self._process:
+            pid = self._process.pid
             try:
                 self._process.stdin.write(b'-stay_open\nFalse\n')
                 self._process.stdin.flush()
                 self._process.wait(timeout=2)
-            except Exception:
-                pass
+                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ✅ ExifTool process (PID: {pid}) stopped gracefully")
+            except Exception as e:
+                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ⚠️  ExifTool process (PID: {pid}) stop failed: {e}")
             finally:
                 if self._process.poll() is None:
-                    self._process.kill()
+                    try:
+                        self._process.kill()
+                        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ✅ ExifTool process (PID: {pid}) killed")
+                    except Exception as e:
+                        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ⚠️  ExifTool process (PID: {pid}) kill failed: {e}")
                 self._process = None
                 self._stdout_queue = None
                 self._reader_thread = None
+    
+    def shutdown(self):
+        """关闭ExifTool管理器，停止所有相关进程"""
+        global exiftool_manager
+        with self._shutdown_lock:
+            if self._is_shutdown:
+                return
+            self._is_shutdown = True
+
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 🔄 ExifToolManager shutting down...")
+            self._stop_process()
+            if exiftool_manager is self:
+                exiftool_manager = None
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ✅ ExifToolManager shutdown completed")
+
+    def __del__(self):
+        """析构函数，确保进程被关闭"""
+        try:
+            self.shutdown()
+        except Exception:
+            pass
 
     def _read_until_ready(self, timeout=10.0) -> bytes:
         """从队列读取直到 {ready}，支持超时"""
@@ -1325,9 +1359,27 @@ class ExifToolManager:
                 if temp_jpegs:
                     log(t("logs.temp_jpeg_cleanup", count=len(temp_jpegs)))
                     deleted_temp = 0
+                    abs_dir_path = os.path.abspath(dir_path)
                     for jpeg_filename in temp_jpegs:
+                        if not isinstance(jpeg_filename, str):
+                            continue
+
+                        normalized_name = os.path.normpath(jpeg_filename)
+                        if (
+                            os.path.isabs(normalized_name)
+                            or os.path.splitdrive(normalized_name)[0]
+                            or normalized_name == '..'
+                            or normalized_name.startswith(f'..{os.sep}')
+                        ):
+                            log(t("logs.temp_jpeg_delete_failed", filename=jpeg_filename, error="invalid_path"))
+                            continue
                         # 临时 JPEG 可能在根目录或子目录中
-                        jpeg_path = os.path.join(dir_path, jpeg_filename)
+                        # jpeg_path = os.path.join(dir_path, jpeg_filename)
+                        jpeg_path = os.path.abspath(os.path.join(abs_dir_path, normalized_name))
+                        if os.path.commonpath([abs_dir_path, jpeg_path]) != abs_dir_path:
+                            log(t("logs.temp_jpeg_delete_failed", filename=jpeg_filename, error="invalid_path"))
+                            continue
+                        
                         if os.path.exists(jpeg_path):
                             try:
                                 os.remove(jpeg_path)

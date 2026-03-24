@@ -1010,6 +1010,7 @@
     "meta_focal": "焦距",
     "meta_confidence": "置信度",
     "meta_birdid_conf": "识鸟置信度",
+    "meta_filesize": "文件大小",
     "meta_filename": "文件名",
     "meta_datetime": "拍摄时间",
     "flying_yes": "是",

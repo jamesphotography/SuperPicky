@@ -255,14 +255,22 @@ def cmd_reset(args):
             continue
         
         # 查找所有子目录（burst_XXX、鸟种目录等）
-        for entry in os.listdir(rating_path):
-            entry_path = os.path.join(rating_path, entry)
-            if os.path.isdir(entry_path):
-                print(f"  📁 打平子目录: {rating_dir}/{entry}")
+        for entry in os.scandir(rating_path):
+            entry_path = entry.path
+            if entry.is_symlink():
+                print(f"  ⚠️ 跳过符号链接目录: {rating_dir}/{entry.name}")
+                continue
+            if entry.is_dir(follow_symlinks=False):
+                print(f"  📁 打平子目录: {rating_dir}/{entry.name}")
                 # 递归将所有文件移回评分目录
                 for root, dirs, files in os.walk(entry_path):
+                    # 防御性处理：不进入任何符号链接子目录
+                    dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d))]
                     for filename in files:
                         src = os.path.join(root, filename)
+                        if os.path.islink(src):
+                            print(f"    ⚠️ 跳过符号链接文件: {filename}")
+                            continue
                         dst = os.path.join(rating_path, filename)
                         if os.path.isfile(src):
                             try:
@@ -272,14 +280,14 @@ def cmd_reset(args):
                                 subdir_stats['files_restored'] += 1
                             except Exception as e:
                                 print(f"    ⚠️ 移动失败: {filename}: {e}")
-                    
+
                 # 删除子目录
                 try:
                     if os.path.exists(entry_path):
                         shutil.rmtree(entry_path)
                     subdir_stats['dirs_removed'] += 1
                 except Exception as e:
-                    print(f"    ⚠️ 删除目录失败: {entry}: {e}")
+                    print(f"    ⚠️ 删除目录失败: {entry.name}: {e}")
     
     if subdir_stats['dirs_removed'] > 0:
         print(f"  ✅ 已清理 {subdir_stats['dirs_removed']} 个子目录，恢复 {subdir_stats['files_restored']} 个文件")
@@ -413,30 +421,40 @@ def cmd_restar(args):
         if not os.path.exists(rating_path):
             continue
         
-        for entry in os.listdir(rating_path):
-            if entry.startswith('burst_'):
-                burst_path = os.path.join(rating_path, entry)
-                if os.path.isdir(burst_path):
-                    for filename in os.listdir(burst_path):
-                        src = os.path.join(burst_path, filename)
-                        dst = os.path.join(rating_path, filename)
-                        if os.path.isfile(src):
-                            try:
-                                if os.path.exists(dst):
-                                    os.remove(dst)
-                                shutil.move(src, dst)
-                                burst_stats['files_restored'] += 1
-                            except Exception as e:
-                                print(f"    ⚠️ 移动失败: {filename}: {e}")
-                    
+        for entry in os.scandir(rating_path):
+            if not entry.name.startswith('burst_'):
+                continue
+
+            burst_path = entry.path
+            if entry.is_symlink():
+                print(f"    ⚠️ 跳过符号链接连拍目录: {entry.name}")
+                continue
+            if not entry.is_dir(follow_symlinks=False):
+                continue
+
+            for filename in os.listdir(burst_path):
+                src = os.path.join(burst_path, filename)
+                dst = os.path.join(rating_path, filename)
+                if os.path.islink(src):
+                    print(f"    ⚠️ 跳过符号链接文件: {filename}")
+                    continue
+                if os.path.isfile(src):
                     try:
-                        if not os.listdir(burst_path):
-                            os.rmdir(burst_path)
-                        else:
-                            shutil.rmtree(burst_path)
-                        burst_stats['dirs_removed'] += 1
+                        if os.path.exists(dst):
+                            os.remove(dst)
+                        shutil.move(src, dst)
+                        burst_stats['files_restored'] += 1
                     except Exception as e:
-                        print(f"    ⚠️ 删除目录失败: {entry}: {e}")
+                        print(f"    ⚠️ 移动失败: {filename}: {e}")
+
+            try:
+                if not os.listdir(burst_path):
+                    os.rmdir(burst_path)
+                else:
+                    shutil.rmtree(burst_path)
+                burst_stats['dirs_removed'] += 1
+            except Exception as e:
+                print(f"    ⚠️ 删除目录失败: {entry.name}: {e}")
     
     if burst_stats['dirs_removed'] > 0:
         print(f"  ✅ 已清理 {burst_stats['dirs_removed']} 个连拍目录，恢复 {burst_stats['files_restored']} 个文件")
