@@ -181,6 +181,16 @@ class OSEAClassifier:
 
         model.to(self.device)
 
+        # V4.2.2: 统一半精度推理规则
+        if self.device.type in ("cuda", "mps"):
+            self._precision_mode = "fp16"
+            self._amp_dtype = torch.float16
+        else:
+            self._precision_mode = "fp32"
+            self._amp_dtype = torch.float32
+        
+        model.eval()
+
         return model
 
     def _load_bird_info(self) -> List[List[str]]:
@@ -233,9 +243,16 @@ class OSEAClassifier:
 
         input_tensor = self.transform(image).unsqueeze(0).to(self.device)
 
-        self.model.eval()
-        with torch.no_grad():
-            output = self.model(input_tensor)[0]
+        # V4.2.2: 统一半精度推理结果
+        with torch.inference_mode():
+            if self._precision_mode == "fp16":
+                with torch.autocast(self.device.type, dtype=self._amp_dtype):
+                    output = self.model(input_tensor)[0]
+            else:
+                output = self.model(input_tensor)[0]
+
+        # with torch.no_grad():
+        #     output = self.model(input_tensor)[0]
 
         output = output[:self.num_classes]
         probs = torch.nn.functional.softmax(output / temperature, dim=0)
@@ -294,10 +311,19 @@ class OSEAClassifier:
         flipped = image.transpose(Image.FLIP_LEFT_RIGHT)
         input2 = self.transform(flipped).unsqueeze(0).to(self.device)
 
-        self.model.eval()
-        with torch.no_grad():
-            output1 = self.model(input1)[0][:self.num_classes]
-            output2 = self.model(input2)[0][:self.num_classes]
+        # V4.2.2: 统一半精度推理结果
+        with torch.inference_mode():
+            if self._precision_mode == "fp16":
+                with torch.autocast(self.device.type, dtype=self._amp_dtype):
+                    output1 = self.model(input1)[0][:self.num_classes]
+                    output2 = self.model(input2)[0][:self.num_classes]
+            else:
+                output1 = self.model(input1)[0][:self.num_classes]
+                output2 = self.model(input2)[0][:self.num_classes]
+
+        # with torch.no_grad():
+        #     output1 = self.model(input1)[0][:self.num_classes]
+        #     output2 = self.model(input2)[0][:self.num_classes]
 
         avg_output = (output1 + output2) / 2
         probs = torch.nn.functional.softmax(avg_output / temperature, dim=0)

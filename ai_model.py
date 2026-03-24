@@ -26,13 +26,16 @@ def load_yolo_model(log_callback=None):
         device = get_best_device()
         i18n = get_i18n()
         
-        # 使用 i18n 翻译设备类型消息
+        # 使用 i18n 翻译设备类型消息，借用这个流程增加模型半精度推理开关
         if device.type == 'mps':
             msg = i18n.t("ai.using_mps")
+            model._precision_mode = "fp16"
         elif device.type == 'cuda':
             msg = i18n.t("ai.using_cuda")
+            model._precision_mode = "fp16"
         else:
             msg = i18n.t("ai.using_cpu")
+            model._precision_mode = "fp32"
         
         # 使用日志回调或直接打印
         if log_callback:
@@ -46,6 +49,7 @@ def load_yolo_model(log_callback=None):
             log_callback(error_msg, "warning")
         else:
             print(error_msg)
+        model._precision_mode = "fp32"
 
     return model
 
@@ -138,13 +142,15 @@ def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, i18n
         device = get_best_device()
         
         # 使用最佳设备进行推理
-        results = model(image, device=device.type)
+        # results = model(image, device=device.type)
+        results = model(image, device=device.type, half=getattr(model, '_precision_mode', "fp32") == "fp16")
     except Exception as device_error:
         # 设备推理失败，降级到CPU
         t = i18n.t if i18n else get_i18n().t
         log_message(t("ai.device_inference_failed", error=device_error), dir)
         try:
-            results = model(image, device='cpu')
+            # results = model(image, device='cpu')
+            results = model(image, device='cpu', half=False)
         except Exception as cpu_error:
             log_message(t("ai.ai_inference_failed", error=cpu_error), dir)
             # 返回"无鸟"结果（V3.1）

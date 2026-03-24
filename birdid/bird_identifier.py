@@ -156,6 +156,15 @@ def get_classifier():
             model.load_state_dict(state_dict)
             model = model.to(CLASSIFIER_DEVICE)
             model.eval()
+
+            # V4.2.2：统一半精度处理规则
+            if CLASSIFIER_DEVICE.type in ("cuda", "mps"):
+                model._precision_mode = "fp16"
+                model._amp_dtype = torch.float16
+            else:
+                model._precision_mode = "fp32"
+                model._amp_dtype = torch.float32
+
             _classifier = model
             print(f"[BirdID] OSEA ResNet34 model loaded, device: {CLASSIFIER_DEVICE}")
         else:
@@ -176,6 +185,9 @@ def get_classifier():
             else:
                 raise RuntimeError(f"未找到分类模型: {MODEL_PATH} 或 {MODEL_PATH_LEGACY}")
             _classifier.eval()
+            # V4.2.2：统一半精度处理规则
+            _classifier._precision_mode = "fp32"
+            _classifier._amp_dtype = torch.float32
             print(_t("logs.birdid_fallback_model"))
     return _classifier
 
@@ -244,6 +256,12 @@ class YOLOBirdDetector:
             print(_t("logs.yolo_load_failed", e=e))
             self.model = None
 
+        # V4.2.2：统一半精度处理规则
+        if CLASSIFIER_DEVICE.type in ("cuda", "mps"):
+            self._precision_mode = "fp16"
+        else:
+            self._precision_mode = "fp32"
+
     def detect_and_crop_bird(
         self,
         image_input,
@@ -281,7 +299,14 @@ class YOLOBirdDetector:
                 return None, "不支持的图像输入类型"
 
             img_array = np.array(image)
-            results = self.model(img_array, conf=confidence_threshold)
+            # V4.2.2：统一半精度推理结果
+            # results = self.model(img_array, conf=confidence_threshold)
+            results = self.model(
+                img_array,
+                conf=confidence_threshold,
+                device=CLASSIFIER_DEVICE,
+                half=(self._precision_mode == "fp16")
+            )
 
             detections = []
             for result in results:
@@ -724,9 +749,20 @@ def predict_bird(
     transform = OSEA_TRANSFORM_DIRECT if is_yolo_cropped else OSEA_TRANSFORM
     input_tensor = transform(image).unsqueeze(0).to(CLASSIFIER_DEVICE)
 
+    # V4.2.2: 统一半精度推理结果
+    with torch.inference_mode():
+        if getattr(model, "_precision_mode", "fp32") == "fp16":
+            with torch.autocast(
+                device_type=CLASSIFIER_DEVICE.type,
+                dtype=getattr(model, "_amp_dtype", torch.float32)
+            ):
+                output = model(input_tensor)[0]
+        else:
+            output = model(input_tensor)[0]
+
     # 推理
-    with torch.no_grad():
-        output = model(input_tensor)[0]
+    # with torch.no_grad():
+    #     output = model(input_tensor)[0]
 
     # 截取有效类别数（模型输出可能多于实际物种数）
     num_classes = min(10964, output.shape[0])

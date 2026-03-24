@@ -519,6 +519,15 @@ class TOPIQScorer:
             self._model = CFANet()
             load_topiq_weights(self._model, weight_path, self.device)
             self._model.to(self.device)
+
+            # V4.2.2：统一半精度推理规则
+            if self.device.type in("cuda", "mps"):
+                self._precision_mode = "fp16"
+                self._amp_dtype = torch.float16
+            else:
+                self._precision_mode = "fp32"
+                self._amp_dtype = torch.float32
+
             self._model.eval()
             
         return self._model
@@ -550,10 +559,18 @@ class TOPIQScorer:
             
             transform = T.ToTensor()
             img_tensor = transform(img).unsqueeze(0).to(self.device)
+
+            # V4.2.2: 统一半精度推理结果
+            with torch.inference_mode():
+                if self._precision_mode == "fp16":
+                    with torch.autocast(self.device.type, dtype=self._amp_dtype):
+                        score = model(img_tensor, return_mos=True)
+                else:
+                    score = model(img_tensor, return_mos=True)
             
-            # 计算评分
-            with torch.no_grad():
-                score = model(img_tensor, return_mos=True)
+            # # 计算评分
+            # with torch.no_grad():
+            #     score = model(img_tensor, return_mos=True)
             
             if isinstance(score, torch.Tensor):
                 score = score.item()

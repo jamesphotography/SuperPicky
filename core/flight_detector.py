@@ -119,6 +119,15 @@ class FlightDetector:
             raise RuntimeError(f"加载飞版检测模型失败: {e}")
         
         self.model.to(self.device)
+
+        # V4.2.2：统一半精度推理规则
+        if self.device.type in ("cuda", "mps"):
+            self._precision_mode = "fp16"
+            self._amp_dtype = torch.float16
+        else:
+            self._precision_mode = "fp32"
+            self._amp_dtype = torch.float32
+
         self.model.eval()
         self.model_loaded = True
     
@@ -169,10 +178,18 @@ class FlightDetector:
         # 预处理
         image_tensor = self.transform(pil_image).unsqueeze(0).to(self.device)
         
-        # 推理
-        with torch.no_grad():
-            prob = self.model(image_tensor).item()
-        
+        # # 推理
+        # with torch.no_grad():
+        #     prob = self.model(image_tensor).item()
+
+        # V4.2.2: 统一半精度推理结果
+        with torch.inference_mode():
+            if self._precision_mode == "fp16":
+                with torch.autocast(device_type=self.device.type, dtype=self._amp_dtype):
+                    prob = self.model(image_tensor).item()
+            else:
+                prob = self.model(image_tensor).item()
+
         return FlightResult(
             is_flying=prob > threshold,
             confidence=prob
@@ -227,10 +244,18 @@ class FlightDetector:
             
             # 组合为批次
             batch_tensor = torch.stack(batch_tensors).to(self.device)
+
+            # V4.2.2: 统一半精度推理结果
+            with torch.inference_mode():
+                if self._precision_mode == "fp16":
+                    with torch.autocast(device_type=self.device.type, dtype=self._amp_dtype):
+                        probs = self.model(batch_tensor).squeeze().cpu().numpy()
+                else:
+                    probs = self.model(batch_tensor).squeeze().cpu().numpy()
             
             # 推理
-            with torch.no_grad():
-                probs = self.model(batch_tensor).squeeze().cpu().numpy()
+            # with torch.no_grad():
+            #     probs = self.model(batch_tensor).squeeze().cpu().numpy()
             
             # 处理单个元素的情况
             if probs.ndim == 0:

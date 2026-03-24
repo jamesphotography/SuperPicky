@@ -57,13 +57,23 @@ class IQAScorer:
                 self._topiq_model = CFANet()
                 load_topiq_weights(self._topiq_model, weight_path, self.device)
                 self._topiq_model.to(self.device)
-                
-                # V4.0.5: 启用 FP16 半精度推理，提速约 30-50%
-                if self.device.type in ('mps', 'cuda'):
+
+                # V4.2.2：统一半精度推理规则
+                if self.device.type in("cuda", "mps"):
+                    self._precision_mode = "fp16"
+                    self._amp_dtype = torch.float16
+                    # 先保持该模型强制全量半精度推理，和原来一致。
                     self._topiq_model = self._topiq_model.half()
-                    self._use_fp16 = True
                 else:
-                    self._use_fp16 = False
+                    self._precision_mode = "fp32"
+                    self._amp_dtype = torch.float32
+                
+                # # V4.0.5: 启用 FP16 半精度推理，提速约 30-50%
+                # if self.device.type in ('mps', 'cuda'):
+                #     self._topiq_model = self._topiq_model.half()
+                #     self._use_fp16 = True
+                # else:
+                #     self._use_fp16 = False
                     
                 self._topiq_model.eval()
                 print("✅ TOPIQ 模型加载完成")
@@ -109,14 +119,25 @@ class IQAScorer:
             
             # 转为张量（复用实例变量）
             img_tensor = self._transform(img).unsqueeze(0).to(self.device)
-            
-            # V4.0.5: 使用 FP16 和 inference_mode 优化推理
-            if hasattr(self, '_use_fp16') and self._use_fp16:
-                img_tensor = img_tensor.half()
 
-            # 计算评分
+            #  V4.2.2: 统一半精度推理结果
             with torch.inference_mode():
-                score = topiq_model(img_tensor, return_mos=True)
+                if self._precision_mode == "fp16":
+                    # 先保持该模型强制全量半精度推理，和原来一致。
+                    img_tensor = img_tensor.half()
+                    score = topiq_model(img_tensor, return_mos=True)
+                    # with torch.autocast(self.device.type, dtype=self._amp_dtype):
+                    #     score = topiq_model(img_tensor, return_mos=True)
+                else:
+                    score = topiq_model(img_tensor, return_mos=True)
+            
+            # # V4.0.5: 使用 FP16 和 inference_mode 优化推理
+            # if hasattr(self, '_use_fp16') and self._use_fp16:
+            #     img_tensor = img_tensor.half()
+
+            # # 计算评分
+            # with torch.inference_mode():
+            #     score = topiq_model(img_tensor, return_mos=True)
 
             # 转换为 Python float
             if isinstance(score, torch.Tensor):
@@ -160,13 +181,24 @@ class IQAScorer:
             # 转为张量（复用实例变量）
             img_tensor = self._transform(img).unsqueeze(0).to(self.device)
 
-            # FP16 推理
-            if hasattr(self, '_use_fp16') and self._use_fp16:
-                img_tensor = img_tensor.half()
-
-            # 计算评分
+            # V4.2.2: 统一半精度推理结果
             with torch.inference_mode():
-                score = topiq_model(img_tensor, return_mos=True)
+                if self._precision_mode == "fp16":
+                    # 先保持该模型强制全量半精度推理，和原来一致。
+                    img_tensor = img_tensor.half()
+                    score = topiq_model(img_tensor, return_mos=True)
+                    # with torch.autocast(device_type=self.device.type, dtype=self._amp_dtype):
+                    #     score = topiq_model(img_tensor, return_mos=True)
+                else:
+                    score = topiq_model(img_tensor, return_mos=True)
+
+            # # FP16 推理
+            # if hasattr(self, '_use_fp16') and self._use_fp16:
+            #     img_tensor = img_tensor.half()
+
+            # # 计算评分
+            # with torch.inference_mode():
+            #     score = topiq_model(img_tensor, return_mos=True)
 
             if isinstance(score, torch.Tensor):
                 score = score.item()

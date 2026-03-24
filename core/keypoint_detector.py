@@ -119,14 +119,24 @@ class KeypointDetector:
             self.model.load_state_dict(checkpoint)
             
         self.model.to(self.device)
-        
-        # V4.0.5: 启用 FP16 半精度推理，提速约 30-50%
-        # MPS 和 CUDA 都支持 FP16
-        if self.device.type in ('mps', 'cuda'):
+
+        # V4.2.2：统一半精度推理规则
+        if self.device.type in("cuda", "mps"):
+            self._precision_mode = "fp16"
+            self._amp_dtype = torch.float16
+            # 先统一使用全量半精度推理，保持和原来推理一致
             self.model = self.model.half()
-            self._use_fp16 = True
         else:
-            self._use_fp16 = False
+            self._precision_mode = "fp32"
+            self._amp_dtype = torch.float32
+        
+        # # V4.0.5: 启用 FP16 半精度推理，提速约 30-50%
+        # # MPS 和 CUDA 都支持 FP16
+        # if self.device.type in ('mps', 'cuda'):
+        #     self.model = self.model.half()
+        #     self._use_fp16 = True
+        # else:
+        #     self._use_fp16 = False
             
         self.model.eval()
     
@@ -151,13 +161,24 @@ class KeypointDetector:
         # 转换为PIL并进行推理
         pil_crop = Image.fromarray(bird_crop)
         tensor = self.transform(pil_crop).unsqueeze(0).to(self.device)
-        
-        # V4.0.5: 使用 FP16 和 inference_mode 优化推理
-        if hasattr(self, '_use_fp16') and self._use_fp16:
-            tensor = tensor.half()
-        
+
+        # V4.2.2: 统一半精度推理结果
         with torch.inference_mode():
-            coords, vis = self.model(tensor)
+            if self._precision_mode == "fp16":
+                # 先统一使用全量半精度推理，保持和原来推理一致
+                tensor = tensor.half()
+                coords, vis = self.model(tensor)
+                # with torch.autocast(self.device.type, dtype=self._amp_dtype):
+                #     coords, vis = self.model(tensor)
+            else:
+                coords, vis = self.model(tensor)
+
+        # # V4.0.5: 使用 FP16 和 inference_mode 优化推理
+        # if hasattr(self, '_use_fp16') and self._use_fp16:
+        #     tensor = tensor.half()
+        
+        # with torch.inference_mode():
+        #     coords, vis = self.model(tensor)
         
         coords = coords[0].cpu().numpy()
         vis = vis[0].cpu().numpy()
@@ -243,7 +264,8 @@ class KeypointDetector:
             eye = left_eye if left_eye_vis >= right_eye_vis else right_eye
             eye_px = (int(eye[0] * w), int(eye[1] * h))
             beak_px = (int(beak[0] * w), int(beak[1] * h))
-            if beak_vis >= self.VISIBILITY_THRESHOLD:
+            # if beak_vis >= self.VISIBILITY_THRESHOLD:
+            if beak_visible: # 上面一行应该是之前代码遗漏未修改导致变量未定义
                 radius = int(self._distance(eye_px, beak_px) * self.RADIUS_MULTIPLIER)
             elif box is not None:
                 box_size = max(box[2], box[3])
