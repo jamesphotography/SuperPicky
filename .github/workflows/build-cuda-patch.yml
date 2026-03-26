@@ -1,6 +1,9 @@
-name: Build and Release SuperPicky Legacy CPU
+name: Build and Release SuperPicky Windows
 
 on:
+  push:
+    tags:
+      - 'v*.*.*'
   workflow_dispatch:
     inputs:
       version:
@@ -22,13 +25,20 @@ jobs:
         with:
           python-version: '3.12'
           cache: 'pip'
-          cache-dependency-path: requirements.txt
+          cache-dependency-path: |
+            requirements.txt
+            requirements_cuda.txt
 
       - name: Resolve release metadata
         id: release_meta
         shell: pwsh
         run: |
-          $rawVersion = "${{ github.event.inputs.version }}"
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $rawVersion = "${{ github.event.inputs.version }}"
+          } else {
+            $rawVersion = "${{ github.ref_name }}"
+          }
+
           if (-not $rawVersion) {
             throw "Release version is required."
           }
@@ -41,20 +51,25 @@ jobs:
         shell: pwsh
         run: python -m venv .venv
 
-      - name: Install dependencies
+      - name: Install CPU build dependencies
         shell: pwsh
         run: |
           .\.venv\Scripts\python.exe -m pip install --upgrade pip
           .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 
-      - name: Build CPU version
+      - name: Build CPU and CUDA patch release payloads
         shell: pwsh
-        run: .\.venv\Scripts\python.exe build_release_win.py --build-type cpu --copy-dir output --debug
+        run: .\.venv\Scripts\python.exe build_release_win.py --build-type cuda-patch --copy-dir output --debug
 
-      - name: Create installer with Inno Setup
+      - name: Create CPU installer with Inno Setup
         uses: Minionguyjpro/Inno-Setup-Action@v1.2.7
         with:
           path: ./output/installer_cpu/SuperPicky.iss
+
+      - name: Create CUDA patch installer with Inno Setup
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.7
+        with:
+          path: ./output/cuda_patch_installer/SuperPicky_CUDA_Patch.iss
 
       - name: Prepare release assets
         shell: pwsh
@@ -63,7 +78,9 @@ jobs:
 
           $assetPatterns = @(
             "output/SuperPicky_Win64_*_cpu.zip",
-            "output/installer_cpu/Output/SuperPicky_Setup_Win64_*.exe"
+            "output/cuda_patch_installer/Output/SuperPicky_CUDA_Patch_Win64_*.exe",
+            "output/installer_cpu/Output/SuperPicky_Setup_Win64_*.exe",
+            "output/SuperPicky_Win64_*_cuda_patch.zip"
           )
 
           foreach ($pattern in $assetPatterns) {

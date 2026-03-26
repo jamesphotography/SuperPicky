@@ -1,4 +1,4 @@
-# SuperPicky - 慧眼选鸟 🦅
+# SuperPicky - 慧眼选鸟 
 
 [![Version](https://img.shields.io/badge/version-4.1.0-blue.svg)](https://github.com/jamesphotography/SuperPicky)
 [![Platform](https://img.shields.io/badge/platform-macOS%20|%20Windows-lightgrey.svg)](https://github.com/jamesphotography/SuperPicky/releases)
@@ -162,6 +162,8 @@ python main.py
 ---
 
 ## 🙏 致谢
+
+- 首位个人赞助者 - 张钧涛 2500 元人民币 （一季度开发团队 AI code 工具费用）
 
 - [YOLO11](https://github.com/ultralytics/ultralytics) - Ultralytics 目标检测模型
 - [TOPIQ](https://github.com/chaofengc/IQA-PyTorch) - Chaofeng Chen 等人的图像质量评估模型

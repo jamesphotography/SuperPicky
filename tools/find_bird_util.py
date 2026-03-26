@@ -40,22 +40,22 @@ def raw_to_jpeg(raw_file_path):
         with rawpy.imread(raw_file_path) as raw:
             thumbnail = raw.extract_thumb()
             if thumbnail is None:
+                log_message(f"DEBUG: rawpy extract_thumb is None for {filename}", directory_path)
                 return None
             if thumbnail.format == rawpy.ThumbFormat.JPEG:
                 with open(jpg_file_path, 'wb') as f:
                     f.write(thumbnail.data)
             elif thumbnail.format == rawpy.ThumbFormat.BITMAP:
                 imageio.imsave(jpg_file_path, thumbnail.data)
-            # 成功转换——已由 photo_processor 的批量日志统计，无需逐文件记录
-            
-            return jpg_file_path  # 返回完整路径
+            return jpg_file_path
     except rawpy._rawpy.LibRawFileUnsupportedError:
         # LibRaw 不支持的格式（如 Sony A7M5 NeXt/Compressed RAW 2）
-        # 回退：使用 exiftool -b -JpgFromRaw 提取相机内嵌 JPEG
+        log_message(f"DEBUG: rawpy unsupported format for {filename}, falling back to ExifTool", directory_path)
         return _raw_to_jpeg_via_exiftool(raw_file_path, jpg_file_path, directory_path)
     except Exception as e:
         log_message(f"Error occurred while converting the RAW file:{raw_file_path}, Error: {e}", directory_path)
-        raise e  # 抛出异常供调用者捕获
+        # 即使是普通异常，也尝试走一次 ExifTool 回退（增加容错）
+        return _raw_to_jpeg_via_exiftool(raw_file_path, jpg_file_path, directory_path)
 
 
 def _raw_to_jpeg_via_heif(raw_file_path, jpg_file_path, directory_path):
@@ -84,17 +84,25 @@ def _raw_to_jpeg_via_exiftool(raw_file_path, jpg_file_path, directory_path):
     import subprocess
     import sys
 
+    # V3.9.4: 处理 Windows 平台的可执行文件后缀和路径
+    is_windows = sys.platform.startswith('win')
+    exe_name = 'exiftool.exe' if is_windows else 'exiftool'
+    exiftool_dir = 'exiftools_win' if is_windows else 'exiftools_mac'
+
     # 查找 exiftool（同 exiftool_manager 逻辑）
     possible_paths = []
     if getattr(sys, "frozen", False):
-        possible_paths.append(os.path.join(sys._MEIPASS, "exiftools_mac", "exiftool"))
+        possible_paths.append(os.path.join(sys._MEIPASS, exiftool_dir, exe_name))
+    
+    # 获取 tools 目录的父目录（项目根目录）
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     possible_paths += [
-        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "exiftools_mac", "exiftool"),
+        os.path.join(project_root, exiftool_dir, exe_name),
         "/opt/homebrew/bin/exiftool",
         "/usr/local/bin/exiftool",
-        "exiftool",
+        exe_name,
     ]
-    exiftool = next((p for p in possible_paths if os.path.isfile(p)), "exiftool")
+    exiftool = next((p for p in possible_paths if os.path.isfile(p)), exe_name)
 
     for tag in ["-JpgFromRaw", "-PreviewImage", "-ThumbnailImage"]:
         try:
