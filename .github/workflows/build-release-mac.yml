@@ -1,0 +1,205 @@
+name: Build and Release SuperPicky macOS ARM
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number for the release'
+        required: true
+
+jobs:
+  build:
+    runs-on: macos-14
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: requirements_mac.txt
+
+      - name: Prepare telemetry build override
+        env:
+          COUNTLY_APP_KEY: ${{ secrets.COUNTLY_APP_KEY }}
+          COUNTLY_SERVER_URL: ${{ secrets.COUNTLY_SERVER_URL }}
+        run: python scripts/prepare_telemetry_build.py --output _telemetry_build.py
+
+      - name: Resolve release metadata
+        id: release_meta
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            RAW_VERSION="$INPUT_VERSION"
+          else
+            RAW_VERSION="$REF_NAME"
+          fi
+
+          if [ -z "$RAW_VERSION" ]; then
+            echo "Release version is required." >&2
+            exit 1
+          fi
+
+          if [[ "$RAW_VERSION" == v* ]]; then
+            TAG="$RAW_VERSION"
+          else
+            TAG="v$RAW_VERSION"
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "name=SuperPicky $TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements_mac.txt
+
+      - name: Import signing certificate
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain"
+          KEYCHAIN_PWD=$(openssl rand -hex 16)
+
+          echo "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+
+          security create-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN_PATH"
+          security import "$RUNNER_TEMP/certificate.p12" \
+            -k "$KEYCHAIN_PATH" \
+            -P "$MACOS_CERTIFICATE_PWD" \
+            -T /usr/bin/codesign
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PWD" "$KEYCHAIN_PATH"
+
+          echo "KEYCHAIN_PWD=$KEYCHAIN_PWD" >> "$GITHUB_ENV"
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+
+      - name: Download models
+        run: python scripts/download_models.py
+
+      - name: Inject commit hash and run PyInstaller
+        run: |
+          COMMIT_HASH=$(git rev-parse --short HEAD)
+          BUILD_INFO_FILE="core/build_info.py"
+
+          cp "$BUILD_INFO_FILE" "${BUILD_INFO_FILE}.backup"
+          sed -i.tmp "s/COMMIT_HASH = None.*/COMMIT_HASH = \"${COMMIT_HASH}\"/" "$BUILD_INFO_FILE"
+          rm -f "${BUILD_INFO_FILE}.tmp"
+
+          pyinstaller SuperPicky.spec --clean --noconfirm
+
+          mv "${BUILD_INFO_FILE}.backup" "$BUILD_INFO_FILE"
+
+          echo "COMMIT_HASH=$COMMIT_HASH" >> "$GITHUB_ENV"
+
+      - name: Organize .app bundle resources
+        run: |
+          APP_PATH="dist/SuperPicky.app"
+          mkdir -p "${APP_PATH}/Contents/MacOS" "${APP_PATH}/Contents/Resources"
+
+          if [ -d "dist/SuperPicky" ] && [ ! -f "${APP_PATH}/Contents/MacOS/SuperPicky" ]; then
+            mv dist/SuperPicky/* "${APP_PATH}/Contents/MacOS/"
+          fi
+
+          for res in SuperBirdIDPlugin.lrplugin en.lproj zh-Hans.lproj; do
+            if [ -d "${APP_PATH}/Contents/MacOS/$res" ]; then
+              mv "${APP_PATH}/Contents/MacOS/$res" "${APP_PATH}/Contents/Resources/"
+            fi
+          done
+
+          echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
+
+      - name: Sign application
+        env:
+          DEVELOPER_ID: ${{ secrets.MACOS_DEVELOPER_ID }}
+        run: |
+          find "${APP_PATH}/Contents" -type f \( -name "*.dylib" -o -name "*.so" -o -perm +111 \) -print0 | \
+            xargs -0 -P 8 -I {} codesign --force --sign "$DEVELOPER_ID" --timestamp --options runtime {} 2>/dev/null || true
+
+          codesign --force --deep --sign "$DEVELOPER_ID" \
+            --timestamp \
+            --options runtime \
+            --entitlements entitlements.plist \
+            "${APP_PATH}"
+
+          codesign --verify --deep --strict --verbose=2 "${APP_PATH}"
+
+      - name: Create DMG
+        env:
+          DEVELOPER_ID: ${{ secrets.MACOS_DEVELOPER_ID }}
+        run: |
+          VERSION=$(python -c "from constants import APP_VERSION; print(APP_VERSION)")
+          DMG_NAME="SuperPicky_v${VERSION}_arm64_${COMMIT_HASH}.dmg"
+          DMG_TEMP="dist/dmg_temp"
+
+          rm -rf "$DMG_TEMP"
+          mkdir -p "$DMG_TEMP"
+
+          cp -R "${APP_PATH}" "${DMG_TEMP}/"
+
+          if [ -d "SuperBirdIDPlugin.lrplugin" ]; then
+            cp -R "SuperBirdIDPlugin.lrplugin" "${DMG_TEMP}/"
+          fi
+
+          hdiutil create -volname "SuperPicky ${VERSION}" \
+            -srcfolder "$DMG_TEMP" \
+            -ov -format UDZO \
+            "dist/${DMG_NAME}"
+
+          rm -rf "$DMG_TEMP"
+
+          codesign --force --sign "$DEVELOPER_ID" --timestamp "dist/${DMG_NAME}"
+
+          echo "DMG_PATH=dist/${DMG_NAME}" >> "$GITHUB_ENV"
+
+      - name: Notarize and staple DMG
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          TEAM_ID: ${{ secrets.MACOS_TEAM_ID }}
+        run: |
+          NOTARIZE_OUTPUT=$(xcrun notarytool submit "${DMG_PATH}" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --team-id "$TEAM_ID" \
+            --wait \
+            --output-format json 2>&1)
+
+          echo "$NOTARIZE_OUTPUT"
+
+          if ! echo "$NOTARIZE_OUTPUT" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"Accepted"'; then
+            echo "Notarization failed." >&2
+            exit 1
+          fi
+
+          xcrun stapler staple "${DMG_PATH}"
+          xcrun stapler validate "${DMG_PATH}"
+
+      - name: Clean up
+        if: always()
+        run: |
+          rm -f _telemetry_build.py
+          security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_meta.outputs.tag }}
+          name: ${{ steps.release_meta.outputs.name }}
+          body_path: ChangeLog.md
+          prerelease: true
+          files: ${{ env.DMG_PATH }}

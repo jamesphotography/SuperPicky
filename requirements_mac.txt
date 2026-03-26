@@ -1,0 +1,12 @@
+# SuperPicky macOS dependency set (Apple Silicon arm64 / Intel x86_64)
+# Uses standard PyPI torch (supports MPS/Metal on Apple Silicon)
+
+-r requirements_base.txt
+
+torch==2.8.0
+torchvision
+torchaudio
+
+pyinstaller
+huggingface_hub
+lap
