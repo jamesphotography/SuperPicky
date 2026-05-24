@@ -1101,34 +1101,42 @@ class InitializationManager(QObject):
         )
         requirements_file = self._resolve_runtime_requirements_path(runtime_variant)
         runtime_requirements = self._runtime_requirements(runtime_variant)
-        install_cmd = [
-            str(pip_executable),
-            "install",
-            "--no-cache-dir",
-            "--progress-bar",
-            "raw",
-            "-r",
-            str(requirements_file),
-            "-i",
-            self._source_map["pypi_primary"],
-            "--extra-index-url",
-            self._source_map["pypi_fallback"],
-        ]
-        if runtime_requirements.extra_index_urls:
-            install_cmd.extend(["--extra-index-url", self._source_map["torch_primary"]])
-            if (
-                self._source_map["torch_fallback"]
-                and self._source_map["torch_fallback"] != self._source_map["torch_primary"]
-            ):
-                install_cmd.extend(
-                    ["--extra-index-url", self._source_map["torch_fallback"]]
-                )
-        self._run_subprocess(
-            install_cmd,
-            f"Install {runtime_variant} runtime",
-            progress_stage=STAGE_PREPARING_RUNTIME,
-            progress_kind=PROGRESS_KIND_RUNTIME,
+        install_cmd = self._build_runtime_install_command(
+            runtime_variant=runtime_variant,
+            requirements_file=requirements_file,
+            runtime_requirements=runtime_requirements,
+            pypi_index_url=self._source_map["pypi_primary"],
+            pypi_extra_urls=[self._source_map["pypi_fallback"]],
+            pip_executable=pip_executable,
         )
+        try:
+            self._run_subprocess(
+                install_cmd,
+                f"Install {runtime_variant} runtime",
+                progress_stage=STAGE_PREPARING_RUNTIME,
+                progress_kind=PROGRESS_KIND_RUNTIME,
+            )
+        except RuntimeError as exc:
+            if self._should_retry_pypi_mirror(str(exc)):
+                fallback_cmd = self._build_runtime_install_command(
+                    runtime_variant=runtime_variant,
+                    requirements_file=requirements_file,
+                    runtime_requirements=runtime_requirements,
+                    pypi_index_url=self._official_pypi_url(),
+                    pypi_extra_urls=[
+                        self._source_map["pypi_primary"],
+                        self._source_map["pypi_fallback"],
+                    ],
+                    pip_executable=pip_executable,
+                )
+                self._run_subprocess(
+                    fallback_cmd,
+                    f"Install {runtime_variant} runtime (fallback)",
+                    progress_stage=STAGE_PREPARING_RUNTIME,
+                    progress_kind=PROGRESS_KIND_RUNTIME,
+                )
+            else:
+                raise
         self._inject_runtime_site_packages()
         self._verify_runtime_import(runtime_variant)
 
@@ -1165,37 +1173,121 @@ class InitializationManager(QObject):
         runtime_site_packages = self._runtime_dir / "site-packages"
         runtime_site_packages.mkdir(parents=True, exist_ok=True)
         runtime_requirements = self._runtime_requirements(runtime_variant)
-
-        command = [
-            str(Path(sys.executable).resolve()),
-            "--runtime-bootstrap",
-            "--runtime-dir",
-            str(self._runtime_dir),
-            "--requirements",
-            str(requirements_file),
-            "--index-url",
-            self._source_map["pypi_primary"],
-            "--extra-index-url",
-            self._source_map["pypi_fallback"],
-        ]
-        if runtime_requirements.extra_index_urls:
-            command.extend(["--extra-index-url", self._source_map["torch_primary"]])
-            if (
-                self._source_map["torch_fallback"]
-                and self._source_map["torch_fallback"] != self._source_map["torch_primary"]
-            ):
-                command.extend(
-                    ["--extra-index-url", self._source_map["torch_fallback"]]
-                )
-
-        self._run_subprocess(
-            command,
-            f"Install {runtime_variant} runtime",
-            progress_stage=STAGE_PREPARING_RUNTIME,
-            progress_kind=PROGRESS_KIND_RUNTIME,
+        command = self._build_runtime_install_command(
+            runtime_variant=runtime_variant,
+            requirements_file=requirements_file,
+            runtime_requirements=runtime_requirements,
+            pypi_index_url=self._source_map["pypi_primary"],
+            pypi_extra_urls=[self._source_map["pypi_fallback"]],
+            runtime_dir=self._runtime_dir,
         )
+        try:
+            self._run_subprocess(
+                command,
+                f"Install {runtime_variant} runtime",
+                progress_stage=STAGE_PREPARING_RUNTIME,
+                progress_kind=PROGRESS_KIND_RUNTIME,
+            )
+        except RuntimeError as exc:
+            if self._should_retry_pypi_mirror(str(exc)):
+                fallback_cmd = self._build_runtime_install_command(
+                    runtime_variant=runtime_variant,
+                    requirements_file=requirements_file,
+                    runtime_requirements=runtime_requirements,
+                    pypi_index_url=self._official_pypi_url(),
+                    pypi_extra_urls=[
+                        self._source_map["pypi_primary"],
+                        self._source_map["pypi_fallback"],
+                    ],
+                    runtime_dir=self._runtime_dir,
+                )
+                self._run_subprocess(
+                    fallback_cmd,
+                    f"Install {runtime_variant} runtime (fallback)",
+                    progress_stage=STAGE_PREPARING_RUNTIME,
+                    progress_kind=PROGRESS_KIND_RUNTIME,
+                )
+            else:
+                raise
         self._inject_runtime_site_packages()
         self._verify_runtime_import(runtime_variant)
+
+    def _build_runtime_install_command(
+        self,
+        *,
+        runtime_variant: str,
+        requirements_file: Path,
+        runtime_requirements: RuntimeRequirements,
+        pypi_index_url: str,
+        pypi_extra_urls: Iterable[str],
+        runtime_dir: Path | None = None,
+        pip_executable: Path | None = None,
+    ) -> list[str]:
+        if runtime_dir is None:
+            runtime_dir = self._runtime_dir
+        if pip_executable is not None:
+            command = [
+                str(pip_executable),
+                "install",
+                "--no-cache-dir",
+                "--progress-bar",
+                "raw",
+                "-r",
+                str(requirements_file),
+            ]
+            index_flag = "-i"
+        else:
+            command = [
+                str(Path(sys.executable).resolve()),
+                "--runtime-bootstrap",
+                "--runtime-dir",
+                str(runtime_dir),
+                "--requirements",
+                str(requirements_file),
+            ]
+            index_flag = "--index-url"
+
+        if pypi_index_url:
+            command.extend([index_flag, pypi_index_url])
+        for extra_url in self._unique_urls(pypi_extra_urls):
+            command.extend(["--extra-index-url", extra_url])
+
+        if runtime_requirements.extra_index_urls:
+            torch_primary = self._source_map.get("torch_primary")
+            torch_fallback = self._source_map.get("torch_fallback")
+            if torch_primary:
+                command.extend(["--extra-index-url", torch_primary])
+            if torch_fallback and torch_fallback != torch_primary:
+                command.extend(["--extra-index-url", torch_fallback])
+        return command
+
+    def _unique_urls(self, urls: Iterable[str]) -> list[str]:
+        unique: list[str] = []
+        seen: set[str] = set()
+        for url in urls:
+            normalized = (url or "").strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            unique.append(normalized)
+        return unique
+
+    def _official_pypi_url(self) -> str:
+        for source in PIPY_SOURCES:
+            if source.get("name") == "official":
+                return source.get("url", "https://pypi.org/simple")
+        return "https://pypi.org/simple"
+
+    def _should_retry_pypi_mirror(self, error_text: str) -> bool:
+        primary = (self._source_map.get("pypi_primary") or "").strip()
+        if not primary:
+            return False
+        if primary == self._official_pypi_url():
+            return False
+        lowered = error_text.lower()
+        if "http error 404" in lowered or "404 client error" in lowered:
+            return True
+        return False
 
     def _run_subprocess(
         self,
@@ -1223,12 +1315,14 @@ class InitializationManager(QObject):
         process = subprocess.Popen(command, **popen_kwargs)
         self._active_process = process
         latest_progress_bytes: tuple[int, int | None] | None = None
+        output_lines: list[str] = []
         try:
             assert process.stdout is not None
             for line in process.stdout:
                 self._raise_if_cancelled()
                 text = line.strip()
                 if text:
+                    output_lines.append(text)
                     parsed = parse_pip_raw_progress_line(text)
                     if (
                         parsed is not None
@@ -1253,6 +1347,11 @@ class InitializationManager(QObject):
             if self._cancel_requested.is_set():
                 raise InitializationInterrupted("Initialization interrupted by user")
             if return_code != 0:
+                tail = "\n".join(output_lines[-12:])
+                if tail:
+                    raise RuntimeError(
+                        f"{label} failed with exit code {return_code}\n{tail}"
+                    )
                 raise RuntimeError(f"{label} failed with exit code {return_code}")
             if progress_stage is not None and progress_kind is not None:
                 done_bytes = latest_progress_bytes[0] if latest_progress_bytes else None
