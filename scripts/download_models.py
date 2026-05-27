@@ -6,17 +6,31 @@ welcome onboarding flow. It emits structured progress events so callers can
 aggregate real byte progress, item-level progress, and source retry state
 without scraping ad-hoc log text.
 
+Download strategy (aligned with hf-mirror.com official guidance):
+  1. Probe both hf-mirror.com and huggingface.co simultaneously.
+  2. Sort by latency; apply 2x ratio threshold so overseas CI isn't forced
+     onto a slow mirror.
+  3. For each endpoint, try `hf download` CLI (subprocess) first, then
+     httpx direct streaming as fallback.
+
 轻量化初始化所需的模型与资源下载辅助模块。
 
 此模块负责准备欢迎引导流程所需的模型文件与本地回退资源，并发出结构化进度事件，
 以便调用方能够聚合真实字节进度、条目级进度以及镜像重试状态，而不必再解析零散日志文本。
+
+下载策略（对齐 hf-mirror.com 官方指南）：
+  1. 同时探测 hf-mirror.com 和 huggingface.co。
+  2. 按延迟排序；应用 2x 比率阈值避免海外 CI 被强行引向慢镜像。
+  3. 逐源：先 `hf download` CLI（子进程），失败则 httpx 流式直拉兜底。
 """
 
 import hashlib
-import importlib
+import json
 import logging
 import os
 import random
+import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -44,20 +58,14 @@ if _PROJECT_ROOT not in sys.path:
 
 HF_MIRROR_ENDPOINT = "https://hf-mirror.com"
 HF_OFFICIAL_ENDPOINT = "https://huggingface.co"
-os.environ["HF_ENDPOINT"] = HF_MIRROR_ENDPOINT
 os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
 os.environ["HF_HUB_DISABLE_XET"] = "1"
 os.environ["DO_NOT_TRACK"] = "1"
 
 try:
-    from huggingface_hub import hf_hub_download
+    import httpx
 except ImportError:
-    hf_hub_download = None
-
-try:
-    from tqdm.auto import tqdm as tqdm_base
-except ImportError:
-    tqdm_base = None
+    httpx = None
 
 try:
     from core.source_probe import pick_best_source, probe_sources
@@ -210,12 +218,10 @@ def verify_resource(resource: Dict[str, Any], file_path: Path) -> bool:
 # 镜像源相对官方源的最大可接受延迟倍率：mirror 延迟 ≤ official 延迟 × 此值
 # 时优先用 mirror，否则用 official。与 core/initialization_manager.py 的
 # PREFERRED_SOURCE_MIRROR_RATIO_THRESHOLD 保持一致。修复 GitHub Actions runner
-# (海外) 跑 CI 时强行用 hf-mirror.com (慢 20+ 倍) 导致 LocalEntryNotFoundError
-# 的问题——mirror 探测通过但下载端点对 GitHub IP 不稳。
+# (海外) 跑 CI 时强行用 hf-mirror.com (慢 20+ 倍) 导致下载失败的问题。
 # Match initialization_manager's 2x ratio rule for endpoint selection. Fixes
 # the case where GitHub Actions (overseas) was forced onto hf-mirror.com — its
-# probe endpoint returned 200 but the download endpoint rejected runner IPs,
-# causing LocalEntryNotFoundError on every model download.
+# probe endpoint returned 200 but the download endpoint rejected runner IPs.
 HF_ENDPOINT_MIRROR_RATIO_THRESHOLD = 2.0
 
 
@@ -376,153 +382,374 @@ def _copy_local_resource(
     return None
 
 
-def _estimate_remote_file_size(repo_id: str, filename: str) -> int | None:
-    """
-    Estimate remote file size with `hf_hub_download(..., dry_run=True)`.
+# ---------------------------------------------------------------------------
+#  Hf CLI helpers – 解析 `hf download --format json` 输出
+#  Hf CLI helpers – parse `hf download --format json` output
+# ---------------------------------------------------------------------------
 
-    通过 `hf_hub_download(..., dry_run=True)` 估算远端文件大小。
+_HF_CLI_CACHE: Optional[str] = None
+
+
+def _resolve_hf_cli_path() -> Optional[str]:
+    """Resolve the `hf` CLI executable path, caching the result."""
+    global _HF_CLI_CACHE
+    if _HF_CLI_CACHE is not None:
+        return _HF_CLI_CACHE
+    _HF_CLI_CACHE = shutil.which("hf") or ""
+    if _HF_CLI_CACHE:
+        logging.debug("hf CLI 已找到: %s", _HF_CLI_CACHE)
+    else:
+        logging.debug("hf CLI 未找到，将仅使用 httpx 直拉")
+    return _HF_CLI_CACHE or None
+
+
+def _estimate_file_size_via_cli(endpoint: str, repo_id: str, filename: str) -> int | None:
     """
-    global hf_hub_download
-    if hf_hub_download is None:
+    通过 `hf download --dry-run --format json` 获取远端文件大小。
+    使用子进程方式，避免全局污染 HF_ENDPOINT 环境变量。
+
+    Get remote file size via `hf download --dry-run --format json`.
+    Uses subprocess to avoid polluting the global HF_ENDPOINT env var.
+    """
+    hf_path = _resolve_hf_cli_path()
+    if not hf_path:
         return None
 
-    for _source_name, endpoint in _resolve_hf_endpoints():
-        try:
-            _configure_hf_client_for_endpoint(endpoint)
-            dry_run_info = cast(
-                Any,
-                hf_hub_download(
-                    repo_id=repo_id,
-                    filename=filename,
-                    endpoint=endpoint,
-                    dry_run=True,
-                ),
-            )
-            file_size = getattr(dry_run_info, "file_size", None)
-            if isinstance(file_size, int) and file_size > 0:
-                return file_size
-        except Exception:
-            continue
-    return None
-
-
-# huggingface_hub 1.x 起移除了 hf_hub_download(tqdm_class=...) 参数，
-# 旧版仍支持。运行时探测一次并缓存结果，避免向新版传入会触发 TypeError 的 kwarg。
-# Older huggingface_hub accepted tqdm_class= in hf_hub_download(); newer
-# versions removed it. Probe once at runtime and cache so we don't pass an
-# unsupported kwarg into newer libs (which raises TypeError).
-_HF_SUPPORTS_TQDM_CLASS_CACHE: Optional[bool] = None
-
-
-def _hf_supports_tqdm_class() -> bool:
-    global _HF_SUPPORTS_TQDM_CLASS_CACHE
-    if _HF_SUPPORTS_TQDM_CLASS_CACHE is not None:
-        return _HF_SUPPORTS_TQDM_CLASS_CACHE
+    env = os.environ.copy()
+    env["HF_ENDPOINT"] = endpoint
     try:
-        import inspect as _inspect
-        _HF_SUPPORTS_TQDM_CLASS_CACHE = (
-            hf_hub_download is not None
-            and "tqdm_class" in _inspect.signature(hf_hub_download).parameters
+        result = subprocess.run(
+            [hf_path, "download", "--dry-run", "--format", "json", repo_id, filename],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            env=env,
         )
-    except (ValueError, TypeError):
-        _HF_SUPPORTS_TQDM_CLASS_CACHE = False
-    return _HF_SUPPORTS_TQDM_CLASS_CACHE
+        if result.returncode != 0:
+            return None
+        records: list[dict] = json.loads(result.stdout.strip())
+        if not records:
+            return None
+        size_str = records[0].get("size", "")
+        return _parse_hf_cli_size(size_str)
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, Exception):
+        return None
 
 
-def _build_download_tqdm_class(
-    resource: Dict[str, Any],
+def _parse_hf_cli_size(size_text: str) -> int | None:
+    """
+    解析 hf CLI JSON 输出中的文件大小（如 "107.8M"）。
+
+    Parse file size from hf CLI JSON output (e.g. "107.8M").
+    """
+    if not size_text:
+        return None
+    size_text = size_text.strip().upper()
+    multipliers = {"K": 1024, "M": 1024**2, "G": 1024**3, "T": 1024**4}
+    for suffix, multiplier in multipliers.items():
+        if size_text.endswith(suffix):
+            try:
+                return int(float(size_text[:-1]) * multiplier)
+            except ValueError:
+                return None
+    try:
+        return int(size_text)
+    except ValueError:
+        return None
+
+
+# ---------------------------------------------------------------------------
+#  下载策略
+#  Download strategies
+# ---------------------------------------------------------------------------
+
+def _download_via_cli(
+    repo_id: str,
+    filename: str,
+    full_dest_dir: str,
+    endpoint: str,
     source_name: str,
-    expected_bytes: int | None,
-    progress_cb: Optional[Callable[[InitializationProgressEvent], None]],
-):
+    *,
+    expected_bytes: int | None = None,
+    progress_cb: Optional[Callable[[InitializationProgressEvent], None]] = None,
+    resource: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
     """
-    Create a tqdm subclass that forwards byte-level download updates.
+    通过 `hf download` CLI 子进程下载文件。
+    官方 hf-mirror.com 推荐的下载方式，正确设置 HF_ENDPOINT 即可使用镜像源。
 
-    创建一个把字节级下载更新转发为结构化事件的 tqdm 子类。
+    Download via `hf download` CLI subprocess.
+    Recommended by hf-mirror.com; correctly uses the mirror by setting
+    HF_ENDPOINT in the subprocess environment (no global pollution).
+
+    参数 Parameters:
+        repo_id (str): Hugging Face 仓库 ID
+        filename (str): 要下载的文件名
+        full_dest_dir (str): 目标目录路径
+        endpoint (str): HF 端点 URL（含 https://）
+        source_name (str): 端点名称（用于日志）
+        expected_bytes (int | None): 预估文件大小
+        progress_cb: 进度回调函数
+        resource: 资源元数据字典
+
+    返回 Returns:
+        Optional[str]: 下载的文件路径，失败时返回 None
     """
-    if progress_cb is None or tqdm_base is None:
+    hf_path = _resolve_hf_cli_path()
+    if not hf_path:
+        logging.warning("hf CLI 不可用，跳过 CLI 下载")
         return None
-    if not _hf_supports_tqdm_class():
+
+    dest_path = Path(full_dest_dir) / filename
+    full_dest_path = str(dest_path.resolve())
+
+    env = os.environ.copy()
+    env["HF_ENDPOINT"] = endpoint
+    env["HF_HUB_DISABLE_TELEMETRY"] = "1"
+    env["HF_HUB_DISABLE_XET"] = "1"
+    env["DO_NOT_TRACK"] = "1"
+
+    cmd = [
+        hf_path, "download",
+        repo_id, filename,
+        "--local-dir", full_dest_dir,
+        "--format", "json",
+    ]
+
+    logging.info("hf CLI: %s 尝试从 %s 下载 %s", source_name, endpoint, filename)
+
+    _emit_resource_progress(
+        progress_cb,
+        _build_resource_progress_event(
+            resource or _make_dummy_resource(repo_id, filename),
+            f"{filename}: starting hf download via {source_name}",
+            ratio=0.0 if expected_bytes else None,
+            bytes_done=0,
+            bytes_total=expected_bytes,
+            source=source_name,
+        ),
+    )
+
+    start = time.perf_counter()
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=3600,
+            env=env,
+        )
+        elapsed = time.perf_counter() - start
+
+        if result.returncode != 0:
+            stderr_tail = result.stderr.strip()[-500:] if result.stderr else "(no stderr)"
+            logging.warning(
+                "hf CLI %s 下载失败 (exit=%d): %s",
+                source_name,
+                result.returncode,
+                stderr_tail,
+            )
+            return None
+
+        stdout_text = result.stdout.strip()
+        if not stdout_text:
+            logging.warning("hf CLI %s 无输出，可能下载未完成", source_name)
+            return None
+
+        try:
+            records: list[dict] = json.loads(stdout_text)
+        except json.JSONDecodeError:
+            logging.warning("hf CLI %s 输出非有效 JSON: %s...", source_name, stdout_text[:200])
+            return None
+
+        if not records or not dest_path.exists():
+            logging.warning("hf CLI %s 完成但目标文件不存在: %s", source_name, dest_path)
+            return None
+
+        file_size = dest_path.stat().st_size
+        logging.info(
+            "hf CLI 成功: %s 通过 %s 完成, %d 字节 (%.1f MB), 耗时 %.2f 秒",
+            filename,
+            source_name,
+            file_size,
+            file_size / 1048576,
+            elapsed,
+        )
+
+        if resource is not None and progress_cb is not None:
+            _emit_resource_progress(
+                progress_cb,
+                _build_resource_progress_event(
+                    resource,
+                    f"{filename}: downloaded via {source_name} (hf CLI)",
+                    ratio=1.0,
+                    bytes_done=file_size,
+                    bytes_total=file_size,
+                    source=source_name,
+                    is_terminal=True,
+                ),
+            )
+
+        return str(dest_path)
+
+    except subprocess.TimeoutExpired:
+        logging.warning("hf CLI %s 下载超时 (3600s)", source_name)
+        return None
+    except Exception as exc:
+        logging.warning(
+            "hf CLI %s 下载异常: %s",
+            source_name,
+            _format_download_error(exc),
+        )
         return None
 
-    class ResourceDownloadTqdm(tqdm_base):
-        """
-        Progress tracker used internally by `hf_hub_download`.
 
-        `hf_hub_download` 内部使用的进度跟踪器。
-        """
+def _make_dummy_resource(repo_id: str, filename: str) -> Dict[str, Any]:
+    """Create a minimal resource dict for progress events when no resource is provided."""
+    return {"resource_id": f"{repo_id}/{filename}", "filename": filename}
 
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-            total = getattr(self, "total", None) or expected_bytes
-            if isinstance(total, (int, float)) and total > 0:
-                total = int(total)
-            else:
-                total = expected_bytes
-            self._superpicky_total = total
-            self._superpicky_last_n = 0
+
+def _download_via_httpx(
+    repo_id: str,
+    filename: str,
+    full_dest_dir: str,
+    endpoint: str,
+    source_name: str,
+    *,
+    expected_bytes: int | None = None,
+    progress_cb: Optional[Callable[[InitializationProgressEvent], None]] = None,
+    resource: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    """
+    用 httpx 流式 GET 直拉下载备用方案。
+    `follow_redirects=True` 可正确处理 HTTP 308 Permanent Redirect
+    （hf-mirror.com 使用 308 跳转到外部 CDN）。
+
+    Fallback download via httpx streaming GET.
+    `follow_redirects=True` correctly handles HTTP 308 Permanent Redirect
+    used by hf-mirror.com to redirect to external CDN.
+
+    参数 Parameters:
+        repo_id (str): Hugging Face 仓库 ID
+        filename (str): 要下载的文件名
+        full_dest_dir (str): 目标目录路径
+        endpoint (str): HF 端点 URL（含 https://）
+        source_name (str): 端点名称（用于日志）
+        expected_bytes (int | None): 预估文件大小
+        progress_cb: 进度回调函数
+        resource: 资源元数据字典
+
+    返回 Returns:
+        Optional[str]: 下载的文件路径，失败时返回 None
+    """
+    if httpx is None:
+        logging.warning("httpx 不可用，跳过直拉下载")
+        return None
+
+    dest_path = Path(full_dest_dir) / filename
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = dest_path.with_suffix(dest_path.suffix + ".part")
+
+    url = f"{endpoint.rstrip('/')}/{repo_id}/resolve/main/{filename}"
+
+    effective_resource = resource or _make_dummy_resource(repo_id, filename)
+
+    logging.info("httpx 直拉: 尝试 %s → %s", source_name, url)
+
+    _emit_resource_progress(
+        progress_cb,
+        _build_resource_progress_event(
+            effective_resource,
+            f"{filename}: starting httpx download via {source_name}",
+            ratio=0.0 if expected_bytes else None,
+            bytes_done=0,
+            bytes_total=expected_bytes,
+            source=source_name,
+        ),
+    )
+
+    start = time.perf_counter()
+    try:
+        with httpx.Client(follow_redirects=True, timeout=600.0) as client:
+            with client.stream(
+                "GET",
+                url,
+                headers={"User-Agent": "SuperPicky-Downloader/4.2.6"},
+            ) as resp:
+                resp.raise_for_status()
+
+                # 从响应头提取 Content-Length，作为预期文件大小的独立估值
+                # Extract Content-Length from response headers as independent size estimate
+                if not expected_bytes:
+                    content_length = resp.headers.get("content-length")
+                    if content_length and content_length.isdigit():
+                        expected_bytes = int(content_length)
+
+                tmp_path.unlink(missing_ok=True)
+                bytes_written = 0
+                with open(tmp_path, "wb") as f:
+                    for chunk in resp.iter_bytes(chunk_size=1024 * 1024):
+                        f.write(chunk)
+                        bytes_written += len(chunk)
+                        if progress_cb is not None and expected_bytes and expected_bytes > 0:
+                            ratio = min(1.0, bytes_written / expected_bytes)
+                            _emit_resource_progress(
+                                progress_cb,
+                                _build_resource_progress_event(
+                                    effective_resource,
+                                    f"{filename}: downloading from {source_name}",
+                                    ratio=ratio,
+                                    bytes_done=bytes_written,
+                                    bytes_total=expected_bytes,
+                                    source=source_name,
+                                    is_terminal=ratio >= 1.0,
+                                ),
+                            )
+
+        elapsed = time.perf_counter() - start
+
+        dest_path.unlink(missing_ok=True)
+        tmp_path.rename(dest_path)
+        file_size = dest_path.stat().st_size
+        logging.info(
+            "httpx 直拉成功: %s 通过 %s 完成, %d 字节 (%.1f MB), 耗时 %.2f 秒",
+            filename,
+            source_name,
+            file_size,
+            file_size / 1048576,
+            elapsed,
+        )
+
+        if resource is not None and progress_cb is not None:
             _emit_resource_progress(
                 progress_cb,
                 _build_resource_progress_event(
-                    resource,
-                    f"{resource['filename']}: downloading from {source_name}",
-                    ratio=0.0 if total else None,
-                    bytes_done=0,
-                    bytes_total=total,
+                    effective_resource,
+                    f"{filename}: downloaded via {source_name} (httpx direct)",
+                    ratio=1.0,
+                    bytes_done=file_size,
+                    bytes_total=file_size,
                     source=source_name,
+                    is_terminal=True,
                 ),
             )
 
-        def update(self, n=1):
-            result = super().update(n)
-            current = int(getattr(self, "n", self._superpicky_last_n))
-            total = getattr(self, "total", None) or self._superpicky_total
-            if isinstance(total, (int, float)) and total > 0:
-                total = int(total)
-                ratio = current / total
-            else:
-                total = None
-                ratio = None
-            self._superpicky_last_n = current
-            _emit_resource_progress(
-                progress_cb,
-                _build_resource_progress_event(
-                    resource,
-                    f"{resource['filename']}: downloading from {source_name}",
-                    ratio=ratio,
-                    bytes_done=current,
-                    bytes_total=total,
-                    source=source_name,
-                    is_terminal=bool(total and current >= total),
-                ),
-            )
-            return result
+        return str(dest_path)
 
-        def close(self):
-            current = int(getattr(self, "n", self._superpicky_last_n))
-            total = getattr(self, "total", None) or self._superpicky_total
-            if isinstance(total, (int, float)) and total > 0:
-                total = int(total)
-                ratio = min(1.0, current / total)
-            else:
-                total = None
-                ratio = None
-            _emit_resource_progress(
-                progress_cb,
-                _build_resource_progress_event(
-                    resource,
-                    f"{resource['filename']}: download stream closed",
-                    ratio=ratio,
-                    bytes_done=current,
-                    bytes_total=total,
-                    source=source_name,
-                    is_terminal=bool(total and current >= total),
-                ),
-            )
-            return super().close()
+    except Exception as exc:
+        tmp_path.unlink(missing_ok=True)
+        logging.warning(
+            "httpx 直拉 %s 失败: %s",
+            source_name,
+            _format_download_error(exc),
+        )
+        return None
 
-    return ResourceDownloadTqdm
 
+# ---------------------------------------------------------------------------
+#  下载编排器
+#  Download orchestrator
+# ---------------------------------------------------------------------------
 
 def _download_with_fallback(
     resource: Dict[str, Any],
@@ -530,293 +757,87 @@ def _download_with_fallback(
     filename: str,
     full_dest_dir: str,
     *,
-    expected_bytes: int | None = None,
     progress_cb: Optional[Callable[[InitializationProgressEvent], None]] = None,
 ) -> Optional[str]:
     """
-    使用回退机制下载文件，支持重试和源切换。
+    逐源尝试下载：hf CLI → httpx 直拉 → 下一源。
 
-    Download file with fallback mechanism, supporting retry and source switching.
+    hf-mirror 对 `hf download` CLI 返回 HTTP 308 Permanent Redirect，
+    huggingface_hub 的元数据检查仅跟随相对跳转（308 被拒绝），所以 CLI
+    在 hf-mirror 上必然失败。此情况下自动回退到 httpx 直拉（follow_redirects=True
+    可正确处理 308）。official 端点则两种方式均可正常工作。
 
-    参数 Parameters:
-        repo_id (str): Hugging Face 仓库 ID
-        filename (str): 要下载的文件名
-        full_dest_dir (str): 目标目录路径
-        expected_bytes (int | None): 预估文件大小
-        progress_cb (Optional[Callable[[InitializationProgressEvent], None]]): 进度回调函数
+    Try download per-endpoint: hf CLI → httpx direct → next endpoint.
+
+    hf-mirror returns HTTP 308 Permanent Redirect to `hf download` CLI;
+    huggingface_hub's metadata check only follows relative redirects
+    (308 rejected), so CLI inevitably fails on hf-mirror. The fallback
+    httpx direct download (follow_redirects=True) handles 308 correctly.
+    The official endpoint works with both methods.
 
     返回 Returns:
-        Optional[str]: 下载的文件路径，失败时返回 None
+        Optional[str]: 下载的文件路径，全部失败则返回 None
     """
-    global hf_hub_download
-    if hf_hub_download is None:
-        try:
-            from huggingface_hub import hf_hub_download as _hf_hub_download
-
-            hf_hub_download = _hf_hub_download
-        except Exception as exc:
-            raise RuntimeError(f"huggingface_hub is not installed yet: {exc}") from exc
-
-    errors = []
     endpoints = _resolve_hf_endpoints()
-    max_retries = 3  # 每个源的最大重试次数
+
+    # ── 预估文件大小：用首个可用端点获取（CLI dry-run 仅 official 端点可用） ──
+    # Pre-estimate file size using the first endpoint where CLI dry-run works
+    # (CLI dry-run only works with the official endpoint; hf-mirror 308 rejected).
+    expected_bytes: int | None = None
+    for _name, _endpoint in endpoints:
+        expected_bytes = _estimate_file_size_via_cli(_endpoint, repo_id, filename)
+        if expected_bytes is not None:
+            break
 
     for index, (source_name, endpoint) in enumerate(endpoints):
         logging.info("尝试从 %s (%s) 下载 %s", source_name, endpoint, filename)
 
-        for retry_count in range(max_retries):
-            _emit_resource_progress(
-                progress_cb,
-                _build_resource_progress_event(
-                    resource,
-                    f"{filename}: connecting {source_name} ({retry_count + 1}/{max_retries})",
-                    ratio=0.0 if expected_bytes else None,
-                    bytes_done=0,
-                    bytes_total=expected_bytes,
-                    source=source_name,
-                ),
-            )
+        # ── 主方案：hf download CLI ───────────────────────────────────
+        cli_result = _download_via_cli(
+            repo_id=repo_id,
+            filename=filename,
+            full_dest_dir=full_dest_dir,
+            endpoint=endpoint,
+            source_name=source_name,
+            expected_bytes=expected_bytes,
+            progress_cb=progress_cb,
+            resource=resource,
+        )
+        if cli_result:
+            return cli_result
 
-            start_time = time.perf_counter()
-            try:
-                _configure_hf_client_for_endpoint(endpoint)
-                download_kwargs: Dict[str, Any] = {
-                    "repo_id": repo_id,
-                    "filename": filename,
-                    "local_dir": full_dest_dir,
-                    "local_dir_use_symlinks": False,
-                    "endpoint": endpoint,
-                }
-                tqdm_class = _build_download_tqdm_class(
-                    resource,
-                    source_name,
-                    expected_bytes,
-                    progress_cb,
-                )
-                if tqdm_class is not None:
-                    download_kwargs["tqdm_class"] = tqdm_class
-                try:
-                    download_kwargs["resume_download"] = True
-                except Exception:
-                    pass
+        # ── 备选方案：httpx 直拉（正确跟随 HTTP 308 跳转） ────────────
+        # httpx direct (correctly follows HTTP 308 redirect).
+        logging.info("hf CLI %s 失败，尝试 httpx 直拉...", source_name)
+        httpx_result = _download_via_httpx(
+            repo_id=repo_id,
+            filename=filename,
+            full_dest_dir=full_dest_dir,
+            endpoint=endpoint,
+            source_name=source_name,
+            expected_bytes=expected_bytes,
+            progress_cb=progress_cb,
+            resource=resource,
+        )
+        if httpx_result:
+            return httpx_result
 
-                downloaded_path = cast(Any, hf_hub_download)(**download_kwargs)
-                elapsed_time = time.perf_counter() - start_time
-
-                path_obj = Path(downloaded_path)
-                file_size = path_obj.stat().st_size if path_obj.exists() else expected_bytes
-                _emit_resource_progress(
-                    progress_cb,
-                    _build_resource_progress_event(
-                        resource,
-                        f"{filename}: downloaded via {source_name}",
-                        ratio=1.0,
-                        bytes_done=file_size,
-                        bytes_total=file_size,
-                        source=source_name,
-                        is_terminal=True,
-                    ),
-                )
-
-                logging.info(
-                    "%s 已通过 %s 下载完成，耗时 %.2f 秒",
-                    filename,
-                    source_name,
-                    elapsed_time
-                )
-                return downloaded_path
-
-            except Exception as exc:
-                elapsed_time = time.perf_counter() - start_time
-                error_text = _format_download_error(exc)
-                errors.append(f"{source_name} (尝试 {retry_count + 1}): {error_text}")
-
-                logging.warning(
-                    "%s 通过 %s 下载失败 (尝试 %d/%d): %s (耗时 %.2f 秒)",
-                    filename,
-                    source_name,
-                    retry_count + 1,
-                    max_retries,
-                    error_text,
-                    elapsed_time
-                )
-
-                _emit_resource_progress(
-                    progress_cb,
-                    _build_resource_progress_event(
-                        resource,
-                        f"{filename}: {source_name} failed ({retry_count + 1}/{max_retries})",
-                        ratio=0.0 if expected_bytes else None,
-                        bytes_done=0,
-                        bytes_total=expected_bytes,
-                        source=source_name,
-                    ),
-                )
-
-                if retry_count < max_retries - 1:
-                    base_delay = 2 ** retry_count
-                    jitter = base_delay * 0.25 * (random.random() * 2 - 1)
-                    delay = max(0.5, base_delay + jitter)
-                    logging.info("等待 %.2f 秒后重试...", delay)
-                    time.sleep(delay)
-                else:
-                    if index < len(endpoints) - 1:
-                        next_source_name = endpoints[index + 1][0]
-                        logging.info("(" + next_source_name + ") 切换到下一个源下载 %s...", filename)
+        if index < len(endpoints) - 1:
+            next_source_name = endpoints[index + 1][0]
+            logging.info("(%s) 切换到下一个源下载 %s...", next_source_name, filename)
 
     logging.error(
-        "所有下载源均失败: %s 来自 %s。详细信息: %s",
+        "所有下载源均失败: %s 来自 %s",
         filename,
         repo_id,
-        " | ".join(errors),
     )
-
-    # ── urllib 直拉兜底 ─────────────────────────────────────────────────
-    # huggingface_hub 1.x 在某些 CI / 海外网络环境下会立即抛
-    # LocalEntryNotFoundError / RemoteEntryNotFoundError（毫秒级失败，且
-    # 重试无效），疑似 hf-xet 后端或反爬识别造成。raw URL
-    # (`/resolve/main/`) 走 Xet CDN 公开 S3 签名链路，没有 anti-bot 检测，
-    # 可以稳定下载。这里在 hf_hub_download 全失败后再试一次直拉。
-    # urllib direct fallback: huggingface_hub 1.x can fail instantly
-    # in CI/overseas networks (LocalEntryNotFoundError in ~0.1s, retries
-    # don't help). Raw URL goes through public Xet CDN with no anti-bot,
-    # so this is a reliable backstop.
-    logging.info("尝试 urllib 直拉兜底 (绕过 huggingface_hub)...")
-    direct_path = _urllib_direct_download(
-        repo_id=repo_id,
-        filename=filename,
-        full_dest_dir=full_dest_dir,
-        endpoints=endpoints,
-        expected_bytes=expected_bytes,
-        progress_cb=progress_cb,
-        resource=resource,
-    )
-    if direct_path:
-        return direct_path
-
     return None
 
 
-def _urllib_direct_download(
-    repo_id: str,
-    filename: str,
-    full_dest_dir: str,
-    endpoints: List[Tuple[str, str]],
-    expected_bytes: int | None = None,
-    progress_cb: Optional[Callable[[InitializationProgressEvent], None]] = None,
-    resource: Optional[Dict[str, Any]] = None,
-) -> Optional[str]:
-    """
-    用 urllib 按 `{endpoint}/{repo_id}/resolve/main/{filename}` 直拉下载，
-    绕过 huggingface_hub。仅作为 hf_hub_download 全失败后的兜底。
-
-    Direct urllib download against the raw HF resolve URL, bypassing
-    huggingface_hub. Used as a backstop after hf_hub_download exhausts.
-    """
-    import urllib.request
-    import shutil
-
-    dest_path = Path(full_dest_dir) / filename
-    dest_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = dest_path.with_suffix(dest_path.suffix + ".part")
-
-    ssl_ctx = ssl.create_default_context() if False else None  # 使用默认 SSL 上下文
-    # 注: 默认 SSL 上下文走 certifi/系统 CA。HF + Xet CDN 均为 Let's Encrypt /
-    # AWS 公开证书链，无需禁用证书验证。
-
-    for source_name, endpoint in endpoints:
-        url = f"{endpoint.rstrip('/')}/{repo_id}/resolve/main/{filename}"
-        logging.info("urllib 直拉: 尝试 %s → %s", source_name, url)
-        try:
-            req = urllib.request.Request(
-                url,
-                headers={"User-Agent": "SuperPicky-Downloader/4.2.6"},
-            )
-            start = time.perf_counter()
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                tmp_path.unlink(missing_ok=True)
-                with open(tmp_path, "wb") as f:
-                    shutil.copyfileobj(resp, f)
-            elapsed = time.perf_counter() - start
-
-            dest_path.unlink(missing_ok=True)
-            tmp_path.rename(dest_path)
-            file_size = dest_path.stat().st_size
-            logging.info(
-                "urllib 直拉成功: %s 通过 %s 完成, %d 字节 (%.1f MB), 耗时 %.2f 秒",
-                filename,
-                source_name,
-                file_size,
-                file_size / 1048576,
-                elapsed,
-            )
-
-            if resource is not None and progress_cb is not None:
-                _emit_resource_progress(
-                    progress_cb,
-                    _build_resource_progress_event(
-                        resource,
-                        f"{filename}: downloaded via {source_name} (urllib fallback)",
-                        ratio=1.0,
-                        bytes_done=file_size,
-                        bytes_total=file_size,
-                        source=source_name,
-                        is_terminal=True,
-                    ),
-                )
-
-            return str(dest_path)
-        except Exception as exc:
-            tmp_path.unlink(missing_ok=True)
-            logging.warning(
-                "urllib 直拉 %s 失败: %s",
-                source_name,
-                _format_download_error(exc),
-            )
-            continue
-
-    return None
-
-
-def _configure_hf_client_for_endpoint(endpoint: str) -> None:
-    """
-    强制 huggingface_hub 在当前尝试中保持选定的端点。
-
-    官方文档说明 `HF_ENDPOINT` 会在导入时读取，因此这里同时设置环境变量与运行期常量，
-    避免中国网络下已经导入过的客户端偷偷回退到默认官方端点。
-
-    Force huggingface_hub to stay on the selected endpoint for the current attempt.
-
-    The official documentation states that `HF_ENDPOINT` is read during import,
-    so we set both environment variables and runtime constants here to prevent
-    the already-imported client from silently falling back to the default official endpoint
-    under Chinese network conditions.
-
-    参数 Parameters:
-        endpoint (str): 要使用的 Hugging Face 端点 URL
-                      The Hugging Face endpoint URL to use
-    """
-    os.environ["HF_ENDPOINT"] = endpoint
-    os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
-    os.environ["HF_HUB_DISABLE_XET"] = "1"
-    os.environ["DO_NOT_TRACK"] = "1"
-
-    try:
-        constants_module = importlib.import_module("huggingface_hub.constants")
-        if hasattr(constants_module, "ENDPOINT"):
-            constants_module.ENDPOINT = endpoint
-            logging.debug("已设置 huggingface_hub.constants.ENDPOINT = %s", endpoint)
-    except Exception as exc:
-        logging.debug("设置 huggingface_hub.constants.ENDPOINT 失败: %s", exc)
-
-    try:
-        file_download_module = importlib.import_module("huggingface_hub.file_download")
-        if hasattr(file_download_module, "ENDPOINT"):
-            file_download_module.ENDPOINT = endpoint
-            logging.debug("已设置 huggingface_hub.file_download.ENDPOINT = %s", endpoint)
-    except Exception as exc:
-        logging.debug("设置 huggingface_hub.file_download.ENDPOINT 失败: %s", exc)
-
+# ---------------------------------------------------------------------------
+#  公共入口
+#  Public API
+# ---------------------------------------------------------------------------
 
 def download_resource(
     resource: Dict[str, Any],
@@ -861,15 +882,15 @@ def download_resource(
         filename,
         repo_id
     )
-    expected_bytes = _estimate_remote_file_size(repo_id, filename)
+
     _emit_resource_progress(
         progress_cb,
         _build_resource_progress_event(
             resource,
             f"Preparing download for {filename}",
-            ratio=0.0 if expected_bytes else None,
+            ratio=0.0,
             bytes_done=0,
-            bytes_total=expected_bytes,
+            bytes_total=None,
         ),
     )
 
@@ -879,7 +900,6 @@ def download_resource(
         repo_id=repo_id,
         filename=filename,
         full_dest_dir=str(full_dest_dir),
-        expected_bytes=expected_bytes,
         progress_cb=progress_cb,
     )
     download_elapsed = time.perf_counter() - download_start_time
@@ -940,8 +960,8 @@ def main():
     Ensures files are placed in the correct directories for the application to function.
     """
     logging.info("Starting model download process...")
-    if hf_hub_download is None:
-        print("Error: huggingface_hub is not installed. Please run `pip install huggingface_hub tqdm` first.")
+    if _resolve_hf_cli_path() is None and httpx is None:
+        print("Error: Neither `hf` CLI nor `httpx` is available. Please run `pip install huggingface_hub httpx` first.")
         sys.exit(1)
 
     project_root = get_project_root()
