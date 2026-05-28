@@ -1129,6 +1129,7 @@ class PhotoProcessor:
             birdid_confidence = top_result.get('confidence', 0)
             cn_name = top_result.get('cn_name', '')
             en_name = top_result.get('en_name', '')
+            rarity_index = top_result.get('rarity_index')  # 懂鸟罕见指数 (0-10)，可能为 None
             
             if birdid_confidence >= self.settings.birdid_confidence_threshold:
                 if self.i18n.current_lang.startswith('en'):
@@ -1152,28 +1153,49 @@ class PhotoProcessor:
                 # 写入数据库，供结果浏览器筛选面板和详情面板使用
                 if self.report_db and (cn_name or en_name):
                     try:
-                        self.report_db.update_photo(file_prefix, {
+                        db_updates = {
                             'bird_species_cn': cn_name,
                             'bird_species_en': en_name,
                             'birdid_confidence': birdid_confidence,
-                        })
-                        # 将鸟名追加到已生成的 DB caption 最前面
+                        }
+                        # V4.2.7: 罕见指数独立写入 report.db 列，供 detail_panel 单独展示
+                        # V4.2.7: Persist rarity index in its own column so detail_panel
+                        # can render it on a dedicated row instead of parsing caption.
+                        if rarity_index is not None:
+                            db_updates['rarity_index'] = rarity_index
+                        self.report_db.update_photo(file_prefix, db_updates)
+                        # 将罕见指数（第一行，单独显示）+ 鸟名追加到已生成的 DB caption 最前面
                         existing = self.report_db.get_photo(file_prefix) or {}
                         old_cap = existing.get('caption') or ''
-                        bird_line = f"鸟种：{cn_name or en_name}"
-                        if old_cap and not old_cap.startswith('鸟种：') and not old_cap.startswith('备选鸟种'):
-                            self.report_db.update_photo(file_prefix, {'caption': bird_line + '\n' + old_cap})
+                        prefix_lines = []
+                        if rarity_index is not None:
+                            prefix_lines.append(f"罕见指数：{rarity_index:.2f}")
+                        prefix_lines.append(f"鸟种：{cn_name or en_name}")
+                        prefix_block = "\n".join(prefix_lines)
+                        already_prefixed = (
+                            old_cap.startswith('罕见指数：')
+                            or old_cap.startswith('鸟种：')
+                            or old_cap.startswith('备选鸟种')
+                        )
+                        if old_cap and not already_prefixed:
+                            self.report_db.update_photo(file_prefix, {'caption': prefix_block + '\n' + old_cap})
                         elif not old_cap:
-                            self.report_db.update_photo(file_prefix, {'caption': bird_line})
+                            self.report_db.update_photo(file_prefix, {'caption': prefix_block})
                     except Exception as _e:
                         self._log(f"  ⚠️ Bird species DB write failed [{file_prefix}]: {_e}", "warning")
 
                 for target_file in title_targets:
                     if target_file and os.path.exists(target_file):
-                        queue_metadata({
+                        meta_item = {
                             'file': target_file,
                             'title': bird_title,
-                        })
+                        }
+                        # V4.2.7: 罕见指数随 Title 一起写入 XMP-superpicky:RarityIndex
+                        # V4.2.7: Push rarity index alongside Title so it lands in
+                        # XMP-superpicky:RarityIndex during the same exiftool batch.
+                        if rarity_index is not None:
+                            meta_item['rarity_index'] = rarity_index
+                        queue_metadata(meta_item)
             else:
                 # 低置信度：记日志，并将候选鸟名存入 file_bird_species 供 caption 使用
                 low_conf_name = (en_name or cn_name) if self.i18n.current_lang.startswith('en') else (cn_name or en_name)

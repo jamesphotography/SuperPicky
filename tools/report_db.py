@@ -21,7 +21,7 @@ from .file_utils import ensure_hidden_directory
 
 
 # Schema 版本，用于未来升级
-SCHEMA_VERSION = "5"
+SCHEMA_VERSION = "6"
 
 # 所有列定义（有序），用于 CREATE TABLE 和数据验证
 PHOTO_COLUMNS = [
@@ -85,7 +85,11 @@ PHOTO_COLUMNS = [
     # V5: 连拍分组
     ("burst_id",         "INTEGER", None),
     ("burst_position",   "INTEGER", None),
-    
+
+    # V6: 懂鸟罕见指数 (0-10，越大越罕见)
+    # V6: BirdID rarity index (0-10, higher = rarer)
+    ("rarity_index",     "REAL", None),
+
     ("created_at",    "TEXT", None),
     ("updated_at",    "TEXT", None),
 ]
@@ -302,6 +306,26 @@ class ReportDB:
                     self._update_schema_version("5")
                 current_version = "5"
                 print("✅ Database schema upgraded to v5")
+
+            # ----------------------------------------------------------------------
+            #  Upgrade: v5 -> v6 (BirdID rarity index)
+            # ----------------------------------------------------------------------
+            if current_version == "5":
+                print("🔄 Upgrading database schema from v5 to v6...")
+                new_columns_v6 = [
+                    ("rarity_index", "REAL"),
+                ]
+                with self._conn:
+                    for col_name, col_type in new_columns_v6:
+                        try:
+                            self._conn.execute(
+                                f"ALTER TABLE photos ADD COLUMN {col_name} {col_type}"
+                            )
+                        except sqlite3.OperationalError:
+                            pass  # 列已存在，跳过
+                    self._update_schema_version("6")
+                current_version = "6"
+                print("✅ Database schema upgraded to v6")
 
     def _update_schema_version(self, version):
         """更新数据库中的版本号（由调用方负责提交事务）"""

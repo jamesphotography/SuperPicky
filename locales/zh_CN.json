@@ -1135,6 +1135,7 @@
     "no_results": "没有符合条件的照片",
     "loading": "加载中...",
     "meta_rating": "评分",
+    "meta_rarity": "罕见指数",
     "meta_focus": "对焦",
     "meta_exposure": "曝光",
     "meta_sharpness": "锐度",

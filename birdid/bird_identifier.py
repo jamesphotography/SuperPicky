@@ -803,12 +803,17 @@ def predict_bird(
             else:
                 continue
 
+        rarity_index = (
+            db_manager.get_rarity_by_class_id(class_id) if db_manager else None
+        )
+
         results.append(
             {
                 "class_id": class_id,
                 "cn_name": cn_name,
                 "en_name": en_name,
                 "scientific_name": scientific_name,
+                "rarity_index": rarity_index,
                 "confidence": confidence,
                 "ebird_code": ebird_code,
                 "region_match": region_match,
