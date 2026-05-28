@@ -110,6 +110,40 @@ class BirdDatabaseManager:
             # rarity_index 表可能不存在（旧版数据库），静默降级，不影响识别主流程
             return None
 
+    def get_iucn_by_class_id(self, class_id: int) -> Optional[str]:
+        """
+        根据模型类别ID获取 IUCN 红色名录保护级别
+
+        Args:
+            class_id: 鸟类类别ID（对应模型输出的索引，即 model_class_id）
+
+        Returns:
+            IUCN 等级缩写（LC/NT/VU/EN/CR/CR(PE)/CR(PEW)/EW/EX/DD/NE），
+            未找到或 avilist_map 无 IUCN 数据时返回 None
+
+        Fetch IUCN Red List category for a model class id.
+        Returns one of LC/NT/VU/EN/CR/CR(PE)/CR(PEW)/EW/EX/DD/NE, or None when
+        the row is missing or the column is empty.
+        """
+        query = (
+            "SELECT iucn_category FROM avilist_map "
+            "WHERE model_class_id = ? AND iucn_category IS NOT NULL "
+            "AND iucn_category != '' LIMIT 1"
+        )
+
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(query, (class_id,))
+                result = cursor.fetchone()
+
+                if result and result[0]:
+                    return str(result[0])
+                return None
+        except Exception:
+            # avilist_map 表可能不存在（旧版数据库），静默降级
+            return None
+
     def get_ebird_code_by_english_name(self, english_name: str) -> Optional[str]:
         """
         根据英文名获取eBird代码

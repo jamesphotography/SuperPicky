@@ -1130,6 +1130,7 @@ class PhotoProcessor:
             cn_name = top_result.get('cn_name', '')
             en_name = top_result.get('en_name', '')
             rarity_index = top_result.get('rarity_index')  # 懂鸟罕见指数 (0-10)，可能为 None
+            iucn_category = top_result.get('iucn_category')  # IUCN 等级 (LC/NT/VU/EN/CR/...)，可能为 None
             
             if birdid_confidence >= self.settings.birdid_confidence_threshold:
                 if self.i18n.current_lang.startswith('en'):
@@ -1158,19 +1159,24 @@ class PhotoProcessor:
                             'bird_species_en': en_name,
                             'birdid_confidence': birdid_confidence,
                         }
-                        # V4.2.7: 罕见指数独立写入 report.db 列，供 detail_panel 单独展示
-                        # V4.2.7: Persist rarity index in its own column so detail_panel
-                        # can render it on a dedicated row instead of parsing caption.
+                        # V4.2.7: 罕见指数 / IUCN 独立写入 report.db 列，供 detail_panel 单独展示
+                        # V4.2.7: Persist rarity index and IUCN category in dedicated
+                        # columns so detail_panel can render them on their own rows.
                         if rarity_index is not None:
                             db_updates['rarity_index'] = rarity_index
+                        if iucn_category:
+                            db_updates['iucn_category'] = iucn_category
                         self.report_db.update_photo(file_prefix, db_updates)
-                        # 将罕见指数（第一行，单独显示）+ 鸟名追加到已生成的 DB caption 最前面
+                        # 将罕见指数 + 鸟种 + IUCN 追加到已生成的 DB caption 最前面
+                        # Prepend rarity / species / IUCN lines to the DB caption.
                         existing = self.report_db.get_photo(file_prefix) or {}
                         old_cap = existing.get('caption') or ''
                         prefix_lines = []
                         if rarity_index is not None:
                             prefix_lines.append(f"罕见指数：{rarity_index:.2f}")
                         prefix_lines.append(f"鸟种：{cn_name or en_name}")
+                        if iucn_category:
+                            prefix_lines.append(f"IUCN：{iucn_category}")
                         prefix_block = "\n".join(prefix_lines)
                         already_prefixed = (
                             old_cap.startswith('罕见指数：')
@@ -1190,11 +1196,13 @@ class PhotoProcessor:
                             'file': target_file,
                             'title': bird_title,
                         }
-                        # V4.2.7: 罕见指数随 Title 一起写入 XMP-superpicky:RarityIndex
-                        # V4.2.7: Push rarity index alongside Title so it lands in
-                        # XMP-superpicky:RarityIndex during the same exiftool batch.
+                        # V4.2.7: 罕见指数 / IUCN 随 Title 一起写入对应 XMP 字段
+                        # V4.2.7: Push rarity index and IUCN category alongside Title
+                        # so they land in their respective XMP fields in one batch.
                         if rarity_index is not None:
                             meta_item['rarity_index'] = rarity_index
+                        if iucn_category:
+                            meta_item['iucn_category'] = iucn_category
                         queue_metadata(meta_item)
             else:
                 # 低置信度：记日志，并将候选鸟名存入 file_bird_species 供 caption 使用

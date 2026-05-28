@@ -517,6 +517,12 @@ class ExifToolManager:
         # rarely used in the wild, and natively writable by ExifTool (no config file).
         if item.get('rarity_index') is not None:
             args.append(f'-XMP-photoshop:TransmissionReference={item["rarity_index"]:.2f}')
+        # V4.2.7: IUCN 红色名录等级。借用 XMP-iptcCore:IntellectualGenre（"智识题材"
+        # IPTC NewsCodes 体裁字段），同样冷门、LR/C1 主面板不显示、ExifTool 原生可写。
+        # V4.2.7: IUCN Red List category in XMP-iptcCore:IntellectualGenre — another
+        # rarely-used IPTC field invisible in LR/C1 main panels, writable natively.
+        if item.get('iucn_category'):
+            args.append(f'-XMP-iptcCore:IntellectualGenre={item["iucn_category"]}')
         temp_files: List[str] = []
 
         title = item.get('title')
@@ -583,6 +589,9 @@ class ExifToolManager:
         # V4.2.7: Rarity index mirrored into sidecar (see field rationale above)
         if item.get('rarity_index') is not None:
             args.append(f'-XMP-photoshop:TransmissionReference={item["rarity_index"]:.2f}')
+        # V4.2.7: IUCN 等级同样写入侧车 / IUCN category mirrored into sidecar
+        if item.get('iucn_category'):
+            args.append(f'-XMP-iptcCore:IntellectualGenre={item["iucn_category"]}')
         temp_files: List[str] = []
 
         # UTF-8 temp file for Title/Caption
@@ -641,6 +650,7 @@ class ExifToolManager:
             '-XMP:Description=',
             '-XMP:Title=',
             '-XMP-photoshop:TransmissionReference=',
+            '-XMP-iptcCore:IntellectualGenre=',
             '-overwrite_original',
             xmp_path
         ]
