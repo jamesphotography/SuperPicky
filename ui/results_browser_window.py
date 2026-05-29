@@ -1194,6 +1194,143 @@ class ResultsBrowserWindow(QMainWindow):
         # 7. 更新状态栏
         self._update_status(len(self._all_photos), len(self._filtered_photos))
 
+    def _delete_selected_photos(self):
+        """Delete currently selected photo(s) in grid view or fullscreen view with Command + Backspace."""
+        in_fullscreen = (self._stack.currentIndex() == 1)
+        
+        # 1. Gather target photos to delete
+        if in_fullscreen:
+            if not self._fullscreen._current_photo:
+                return
+            target_photos = [self._fullscreen._current_photo]
+        else:
+            target_photos = self._thumb_grid.get_multi_selected_photos()
+            if not target_photos and self._detail_panel._current_photo:
+                target_photos = [self._detail_panel._current_photo]
+                
+        if not target_photos:
+            return
+
+        from advanced_config import get_advanced_config
+        cfg = get_advanced_config()
+        
+        # 2. Confirmation Dialog (if enabled in config)
+        if cfg.delete_confirm:
+            from PySide6.QtWidgets import QCheckBox
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle(self.i18n.t("browser.delete_title"))
+            msg_box.setIcon(QMessageBox.Warning)
+            yes_btn = msg_box.addButton(self.i18n.t("browser.delete_confirm_btn"), QMessageBox.AcceptRole)
+            msg_box.addButton(self.i18n.t("browser.delete_cancel_btn"), QMessageBox.RejectRole)
+            cb = QCheckBox(self.i18n.t("browser.delete_no_ask"))
+            msg_box.setCheckBox(cb)
+            
+            if len(target_photos) == 1:
+                filename = target_photos[0].get("filename", "")
+                msg_box.setText(self.i18n.t("browser.delete_msg").format(filename=filename))
+            else:
+                count = len(target_photos)
+                if self.i18n.current_lang.startswith('en'):
+                    msg_text = f"Move {count} selected photos to Trash?\n\n❗ This will also delete their database records. You'll need to reprocess after restoring."
+                else:
+                    msg_text = f"将选中的 {count} 张图片移入回收站？\n\n❗ 此操作会同时从数据库删除记录，恢复文件后需重新处理。"
+                msg_box.setText(msg_text)
+                
+            msg_box.exec()
+            if msg_box.clickedButton() != yes_btn:
+                return
+            if cb.isChecked():
+                cfg.set_delete_confirm(False)
+                cfg.save()
+                
+        # 3. Perform Deletion
+        deleted_photos = []
+        failed_paths = []
+        for photo in target_photos:
+            filepath = photo.get("current_path") or photo.get("original_path") or ""
+            if filepath:
+                if _move_to_trash(filepath):
+                    deleted_photos.append(photo)
+                else:
+                    failed_paths.append(filepath)
+            else:
+                # If no filepath (rare DB fallback), count as deleted from DB at least
+                deleted_photos.append(photo)
+                
+        # If any failed to move to trash, alert the user and stop DB/memory sync for them
+        if failed_paths:
+            QMessageBox.warning(
+                self,
+                self.i18n.t("browser.delete_failed"),
+                self.i18n.t("browser.delete_failed_msg").format(error="\n".join(failed_paths))
+            )
+            
+        if not deleted_photos:
+            return
+            
+        # 4. DB Deletion
+        if self._db:
+            for photo in deleted_photos:
+                self._db.delete_photo(_photo_db_key(photo))
+                
+        # 5. Memory & UI Sync
+        deleted_identities = {_photo_identity(p) for p in deleted_photos}
+        
+        # If we are in fullscreen and deleting the current photo, determine the next photo to show
+        next_photo = None
+        if in_fullscreen and self._fullscreen._current_photo:
+            curr_id = _photo_identity(self._fullscreen._current_photo)
+            if curr_id in deleted_identities:
+                # Find its index in filtered photos list
+                _del_identities = [_photo_identity(p) for p in self._filtered_photos]
+                try:
+                    curr_idx = _del_identities.index(curr_id)
+                except ValueError:
+                    curr_idx = 0
+                # Filter out all deleted photos
+                remaining_photos = [p for p in self._filtered_photos if _photo_identity(p) not in deleted_identities]
+                if remaining_photos:
+                    next_idx = min(curr_idx, len(remaining_photos) - 1)
+                    next_photo = remaining_photos[next_idx]
+                    
+        # Update our in-memory lists
+        self._filtered_photos = [p for p in self._filtered_photos if _photo_identity(p) not in deleted_identities]
+        self._all_photos = [p for p in self._all_photos if _photo_identity(p) not in deleted_identities]
+        
+        # Sync the grid UI
+        for photo in deleted_photos:
+            self._thumb_grid.remove_photo(photo)
+            
+        # Reset selection if it was deleted
+        if self._thumb_grid._selected_key in deleted_identities:
+            self._thumb_grid._selected_key = None
+            
+        # Clear grid multi-select state
+        self._thumb_grid.clear_multi_select()
+        
+        # Sync fullscreen viewer list
+        self._fullscreen.set_photo_list(self._filtered_photos)
+        
+        # 6. Navigation / Transition UI state
+        if in_fullscreen:
+            if next_photo:
+                self._thumb_grid.select_photo(next_photo)
+                self._fullscreen.show_photo(next_photo)
+                self._detail_panel.show_photo(next_photo)
+            else:
+                self._exit_fullscreen()
+        else:
+            # If not in fullscreen, just select the first available photo or clear panel
+            if self._filtered_photos:
+                first_remaining = self._filtered_photos[0]
+                self._thumb_grid.select_photo(first_remaining)
+                self._detail_panel.show_photo(first_remaining)
+            else:
+                self._detail_panel.show_photo(None)
+                
+        # 7. Update Status bar
+        self._update_status(len(self._all_photos), len(self._filtered_photos))
+
     def _enter_comparison(self):
         """C5：进入 2-up 对比视图（ResultsBrowserWindow）。"""
         photos = self._thumb_grid.get_multi_selected_photos()
@@ -1260,6 +1397,8 @@ class ResultsBrowserWindow(QMainWindow):
                 self._fullscreen.toggle_focus()
             else:
                 self._detail_panel._switch_view(not self._detail_panel._use_crop_view)
+        elif key == Qt.Key_Backspace and (event.modifiers() & Qt.ControlModifier):
+            self._delete_selected_photos()
         else:
             super().keyPressEvent(event)
 
@@ -1920,11 +2059,6 @@ class ResultsBrowserWidget(QWidget):
             return
 
         # 1. 确认弹窗
-    @Slot(dict, object)
-    def _on_fullscreen_context_menu(self, photo: dict, global_pos):
-        """全屏大图右键菜单。"""
-        _show_context_menu_impl(self, photo, global_pos, self._directory)
-
         if cfg.delete_confirm:
             from PySide6.QtWidgets import QCheckBox
             msg_box = QMessageBox(self)
@@ -1982,6 +2116,148 @@ class ResultsBrowserWidget(QWidget):
             self._exit_fullscreen()
 
         # 7. 更新状态栏
+        self._update_status(len(self._all_photos), len(self._filtered_photos))
+
+    @Slot(dict, object)
+    def _on_fullscreen_context_menu(self, photo: dict, global_pos):
+        """全屏大图右键菜单。"""
+        _show_context_menu_impl(self, photo, global_pos, self._directory)
+
+    def _delete_selected_photos(self):
+        """Delete currently selected photo(s) in grid view or fullscreen view with Command + Backspace."""
+        in_fullscreen = (self._stack.currentIndex() == 1)
+        
+        # 1. Gather target photos to delete
+        if in_fullscreen:
+            if not self._fullscreen._current_photo:
+                return
+            target_photos = [self._fullscreen._current_photo]
+        else:
+            target_photos = self._thumb_grid.get_multi_selected_photos()
+            if not target_photos and self._detail_panel._current_photo:
+                target_photos = [self._detail_panel._current_photo]
+                
+        if not target_photos:
+            return
+
+        from advanced_config import get_advanced_config
+        cfg = get_advanced_config()
+        
+        # 2. Confirmation Dialog (if enabled in config)
+        if cfg.delete_confirm:
+            from PySide6.QtWidgets import QCheckBox
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle(self.i18n.t("browser.delete_title"))
+            msg_box.setIcon(QMessageBox.Warning)
+            yes_btn = msg_box.addButton(self.i18n.t("browser.delete_confirm_btn"), QMessageBox.AcceptRole)
+            msg_box.addButton(self.i18n.t("browser.delete_cancel_btn"), QMessageBox.RejectRole)
+            cb = QCheckBox(self.i18n.t("browser.delete_no_ask"))
+            msg_box.setCheckBox(cb)
+            
+            if len(target_photos) == 1:
+                filename = target_photos[0].get("filename", "")
+                msg_box.setText(self.i18n.t("browser.delete_msg").format(filename=filename))
+            else:
+                count = len(target_photos)
+                if self.i18n.current_lang.startswith('en'):
+                    msg_text = f"Move {count} selected photos to Trash?\n\n❗ This will also delete their database records. You'll need to reprocess after restoring."
+                else:
+                    msg_text = f"将选中的 {count} 张图片移入回收站？\n\n❗ 此操作会同时从数据库删除记录，恢复文件后需重新处理。"
+                msg_box.setText(msg_text)
+                
+            msg_box.exec()
+            if msg_box.clickedButton() != yes_btn:
+                return
+            if cb.isChecked():
+                cfg.set_delete_confirm(False)
+                cfg.save()
+                
+        # 3. Perform Deletion
+        deleted_photos = []
+        failed_paths = []
+        for photo in target_photos:
+            filepath = photo.get("current_path") or photo.get("original_path") or ""
+            if filepath:
+                if _move_to_trash(filepath):
+                    deleted_photos.append(photo)
+                else:
+                    failed_paths.append(filepath)
+            else:
+                # If no filepath (rare DB fallback), count as deleted from DB at least
+                deleted_photos.append(photo)
+                
+        # If any failed to move to trash, alert the user and stop DB/memory sync for them
+        if failed_paths:
+            QMessageBox.warning(
+                self,
+                self.i18n.t("browser.delete_failed"),
+                self.i18n.t("browser.delete_failed_msg").format(error="\n".join(failed_paths))
+            )
+            
+        if not deleted_photos:
+            return
+            
+        # 4. DB Deletion
+        if self._db:
+            for photo in deleted_photos:
+                self._db.delete_photo(_photo_db_key(photo))
+                
+        # 5. Memory & UI Sync
+        deleted_identities = {_photo_identity(p) for p in deleted_photos}
+        
+        # If we are in fullscreen and deleting the current photo, determine the next photo to show
+        next_photo = None
+        if in_fullscreen and self._fullscreen._current_photo:
+            curr_id = _photo_identity(self._fullscreen._current_photo)
+            if curr_id in deleted_identities:
+                # Find its index in filtered photos list
+                _del_identities = [_photo_identity(p) for p in self._filtered_photos]
+                try:
+                    curr_idx = _del_identities.index(curr_id)
+                except ValueError:
+                    curr_idx = 0
+                # Filter out all deleted photos
+                remaining_photos = [p for p in self._filtered_photos if _photo_identity(p) not in deleted_identities]
+                if remaining_photos:
+                    next_idx = min(curr_idx, len(remaining_photos) - 1)
+                    next_photo = remaining_photos[next_idx]
+                    
+        # Update our in-memory lists
+        self._filtered_photos = [p for p in self._filtered_photos if _photo_identity(p) not in deleted_identities]
+        self._all_photos = [p for p in self._all_photos if _photo_identity(p) not in deleted_identities]
+        
+        # Sync the grid UI
+        for photo in deleted_photos:
+            self._thumb_grid.remove_photo(photo)
+            
+        # Reset selection if it was deleted
+        if self._thumb_grid._selected_key in deleted_identities:
+            self._thumb_grid._selected_key = None
+            
+        # Clear grid multi-select state
+        self._thumb_grid.clear_multi_select()
+        
+        # Sync fullscreen viewer list
+        self._fullscreen.set_photo_list(self._filtered_photos)
+        
+        # 6. Navigation / Transition UI state
+        if in_fullscreen:
+            if next_photo:
+                self._thumb_grid.select_photo(next_photo)
+                self._fullscreen.show_photo(next_photo)
+                self._detail_panel.show_photo(next_photo)
+            else:
+                self._exit_fullscreen()
+        else:
+            # If not in fullscreen, just select the first available photo or clear panel
+            if self._filtered_photos:
+                first_remaining = self._filtered_photos[0]
+                self._thumb_grid.select_photo(first_remaining)
+                self._detail_panel.show_photo(first_remaining)
+            else:
+                self._detail_panel.show_photo(None)
+                
+        # 7. Update Status bar
         self._update_status(len(self._all_photos), len(self._filtered_photos))
 
     def _enter_comparison(self):
@@ -2052,5 +2328,7 @@ class ResultsBrowserWidget(QWidget):
                 self._fullscreen.toggle_focus()
             else:
                 self._detail_panel._switch_view(not self._detail_panel._use_crop_view)
+        elif key == Qt.Key_Backspace and (event.modifiers() & Qt.ControlModifier):
+            self._delete_selected_photos()
         else:
             super().keyPressEvent(event)
