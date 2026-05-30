@@ -16,6 +16,7 @@ from PySide6.QtCore import Qt, Signal, QSize, QThread, Slot, QTimer
 from PySide6.QtGui import QPixmap, QFont, QGuiApplication, QImage
 
 from ui.styles import COLORS, FONTS
+from core.rarity_tier import gbif_score_to_tier, tier_name, tier_icon, tier_color
 
 
 # ============================================================
@@ -69,22 +70,6 @@ _IUCN_INFO = {
     "DD":       ("数据不足",              "Data Deficient",                        "#B2B2B2"),
     "NE":       ("未评估",                "Not Evaluated",                         "#B2B2B2"),
 }
-
-
-def _gbif_color(score: float) -> str:
-    """
-    根据 GBIF 罕见度 0-100 分返回颜色。
-
-    Map a 0-100 GBIF rarity score to a color (low = common = green,
-    high = rare = red).
-    """
-    if score < 20:
-        return "#60C659"  # 绿（常见）
-    if score < 60:
-        return "#F9E814"  # 黄（普通）
-    if score < 80:
-        return "#FC7F3F"  # 橙（罕见）
-    return "#D81E05"      # 红（极罕见）
 
 
 def _format_iucn(category: str, is_zh: bool) -> tuple:
@@ -599,7 +584,7 @@ class DetailPanel(QWidget):
             f"{t('browser.meta_species')}: {species}",
             f"{t('browser.meta_iucn')}: {iucn_text}",
             f"{t('browser.meta_rarity')}: {f'{rarity:.2f}' if rarity is not None else '—'}",
-            f"{t('browser.meta_gbif_rarity')}: {f'{gbif_r:.1f} / 100' if gbif_r is not None else '—'}",
+            f"{t('browser.meta_gbif_rarity')}: {f'{tier_icon(gbif_score_to_tier(gbif_r))} {tier_name(gbif_score_to_tier(gbif_r), is_zh=is_zh)} ({gbif_r:.1f})' if gbif_r is not None else '—'}",
             f"{t('browser.meta_focus')}: {focus}",
             f"{t('browser.meta_sharpness')}: {f'{sharp:.1f}' if sharp is not None else '—'}",
             f"{t('browser.meta_aesthetic')}: {f'{topiq:.2f}' if topiq is not None else '—'}",
@@ -779,12 +764,16 @@ class DetailPanel(QWidget):
                 f"color: {COLORS['text_primary']}; font-size: 12px; background: transparent;"
             )
 
-        # GBIF 全球罕见度（0-100，AWS Open Data 派生）— 分段着色
-        # GBIF global rarity (0-100, AWS Open Data derived) — segmented color
+        # GBIF 全球罕见度 → 5-tier 圆形充填图标 + tier 名 + 小字分数
+        # GBIF rarity → 5-tier circle glyph + tier label + small score
         gbif_r = p.get("gbif_rarity_100")
         if gbif_r is not None:
-            color = _gbif_color(gbif_r)
-            self._val_gbif_rarity.setText(f"{gbif_r:.1f} / 100")
+            tidx = gbif_score_to_tier(gbif_r)
+            is_zh = not self.i18n.current_lang.startswith('en')
+            icon = tier_icon(tidx)
+            name = tier_name(tidx, is_zh=is_zh)
+            color = tier_color(tidx) or COLORS['text_primary']
+            self._val_gbif_rarity.setText(f"{icon} {name}  ({gbif_r:.1f})")
             self._val_gbif_rarity.setStyleSheet(
                 f"color: {color}; font-size: 13px; font-weight: 600; background: transparent;"
             )
