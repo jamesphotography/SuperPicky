@@ -355,9 +355,6 @@ class DetailPanel(QWidget):
             l.setStyleSheet(f"color: {COLORS['text_tertiary']}; font-size: 11px; background: transparent;")
             return l
 
-        # V4.2.7: 罕见指数行（懂鸟模型 0-10 评分，越大越罕见）
-        # V4.2.7: Rarity index row (BirdID 0-10 score, higher = rarer)
-        self._val_rarity = _make_value_label()
         # V4.2.7: GBIF 全球罕见度（0-100 分制，AWS Open Data 2026-05 snapshot 派生）
         # V4.2.7: GBIF-derived global rarity (0-100, from AWS Open Data snapshot)
         self._val_gbif_rarity = _make_value_label()
@@ -389,7 +386,6 @@ class DetailPanel(QWidget):
         self._val_caption.setWordWrap(True)
 
         rows = [
-            ("browser.meta_rarity",     self._val_rarity),
             ("browser.meta_gbif_rarity", self._val_gbif_rarity),
             ("browser.meta_focus",      self._val_focus),
             ("browser.meta_sharpness",  self._val_sharpness),
@@ -486,7 +482,7 @@ class DetailPanel(QWidget):
         self._copy_exif_btn.setEnabled(False)
         self._img_label.set_pixmap(QPixmap())
         for val in (
-            self._val_rarity, self._val_gbif_rarity,
+            self._val_gbif_rarity,
             self._val_focus, self._val_sharpness,
             self._val_aesthetic, self._val_flying, self._val_species,
             self._val_iucn,
@@ -565,7 +561,6 @@ class DetailPanel(QWidget):
         else:
             species = p.get("bird_species_en") or p.get("bird_species_cn") or "—"
 
-        rarity = p.get("rarity_index")
         gbif_r = p.get("gbif_rarity_100")
         iucn_raw = p.get("iucn_category")
         if iucn_raw:
@@ -583,7 +578,6 @@ class DetailPanel(QWidget):
             f"{t('browser.meta_focal')}: {f'{fl:.0f}mm' if fl else '—'}",
             f"{t('browser.meta_species')}: {species}",
             f"{t('browser.meta_iucn')}: {iucn_text}",
-            f"{t('browser.meta_rarity')}: {f'{rarity:.2f}' if rarity is not None else '—'}",
             f"{t('browser.meta_gbif_rarity')}: {f'{tier_icon(gbif_score_to_tier(gbif_r))} {tier_name(gbif_score_to_tier(gbif_r), is_zh=is_zh)} ({gbif_r:.1f})' if gbif_r is not None else '—'}",
             f"{t('browser.meta_focus')}: {focus}",
             f"{t('browser.meta_sharpness')}: {f'{sharp:.1f}' if sharp is not None else '—'}",
@@ -749,20 +743,6 @@ class DetailPanel(QWidget):
             -1: "—",
         }
         self._rating_label.setText(_rating_text.get(rating, _unknown))
-
-        # 罕见指数（懂鸟 0-10，越大越罕见）— 琥珀色突出显示
-        # Rarity index (BirdID 0-10, higher = rarer) — amber accent for visibility
-        rarity = p.get("rarity_index")
-        if rarity is not None:
-            self._val_rarity.setText(f"{rarity:.2f}")
-            self._val_rarity.setStyleSheet(
-                "color: #f59e0b; font-size: 13px; font-weight: 600; background: transparent;"
-            )
-        else:
-            self._val_rarity.setText(_unknown)
-            self._val_rarity.setStyleSheet(
-                f"color: {COLORS['text_primary']}; font-size: 12px; background: transparent;"
-            )
 
         # GBIF 全球罕见度 → 5-tier 圆形充填图标 + tier 名 + 小字分数
         # GBIF rarity → 5-tier circle glyph + tier label + small score

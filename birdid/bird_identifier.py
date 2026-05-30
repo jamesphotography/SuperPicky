@@ -839,9 +839,6 @@ def predict_bird(
             else:
                 continue
 
-        rarity_index = (
-            db_manager.get_rarity_by_class_id(class_id) if db_manager else None
-        )
         iucn_category = (
             db_manager.get_iucn_by_class_id(class_id) if db_manager else None
         )
@@ -859,7 +856,6 @@ def predict_bird(
                 "cn_name": cn_name,
                 "en_name": en_name,
                 "scientific_name": scientific_name,
-                "rarity_index": rarity_index,
                 "iucn_category": iucn_category,
                 "gbif_rarity_100": gbif_rarity_100,
                 "confidence": confidence,
