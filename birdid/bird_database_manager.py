@@ -132,17 +132,26 @@ class BirdDatabaseManager:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
 
-                # 1) 优先查 country-specific 分数 / Country-specific first
+                # 1) 优先查 country-specific 分数（gbif_rarity_by_country 表）
+                # 注意 inner try/except：该表可能不存在（未启用 country-aware 时），
+                # 不能让 OperationalError 把整个方法短路掉，否则全球 fallback 不会被执行。
+                # Country-specific lookup with an inner try/except so a missing
+                # gbif_rarity_by_country table does not short-circuit the
+                # function before the global fallback runs.
                 if country_code:
-                    cursor.execute(
-                        "SELECT gbif_rarity_100 FROM gbif_rarity_by_country "
-                        "WHERE model_class_id = ? AND countrycode = ? "
-                        "AND gbif_rarity_100 IS NOT NULL LIMIT 1",
-                        (class_id, country_code),
-                    )
-                    row = cursor.fetchone()
-                    if row and row[0] is not None:
-                        return float(row[0])
+                    try:
+                        cursor.execute(
+                            "SELECT gbif_rarity_100 FROM gbif_rarity_by_country "
+                            "WHERE model_class_id = ? AND countrycode = ? "
+                            "AND gbif_rarity_100 IS NOT NULL LIMIT 1",
+                            (class_id, country_code),
+                        )
+                        row = cursor.fetchone()
+                        if row and row[0] is not None:
+                            return float(row[0])
+                    except sqlite3.OperationalError:
+                        # 表不存在 → 走全球 fallback / Missing table → global fallback
+                        pass
 
                 # 2) Fallback 全球 / Global fallback
                 cursor.execute(
@@ -155,7 +164,7 @@ class BirdDatabaseManager:
                     return float(row[0])
                 return None
         except Exception:
-            # 表可能不存在（旧版数据库），静默降级
+            # gbif_rarity_100 表也不存在（旧版数据库），静默降级
             return None
 
     def get_iucn_by_class_id(self, class_id: int) -> Optional[str]:
