@@ -44,6 +44,41 @@ except ImportError:
     imageio = cast(Any, None)
     RAW_SUPPORT = False
 
+# V4.2.7: reverse_geocoder lazy 单例 — 首次用时加载 ~70MB cKDTree 数据，
+# 之后所有线程共享同一个只读索引。
+# V4.2.7: reverse_geocoder lazy singleton — first use loads ~70MB cKDTree,
+# subsequent calls share the read-only index across threads.
+import threading
+
+_RG_LOCK = threading.Lock()
+_RG_INSTANCE: Any = None  # 标记是否已初始化（None 表示未尝试）
+_RG_AVAILABLE = True
+
+
+def _resolve_country_code_from_gps(lat: float, lon: float) -> Optional[str]:
+    """
+    用 reverse_geocoder 把 GPS 坐标反查成 ISO 3166-1 alpha-2 国家代码。
+
+    Convert a GPS coordinate to ISO 3166-1 alpha-2 country code via
+    reverse_geocoder (offline, cKDTree-backed). Returns None when the
+    library is unavailable or the lookup fails.
+    """
+    global _RG_INSTANCE, _RG_AVAILABLE
+    if not _RG_AVAILABLE:
+        return None
+    try:
+        if _RG_INSTANCE is None:
+            with _RG_LOCK:
+                if _RG_INSTANCE is None:
+                    import reverse_geocoder as rg
+                    _RG_INSTANCE = rg
+        result = _RG_INSTANCE.search([(lat, lon)], mode=1, verbose=False)
+        if result and result[0].get("cc"):
+            return str(result[0]["cc"]).upper()
+    except Exception:
+        _RG_AVAILABLE = False  # 永久禁用，避免反复 import 失败
+    return None
+
 try:
     from ultralytics import YOLO
 
@@ -728,6 +763,7 @@ def predict_bird(
     species_class_ids: Optional[Set[int]] = None,
     is_yolo_cropped: bool = False,
     name_format: Optional[str] = None,
+    photo_country_code: Optional[str] = None,
 ) -> List[Dict]:
     model = get_classifier()
     db_manager = get_database_manager()
@@ -803,12 +839,29 @@ def predict_bird(
             else:
                 continue
 
+        rarity_index = (
+            db_manager.get_rarity_by_class_id(class_id) if db_manager else None
+        )
+        iucn_category = (
+            db_manager.get_iucn_by_class_id(class_id) if db_manager else None
+        )
+        # V4.2.7: GBIF 罕见度（按拍摄地国家优先，未命中回退到全球）
+        # V4.2.7: GBIF rarity — country-aware (per photo country) with global fallback
+        gbif_rarity_100 = (
+            db_manager.get_gbif_rarity_by_class_id(class_id, photo_country_code)
+            if db_manager
+            else None
+        )
+
         results.append(
             {
                 "class_id": class_id,
                 "cn_name": cn_name,
                 "en_name": en_name,
                 "scientific_name": scientific_name,
+                "rarity_index": rarity_index,
+                "iucn_category": iucn_category,
+                "gbif_rarity_100": gbif_rarity_100,
                 "confidence": confidence,
                 "ebird_code": ebird_code,
                 "region_match": region_match,
@@ -872,22 +925,33 @@ def identify_bird(
         species_class_ids = None
         lat = lon = None
         species_filter = None
+        photo_country_code: Optional[str] = None
+
+        # V4.2.7: 提前提取 GPS（无论是否启用 ebird 过滤），用于反查拍摄国家
+        # → 为 GBIF 按国家归一化 rarity 提供输入
+        # V4.2.7: Extract GPS upfront (regardless of ebird filter) so we can
+        # reverse-geocode the shooting country for country-aware GBIF rarity.
+        if use_gps:
+            try:
+                lat, lon, _gps_msg = extract_gps_from_exif(image_path)
+                if lat and lon:
+                    result["gps_info"] = {
+                        "latitude": lat,
+                        "longitude": lon,
+                        "info": _gps_msg,
+                    }
+                    photo_country_code = _resolve_country_code_from_gps(lat, lon)
+                    if photo_country_code:
+                        result["gps_info"]["country_code"] = photo_country_code
+            except Exception:
+                pass
 
         if use_ebird:
             try:
                 species_filter = get_species_filter()
                 if species_filter:
-                    if use_gps:
-                        lat, lon, gps_msg = extract_gps_from_exif(image_path)
-                        if lat and lon:
-                            result["gps_info"] = {
-                                "latitude": lat,
-                                "longitude": lon,
-                                "info": gps_msg,
-                            }
-                            species_class_ids = species_filter.get_species_by_gps(
-                                lat, lon
-                            )
+                    if use_gps and lat is not None and lon is not None:
+                        species_class_ids = species_filter.get_species_by_gps(lat, lon)
 
                     if species_class_ids is None and (region_code or country_code):
                         effective_region = region_code or country_code
@@ -927,6 +991,7 @@ def identify_bird(
             species_class_ids=species_class_ids,
             is_yolo_cropped=is_yolo_cropped,
             name_format=name_format,
+            photo_country_code=photo_country_code,
         )
 
         if not results and species_class_ids:
@@ -947,6 +1012,7 @@ def identify_bird(
                     species_class_ids=country_cls_ids,
                     is_yolo_cropped=is_yolo_cropped,
                     name_format=name_format,
+                    photo_country_code=photo_country_code,
                 )
                 if results:
                     if not result.get("ebird_info"):
@@ -961,6 +1027,7 @@ def identify_bird(
                     species_class_ids=None,
                     is_yolo_cropped=is_yolo_cropped,
                     name_format=name_format,
+                    photo_country_code=photo_country_code,
                 )
                 if results and result.get("ebird_info"):
                     result["ebird_info"]["gps_fallback"] = True

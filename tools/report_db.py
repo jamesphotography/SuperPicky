@@ -21,7 +21,7 @@ from .file_utils import ensure_hidden_directory
 
 
 # Schema 版本，用于未来升级
-SCHEMA_VERSION = "5"
+SCHEMA_VERSION = "8"
 
 # 所有列定义（有序），用于 CREATE TABLE 和数据验证
 PHOTO_COLUMNS = [
@@ -85,7 +85,19 @@ PHOTO_COLUMNS = [
     # V5: 连拍分组
     ("burst_id",         "INTEGER", None),
     ("burst_position",   "INTEGER", None),
-    
+
+    # V6: 懂鸟罕见指数 (0-10，越大越罕见)
+    # V6: BirdID rarity index (0-10, higher = rarer)
+    ("rarity_index",     "REAL", None),
+
+    # V7: IUCN 红色名录保护级别 (LC/NT/VU/EN/CR/CR(PE)/CR(PEW)/EW/EX/DD/NE)
+    # V7: IUCN Red List category
+    ("iucn_category",    "TEXT", None),
+
+    # V8: GBIF 全球罕见度 (0-100 分制，越大越罕见，CC0+CC-BY 4.0 子集派生)
+    # V8: GBIF-derived global rarity score (0-100, higher = rarer)
+    ("gbif_rarity_100",  "REAL", None),
+
     ("created_at",    "TEXT", None),
     ("updated_at",    "TEXT", None),
 ]
@@ -302,6 +314,66 @@ class ReportDB:
                     self._update_schema_version("5")
                 current_version = "5"
                 print("✅ Database schema upgraded to v5")
+
+            # ----------------------------------------------------------------------
+            #  Upgrade: v5 -> v6 (BirdID rarity index)
+            # ----------------------------------------------------------------------
+            if current_version == "5":
+                print("🔄 Upgrading database schema from v5 to v6...")
+                new_columns_v6 = [
+                    ("rarity_index", "REAL"),
+                ]
+                with self._conn:
+                    for col_name, col_type in new_columns_v6:
+                        try:
+                            self._conn.execute(
+                                f"ALTER TABLE photos ADD COLUMN {col_name} {col_type}"
+                            )
+                        except sqlite3.OperationalError:
+                            pass  # 列已存在，跳过
+                    self._update_schema_version("6")
+                current_version = "6"
+                print("✅ Database schema upgraded to v6")
+
+            # ----------------------------------------------------------------------
+            #  Upgrade: v6 -> v7 (IUCN Red List category)
+            # ----------------------------------------------------------------------
+            if current_version == "6":
+                print("🔄 Upgrading database schema from v6 to v7...")
+                new_columns_v7 = [
+                    ("iucn_category", "TEXT"),
+                ]
+                with self._conn:
+                    for col_name, col_type in new_columns_v7:
+                        try:
+                            self._conn.execute(
+                                f"ALTER TABLE photos ADD COLUMN {col_name} {col_type}"
+                            )
+                        except sqlite3.OperationalError:
+                            pass  # 列已存在，跳过
+                    self._update_schema_version("7")
+                current_version = "7"
+                print("✅ Database schema upgraded to v7")
+
+            # ----------------------------------------------------------------------
+            #  Upgrade: v7 -> v8 (GBIF 0-100 rarity score)
+            # ----------------------------------------------------------------------
+            if current_version == "7":
+                print("🔄 Upgrading database schema from v7 to v8...")
+                new_columns_v8 = [
+                    ("gbif_rarity_100", "REAL"),
+                ]
+                with self._conn:
+                    for col_name, col_type in new_columns_v8:
+                        try:
+                            self._conn.execute(
+                                f"ALTER TABLE photos ADD COLUMN {col_name} {col_type}"
+                            )
+                        except sqlite3.OperationalError:
+                            pass  # 列已存在，跳过
+                    self._update_schema_version("8")
+                current_version = "8"
+                print("✅ Database schema upgraded to v8")
 
     def _update_schema_version(self, version):
         """更新数据库中的版本号（由调用方负责提交事务）"""

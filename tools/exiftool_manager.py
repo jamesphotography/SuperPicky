@@ -509,6 +509,26 @@ class ExifToolManager:
             args.append(f'-XMP:Label={item["label"]}')
         if item.get('focus_status') is not None:
             args.append(f'-XMP:Country={item["focus_status"]}')
+        # V4.2.7: 懂鸟罕见指数（0-10）。借用 XMP-photoshop:TransmissionReference
+        # 这一冷门 IPTC 字段——Lightroom / Capture One 主界面均不显示，几乎无人手动写入，
+        # 且 ExifTool 原生支持（无需 config 文件）。
+        # V4.2.7: BirdID rarity index (0-10). Stored in XMP-photoshop:TransmissionReference
+        # — an obscure IPTC field invisible in Lightroom / Capture One main panels,
+        # rarely used in the wild, and natively writable by ExifTool (no config file).
+        if item.get('rarity_index') is not None:
+            args.append(f'-XMP-photoshop:TransmissionReference={item["rarity_index"]:.2f}')
+        # V4.2.7: IUCN 红色名录等级。借用 XMP-iptcCore:IntellectualGenre（"智识题材"
+        # IPTC NewsCodes 体裁字段），同样冷门、LR/C1 主面板不显示、ExifTool 原生可写。
+        # V4.2.7: IUCN Red List category in XMP-iptcCore:IntellectualGenre — another
+        # rarely-used IPTC field invisible in LR/C1 main panels, writable natively.
+        if item.get('iucn_category'):
+            args.append(f'-XMP-iptcCore:IntellectualGenre={item["iucn_category"]}')
+        # V4.2.7: GBIF 全球罕见度 0-100。借用 XMP-iptcExt:Event（IPTC Extension
+        # 事件字段，LR/C1 主面板不显示，几乎无人手动写入）。
+        # V4.2.7: GBIF global rarity 0-100. Uses XMP-iptcExt:Event — IPTC Extension
+        # "Event" field, invisible in LR/C1 main panels, rarely used in the wild.
+        if item.get('gbif_rarity_100') is not None:
+            args.append(f'-XMP-iptcExt:Event={item["gbif_rarity_100"]:.2f}')
         temp_files: List[str] = []
 
         title = item.get('title')
@@ -571,6 +591,16 @@ class ExifToolManager:
             args.append(f'-XMP:Label={item["label"]}')
         if item.get('focus_status') is not None:
             args.append(f'-XMP:Country={item["focus_status"]}')
+        # V4.2.7: 罕见指数同样写入侧车（见 _write_metadata_subprocess 的字段选择说明）
+        # V4.2.7: Rarity index mirrored into sidecar (see field rationale above)
+        if item.get('rarity_index') is not None:
+            args.append(f'-XMP-photoshop:TransmissionReference={item["rarity_index"]:.2f}')
+        # V4.2.7: IUCN 等级同样写入侧车 / IUCN category mirrored into sidecar
+        if item.get('iucn_category'):
+            args.append(f'-XMP-iptcCore:IntellectualGenre={item["iucn_category"]}')
+        # V4.2.7: GBIF 罕见度同样写入侧车 / GBIF rarity mirrored into sidecar
+        if item.get('gbif_rarity_100') is not None:
+            args.append(f'-XMP-iptcExt:Event={item["gbif_rarity_100"]:.2f}')
         temp_files: List[str] = []
 
         # UTF-8 temp file for Title/Caption
@@ -628,6 +658,9 @@ class ExifToolManager:
             '-XMP:Country=',
             '-XMP:Description=',
             '-XMP:Title=',
+            '-XMP-photoshop:TransmissionReference=',
+            '-XMP-iptcCore:IntellectualGenre=',
+            '-XMP-iptcExt:Event=',
             '-overwrite_original',
             xmp_path
         ]

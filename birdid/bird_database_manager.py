@@ -84,7 +84,123 @@ class BirdDatabaseManager:
         except Exception as e:
             print(_t("logs.db_query_failed", id=class_id, e=e))
             return None
-    
+
+    def get_rarity_by_class_id(self, class_id: int) -> Optional[float]:
+        """
+        根据模型类别ID获取懂鸟罕见指数
+
+        Args:
+            class_id: 鸟类类别ID（对应模型输出的索引，即 model_class_id）
+
+        Returns:
+            罕见指数 (0-10，越大越罕见)，未找到或 rarity_index 表不存在时返回 None
+        """
+        query = "SELECT rarity_index FROM rarity_index WHERE model_class_id = ?"
+
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(query, (class_id,))
+                result = cursor.fetchone()
+
+                if result and result[0] is not None:
+                    return float(result[0])
+                return None
+        except Exception:
+            # rarity_index 表可能不存在（旧版数据库），静默降级，不影响识别主流程
+            return None
+
+    def get_gbif_rarity_by_class_id(
+        self, class_id: int, country_code: Optional[str] = None
+    ) -> Optional[float]:
+        """
+        根据模型类别ID获取 GBIF 罕见度（0-100 分）。
+
+        Args:
+            class_id: 鸟类类别ID（model_class_id）
+            country_code: ISO 3166-1 alpha-2 国家代码（如 "CN"/"AU"）。
+                          提供时优先查该国家的 rarity，未命中再回退到全球。
+
+        Returns:
+            GBIF 罕见度 (0-100, 越大越罕见; None=数据库未匹配)
+
+        Fetch GBIF-derived rarity score (0-100). When country_code is given,
+        prefer the country-specific score (table gbif_rarity_by_country);
+        fall back to the global table on miss.
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+
+                # 1) 优先查 country-specific 分数（gbif_rarity_by_country 表）
+                # 注意 inner try/except：该表可能不存在（未启用 country-aware 时），
+                # 不能让 OperationalError 把整个方法短路掉，否则全球 fallback 不会被执行。
+                # Country-specific lookup with an inner try/except so a missing
+                # gbif_rarity_by_country table does not short-circuit the
+                # function before the global fallback runs.
+                if country_code:
+                    try:
+                        cursor.execute(
+                            "SELECT gbif_rarity_100 FROM gbif_rarity_by_country "
+                            "WHERE model_class_id = ? AND countrycode = ? "
+                            "AND gbif_rarity_100 IS NOT NULL LIMIT 1",
+                            (class_id, country_code),
+                        )
+                        row = cursor.fetchone()
+                        if row and row[0] is not None:
+                            return float(row[0])
+                    except sqlite3.OperationalError:
+                        # 表不存在 → 走全球 fallback / Missing table → global fallback
+                        pass
+
+                # 2) Fallback 全球 / Global fallback
+                cursor.execute(
+                    "SELECT gbif_rarity_100 FROM gbif_rarity_100 "
+                    "WHERE model_class_id = ? AND gbif_rarity_100 IS NOT NULL LIMIT 1",
+                    (class_id,),
+                )
+                row = cursor.fetchone()
+                if row and row[0] is not None:
+                    return float(row[0])
+                return None
+        except Exception:
+            # gbif_rarity_100 表也不存在（旧版数据库），静默降级
+            return None
+
+    def get_iucn_by_class_id(self, class_id: int) -> Optional[str]:
+        """
+        根据模型类别ID获取 IUCN 红色名录保护级别
+
+        Args:
+            class_id: 鸟类类别ID（对应模型输出的索引，即 model_class_id）
+
+        Returns:
+            IUCN 等级缩写（LC/NT/VU/EN/CR/CR(PE)/CR(PEW)/EW/EX/DD/NE），
+            未找到或 avilist_map 无 IUCN 数据时返回 None
+
+        Fetch IUCN Red List category for a model class id.
+        Returns one of LC/NT/VU/EN/CR/CR(PE)/CR(PEW)/EW/EX/DD/NE, or None when
+        the row is missing or the column is empty.
+        """
+        query = (
+            "SELECT iucn_category FROM avilist_map "
+            "WHERE model_class_id = ? AND iucn_category IS NOT NULL "
+            "AND iucn_category != '' LIMIT 1"
+        )
+
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(query, (class_id,))
+                result = cursor.fetchone()
+
+                if result and result[0]:
+                    return str(result[0])
+                return None
+        except Exception:
+            # avilist_map 表可能不存在（旧版数据库），静默降级
+            return None
+
     def get_ebird_code_by_english_name(self, english_name: str) -> Optional[str]:
         """
         根据英文名获取eBird代码

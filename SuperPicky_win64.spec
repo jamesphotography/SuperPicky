@@ -56,6 +56,7 @@ all_datas = [
     (os.path.join(ultralytics_base, 'ultralytics/cfg'), 'ultralytics/cfg'),
     # V4.0.0: 鸟类识别模块数据 (V4.0.6: 移除旧 birdid/models，改用 models/model20240824.pth OSEA 模型)
     (os.path.join(base_path, 'birdid/data'), 'birdid/data'),
+    (os.path.join(base_path, 'ioc'), 'ioc'),
     # V4.0.0: Lightroom 插件
     (os.path.join(base_path, 'SuperBirdIDPlugin.lrplugin'), 'SuperBirdIDPlugin.lrplugin'),
 ]

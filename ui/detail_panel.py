@@ -16,6 +16,7 @@ from PySide6.QtCore import Qt, Signal, QSize, QThread, Slot, QTimer
 from PySide6.QtGui import QPixmap, QFont, QGuiApplication, QImage
 
 from ui.styles import COLORS, FONTS
+from core.rarity_tier import gbif_score_to_tier, tier_name, tier_icon, tier_color
 
 
 # ============================================================
@@ -53,6 +54,43 @@ _FOCUS_COLORS = {
     "BAD":   COLORS['focus_bad'],     # 近白灰 — 失焦
     "WORST": COLORS['focus_worst'],   # 灰 — 脱焦
 }
+
+# IUCN 红色名录等级 → (中文全名, 英文全名, 官方色)
+# IUCN Red List category → (Chinese, English, official color)
+_IUCN_INFO = {
+    "LC":       ("无危",                 "Least Concern",                         "#60C659"),
+    "NT":       ("近危",                 "Near Threatened",                       "#CCE226"),
+    "VU":       ("易危",                 "Vulnerable",                            "#F9E814"),
+    "EN":       ("濒危",                 "Endangered",                            "#FC7F3F"),
+    "CR":       ("极危",                 "Critically Endangered",                 "#D81E05"),
+    "CR (PE)":  ("极危（可能已灭绝）",      "Critically Endangered (Possibly Extinct)", "#D81E05"),
+    "CR (PEW)": ("极危（野外可能已灭绝）",   "Critically Endangered (Possibly Extinct in the Wild)", "#D81E05"),
+    "EW":       ("野外灭绝",              "Extinct in the Wild",                   "#542344"),
+    "EX":       ("灭绝",                 "Extinct",                               "#000000"),
+    "DD":       ("数据不足",              "Data Deficient",                        "#B2B2B2"),
+    "NE":       ("未评估",                "Not Evaluated",                         "#B2B2B2"),
+}
+
+
+def _format_iucn(category: str, is_zh: bool) -> tuple:
+    """
+    根据 IUCN 等级代码返回 (显示文本, 颜色)。
+
+    Args:
+        category: IUCN 缩写（LC/NT/VU/EN/CR/...）
+        is_zh: 当前是否为中文界面
+
+    Returns:
+        (display_text, color) — display_text 形如「易危 (VU)」/「Vulnerable (VU)」
+
+    Format an IUCN category code into (display_text, color).
+    """
+    info = _IUCN_INFO.get(category)
+    if not info:
+        return (category, COLORS['text_primary'])
+    zh_name, en_name, color = info
+    name = zh_name if is_zh else en_name
+    return (f"{name} ({category})", color)
 
 
 def _make_section_label(text: str) -> QLabel:
@@ -317,6 +355,12 @@ class DetailPanel(QWidget):
             l.setStyleSheet(f"color: {COLORS['text_tertiary']}; font-size: 11px; background: transparent;")
             return l
 
+        # V4.2.7: 罕见指数行（懂鸟模型 0-10 评分，越大越罕见）
+        # V4.2.7: Rarity index row (BirdID 0-10 score, higher = rarer)
+        self._val_rarity = _make_value_label()
+        # V4.2.7: GBIF 全球罕见度（0-100 分制，AWS Open Data 2026-05 snapshot 派生）
+        # V4.2.7: GBIF-derived global rarity (0-100, from AWS Open Data snapshot)
+        self._val_gbif_rarity = _make_value_label()
         self._val_focus = _make_value_label()
         self._val_sharpness = _make_value_label()
         self._val_aesthetic = _make_value_label()
@@ -325,6 +369,9 @@ class DetailPanel(QWidget):
         self._val_species.setStyleSheet(f"color: {COLORS['accent']}; font-size: 12px; background: transparent;")
         self._val_species.setWordWrap(False)
         self._val_species.setMinimumHeight(28)
+        # V4.2.7: IUCN 红色名录等级，紧贴鸟种之下显示
+        # V4.2.7: IUCN Red List category, pinned directly under Species
+        self._val_iucn = _make_value_label()
         self._val_camera = _make_value_label()
         self._val_lens = _NoWrapLabel()
         self._val_lens.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 12px; font-family: {FONTS['mono']}; background: transparent;")
@@ -342,11 +389,14 @@ class DetailPanel(QWidget):
         self._val_caption.setWordWrap(True)
 
         rows = [
+            ("browser.meta_rarity",     self._val_rarity),
+            ("browser.meta_gbif_rarity", self._val_gbif_rarity),
             ("browser.meta_focus",      self._val_focus),
             ("browser.meta_sharpness",  self._val_sharpness),
             ("browser.meta_aesthetic",  self._val_aesthetic),
             ("browser.meta_flying",     self._val_flying),
             ("browser.meta_species",    self._val_species),
+            ("browser.meta_iucn",       self._val_iucn),
             ("browser.meta_camera",     self._val_camera),
             ("browser.meta_lens",       self._val_lens),
             ("browser.meta_shutter",    self._val_shutter),
@@ -436,8 +486,10 @@ class DetailPanel(QWidget):
         self._copy_exif_btn.setEnabled(False)
         self._img_label.set_pixmap(QPixmap())
         for val in (
+            self._val_rarity, self._val_gbif_rarity,
             self._val_focus, self._val_sharpness,
             self._val_aesthetic, self._val_flying, self._val_species,
+            self._val_iucn,
             self._val_caption,
             self._val_camera, self._val_lens, self._val_shutter,
             self._val_iso, self._val_focal, self._val_confidence,
@@ -513,6 +565,14 @@ class DetailPanel(QWidget):
         else:
             species = p.get("bird_species_en") or p.get("bird_species_cn") or "—"
 
+        rarity = p.get("rarity_index")
+        gbif_r = p.get("gbif_rarity_100")
+        iucn_raw = p.get("iucn_category")
+        if iucn_raw:
+            iucn_text, _ = _format_iucn(iucn_raw, is_zh)
+        else:
+            iucn_text = "—"
+
         lines = [
             f"{t('browser.meta_filename')}: {p.get('filename') or '—'}",
             f"{t('browser.meta_datetime')}: {(p.get('date_time_original') or '—')[:19]}",
@@ -522,6 +582,9 @@ class DetailPanel(QWidget):
             f"{t('browser.meta_iso')}: {iso if iso else '—'}",
             f"{t('browser.meta_focal')}: {f'{fl:.0f}mm' if fl else '—'}",
             f"{t('browser.meta_species')}: {species}",
+            f"{t('browser.meta_iucn')}: {iucn_text}",
+            f"{t('browser.meta_rarity')}: {f'{rarity:.2f}' if rarity is not None else '—'}",
+            f"{t('browser.meta_gbif_rarity')}: {f'{tier_icon(gbif_score_to_tier(gbif_r))} {tier_name(gbif_score_to_tier(gbif_r), is_zh=is_zh)} ({gbif_r:.1f})' if gbif_r is not None else '—'}",
             f"{t('browser.meta_focus')}: {focus}",
             f"{t('browser.meta_sharpness')}: {f'{sharp:.1f}' if sharp is not None else '—'}",
             f"{t('browser.meta_aesthetic')}: {f'{topiq:.2f}' if topiq is not None else '—'}",
@@ -687,6 +750,39 @@ class DetailPanel(QWidget):
         }
         self._rating_label.setText(_rating_text.get(rating, _unknown))
 
+        # 罕见指数（懂鸟 0-10，越大越罕见）— 琥珀色突出显示
+        # Rarity index (BirdID 0-10, higher = rarer) — amber accent for visibility
+        rarity = p.get("rarity_index")
+        if rarity is not None:
+            self._val_rarity.setText(f"{rarity:.2f}")
+            self._val_rarity.setStyleSheet(
+                "color: #f59e0b; font-size: 13px; font-weight: 600; background: transparent;"
+            )
+        else:
+            self._val_rarity.setText(_unknown)
+            self._val_rarity.setStyleSheet(
+                f"color: {COLORS['text_primary']}; font-size: 12px; background: transparent;"
+            )
+
+        # GBIF 全球罕见度 → 5-tier 圆形充填图标 + tier 名 + 小字分数
+        # GBIF rarity → 5-tier circle glyph + tier label + small score
+        gbif_r = p.get("gbif_rarity_100")
+        if gbif_r is not None:
+            tidx = gbif_score_to_tier(gbif_r)
+            is_zh = not self.i18n.current_lang.startswith('en')
+            icon = tier_icon(tidx)
+            name = tier_name(tidx, is_zh=is_zh)
+            color = tier_color(tidx) or COLORS['text_primary']
+            self._val_gbif_rarity.setText(f"{icon} {name}  ({gbif_r:.1f})")
+            self._val_gbif_rarity.setStyleSheet(
+                f"color: {color}; font-size: 13px; font-weight: 600; background: transparent;"
+            )
+        else:
+            self._val_gbif_rarity.setText(_unknown)
+            self._val_gbif_rarity.setStyleSheet(
+                f"color: {COLORS['text_primary']}; font-size: 12px; background: transparent;"
+            )
+
         # 对焦
         focus = p.get("focus_status") or _unknown
         self._val_focus.setText(focus)
@@ -724,6 +820,22 @@ class DetailPanel(QWidget):
             species = p.get("bird_species_cn") or p.get("bird_species_en") or _unknown
         self._val_species.setText(species)
         self._val_species.setToolTip(species)
+
+        # IUCN 红色名录（中英全名 + 缩写，按官方色着色）
+        # IUCN Red List (full name + abbreviation, official color)
+        iucn = p.get("iucn_category")
+        if iucn:
+            is_zh = not self.i18n.current_lang.startswith('en')
+            text, color = _format_iucn(iucn, is_zh)
+            self._val_iucn.setText(text)
+            self._val_iucn.setStyleSheet(
+                f"color: {color}; font-size: 12px; font-weight: 600; background: transparent;"
+            )
+        else:
+            self._val_iucn.setText(_unknown)
+            self._val_iucn.setStyleSheet(
+                f"color: {COLORS['text_primary']}; font-size: 12px; background: transparent;"
+            )
 
         # 相机
         self._val_camera.setText(p.get("camera_model") or _unknown)
