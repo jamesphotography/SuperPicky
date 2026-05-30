@@ -37,13 +37,26 @@ class MergedReportDB:
         self._conn.row_factory = sqlite3.Row
         
         # ATTACH 各子目录的 DB
+        # V4.2.7: ATTACH 前先实例化 ReportDB 触发 schema 升级，避免不同子目录
+        # 的 photos 表列数不一致导致 UNION ALL 失败。
+        # V4.2.7: Instantiate ReportDB once before ATTACH so each sub-directory
+        # DB gets schema-migrated; otherwise UNION ALL across mixed-schema
+        # photos tables fails with "different number of result columns".
+        from tools.report_db import ReportDB  # 局部导入避免循环依赖
         self._db_aliases: List[str] = []
         self._alias_to_dir: Dict[str, str] = {}
-        
+
         for i, sub_dir in enumerate(sub_dirs):
             db_path = os.path.join(sub_dir, ".superpicky", "report.db")
             if not os.path.exists(db_path):
                 continue
+            # 先用 ReportDB 打开一次，触发 _ensure_schema()（含 ALTER TABLE 升列）
+            # Touch via ReportDB to trigger _ensure_schema() (auto ALTER missing cols)
+            try:
+                _tmp = ReportDB(sub_dir)
+                _tmp.close()
+            except Exception:
+                pass
             alias = f"db{i}"
             try:
                 self._conn.execute(f"ATTACH DATABASE ? AS {alias}", (db_path,))

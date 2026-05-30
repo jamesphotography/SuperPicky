@@ -1131,6 +1131,7 @@ class PhotoProcessor:
             en_name = top_result.get('en_name', '')
             rarity_index = top_result.get('rarity_index')  # 懂鸟罕见指数 (0-10)，可能为 None
             iucn_category = top_result.get('iucn_category')  # IUCN 等级 (LC/NT/VU/EN/CR/...)，可能为 None
+            gbif_rarity_100 = top_result.get('gbif_rarity_100')  # GBIF 全球罕见度 (0-100)，可能为 None
             
             if birdid_confidence >= self.settings.birdid_confidence_threshold:
                 if self.i18n.current_lang.startswith('en'):
@@ -1166,6 +1167,8 @@ class PhotoProcessor:
                             db_updates['rarity_index'] = rarity_index
                         if iucn_category:
                             db_updates['iucn_category'] = iucn_category
+                        if gbif_rarity_100 is not None:
+                            db_updates['gbif_rarity_100'] = gbif_rarity_100
                         self.report_db.update_photo(file_prefix, db_updates)
                         # 将罕见指数 + 鸟种 + IUCN 追加到已生成的 DB caption 最前面
                         # Prepend rarity / species / IUCN lines to the DB caption.
@@ -1203,6 +1206,8 @@ class PhotoProcessor:
                             meta_item['rarity_index'] = rarity_index
                         if iucn_category:
                             meta_item['iucn_category'] = iucn_category
+                        if gbif_rarity_100 is not None:
+                            meta_item['gbif_rarity_100'] = gbif_rarity_100
                         queue_metadata(meta_item)
             else:
                 # 低置信度：记日志，并将候选鸟名存入 file_bird_species 供 caption 使用

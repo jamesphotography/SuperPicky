@@ -71,6 +71,22 @@ _IUCN_INFO = {
 }
 
 
+def _gbif_color(score: float) -> str:
+    """
+    根据 GBIF 罕见度 0-100 分返回颜色。
+
+    Map a 0-100 GBIF rarity score to a color (low = common = green,
+    high = rare = red).
+    """
+    if score < 20:
+        return "#60C659"  # 绿（常见）
+    if score < 60:
+        return "#F9E814"  # 黄（普通）
+    if score < 80:
+        return "#FC7F3F"  # 橙（罕见）
+    return "#D81E05"      # 红（极罕见）
+
+
 def _format_iucn(category: str, is_zh: bool) -> tuple:
     """
     根据 IUCN 等级代码返回 (显示文本, 颜色)。
@@ -357,6 +373,9 @@ class DetailPanel(QWidget):
         # V4.2.7: 罕见指数行（懂鸟模型 0-10 评分，越大越罕见）
         # V4.2.7: Rarity index row (BirdID 0-10 score, higher = rarer)
         self._val_rarity = _make_value_label()
+        # V4.2.7: GBIF 全球罕见度（0-100 分制，AWS Open Data 2026-05 snapshot 派生）
+        # V4.2.7: GBIF-derived global rarity (0-100, from AWS Open Data snapshot)
+        self._val_gbif_rarity = _make_value_label()
         self._val_focus = _make_value_label()
         self._val_sharpness = _make_value_label()
         self._val_aesthetic = _make_value_label()
@@ -386,6 +405,7 @@ class DetailPanel(QWidget):
 
         rows = [
             ("browser.meta_rarity",     self._val_rarity),
+            ("browser.meta_gbif_rarity", self._val_gbif_rarity),
             ("browser.meta_focus",      self._val_focus),
             ("browser.meta_sharpness",  self._val_sharpness),
             ("browser.meta_aesthetic",  self._val_aesthetic),
@@ -481,7 +501,8 @@ class DetailPanel(QWidget):
         self._copy_exif_btn.setEnabled(False)
         self._img_label.set_pixmap(QPixmap())
         for val in (
-            self._val_rarity, self._val_focus, self._val_sharpness,
+            self._val_rarity, self._val_gbif_rarity,
+            self._val_focus, self._val_sharpness,
             self._val_aesthetic, self._val_flying, self._val_species,
             self._val_iucn,
             self._val_caption,
@@ -560,6 +581,7 @@ class DetailPanel(QWidget):
             species = p.get("bird_species_en") or p.get("bird_species_cn") or "—"
 
         rarity = p.get("rarity_index")
+        gbif_r = p.get("gbif_rarity_100")
         iucn_raw = p.get("iucn_category")
         if iucn_raw:
             iucn_text, _ = _format_iucn(iucn_raw, is_zh)
@@ -577,6 +599,7 @@ class DetailPanel(QWidget):
             f"{t('browser.meta_species')}: {species}",
             f"{t('browser.meta_iucn')}: {iucn_text}",
             f"{t('browser.meta_rarity')}: {f'{rarity:.2f}' if rarity is not None else '—'}",
+            f"{t('browser.meta_gbif_rarity')}: {f'{gbif_r:.1f} / 100' if gbif_r is not None else '—'}",
             f"{t('browser.meta_focus')}: {focus}",
             f"{t('browser.meta_sharpness')}: {f'{sharp:.1f}' if sharp is not None else '—'}",
             f"{t('browser.meta_aesthetic')}: {f'{topiq:.2f}' if topiq is not None else '—'}",
@@ -753,6 +776,21 @@ class DetailPanel(QWidget):
         else:
             self._val_rarity.setText(_unknown)
             self._val_rarity.setStyleSheet(
+                f"color: {COLORS['text_primary']}; font-size: 12px; background: transparent;"
+            )
+
+        # GBIF 全球罕见度（0-100，AWS Open Data 派生）— 分段着色
+        # GBIF global rarity (0-100, AWS Open Data derived) — segmented color
+        gbif_r = p.get("gbif_rarity_100")
+        if gbif_r is not None:
+            color = _gbif_color(gbif_r)
+            self._val_gbif_rarity.setText(f"{gbif_r:.1f} / 100")
+            self._val_gbif_rarity.setStyleSheet(
+                f"color: {color}; font-size: 13px; font-weight: 600; background: transparent;"
+            )
+        else:
+            self._val_gbif_rarity.setText(_unknown)
+            self._val_gbif_rarity.setStyleSheet(
                 f"color: {COLORS['text_primary']}; font-size: 12px; background: transparent;"
             )
 

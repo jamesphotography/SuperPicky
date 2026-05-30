@@ -523,6 +523,12 @@ class ExifToolManager:
         # rarely-used IPTC field invisible in LR/C1 main panels, writable natively.
         if item.get('iucn_category'):
             args.append(f'-XMP-iptcCore:IntellectualGenre={item["iucn_category"]}')
+        # V4.2.7: GBIF 全球罕见度 0-100。借用 XMP-iptcExt:Event（IPTC Extension
+        # 事件字段，LR/C1 主面板不显示，几乎无人手动写入）。
+        # V4.2.7: GBIF global rarity 0-100. Uses XMP-iptcExt:Event — IPTC Extension
+        # "Event" field, invisible in LR/C1 main panels, rarely used in the wild.
+        if item.get('gbif_rarity_100') is not None:
+            args.append(f'-XMP-iptcExt:Event={item["gbif_rarity_100"]:.2f}')
         temp_files: List[str] = []
 
         title = item.get('title')
@@ -592,6 +598,9 @@ class ExifToolManager:
         # V4.2.7: IUCN 等级同样写入侧车 / IUCN category mirrored into sidecar
         if item.get('iucn_category'):
             args.append(f'-XMP-iptcCore:IntellectualGenre={item["iucn_category"]}')
+        # V4.2.7: GBIF 罕见度同样写入侧车 / GBIF rarity mirrored into sidecar
+        if item.get('gbif_rarity_100') is not None:
+            args.append(f'-XMP-iptcExt:Event={item["gbif_rarity_100"]:.2f}')
         temp_files: List[str] = []
 
         # UTF-8 temp file for Title/Caption
@@ -651,6 +660,7 @@ class ExifToolManager:
             '-XMP:Title=',
             '-XMP-photoshop:TransmissionReference=',
             '-XMP-iptcCore:IntellectualGenre=',
+            '-XMP-iptcExt:Event=',
             '-overwrite_original',
             xmp_path
         ]

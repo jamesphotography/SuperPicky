@@ -110,6 +110,54 @@ class BirdDatabaseManager:
             # rarity_index 表可能不存在（旧版数据库），静默降级，不影响识别主流程
             return None
 
+    def get_gbif_rarity_by_class_id(
+        self, class_id: int, country_code: Optional[str] = None
+    ) -> Optional[float]:
+        """
+        根据模型类别ID获取 GBIF 罕见度（0-100 分）。
+
+        Args:
+            class_id: 鸟类类别ID（model_class_id）
+            country_code: ISO 3166-1 alpha-2 国家代码（如 "CN"/"AU"）。
+                          提供时优先查该国家的 rarity，未命中再回退到全球。
+
+        Returns:
+            GBIF 罕见度 (0-100, 越大越罕见; None=数据库未匹配)
+
+        Fetch GBIF-derived rarity score (0-100). When country_code is given,
+        prefer the country-specific score (table gbif_rarity_by_country);
+        fall back to the global table on miss.
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+
+                # 1) 优先查 country-specific 分数 / Country-specific first
+                if country_code:
+                    cursor.execute(
+                        "SELECT gbif_rarity_100 FROM gbif_rarity_by_country "
+                        "WHERE model_class_id = ? AND countrycode = ? "
+                        "AND gbif_rarity_100 IS NOT NULL LIMIT 1",
+                        (class_id, country_code),
+                    )
+                    row = cursor.fetchone()
+                    if row and row[0] is not None:
+                        return float(row[0])
+
+                # 2) Fallback 全球 / Global fallback
+                cursor.execute(
+                    "SELECT gbif_rarity_100 FROM gbif_rarity_100 "
+                    "WHERE model_class_id = ? AND gbif_rarity_100 IS NOT NULL LIMIT 1",
+                    (class_id,),
+                )
+                row = cursor.fetchone()
+                if row and row[0] is not None:
+                    return float(row[0])
+                return None
+        except Exception:
+            # 表可能不存在（旧版数据库），静默降级
+            return None
+
     def get_iucn_by_class_id(self, class_id: int) -> Optional[str]:
         """
         根据模型类别ID获取 IUCN 红色名录保护级别
