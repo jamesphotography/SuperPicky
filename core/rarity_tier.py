@@ -11,12 +11,12 @@ Five tiers expressed via Unicode Geometric Shapes — empty ring, quarter,
 half, three-quarter, full — mapped to a photographer-friendly difficulty
 scale: Common / Occasional / Uncommon / Rare / Legendary.
 
-阈值 / Thresholds（按 GBIF 0-100 分均匀切 20 分一档）
-  [0, 20)  → 常见
-  [20, 40) → 偶见
-  [40, 60) → 少见
-  [60, 80) → 罕见
-  [80, 100] → 传奇
+阈值 / Thresholds（非均匀切分，让「常见」档紧贴真街边鸟）
+  [0, 8)   → 常见  (~7%)   真街边鸟（家麻雀/麻雀/白头鹎/戴胜级）
+  [8, 25)  → 能见  (~17%)  努力能见到（澳洲花园鸟/中国湿地鸟级）
+  [25, 50) → 少见  (~25%)  专程找
+  [50, 75) → 罕见  (~25%)  远途+耐心
+  [75, 100]→ 传奇  (~26%)  一生一遇
 """
 
 from __future__ import annotations
@@ -30,7 +30,10 @@ TIER_ICONS = ["○", "◔", "◑", "◕", "●"]
 
 # 中文 tier 名（摄影师视角的观察难度）
 # Chinese tier names — photographer-centric observation difficulty.
-TIER_NAMES_ZH = ["常见", "偶见", "少见", "罕见", "传奇"]
+# 注：第 2 档用「能见」而非「偶见」，避免和第 3 档「少见」产生语义歧义
+# Note: tier 2 uses 「能见」("findable") to avoid Chinese semantic
+# collision with tier 3「少见」(both could read as "sometimes seen").
+TIER_NAMES_ZH = ["常见", "能见", "少见", "罕见", "传奇"]
 
 # 英文 tier 名
 # English tier names.
@@ -47,10 +50,76 @@ TIER_COLORS = [
     "#D81E05",  # 红 / red   — 传奇
 ]
 
-# 4 个内部边界（左闭右开），第 5 档是 [80, +∞)。
+# 4 个内部边界（左闭右开），第 5 档是 [75, +∞)。
 # Four inner boundaries (left-inclusive, right-exclusive); the 5th tier
-# is [80, +infinity).
-_TIER_THRESHOLDS = [20.0, 40.0, 60.0, 80.0]
+# is [75, +infinity).
+# 非均匀切分：让「常见」档收紧到真街边鸟（前 ~7%），避免和澳洲花园鸟等
+# 「中国出片但本地常见」鸟混档。Non-uniform thresholds collapse the
+# "Common" bucket to true everyday birds (~top 7%), preventing collision
+# with regionally-common species that feel rare to off-region photographers.
+_TIER_THRESHOLDS = [8.0, 25.0, 50.0, 75.0]
+
+
+# 手动 override 表 / Manual override table
+#
+# 对极少数 GBIF 算法明显失真的鸟，按学名做硬编码降级。
+# 这些鸟通常是「分类学新拆分 / 区域偏远 / 学名变更」导致 GBIF CC0+CC-BY
+# 子集里 count 极低，被百分位算法误判为「传奇」。
+# 每条 override 必须附理由 + 提议人 + 日期，方便审计与回滚。
+#
+# Hardcoded overrides for the handful of species where GBIF's count-based
+# percentile clearly mis-ranks them (taxonomic splits, remote regions,
+# license filter cutoffs). Each entry must carry a rationale + proposer +
+# date so the table stays auditable and reversible.
+HARDCODE_OVERRIDES = {
+    # 学名 → (override 分数 0-100, 理由)
+    # scientific name → (override score 0-100, reason)
+    "Quoyornis georgianus": (
+        40.0,
+        "白胸鸲鹟 — 2020 年从 Eopsaltria 拆出新属，GBIF backbone 仍按旧学名"
+        "索引大量记录；西澳森林局部常见但全球 cc 子集 count=183 → 误判为传奇。"
+        "Recently split from Eopsaltria; majority of records still indexed "
+        "under the old binomial. Locally common in SW Australia. "
+        "[james 2026-05-30]",
+    ),
+    "Butorides sundevalli": (
+        12.0,
+        "加岛绿鹭 — 加拉帕戈斯特有亚种近年提为独立种，GBIF 数据稀少 (count=319)"
+        "但岛上观鸟者几乎必见。懂鸟 4.57 印证其实际相当容易遇到。"
+        "Recently elevated Galapagos subspecies; sparse GBIF data but "
+        "trivially encountered on any Galapagos visit. "
+        "[james 2026-05-30]",
+    ),
+    "Pyrocephalus obscurus": (
+        18.0,
+        "朱红霸鹟 — 2016 年从 Pyrocephalus rubinus 拆出，原属拆分后 GBIF 数据"
+        "尚未完全归位；实为美洲西海岸常见鸟。懂鸟 6.64 印证不属传奇级。"
+        "Recently split from P. rubinus; under-indexed in GBIF backbone but "
+        "common along American west coast. [james 2026-05-30]",
+    ),
+    "Pteroglossus erythropygius": (
+        20.0,
+        "褐嘴/淡嘴簇舌巨嘴鸟 — 厄瓜多尔/哥伦比亚低地森林相对常见；CC0+CC-BY 子集"
+        "记录稀少 (count=152) 但当地观鸟项目几乎必中。懂鸟 7.22 偏稀少端。"
+        "Common in Ecuador / W Colombia lowland forest; sparse cc-licensed "
+        "GBIF data but reliable on local birding trips. [james 2026-05-30]",
+    ),
+}
+
+
+def get_score_override(scientific_name: Optional[str]) -> Optional[float]:
+    """
+    检查学名是否在手动 override 表里。命中返回 override 分数，否则返回 None。
+
+    Return the manually-overridden score for a scientific name, or None
+    if the species is not in the override table.
+    """
+    if not scientific_name:
+        return None
+    entry = HARDCODE_OVERRIDES.get(scientific_name.strip())
+    if entry is None:
+        return None
+    return float(entry[0])
 
 
 def gbif_score_to_tier(score: Optional[float]) -> Optional[int]:

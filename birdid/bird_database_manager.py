@@ -153,14 +153,27 @@ class BirdDatabaseManager:
                         # 表不存在 → 走全球 fallback / Missing table → global fallback
                         pass
 
-                # 2) Fallback 全球 / Global fallback
+                # 2) Fallback 全球 + 手动 override 检查
+                # Global fallback + manual override check
                 cursor.execute(
-                    "SELECT gbif_rarity_100 FROM gbif_rarity_100 "
+                    "SELECT gbif_rarity_100, scientific_name FROM gbif_rarity_100 "
                     "WHERE model_class_id = ? AND gbif_rarity_100 IS NOT NULL LIMIT 1",
                     (class_id,),
                 )
                 row = cursor.fetchone()
                 if row and row[0] is not None:
+                    # V4.2.7: 检查 core.rarity_tier 的 HARDCODE_OVERRIDES 表，
+                    # 对极少数 GBIF 算法明显失真的鸟做学名级硬编码降级。
+                    # V4.2.7: Consult core.rarity_tier.HARDCODE_OVERRIDES first
+                    # so manual corrections for taxonomic splits / data gaps
+                    # take precedence over the raw GBIF score.
+                    try:
+                        from core.rarity_tier import get_score_override
+                        ov = get_score_override(row[1])
+                        if ov is not None:
+                            return ov
+                    except Exception:
+                        pass
                     return float(row[0])
                 return None
         except Exception:
