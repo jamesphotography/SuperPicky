@@ -640,7 +640,7 @@ class InitializationManager(QObject):
 
         if self._uses_bundled_runtime():
             raise RuntimeError(
-                "Bundled macOS Lite Torch runtime is unavailable; rebuild the app bundle."
+                "Bundled macOS Torch runtime is unavailable; rebuild the app bundle."
             )
 
         logging.info("运行时环境需要修复，开始准备 %s 运行时...", runtime_variant)
@@ -1080,7 +1080,7 @@ class InitializationManager(QObject):
         """
         if self._uses_bundled_runtime():
             raise RuntimeError(
-                "Bundled macOS Lite Torch runtime is unavailable; runtime installation is disabled."
+                "Bundled macOS Torch runtime is unavailable; runtime installation is disabled."
             )
 
         if self._use_packaged_runtime_bootstrap():

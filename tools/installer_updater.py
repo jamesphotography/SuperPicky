@@ -92,7 +92,7 @@ def select_installer_asset(
     Pick the installer asset for the current platform.
 
     选择规则 / Rules:
-    - macOS: 选 *.dmg，优先 arm64，排除 Lite 字样。
+    - macOS: 选 *.dmg，优先 arm64（mac 端只发布 full 包，仍保留 Lite 字样过滤作防御）。
     - Windows: 优先 Setup_Lite_Win64_*.exe（用户已下载的 PyTorch + 模型
       存在 ~/AppData/Local 中，升级 Lite 不会重新下载），否则退到 Full。
 
@@ -116,11 +116,10 @@ def select_installer_asset(
 def _select_mac_installer(assets: List[dict]) -> Optional[InstallerAsset]:
     # 选 arm64 dmg。PyTorch 在 macOS x86_64 上的最后 wheel 是 2.2.2 (2024-03)，
     # 之后官方不再发 Intel wheel，SuperPicky v4.2.6 起也不再为 Intel mac 出包。
-    # 排除 Lite 字样（mac 端从未发布 Lite 包；保留过滤是为未来留兜底）。
+    # 排除 Lite 字样（mac 端只发布 full 包，过滤保留作防御）。
     # macOS dmg selection. PyTorch's last macOS x86_64 wheel was 2.2.2 (Mar
     # 2024); from SuperPicky v4.2.6 we no longer ship Intel mac builds.
-    # We also filter "Lite" defensively — macOS never shipped a Lite variant
-    # for production users.
+    # We also filter "Lite" defensively — macOS only ships the full bundle.
     for asset in assets:
         name = asset.get("name", "")
         if name.endswith(".dmg") and "arm64" in name and "Lite" not in name:
