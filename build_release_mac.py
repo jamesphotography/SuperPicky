@@ -4,8 +4,8 @@
 """
 SuperPicky macOS 构建脚本 / SuperPicky macOS build script.
 
-支持 full 与 lite 两种构建类型，并可选执行 Developer ID 签名。
-Supports both full and lite builds with optional Developer ID signing.
+仅支持 full 构建，并可选执行 Developer ID 签名。
+Builds the full macOS bundle with optional Developer ID signing.
 """
 
 from __future__ import annotations
@@ -32,11 +32,9 @@ from packaging.requirements import Requirement
 
 ROOT_DIR = Path(__file__).resolve().parent
 APP_NAME = "SuperPicky"
-LITE_APP_NAME = "SuperPickyLite"
 BUILD_INFO_FILE = ROOT_DIR / "core" / "build_info.py"
 DOWNLOAD_MODELS_SCRIPT = ROOT_DIR / "scripts" / "download_models.py"
 FULL_SPEC_FILE = ROOT_DIR / "SuperPicky_full.spec"
-LITE_SPEC_FILE = ROOT_DIR / "SuperPicky_lite.spec"
 REQUIREMENTS_MAC_FILE = ROOT_DIR / "requirements_mac.txt"
 ENTITLEMENTS_FILE = ROOT_DIR / "entitlements.plist"
 DMG_README_FILE = ROOT_DIR / "resources" / "DMG_README.txt"
@@ -158,7 +156,7 @@ def parse_args() -> argparse.Namespace:
     """
 
     parser = argparse.ArgumentParser(description="SuperPicky macOS 构建脚本")
-    parser.add_argument("--build-type", choices=["full", "lite"], required=True, help="构建类型：full 或 lite")
+    parser.add_argument("--build-type", choices=["full"], required=True, help="构建类型：仅支持 full")
     parser.add_argument(
         "--arch",
         choices=["arm64", "x86_64"],
@@ -339,8 +337,6 @@ def spec_file_for(build_type: str) -> Path:
     返回构建类型对应的 spec 文件 / Return the spec file for a build type.
     """
 
-    if build_type == "lite":
-        return LITE_SPEC_FILE
     return FULL_SPEC_FILE
 
 
@@ -349,7 +345,7 @@ def app_name_for(build_type: str) -> str:
     返回构建类型对应的应用名 / Return the app name for a build type.
     """
 
-    return LITE_APP_NAME if build_type == "lite" else APP_NAME
+    return APP_NAME
 
 
 def artifact_name_for(build_type: str) -> str:
@@ -357,7 +353,7 @@ def artifact_name_for(build_type: str) -> str:
     返回发布产物名称前缀 / Return the artifact name prefix for releases.
     """
 
-    return "SuperPicky_Lite" if build_type == "lite" else APP_NAME
+    return APP_NAME
 
 
 def display_name_for(build_type: str) -> str:
@@ -365,7 +361,7 @@ def display_name_for(build_type: str) -> str:
     返回面向用户的展示名称 / Return the user-facing display name.
     """
 
-    return "SuperPicky Lite" if build_type == "lite" else APP_NAME
+    return APP_NAME
 
 
 def get_build_paths(build_type: str, arch: str, app_version: str, commit_hash: str) -> BuildPaths:
@@ -565,8 +561,6 @@ def build_bundle(config: BuildConfig, paths: BuildPaths) -> None:
 
     log_step("步骤 5: 执行 PyInstaller 构建")
     spec_file = spec_file_for(config.build_type)
-    if config.build_type == "lite":
-        log_verbose("[信息] macOS Lite 当前采用内置 Torch/Torchvision/Timm 的单包运行时策略")
     pyinstaller_command = [
         sys.executable,
         "-m",
