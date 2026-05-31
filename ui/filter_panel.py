@@ -27,7 +27,10 @@ _RATING_OPTIONS = [
     ("0",     "0",   [0]),          # 0星（有鸟但评分为0）
     ("nobird", "×",  [-1]),         # 无鸟
 ]
-_DEFAULT_RATING = "3"
+# 默认勾选的评分按钮（V4.2.7：3星 + 2星，与摄影师常用「能用的片子」一致）
+# Default checked rating buttons (V4.2.7): 3★ + 2★ — matches the "keeper" pile
+# photographers typically review first.
+_DEFAULT_RATINGS = {"3", "2"}
 
 # 对焦按钮配置 (mode_key, label, statuses_list, color_key)
 # statuses_list 是传给 DB 的 focus_status 列表
@@ -78,7 +81,7 @@ class FilterPanel(QWidget):
         self._species_list: list = []
 
         # 当前激活的多选状态（set of mode keys）
-        self._active_ratings: set = {_DEFAULT_RATING}
+        self._active_ratings: set = set(_DEFAULT_RATINGS)
         # 对焦多选状态（默认精焦+合焦）
         self._focus_checks: dict = {}  # mode -> QCheckBox（在 _build_focus_buttons 里填充）
 
@@ -169,6 +172,7 @@ class FilterPanel(QWidget):
         # --- 排序方式 ---
         layout.addWidget(_section_label(self.i18n.t("browser.section_sort")))
         self._sort_combo = QComboBox()
+        self._sort_combo.addItem(self.i18n.t("browser.sort_rarity"), "rarity_desc")
         self._sort_combo.addItem(self.i18n.t("browser.sort_filename"), "filename")
         self._sort_combo.addItem(self.i18n.t("browser.sort_sharpness"), "sharpness_desc")
         self._sort_combo.addItem(self.i18n.t("browser.sort_aesthetic"), "aesthetic_desc")
@@ -460,10 +464,10 @@ class FilterPanel(QWidget):
 
     def reset_all(self):
         """重置筛选条件到默认值。"""
-        # 评分 → 默认 ★★★
-        self._active_ratings = {_DEFAULT_RATING}
+        # 评分 → 默认 ★★★ + ★★
+        self._active_ratings = set(_DEFAULT_RATINGS)
         for m, btn in self._rating_btns.items():
-            btn.setStyleSheet(self._rating_btn_style(m == _DEFAULT_RATING, m))
+            btn.setStyleSheet(self._rating_btn_style(m in _DEFAULT_RATINGS, m))
 
         # 对焦 → 默认全选
         _defaults = set(_DEFAULT_CHECKED_FOCUS)

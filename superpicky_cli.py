@@ -163,7 +163,7 @@ def cmd_process(args):
             print(f"  └─ 国家: {args.birdid_country}")
         if getattr(args, 'birdid_region', None):
             print(f"  └─ 区域: {args.birdid_region}")
-        print(f"  └─ 置信度阈值: {getattr(args, 'birdid_threshold', 70.0)}%")
+        print(f"  └─ 置信度阈值: {getattr(args, 'birdid_threshold', 50.0)}%")
     print()
     
     # 更新 ARW 写入策略
@@ -200,7 +200,7 @@ def cmd_process(args):
         birdid_use_ebird=True,
         birdid_country_code=getattr(args, 'birdid_country', None) or "",
         birdid_region_code=getattr(args, 'birdid_region', None) or "",
-        birdid_confidence_threshold=getattr(args, 'birdid_threshold', 70.0)
+        birdid_confidence_threshold=getattr(args, 'birdid_threshold', 50.0)
     )
     
     # 创建处理器（直接传入 ProcessingSettings）
@@ -859,7 +859,7 @@ def cmd_batch(args):
         birdid_use_ebird=True,
         birdid_country_code=getattr(args, 'birdid_country', None) or "",
         birdid_region_code=getattr(args, 'birdid_region', None) or "",
-        birdid_confidence_threshold=getattr(args, 'birdid_threshold', 70.0),
+        birdid_confidence_threshold=getattr(args, 'birdid_threshold', 50.0),
     )
     
     # 执行批量处理
@@ -995,8 +995,8 @@ Examples:
                           help='BirdID 国家代码 (如 AU, CN, US)')
     p_process.add_argument('--birdid-region', type=str, default=None,
                           help='BirdID 区域代码 (如 AU-SA, CN-31)')
-    p_process.add_argument('--birdid-threshold', type=float, default=70.0,
-                          help='BirdID 置信度阈值 (默认: 70%%)')
+    p_process.add_argument('--birdid-threshold', type=float, default=50.0,
+                          help='BirdID 置信度阈值 (默认: 50%%)')
     # V4.1: 临时文件管理
     p_process.add_argument('--keep-temp-files', action='store_true', dest='keep_temp',
                           help='保留临时预览图片（默认: 开启）')
@@ -1094,7 +1094,7 @@ Examples:
     p_batch.add_argument('--auto-identify', '-i', action='store_true')
     p_batch.add_argument('--birdid-country', type=str, default=None)
     p_batch.add_argument('--birdid-region', type=str, default=None)
-    p_batch.add_argument('--birdid-threshold', type=float, default=70.0)
+    p_batch.add_argument('--birdid-threshold', type=float, default=50.0)
     p_batch.add_argument('--save-crop', action='store_true')
     p_batch.add_argument('--keep-temp-files', action='store_true', dest='keep_temp')
     p_batch.add_argument('--no-keep-temp-files', action='store_false', dest='keep_temp')
