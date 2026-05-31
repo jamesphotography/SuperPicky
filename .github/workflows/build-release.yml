@@ -43,9 +43,11 @@ jobs:
           GITHUB_REF_NAME: ${{ github.ref_name }}
         run: python scripts/ci_release.py resolve-metadata
 
-      # Windows 只构建 Lite —— Full (build-type=cpu) 仅打包了 CPU PyTorch，对
-       # 有 NVIDIA GPU 的用户不能用 CUDA 加速；Lite 在首次启动时按硬件下载匹配的
-      # PyTorch wheel，覆盖所有 Win 用户群体。Full 仅离线安装场景有意义但用户少。
+      # Windows 同时构建 Lite 与 Full CPU 两个安装器：
+      # - Lite：体积小，首次启动按硬件下载匹配 PyTorch wheel，但在大陆部分网络
+      #   环境下下载非常慢，用户反馈强烈。
+      # - Full CPU：自带 CPU PyTorch + 所有模型，安装即用、完全离线，给慢网络
+      #   或离线环境用户兜底（无 CUDA 加速；有 N 卡用户仍建议 Lite）。
       - name: Build Lite release
         env:
           RELEASE_TAG: ${{ steps.release_meta.outputs.tag }}
@@ -56,9 +58,19 @@ jobs:
         with:
           path: ./output/installer_lite/SuperPicky-lite.iss
 
+      - name: Build Full CPU release
+        env:
+          RELEASE_TAG: ${{ steps.release_meta.outputs.tag }}
+        run: python build_release_win.py --build-type cpu --copy-dir output --no-zip
+
+      - name: Create Full CPU installer with Inno Setup
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.7
+        with:
+          path: ./output/installer_cpu/SuperPicky.iss
+
       - name: Prepare release assets
         run: |
-          python scripts/ci_release.py collect-assets --output-dir release_assets --pattern output/installer_lite/Output/SuperPicky_Setup_Lite_Win64_*.exe
+          python scripts/ci_release.py collect-assets --output-dir release_assets --pattern output/installer_lite/Output/SuperPicky_Setup_Lite_Win64_*.exe --pattern output/installer_cpu/Output/SuperPicky_Setup_Full_Win64_*.exe
 
       - name: Build code patch zip
         run: python scripts/ci_release.py build-patch --output-dir release_assets --patch-version ${{ steps.release_meta.outputs.tag }}
