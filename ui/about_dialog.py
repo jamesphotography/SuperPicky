@@ -169,7 +169,7 @@ class AboutDialog(QDialog):
 Australian-Chinese Professional Photographer, Author of "James' Landscape Photography Notes" Trilogy
 
 Model Training: Jordan Yu
-Development Team: Xiaoping, Lyapunov, osk.sh
+Development Team: Xiaoping, Lyapunov, osk.sh, yblpoi, jcchan23
 
 Open Source Models
 YOLO11 - Bird Detection by Ultralytics

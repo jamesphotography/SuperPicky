@@ -18,7 +18,7 @@ COLORS = {
     'text_primary': '#fafafa',       # 主文字
     'text_secondary': '#a1a1a1',     # 次要文字
     'text_tertiary': '#909090',      # 第三级文字
-    'text_muted': '#404040',         # 静默文字
+    'text_muted': '#8a8a8a',         # 静默文字（hint / 说明），53% 亮度保证深色背景可读
 
     # 强调色 - 优雅的青绿色
     'accent': '#00d4aa',
