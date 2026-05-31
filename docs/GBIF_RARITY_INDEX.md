@@ -1,28 +1,27 @@
 # GBIF 全球罕见度指数 / GBIF Global Rarity Index
 
-> v4.3.0 起，SuperPicky 用 **GBIF 全球观察数据** 替代了原先的"懂鸟"罕见指数。本文说明
-> 这套新罕见度系统的来源、算法、使用方式与解读方法。
+> v4.3.0 起，SuperPicky 引入了一套基于 **GBIF 全球观察数据** 的罕见度
+> 系统：每只鸟一个 0-100 分，配五级图标，帮你在一堆相似照片里一眼挑出
+> 真正难得的那张。本文说明分数从哪里来、怎么算、怎么读。
 >
-> Starting with v4.3.0, SuperPicky replaces the legacy DongNiao
-> rarity index with a global rarity score derived from **GBIF
-> occurrence data**. This document explains where the score
-> comes from, how it is computed, and how to use it.
+> v4.3.0 introduces a rarity scoring system built on **GBIF
+> occurrence data**: every bird gets a 0-100 score plus a 5-tier
+> glyph, so you can pick out the genuinely rare shot from a stack of
+> lookalikes at a glance. This document explains where the score
+> comes from, how it is computed, and how to read it.
 
 ---
 
-## 1. 为什么换掉懂鸟罕见指数 / Why move off DongNiao
+## 1. 为什么是 GBIF / Why GBIF
 
-懂鸟（Aboutbirds）的 0-10 罕见指数虽然在中文鸟圈里很常用，但它来自
-闭源 App 的私有数据库，把它直接发布在开源软件里存在版权和服务条款上
-的风险。我们需要一份**可溯源、可商用、可开源**的全球罕见度数据。
+我们需要一份**可溯源、可商用、可开源**的全球罕见度数据。
+评估了几个候选数据源之后，GBIF（Global Biodiversity Information
+Facility）是唯一同时满足规模、许可、可引用性三项的：
 
-DongNiao's 0-10 rarity index is widely used in the Chinese birding
-community, but it ships inside a closed-source app with a proprietary
-database. Bundling that data in an open-source project carries
-copyright and ToS risk. We needed a **citable, license-clean, fully
-open** alternative with global coverage.
-
-**为什么是 GBIF / Why GBIF**:
+We needed **citable, license-clean, fully open** rarity data with
+global coverage. Among the candidates we evaluated, the Global
+Biodiversity Information Facility (GBIF) was the only one that
+checked all three boxes — scale, license, citability:
 
 - **数据规模 / Volume**: 30 亿+ 物种观察记录，覆盖全球 / 3B+ occurrence records, global coverage.
 - **开放许可 / License**: 我们只用 CC0 / CC-BY 两个最宽松的许可下的数据 / We
@@ -117,15 +116,14 @@ The IUCN floor only applies when GBIF score is below it.
 ### 3.4 count=0 异常修复 / count=0 anomaly fix
 
 某些常见鸟在 GBIF 上 `count = 0`（地区性数据采集差异、学名同义词未合并
-等原因），原始算法会给 100 分——明显错误。我们对这类异常用**懂鸟原始
-数据的邻居中位数**作 proxy 重打分（懂鸟数据已不再分发，仅用于离线修
-正预计算表）。共修复 47 个物种。
+等原因），原始算法会给 100 分——明显错误。我们对这 47 个异常物种，用
+**同科属邻居 GBIF 中位数**作 proxy 重打分，写进离线预计算表里。
 
 Some common birds have `count = 0` on GBIF due to regional sampling
 gaps or unmerged synonyms; the naive algorithm scores them 100 — clearly
-wrong. We use the **median of DongNiao neighbors in the same family**
-as a proxy to re-score these (DongNiao data is *only* used offline to
-correct the precomputed table; not distributed). 47 species fixed.
+wrong. For these 47 species we substitute the **median GBIF score of
+same-family neighbors** as a proxy and bake the corrected value into
+the offline precomputed table.
 
 ### 3.5 手动 override / Manual overrides
 
