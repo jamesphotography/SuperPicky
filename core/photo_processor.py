@@ -1140,9 +1140,22 @@ class PhotoProcessor:
                     bird_log = cn_name or en_name
                     bird_title = cn_name or en_name
                 
-                self._log(f"  🐦 Bird ID [{source_display}]: {bird_log} ({birdid_confidence:.0f}%)")
-                
+                # V4.2.7: 跟随鸟名输出 GBIF 罕见度 tier（5 级圆形充填图标 + 中英文）
+                # V4.2.7: Append GBIF rarity tier to the bird-id log line.
+                tier_suffix = ""
+                tier_idx = None
+                if gbif_rarity_100 is not None:
+                    from core.rarity_tier import gbif_score_to_tier, tier_icon, tier_name
+                    tier_idx = gbif_score_to_tier(gbif_rarity_100)
+                    is_zh = not self.i18n.current_lang.startswith('en')
+                    tier_suffix = f"  {tier_icon(tier_idx)} {tier_name(tier_idx, is_zh=is_zh)}"
+
+                self._log(f"  🐦 Bird ID [{source_display}]: {bird_log} ({birdid_confidence:.0f}%){tier_suffix}")
+
                 species_entry = {'cn_name': cn_name, 'en_name': en_name}
+                if tier_idx is not None:
+                    species_entry['gbif_tier'] = tier_idx
+                    species_entry['gbif_score'] = gbif_rarity_100
                 if not any(s.get('cn_name') == cn_name for s in self.stats['bird_species']):
                     self.stats['bird_species'].append(species_entry)
                 if cn_name:
@@ -2457,7 +2470,67 @@ class PhotoProcessor:
         ai_total_time = time.time() - ai_total_start
         avg_ai_time = ai_total_time / total_files if total_files > 0 else 0
         self._log(self.i18n.t("logs.ai_detection_total", time_str=f"{ai_total_time:.1f}s", avg=avg_ai_time))
+
+        # V4.2.7: 跑批结束输出 GBIF 罕见度 tier 分布统计
+        # V4.2.7: Print GBIF rarity tier breakdown at the end of the batch.
+        self._log_tier_summary()
     
+    def _log_tier_summary(self) -> None:
+        """
+        输出本次跑批识别到的鸟种按 GBIF 罕见度 tier 分组的统计。
+
+        Print a rarity-tier breakdown for all species identified in this
+        batch, ordered from rarest (● 传奇) to most common (○ 常见). Names
+        are localized to the current UI language.
+        """
+        bird_species = self.stats.get('bird_species', [])
+        if not bird_species:
+            return
+
+        from collections import defaultdict
+        from core.rarity_tier import TIER_ICONS, TIER_NAMES_ZH, TIER_NAMES_EN
+
+        tier_groups = defaultdict(list)
+        no_tier = []
+        for entry in bird_species:
+            tidx = entry.get('gbif_tier')
+            if tidx is None:
+                no_tier.append(entry)
+            else:
+                tier_groups[tidx].append(entry)
+
+        if not tier_groups and not no_tier:
+            return
+
+        is_zh = not self.i18n.current_lang.startswith('en')
+        tier_names = TIER_NAMES_ZH if is_zh else TIER_NAMES_EN
+        primary_key = 'cn_name' if is_zh else 'en_name'
+        fallback_key = 'en_name' if is_zh else 'cn_name'
+
+        def _name(entry: Dict) -> str:
+            return entry.get(primary_key) or entry.get(fallback_key) or '?'
+
+        header = "🐦 鸟种罕见度分布:" if is_zh else "🐦 Species rarity breakdown:"
+        unit = "种" if is_zh else "spp."
+        unknown_label = "未知" if is_zh else "unknown"
+
+        self._log("")
+        self._log(header)
+
+        # 从最罕见 (●) 到最常见 (○) 排列
+        for tidx in range(4, -1, -1):
+            entries = tier_groups.get(tidx, [])
+            if not entries:
+                continue
+            names = ", ".join(_name(e) for e in entries)
+            self._log(
+                f"  {TIER_ICONS[tidx]} {tier_names[tidx]}: {len(entries)} {unit}  ({names})"
+            )
+
+        if no_tier:
+            names = ", ".join(_name(e) for e in no_tier)
+            self._log(f"  ? {unknown_label}: {len(no_tier)} {unit}  ({names})")
+
     # 注意: _calculate_rating 方法已移至 core/rating_engine.py
     # 现在使用 self.rating_engine.calculate() 替代
     
