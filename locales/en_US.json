@@ -658,7 +658,12 @@
     "name_format_avilist": "AviList v2025",
     "name_format_clements": "Clements / eBird v2024",
     "name_format_birdlife": "BirdLife v9",
-    "name_format_scientific": "Scientific Name Only"
+    "name_format_scientific": "Scientific Name Only",
+    "folder_layout": "Output Folder Layout",
+    "folder_layout_label": "Organize by",
+    "folder_layout_rating_first": "Rating → Species (3star_excellent/White-breasted_Robin/)",
+    "folder_layout_species_first": "Species → Rating (White-breasted_Robin/3star_excellent/)",
+    "folder_layout_hint": "1-star / 0-star / -1-star photos always go into the \"Other Birds\" folder (not split by species) so the rejected pile stays consolidated. Only affects new runs; existing directory structures are untouched."
   },
   "normalization_modes": {
     "log_compression": "Log Compression(V3.1)",

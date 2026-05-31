@@ -74,6 +74,12 @@ class AdvancedConfig:
         #   "scientific" = Scientific name only
         "name_format": "default",
 
+        # V4.2.7: 分目录布局策略
+        # "rating-first"  (默认) — 3星_优选/白胸鸲鹟/photo.NEF
+        # "species-first"        — 白胸鸲鹟/3星_优选/photo.NEF
+        # 1星/0星/-1星 永远只用 rating 目录，与本设置无关
+        "folder_layout": "rating-first",
+
         # 外部编辑应用（右键菜单 "用 X 打开"）
         # 每项格式：{"name": "显示名称", "path": "/Applications/...app"}
         "external_apps": [],
@@ -349,6 +355,18 @@ class AdvancedConfig:
         """设置鸟种英文名显示格式: default | avilist | clements | birdlife | scientific"""
         if value in ("default", "avilist", "clements", "birdlife", "scientific"):
             self.config["name_format"] = value
+
+    # V4.2.7: 分目录布局 (rating-first 或 species-first)
+    # V4.2.7: Output folder layout (rating-first or species-first)
+    @property
+    def folder_layout(self) -> str:
+        from core.folder_layout import normalize_layout
+        return normalize_layout(self.config.get("folder_layout"))
+
+    def set_folder_layout(self, value: str) -> None:
+        """设置分目录布局: rating-first (默认) 或 species-first。"""
+        from core.folder_layout import VALID_LAYOUTS, DEFAULT_LAYOUT
+        self.config["folder_layout"] = value if value in VALID_LAYOUTS else DEFAULT_LAYOUT
 
     # 外部应用配置 getter/setter
     def get_external_apps(self) -> list:
