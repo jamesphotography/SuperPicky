@@ -658,7 +658,12 @@
     "name_format_avilist": "AviList v2025",
     "name_format_clements": "Clements / eBird v2024",
     "name_format_birdlife": "BirdLife v9",
-    "name_format_scientific": "仅学名"
+    "name_format_scientific": "仅学名",
+    "folder_layout": "分类目录布局",
+    "folder_layout_label": "组织方式",
+    "folder_layout_rating_first": "先星级 → 鸟种 (3星_优选/白胸鸲鹟/)",
+    "folder_layout_species_first": "先鸟种 → 星级 (白胸鸲鹟/3星_优选/)",
+    "folder_layout_hint": "1星/0星/-1星 统一归到「其他鸟类」目录（不按鸟种分散），便于整体处理。仅影响新跑批，已有目录结构不变。"
   },
   "normalization_modes": {
     "log_compression": "对数压缩(V3.1)",

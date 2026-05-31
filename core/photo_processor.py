@@ -811,16 +811,22 @@ class PhotoProcessor:
             # 按综合分数选最佳
             best_file = max(current_files, key=lambda x: x['sharpness'] * 0.5 + x['topiq'] * 0.5)
             
-            # 创建 burst 目录（V4.0.6: 无识别结果时放入"其他鸟类"）
-            if bird_species_name and highest_rating >= 2:
-                # 有鸟种识别结果，放在鸟种子目录
-                burst_dir = os.path.join(highest_rating_dir, bird_species_name, f"burst_{group_id:03d}")
-            elif self.settings.auto_identify and highest_rating >= 2:
-                # 启用了识鸟功能但没有识别结果，放在"其他鸟类"子目录
-                other_birds = self.i18n.t("logs.folder_other_birds")
-                burst_dir = os.path.join(highest_rating_dir, other_birds, f"burst_{group_id:03d}")
+            # V4.2.7: 创建 burst 目录 — 通过 compute_target_folder 统一 layout 策略
+            # V4.2.7: Build burst directory via the shared layout helper.
+            from core.folder_layout import compute_target_folder
+            other_birds = self.i18n.t("logs.folder_other_birds")
+            if highest_rating >= 2 and self.settings.auto_identify:
+                target = compute_target_folder(
+                    highest_rating,
+                    bird_species_name,
+                    self.config.folder_layout,
+                    other_birds,
+                )
+                burst_dir = os.path.join(self.dir_path, target, f"burst_{group_id:03d}")
             else:
-                # 未启用识鸟功能或低星级，直接放在评分目录
+                # 未启用识鸟或低星 — 直接放在评分目录
+                # Identification disabled or low star — burst goes straight under
+                # the rating folder regardless of layout.
                 burst_dir = os.path.join(highest_rating_dir, f"burst_{group_id:03d}")
             os.makedirs(burst_dir, exist_ok=True)
 
@@ -2809,32 +2815,32 @@ class PhotoProcessor:
             self.stats['picked'] = 0
     
     def _move_files_to_rating_folders(self, raw_dict):
-        """移动文件到分类文件夹（V4.0: 2星和3星按鸟种分目录）"""
+        """移动文件到分类文件夹（V4.2.7: layout 由 folder_layout 决定）"""
+        from core.folder_layout import compute_target_folder
+        other_birds = self.i18n.t("logs.folder_other_birds")
+        layout = self.config.folder_layout
+
         # 筛选需要移动的文件（包括所有星级，确保原目录为空）
         files_to_move = []
         for prefix, rating in self.file_ratings.items():
             if rating in [-1, 0, 1, 2, 3]:
-                base_folder = get_rating_folder_name(rating)
-                
-                # V4.0: 2-star and 3-star photos go to bird species subdirectories
-                # 只有高置信度（无 low_confidence 标记）才按鸟种分目录
-                if rating >= 2 and prefix in self.file_bird_species and not self.file_bird_species[prefix].get('low_confidence'):
-                    # Photo with confirmed species identification
-                    bird_info = self.file_bird_species[prefix]
-                    if self.i18n.current_lang.startswith('en'):
-                        bird_name = bird_info.get('en_name', '').replace(' ', '_')
-                    else:
-                        bird_name = bird_info.get('cn_name', '')
-                    if not bird_name:
-                        bird_name = bird_info.get('cn_name', '') or bird_info.get('en_name', '').replace(' ', '_') or 'Unknown'
-                    folder = os.path.join(base_folder, bird_name)
-                elif rating >= 2:
-                    # 2-star/3-star without species ID, put in "Other Birds"
-                    other_birds = self.i18n.t("logs.folder_other_birds")
-                    folder = os.path.join(base_folder, other_birds)
-                else:
-                    # 0-star, 1-star, -1-star go directly to rating folder
-                    folder = base_folder
+                # V4.2.7: 抽取鸟种名 → 调 compute_target_folder 统一 layout
+                # V4.2.7: Resolve species name then delegate to the layout helper.
+                bird_name = None
+                if rating >= 2:
+                    bird_info = self.file_bird_species.get(prefix)
+                    if bird_info and not bird_info.get('low_confidence'):
+                        if self.i18n.current_lang.startswith('en'):
+                            bird_name = bird_info.get('en_name', '').replace(' ', '_')
+                        else:
+                            bird_name = bird_info.get('cn_name', '')
+                        if not bird_name:
+                            bird_name = (
+                                bird_info.get('cn_name', '')
+                                or bird_info.get('en_name', '').replace(' ', '_')
+                                or 'Unknown'
+                            )
+                folder = compute_target_folder(rating, bird_name, layout, other_birds)
                 
                 if prefix in raw_dict:
                     # 有对应的 RAW 文件

@@ -281,13 +281,55 @@ class AdvancedSettingsDialog(QDialog):
         return page
 
     def _create_output_page(self):
-        """创建输出设置页面 - XMP 设置"""
+        """创建输出设置页面 - 目录布局 + XMP 设置"""
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(24, 20, 24, 20)
         layout.setSpacing(16)
 
-        # 页面标题
+        # === V4.2.7: 分目录布局 / Folder layout ===
+        fl_title = QLabel(self.i18n.t("advanced_settings.folder_layout"))
+        fl_title.setStyleSheet(f"""
+            color: {COLORS['text_primary']};
+            font-size: 13px;
+            font-weight: 500;
+            margin-bottom: 4px;
+        """)
+        layout.addWidget(fl_title)
+
+        fl_container = QHBoxLayout()
+        fl_container.setSpacing(16)
+        fl_label = QLabel(self.i18n.t("advanced_settings.folder_layout_label"))
+        fl_label.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 13px; min-width: 80px;"
+        )
+        fl_container.addWidget(fl_label)
+
+        fl_combo = QComboBox()
+        fl_combo.addItem(
+            self.i18n.t("advanced_settings.folder_layout_rating_first"), "rating-first"
+        )
+        fl_combo.addItem(
+            self.i18n.t("advanced_settings.folder_layout_species_first"), "species-first"
+        )
+        self.vars["folder_layout"] = fl_combo
+        fl_container.addWidget(fl_combo)
+        fl_container.addStretch()
+        layout.addLayout(fl_container)
+
+        fl_hint = QLabel(self.i18n.t("advanced_settings.folder_layout_hint"))
+        fl_hint.setStyleSheet(f"""
+            color: {COLORS['text_muted']};
+            font-size: 11px;
+            margin-left: 96px;
+            margin-bottom: 8px;
+        """)
+        fl_hint.setWordWrap(True)
+        layout.addWidget(fl_hint)
+
+        self._add_divider(layout)
+
+        # 页面标题（XMP 区段）
         title = QLabel(self.i18n.t("advanced_settings.xmp_write_mode"))
         title.setStyleSheet(f"""
             color: {COLORS['text_primary']};
@@ -539,6 +581,11 @@ class AdvancedSettingsDialog(QDialog):
         nf_index = nf_combo.findData(self.config.name_format)
         nf_combo.setCurrentIndex(nf_index if nf_index >= 0 else 0)
 
+        # V4.2.7: 加载分目录布局 / Load folder layout
+        fl_combo = self.vars["folder_layout"]
+        fl_index = fl_combo.findData(self.config.folder_layout)
+        fl_combo.setCurrentIndex(fl_index if fl_index >= 0 else 0)
+
         # 加载全局元数据写入模式设置
         try:
             global_mode = self.config.get_metadata_write_mode()
@@ -596,6 +643,10 @@ class AdvancedSettingsDialog(QDialog):
         # 保存鸟种英文名格式
         name_format = self.vars["name_format"].currentData()
         self.config.set_name_format(name_format)
+
+        # V4.2.7: 保存分目录布局 / Persist folder layout
+        folder_layout = self.vars["folder_layout"].currentData()
+        self.config.set_folder_layout(folder_layout)
 
         # 保存全局元数据写入模式设置
         btn_id = self.xmp_button_group.checkedId()
