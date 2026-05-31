@@ -1,10 +1,10 @@
 {
   "beta": {
-    "tag": "v4.2.6-RC13",
-    "updated_at": "2026-05-14T10:10:00.0000000+00:00",
+    "tag": "v4.3.0-RC1",
+    "updated_at": "2026-05-31T13:33:00.0000000+00:00",
     "files": {
-      "mac_arm64": "SuperPicky_v4.2.6_arm64_f421bd4.dmg",
-      "win_lite": "SuperPicky_Setup_Lite_Win64_v4.2.6_f421bd4.exe"
+      "mac_arm64": "SuperPicky_v4.3.0-RC1_arm64_3f1a958.dmg",
+      "win_lite": "SuperPicky_Setup_Lite_Win64_v4.3.0-RC1_3f1a958.exe"
     }
   }
 }
