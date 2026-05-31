@@ -13,7 +13,8 @@ from PySide6.QtWidgets import (
     QLabel, QSlider, QPushButton,
     QWidget, QFrame, QRadioButton,
     QButtonGroup, QTabWidget, QCheckBox, QComboBox,
-    QListWidget, QListWidgetItem, QFileDialog, QSizePolicy
+    QListWidget, QListWidgetItem, QFileDialog, QSizePolicy,
+    QScrollArea
 )
 from PySide6.QtCore import Qt, Slot
 
@@ -281,7 +282,10 @@ class AdvancedSettingsDialog(QDialog):
         return page
 
     def _create_output_page(self):
-        """创建输出设置页面 - 目录布局 + XMP 设置"""
+        """创建输出设置页面 - 目录布局 + XMP 设置 + 预览管理（含滚动）"""
+        # V4.2.7: 用 ScrollArea 包裹，避免内容超出 dialog 高度时下方控件被挤压
+        # V4.2.7: Wrap in QScrollArea so growing content (folder layout + XMP +
+        # preview management) never gets clipped below the dialog's bottom edge.
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(24, 20, 24, 20)
@@ -461,7 +465,16 @@ class AdvancedSettingsDialog(QDialog):
         layout.addWidget(preview_group_widget)
 
         layout.addStretch()
-        return page
+
+        # 包一层 QScrollArea，让 page 在垂直方向超出时可滚动
+        # Wrap in a vertical-scrolling viewport.
+        scroll = QScrollArea()
+        scroll.setWidget(page)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        return scroll
 
     def _add_divider(self, layout):
         """添加分隔线"""
