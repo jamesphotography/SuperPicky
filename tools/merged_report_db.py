@@ -328,6 +328,9 @@ class MergedReportDB:
             order = "ORDER BY COALESCE(adj_sharpness, head_sharp, -1e99) DESC, filename ASC"
         elif sort_by == "aesthetic_desc":
             order = "ORDER BY COALESCE(adj_topiq, nima_score, -1e99) DESC, filename ASC"
+        elif sort_by == "rarity_desc":
+            # V4.2.7: GBIF 罕见度降序，最罕见的鸟先看
+            order = "ORDER BY COALESCE(gbif_rarity_100, -1e99) DESC, filename ASC"
         else:
             order = "ORDER BY source_dir ASC, filename ASC"
         

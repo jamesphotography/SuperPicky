@@ -141,10 +141,20 @@ def _make_value_label(text: str = "—") -> QLabel:
 
 
 class _NoWrapLabel(QLabel):
-    """单行不换行的 QLabel：minimumSizeHint 返回小宽度，避免撑宽父容器。"""
+    """单行不换行的 QLabel：minimumSizeHint 返回小宽度，避免撑宽父容器。
+
+    V4.2.7: 增加 clicked 信号 — 鸟种行用它实现「点击复制鸟名」。
+    """
+    clicked = Signal()
+
     def minimumSizeHint(self):
         h = super().minimumSizeHint()
         return QSize(40, h.height())
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
 
 
 class _ZoomableImageLabel(QLabel):
@@ -366,6 +376,11 @@ class DetailPanel(QWidget):
         self._val_species.setStyleSheet(f"color: {COLORS['accent']}; font-size: 12px; background: transparent;")
         self._val_species.setWordWrap(False)
         self._val_species.setMinimumHeight(28)
+        # V4.2.7: 鸟种行点击复制鸟名到剪贴板
+        # V4.2.7: Click the species label to copy the name to clipboard.
+        self._val_species.setCursor(Qt.PointingHandCursor)
+        self._val_species.clicked.connect(self._on_species_clicked)
+        self._species_revert_text: Optional[str] = None
         # V4.2.7: IUCN 红色名录等级，紧贴鸟种之下显示
         # V4.2.7: IUCN Red List category, pinned directly under Species
         self._val_iucn = _make_value_label()
@@ -386,13 +401,15 @@ class DetailPanel(QWidget):
         self._val_caption.setWordWrap(True)
 
         rows = [
+            # V4.2.7: 鸟类信息 3 行连续（鸟种 → 全球罕见度 → IUCN）
+            # V4.2.7: Three bird-related rows kept adjacent for natural reading.
+            ("browser.meta_species",    self._val_species),
             ("browser.meta_gbif_rarity", self._val_gbif_rarity),
+            ("browser.meta_iucn",       self._val_iucn),
             ("browser.meta_focus",      self._val_focus),
             ("browser.meta_sharpness",  self._val_sharpness),
             ("browser.meta_aesthetic",  self._val_aesthetic),
             ("browser.meta_flying",     self._val_flying),
-            ("browser.meta_species",    self._val_species),
-            ("browser.meta_iucn",       self._val_iucn),
             ("browser.meta_camera",     self._val_camera),
             ("browser.meta_lens",       self._val_lens),
             ("browser.meta_shutter",    self._val_shutter),
@@ -577,8 +594,8 @@ class DetailPanel(QWidget):
             f"{t('browser.meta_iso')}: {iso if iso else '—'}",
             f"{t('browser.meta_focal')}: {f'{fl:.0f}mm' if fl else '—'}",
             f"{t('browser.meta_species')}: {species}",
-            f"{t('browser.meta_iucn')}: {iucn_text}",
             f"{t('browser.meta_gbif_rarity')}: {f'{tier_icon(gbif_score_to_tier(gbif_r))} {tier_name(gbif_score_to_tier(gbif_r), is_zh=is_zh)} ({gbif_r:.1f})' if gbif_r is not None else '—'}",
+            f"{t('browser.meta_iucn')}: {iucn_text}",
             f"{t('browser.meta_focus')}: {focus}",
             f"{t('browser.meta_sharpness')}: {f'{sharp:.1f}' if sharp is not None else '—'}",
             f"{t('browser.meta_aesthetic')}: {f'{topiq:.2f}' if topiq is not None else '—'}",
@@ -596,6 +613,32 @@ class DetailPanel(QWidget):
     def _reset_copy_btn(self):
         self._copy_exif_btn.setText(self.i18n.t("browser.copy_exif"))
         self._copy_exif_btn.setStyleSheet(self._inactive_btn_style())
+
+    def _on_species_clicked(self):
+        """点击鸟种行 → 复制鸟名到剪贴板 + 1.5s 反馈。"""
+        text = (self._val_species.text() or "").strip()
+        if not text or text == "—":
+            return
+        # 如果当前已经在「复制成功」反馈中，再点不重复处理
+        if self._species_revert_text is not None:
+            return
+        QGuiApplication.clipboard().setText(text)
+        self._species_revert_text = text
+        self._val_species.setText(self.i18n.t("browser.species_copied"))
+        self._val_species.setToolTip(self.i18n.t("browser.species_copied"))
+        QTimer.singleShot(1500, self._restore_species_text)
+
+    def _restore_species_text(self):
+        """1.5s 后把鸟种行文本恢复（仅当用户没切换照片）。"""
+        if self._species_revert_text is None:
+            return
+        original = self._species_revert_text
+        self._species_revert_text = None
+        # 当前 label 仍是「复制成功」时才恢复；用户已经切换照片就不动
+        cur = (self._val_species.text() or "").strip()
+        if cur == self.i18n.t("browser.species_copied"):
+            self._val_species.setText(original)
+            self._val_species.setToolTip(original)
 
     def _nav_btn_style(self) -> str:
         """导航按钮（◀/▶）样式 — 比一般次级按钮更明显。"""

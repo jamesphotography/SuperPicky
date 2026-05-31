@@ -35,7 +35,7 @@ class AdvancedConfig:
         "burst_min_count": 4,         # 连拍最少张数 (3-10) - 至少此数量连续照片才算连拍组
         
         # 鸟种识别设置 V4.2
-        "birdid_confidence": 70,      # 识别置信度阈值 (50-95) - 低于此值不写入EXIF
+        "birdid_confidence": 50,      # 识别置信度阈值 (30-95) - 低于此值不写入EXIF
 
         # 输出设置
         "save_csv": True,           # 是否保存CSV报告
@@ -85,8 +85,8 @@ class AdvancedConfig:
         "external_apps": [],
 
         # 浏览器排序偏好（用户上次选择）
-        # 可选值: "filename" | "sharpness_desc" | "aesthetic_desc"
-        "browser_sort": "sharpness_desc",
+        # 可选值: "rarity_desc" | "filename" | "sharpness_desc" | "aesthetic_desc"
+        "browser_sort": "rarity_desc",
 
         # 浏览器删除确认弹窗（首次弹窗后可勾选「不再确认」关闭）
         "delete_confirm": True,
@@ -210,7 +210,7 @@ class AdvancedConfig:
     
     @property
     def birdid_confidence(self):
-        return self.config.get("birdid_confidence", 70)
+        return self.config.get("birdid_confidence", 50)
 
     @property
     def save_csv(self):
@@ -234,8 +234,8 @@ class AdvancedConfig:
         self.config["min_sharpness"] = max(100, min(500, int(value)))
 
     def set_min_nima(self, value):
-        """设置美学最低阈值 (3.0-5.0)"""
-        self.config["min_nima"] = max(3.0, min(5.0, float(value)))
+        """设置美学最低阈值 (0.0-5.0)"""
+        self.config["min_nima"] = max(0.0, min(5.0, float(value)))
 
     # V3.2: 移除 set_max_brisque 方法
 
@@ -256,8 +256,8 @@ class AdvancedConfig:
         self.config["burst_min_count"] = max(3, min(10, int(value)))
     
     def set_birdid_confidence(self, value):
-        """设置鸟种识别置信度阈值 (50-95)"""
-        self.config["birdid_confidence"] = max(50, min(95, int(value)))
+        """设置鸟种识别置信度阈值 (30-95)"""
+        self.config["birdid_confidence"] = max(30, min(95, int(value)))
 
     def set_save_csv(self, value):
         """设置是否保存CSV"""
@@ -378,12 +378,12 @@ class AdvancedConfig:
         self.config["external_apps"] = list(apps)
 
     def get_browser_sort(self) -> str:
-        """返回浏览器排序偏好: filename | sharpness_desc | aesthetic_desc"""
-        return self.config.get("browser_sort", "sharpness_desc")
+        """返回浏览器排序偏好: rarity_desc | filename | sharpness_desc | aesthetic_desc"""
+        return self.config.get("browser_sort", "rarity_desc")
 
     def set_browser_sort(self, value: str):
         """保存浏览器排序偏好。"""
-        if value in ("filename", "sharpness_desc", "aesthetic_desc"):
+        if value in ("rarity_desc", "filename", "sharpness_desc", "aesthetic_desc"):
             self.config["browser_sort"] = value
 
     @property

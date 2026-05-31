@@ -203,12 +203,12 @@ class AdvancedSettingsDialog(QDialog):
             step=50
         )
 
-        # 画面美感要求
+        # 画面美感要求 (V4.2.7: 高级设置允许下探到 0，0 = 关闭美学过滤)
         self.vars["min_nima"] = self._create_slider_setting(
             layout,
             self.i18n.t("advanced_settings.aesthetics_requirement"),
             self.i18n.t("advanced_settings.aesthetics_requirement_hint"),
-            min_val=30, max_val=50, default=40,
+            min_val=0, max_val=50, default=40,
             format_func=lambda v: f"{v/10:.1f}",
             scale=10
         )
@@ -241,7 +241,7 @@ class AdvancedSettingsDialog(QDialog):
             layout,
             self.i18n.t("advanced_settings.birdid_confidence"),
             self.i18n.t("advanced_settings.birdid_confidence_hint"),
-            min_val=50, max_val=95, default=70,
+            min_val=30, max_val=95, default=50,
             step=5,
             format_func=lambda v: f"{v}%"
         )

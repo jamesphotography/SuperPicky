@@ -66,7 +66,7 @@ class ProcessingSettings:
     birdid_use_ebird: bool = True     # 使用 eBird 过滤
     birdid_country_code: str = None   # eBird 国家代码
     birdid_region_code: str = None    # eBird 区域代码
-    birdid_confidence_threshold: float = 70.0  # 置信度阈值（70%+才写入）
+    birdid_confidence_threshold: float = 50.0  # 置信度阈值（默认 50%，可在「高级设置 → 自动识鸟」调整 50-95%）
     # 鸟种英文名显示格式 (AviList mapping)
     name_format: str = "default"       # "default" | "avilist" | "clements" | "birdlife" | "scientific"
     # 性能日志模式
