@@ -859,6 +859,20 @@ class ThumbnailGrid(QScrollArea):
                 return [self._anchor_photo] + in_multi
         return in_multi
 
+    def select_all(self):
+        """全选当前网格中所有可见照片（Command/Ctrl+A）。"""
+        if not self._photos:
+            return
+        photo_keys = [_photo_key(p) for p in self._photos]
+        for key in photo_keys:
+            self._multi_selected.add(key)
+            card = self._cards.get(key)
+            if card:
+                card.set_multi_selected(True)
+        self._last_clicked_idx = len(self._photos) - 1
+        self._anchor_photo = self._photos[0] if self._photos else None
+        self._emit_multi_selection()
+
     def clear_multi_select(self):
         """公共接口：清空多选状态（ESC 快捷键或取消对比时使用）。"""
         self._clear_multi_selection()
