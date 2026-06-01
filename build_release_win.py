@@ -39,6 +39,7 @@ CUDA_VENV_DIR = ROOT_DIR / ".venv-cuda"
 DEFAULT_PATCH_OUTPUT_ROOT = ROOT_DIR / "output"
 STANDARD_INNO_TEMPLATE = INNO_DIR / "SuperPicky.iss"
 LITE_INNO_TEMPLATE = INNO_DIR / "SuperPicky-lite.iss"
+CUDA_INNO_TEMPLATE = INNO_DIR / "SuperPicky-cuda.iss"
 PATCH_INNO_TEMPLATE = INNO_DIR / "SuperPicky_CUDA_Patch.iss"
 INNO_LANGUAGE_FILE = INNO_DIR / "ChineseSimplified.isl"
 CPU_REQUIREMENTS_FILE = ROOT_DIR / "requirements.txt"
@@ -506,13 +507,15 @@ def inno_template_for(label: str) -> Path:
     Return the ISS template path for the given build label.
 
     参数 / Parameters:
-        label (str): 构建标签，"lite" 或其他（Full/CPU/CUDA）
+        label (str): 构建标签，"lite" / "cuda" 或其他 (cpu/full)
 
     返回 / Return:
         Path: ISS 模板文件路径
     """
     if label == "lite":
         return LITE_INNO_TEMPLATE
+    if label == "cuda":
+        return CUDA_INNO_TEMPLATE
     return STANDARD_INNO_TEMPLATE
 
 
@@ -660,7 +663,7 @@ def ensure_inno_templates() -> None:
 
     Verify all Inno Setup templates and dependency files exist.
     """
-    for path in (STANDARD_INNO_TEMPLATE, LITE_INNO_TEMPLATE, PATCH_INNO_TEMPLATE, INNO_LANGUAGE_FILE):
+    for path in (STANDARD_INNO_TEMPLATE, LITE_INNO_TEMPLATE, CUDA_INNO_TEMPLATE, PATCH_INNO_TEMPLATE, INNO_LANGUAGE_FILE):
         if not path.exists():
             raise FileNotFoundError(f"缺少 Inno 相关文件: {path}")
 
