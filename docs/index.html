@@ -870,8 +870,9 @@
         var CN_PROXY_PREFIX = 'https://gh-proxy.com/';
 
         var PLATFORMS = [
-            { key: 'mac_arm64', labelCn: 'macOS · Apple Silicon (M1/M2/M3/M4/M5)',                            labelEn: 'macOS · Apple Silicon (M1/M2/M3/M4/M5)',                              badge: 'macOS',   cardClass: 'featured', tooltipCn: null, tooltipEn: null },
-            { key: 'win_lite',  labelCn: 'Windows · x64（按硬件自动选 CPU 或 NVIDIA CUDA 运行时）',           labelEn: 'Windows · x64 (auto-selects CPU or NVIDIA CUDA runtime by hardware)', badge: 'Windows', cardClass: 'windows',  tooltipCn: '⚠️ 首次启动会联网下载匹配硬件的 PyTorch 与 AI 模型', tooltipEn: '⚠️ First launch downloads hardware-matched PyTorch + AI models' },
+            { key: 'mac_arm64', labelCn: 'macOS · Apple Silicon (M1/M2/M3/M4/M5)',                            labelEn: 'macOS · Apple Silicon (M1/M2/M3/M4/M5)',                              badge: 'macOS',   cardClass: 'featured',          tooltipCn: null, tooltipEn: null },
+            { key: 'win_cpu',   labelCn: 'Windows · x64 · 自带 CPU 运行时 · 离线可装 ⭐ 推荐',                labelEn: 'Windows · x64 · CPU runtime bundled · offline-ready ⭐ recommended',  badge: 'Windows', cardClass: 'windows featured',  tooltipCn: '✅ 安装即用，无需联网下载 · 约 749 MB', tooltipEn: '✅ Install-and-run, no extra download · ≈749 MB' },
+            { key: 'win_lite',  labelCn: 'Windows · x64 · 首次启动按硬件下载 GPU/CPU 运行时（不建议）',      labelEn: 'Windows · x64 · downloads runtime on first launch (not recommended)', badge: 'Windows', cardClass: 'windows',           tooltipCn: '⚠️ 首次启动联网下载 PyTorch 与 AI 模型，慢网络下体验差 · 仅有 NVIDIA GPU 想追求 CUDA 加速时再选', tooltipEn: '⚠️ First launch downloads PyTorch + AI models; slow on poor networks · only pick this if you want CUDA acceleration on an NVIDIA GPU' },
         ];
 
         function mkEl(tag, cls) { var e = document.createElement(tag); if (cls) e.className = cls; return e; }
