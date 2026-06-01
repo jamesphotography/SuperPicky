@@ -1397,6 +1397,9 @@ class ResultsBrowserWindow(QMainWindow):
                 self._fullscreen.toggle_focus()
             else:
                 self._detail_panel._switch_view(not self._detail_panel._use_crop_view)
+        elif key == Qt.Key_A and (event.modifiers() & Qt.ControlModifier):
+            if not in_fullscreen and self._stack.currentIndex() != 2:
+                self._thumb_grid.select_all()
         elif key == Qt.Key_Backspace and (event.modifiers() & Qt.ControlModifier):
             self._delete_selected_photos()
         else:
@@ -2328,6 +2331,9 @@ class ResultsBrowserWidget(QWidget):
                 self._fullscreen.toggle_focus()
             else:
                 self._detail_panel._switch_view(not self._detail_panel._use_crop_view)
+        elif key == Qt.Key_A and (event.modifiers() & Qt.ControlModifier):
+            if not in_fullscreen and self._stack.currentIndex() != 2:
+                self._thumb_grid.select_all()
         elif key == Qt.Key_Backspace and (event.modifiers() & Qt.ControlModifier):
             self._delete_selected_photos()
         else:
