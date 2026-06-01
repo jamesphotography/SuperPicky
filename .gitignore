@@ -58,6 +58,10 @@ ebird_cache/
 .venv-cuda/
 venv/
 
+# uv 包管理器
+uv.lock
+pyproject.toml
+
 # 模型文件（临时模型不上传，基础模型需要上传）
 temp_models/
 
