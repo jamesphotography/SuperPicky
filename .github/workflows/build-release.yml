@@ -68,6 +68,32 @@ jobs:
         with:
           path: ./output/installer_cpu/SuperPicky.iss
 
+      # Full CUDA installer 单文件预期 > 2 GiB，超过 GitHub Releases 单 asset 上限。
+      # 因此 CUDA 产物只作为 workflow artifact 保留 90 天，由维护者手动转存到
+      # 百度 / 夸克网盘等大文件分发渠道，不进入 release_assets。失败不阻塞
+      # CPU/Lite 的 release 流程（continue-on-error）。
+      - name: Build Full CUDA release
+        continue-on-error: true
+        env:
+          RELEASE_TAG: ${{ steps.release_meta.outputs.tag }}
+        run: python build_release_win.py --build-type cuda --copy-dir output --no-zip
+
+      - name: Create Full CUDA installer with Inno Setup
+        id: cuda_inno
+        continue-on-error: true
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.7
+        with:
+          path: ./output/installer_cuda/SuperPicky-cuda.iss
+
+      - name: Upload Full CUDA installer as workflow artifact
+        if: steps.cuda_inno.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: SuperPicky_FullCUDA_Win64
+          path: output/installer_cuda/Output/SuperPicky_Setup_FullCUDA_Win64_*.exe
+          retention-days: 90
+          if-no-files-found: warn
+
       - name: Prepare release assets
         run: |
           python scripts/ci_release.py collect-assets --output-dir release_assets --pattern output/installer_lite/Output/SuperPicky_Setup_Lite_Win64_*.exe --pattern output/installer_cpu/Output/SuperPicky_Setup_Full_Win64_*.exe
