@@ -872,7 +872,7 @@
         var PLATFORMS = [
             { key: 'mac_arm64', labelCn: 'macOS · Apple Silicon (M1/M2/M3/M4/M5)',                            labelEn: 'macOS · Apple Silicon (M1/M2/M3/M4/M5)',                              badge: 'macOS',   cardClass: 'featured',          tooltipCn: null, tooltipEn: null },
             { key: 'win_cpu',   labelCn: 'Windows · x64 · 自带 CPU 运行时 · 离线可装 ⭐ 推荐',                labelEn: 'Windows · x64 · CPU runtime bundled · offline-ready ⭐ recommended',  badge: 'Windows', cardClass: 'windows featured',  tooltipCn: '✅ 安装即用，无需联网下载 · 约 749 MB', tooltipEn: '✅ Install-and-run, no extra download · ≈749 MB' },
-            { key: 'win_lite',  labelCn: 'Windows · x64 · 首次启动按硬件下载 GPU/CPU 运行时（不建议）',      labelEn: 'Windows · x64 · downloads runtime on first launch (not recommended)', badge: 'Windows', cardClass: 'windows',           tooltipCn: '⚠️ 首次启动联网下载 PyTorch 与 AI 模型，慢网络下体验差 · 仅有 NVIDIA GPU 想追求 CUDA 加速时再选', tooltipEn: '⚠️ First launch downloads PyTorch + AI models; slow on poor networks · only pick this if you want CUDA acceleration on an NVIDIA GPU' },
+            { key: 'win_lite',  labelCn: 'Windows · x64 · 首次启动按硬件下载 · ⚠️ 慢网可能数小时（不建议）',  labelEn: 'Windows · x64 · downloads runtime on first launch · ⚠️ may take hours on slow networks (not recommended)', badge: 'Windows', cardClass: 'windows',           tooltipCn: '⚠️ 首次启动联网下载 PyTorch + AI 模型共约 3-5 GB · 大陆慢网络实测可能需要 2-6 小时甚至更久 · 仅有 NVIDIA GPU 想追求 CUDA 加速时再选', tooltipEn: '⚠️ First launch downloads ≈3-5 GB of PyTorch + AI models · users on slow CN networks have reported 2-6 hours or longer · only pick this if you want CUDA acceleration on an NVIDIA GPU' },
         ];
 
         function mkEl(tag, cls) { var e = document.createElement(tag); if (cls) e.className = cls; return e; }
