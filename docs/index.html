@@ -870,9 +870,9 @@
         var CN_PROXY_PREFIX = 'https://gh-proxy.com/';
 
         var PLATFORMS = [
-            { key: 'mac_arm64', labelCn: 'macOS · Apple Silicon (M1/M2/M3/M4/M5)',                            labelEn: 'macOS · Apple Silicon (M1/M2/M3/M4/M5)',                              badge: 'macOS',   cardClass: 'featured',          tooltipCn: null, tooltipEn: null },
-            { key: 'win_cpu',   labelCn: 'Windows · x64 · 自带 CPU 运行时 · 离线可装 ⭐ 推荐',                labelEn: 'Windows · x64 · CPU runtime bundled · offline-ready ⭐ recommended',  badge: 'Windows', cardClass: 'windows featured',  tooltipCn: '✅ 安装即用，无需联网下载 · 约 749 MB', tooltipEn: '✅ Install-and-run, no extra download · ≈749 MB' },
-            { key: 'win_lite',  labelCn: 'Windows · x64 · 首次启动按硬件下载 · ⚠️ 慢网可能数小时（不建议）',  labelEn: 'Windows · x64 · downloads runtime on first launch · ⚠️ may take hours on slow networks (not recommended)', badge: 'Windows', cardClass: 'windows',           tooltipCn: '⚠️ 首次启动联网下载 PyTorch + AI 模型共约 3-5 GB · 大陆慢网络实测可能需要 2-6 小时甚至更久 · 仅有 NVIDIA GPU 想追求 CUDA 加速时再选', tooltipEn: '⚠️ First launch downloads ≈3-5 GB of PyTorch + AI models · users on slow CN networks have reported 2-6 hours or longer · only pick this if you want CUDA acceleration on an NVIDIA GPU' },
+            { key: 'mac_arm64', labelCn: 'macOS · Apple Silicon (M1/M2/M3/M4/M5)',                labelEn: 'macOS · Apple Silicon (M1/M2/M3/M4/M5)',              badge: 'macOS',   cardClass: 'featured',          tooltipCn: null, tooltipEn: null },
+            { key: 'win_cpu',   labelCn: 'Windows · x64 · CPU 自带 PyTorch + 模型',                labelEn: 'Windows · x64 · CPU · bundled PyTorch + models',      badge: 'Windows', cardClass: 'windows featured',  tooltipCn: '✅ 安装即用，无需联网下载 · 约 749 MB', tooltipEn: '✅ Install-and-run, no extra download · ≈749 MB' },
+            { key: 'win_cuda',  labelCn: 'Windows · x64 · GPU CUDA 加速版（仅 NVIDIA 显卡）',     labelEn: 'Windows · x64 · GPU CUDA build (NVIDIA only)',        badge: 'Windows', cardClass: 'windows',           tooltipCn: 'Full CUDA ≈2.0 GB · 仅网盘分发，因超出 GitHub 单文件 2 GiB 上限', tooltipEn: 'Full CUDA ≈2.0 GB · netdisk-only (exceeds GitHub 2 GiB single-asset cap)', noGitHub: true },
         ];
 
         function mkEl(tag, cls) { var e = document.createElement(tag); if (cls) e.className = cls; return e; }
@@ -894,7 +894,9 @@
 
         function renderBetaCards(ghData) {
             var tag = ghData.beta.tag;
-            var ghFiles = ghData.beta.files;
+            var ghFiles = ghData.beta.files || {};
+            var driveMap = ghData.beta.drive || {};
+            var baiduMap = ghData.beta.baidu || {};
 
             ['beta-section-tag-cn', 'beta-section-tag-en', 'hero-beta-tag-cn', 'hero-beta-tag-en'].forEach(function (id) {
                 var e = document.getElementById(id); if (e) e.textContent = tag;
@@ -906,10 +908,11 @@
 
             PLATFORMS.forEach(function (p) {
                 var ghFile = ghFiles[p.key];
-                if (!ghFile) return;
+                var driveUrl = driveMap[p.key];
+                var baiduUrl = baiduMap[p.key];
 
-                var ghUrl = GH_BASE + tag + '/' + ghFile;
-                var cnUrl = CN_PROXY_PREFIX + ghUrl;
+                // 至少要有一个可用渠道才渲染该平台
+                if (!ghFile && !driveUrl && !baiduUrl) return;
 
                 var card = mkEl('div', 'download-card ' + (p.cardClass || ''));
 
@@ -929,8 +932,21 @@
                 info.appendChild(icon); info.appendChild(meta);
 
                 var links = mkEl('div', 'download-links');
-                links.appendChild(mkBtn(ghUrl, 'btn-secondary', p.tooltipCn, p.tooltipEn, 'GitHub', 'GitHub'));
-                links.appendChild(mkBtn(cnUrl, 'btn-primary',  p.tooltipCn, p.tooltipEn, '大陆镜像', 'China Mirror'));
+
+                // GitHub + 大陆镜像（CUDA 等 noGitHub 平台跳过）
+                if (!p.noGitHub && ghFile) {
+                    var ghUrl = GH_BASE + tag + '/' + ghFile;
+                    var cnUrl = CN_PROXY_PREFIX + ghUrl;
+                    links.appendChild(mkBtn(ghUrl, 'btn-secondary', p.tooltipCn, p.tooltipEn, 'GitHub', 'GitHub'));
+                    links.appendChild(mkBtn(cnUrl, 'btn-secondary', p.tooltipCn, p.tooltipEn, '大陆镜像', 'China Mirror'));
+                }
+
+                if (driveUrl) {
+                    links.appendChild(mkBtn(driveUrl, 'btn-secondary', p.tooltipCn, p.tooltipEn, 'Google Drive', 'Google Drive'));
+                }
+                if (baiduUrl) {
+                    links.appendChild(mkBtn(baiduUrl, 'btn-primary', p.tooltipCn, p.tooltipEn, '百度网盘', 'Baidu'));
+                }
 
                 card.appendChild(info); card.appendChild(links);
                 container.appendChild(card);
