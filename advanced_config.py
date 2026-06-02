@@ -74,11 +74,12 @@ class AdvancedConfig:
         #   "scientific" = Scientific name only
         "name_format": "default",
 
-        # V4.2.7: 分目录布局策略
-        # "rating-first"  (默认) — 3星_优选/白胸鸲鹟/photo.NEF
-        # "species-first"        — 白胸鸲鹟/3星_优选/photo.NEF
-        # 1星/0星/-1星 永远只用 rating 目录，与本设置无关
-        "folder_layout": "rating-first",
+        # V4.2.7 / V4.3 Phase 4: 分目录布局策略
+        # "rating-first"           — 3星_优选/白胸鸲鹟/photo.NEF
+        # "species-first" (默认)   — 白胸鸲鹟/3星_优选/photo.NEF
+        # 1星/0星/-1星 永远聚到「其他鸟类」分支，与本设置无关
+        # V4.3 Phase 4: 默认改为 species-first，让视频和照片共享鸟种目录
+        "folder_layout": "species-first",
 
         # 外部编辑应用（右键菜单 "用 X 打开"）
         # 每项格式：{"name": "显示名称", "path": "/Applications/...app"}
@@ -137,6 +138,18 @@ class AdvancedConfig:
         "video_max_frames": 60,
         "video_yolo_threshold": 0.5,
         "video_min_segment_frames": 2,
+
+        # V4.3 Phase 4: 主流程视频集成 / Main-flow video integration
+        # video_auto_process_in_main : 选鸟时是否自动分析视频（默认开）
+        # video_species_mode         : 默认识别模式 instant/fast/full（默认 instant 极速）
+        # video_enable_species_id    : 是否启用鸟种识别（默认开）
+        # video_enable_flight        : 是否启用飞行检测（默认开）
+        # video_first_run_prompted   : 首次发现视频弹一次性提示后标记（避免重复弹）
+        "video_auto_process_in_main": True,
+        "video_species_mode": "instant",
+        "video_enable_species_id": True,
+        "video_enable_flight": True,
+        "video_first_run_prompted": False,
     }
 
     def __init__(self, config_file=None):

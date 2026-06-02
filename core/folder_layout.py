@@ -22,7 +22,11 @@ from constants import get_rating_folder_name
 # 布局策略 / Layout strategy identifiers
 LAYOUT_RATING_FIRST = "rating-first"
 LAYOUT_SPECIES_FIRST = "species-first"
-DEFAULT_LAYOUT = LAYOUT_RATING_FIRST
+# V4.3 Phase 4: 默认改 species-first 以兼容视频集成
+# 视频不分星，species-first 让视频和照片自然共享同一个鸟种目录
+# V4.3 Phase 4: default switched to species-first so videos (no star rating)
+# can naturally live alongside photos in the same species folder.
+DEFAULT_LAYOUT = LAYOUT_SPECIES_FIRST
 
 VALID_LAYOUTS = {LAYOUT_RATING_FIRST, LAYOUT_SPECIES_FIRST}
 
