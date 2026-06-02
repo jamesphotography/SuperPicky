@@ -29,8 +29,11 @@ from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QAction, QDragEnterEvent, QDropEvent, QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
+    QComboBox,
     QFileDialog,
     QFrame,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -57,9 +60,9 @@ from ui.styles import COLORS, FONTS, GLOBAL_STYLE
 
 class _VideoDropArea(QFrame):
     """
-    拖放区：支持拖入单视频或文件夹
+    拖放区：支持拖入单视频或文件夹（紧凑细条）
 
-    Drop area widget: accepts a single video file or a folder.
+    Drop area widget: accepts a single video file or a folder (compact bar).
     """
     pathsDropped = Signal(list)   # list[str] — 视频文件绝对路径列表
 
@@ -67,35 +70,34 @@ class _VideoDropArea(QFrame):
         super().__init__()
         self.setObjectName("VideoDropArea")
         self.setAcceptDrops(True)
-        self.setMinimumHeight(140)
+        self.setFixedHeight(54)
         self.setStyleSheet(f"""
             QFrame#VideoDropArea {{
-                border: 2px dashed {COLORS['border']};
-                border-radius: 10px;
+                border: 1px dashed {COLORS['border']};
+                border-radius: 6px;
                 background-color: {COLORS['bg_elevated']};
             }}
             QFrame#VideoDropArea:hover {{
-                border: 2px dashed {COLORS['accent']};
+                border: 1px dashed {COLORS['accent']};
                 background-color: {COLORS['bg_card']};
             }}
         """)
-        layout = QVBoxLayout(self)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.setSpacing(6)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(14, 0, 14, 0)
+        layout.setSpacing(10)
 
         icon = QLabel("🎬")
-        icon.setStyleSheet(f"font-size: 42px; color: {COLORS['text_tertiary']}; background: transparent;")
-        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon.setStyleSheet(f"font-size: 24px; color: {COLORS['text_tertiary']}; background: transparent;")
         layout.addWidget(icon)
 
-        hint = QLabel("拖入视频文件 / 文件夹，或点击下方按钮选择")
+        hint = QLabel("拖入视频文件 / 文件夹到此处")
         hint.setStyleSheet(f"color: {COLORS['text_secondary']}; background: transparent;")
-        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(hint)
+
+        layout.addStretch()
 
         ext_hint = QLabel("支持 .mp4 / .mov / .m4v")
         ext_hint.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 11px; background: transparent;")
-        ext_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(ext_hint)
 
     def dragEnterEvent(self, event: QDragEnterEvent):
@@ -123,6 +125,65 @@ class _VideoDropArea(QFrame):
 def _is_video(path: str) -> bool:
     """判断是否为支持的视频文件 / Check if file is a supported video"""
     return os.path.splitext(path)[1] in VIDEO_EXTENSIONS_ALL
+
+
+def _format_segments_detail(segments) -> str:
+    """
+    把段列表展开成多行文本（每段一行），用于结果表「时间段」列
+
+    每行格式示例：
+        0:00-0:07  🐦 澳洲蛇鹈 83%  停栖
+        0:07-0:08  [无鸟]
+        0:08-0:33  🦅 白鹭 94%  飞行
+
+    Expand segment list into multi-line text (one segment per line).
+    """
+    if not segments:
+        return "—"
+    lines = []
+    for s in segments:
+        time_str = f"{_fmt_mmss(s.start_sec)}-{_fmt_mmss(s.end_sec)}"
+        if not s.has_bird:
+            lines.append(f"{time_str}  [无鸟]")
+            continue
+        # 有鸟段：组装鸟种 + 飞行 + 置信度
+        parts = [time_str]
+        if s.species_zh:
+            emoji = "🦅" if s.is_flying else "🐦"
+            parts.append(f"{emoji} {s.species_zh}")
+            if s.species_conf > 0:
+                parts.append(f"{int(round(s.species_conf*100))}%")
+        else:
+            parts.append("🐦 有鸟")
+            if s.avg_conf > 0:
+                parts.append(f"{int(round(s.avg_conf*100))}%")
+        if s.is_flying is not None:
+            parts.append("飞行" if s.is_flying else "停栖")
+        lines.append("  ".join(parts))
+    return "\n".join(lines)
+
+
+def _fmt_mmss(sec: float) -> str:
+    """秒数 → m:ss 格式（结果表用，比 SRT 简洁）/ Seconds → m:ss for compact display"""
+    m = int(sec) // 60
+    s = sec - m * 60
+    return f"{m}:{s:05.2f}"
+
+
+def _fmt_duration_short(sec: float) -> str:
+    """
+    视频时长 → 简短显示
+
+    < 60s   → "16 秒"
+    >= 60s  → "1:23"（分:秒）
+
+    Compact duration label for filename suffix.
+    """
+    if sec < 60:
+        return f"{int(round(sec))} 秒"
+    m = int(sec) // 60
+    s = int(round(sec - m * 60))
+    return f"{m}:{s:02d}"
 
 
 # ============================================================================
@@ -154,12 +215,28 @@ class _AnalysisWorker(QThread):
 
     def __init__(self, video_paths: List[str],
                  max_frames: int, yolo_threshold: float,
-                 min_segment_frames: int):
+                 min_segment_frames: int,
+                 enable_species: bool = False,
+                 species_mode: str = 'fast',
+                 enable_flight: bool = False):
+        """
+        Parameters:
+            video_paths       : 待处理视频路径列表
+            max_frames        : 抽帧上限
+            yolo_threshold    : YOLO 置信度阈值
+            min_segment_frames: 段最小帧数
+            enable_species    : 是否启用鸟种识别（Phase 2）
+            species_mode      : 'fast' (单帧) / 'full' (多帧投票)
+            enable_flight     : 是否启用飞行检测（Phase 2）
+        """
         super().__init__()
         self.video_paths = video_paths
         self.max_frames = max_frames
         self.yolo_threshold = yolo_threshold
         self.min_segment_frames = min_segment_frames
+        self.enable_species = enable_species
+        self.species_mode = species_mode
+        self.enable_flight = enable_flight
         self._stop_requested = False
 
     def request_stop(self):
@@ -174,6 +251,18 @@ class _AnalysisWorker(QThread):
             from core.video_analyzer import VideoAnalyzer
 
             model = load_yolo_model()
+
+            # Phase 2: 按需实例化鸟种 / 飞行 classifier
+            # Phase 2: lazily instantiate species/flight classifiers if enabled.
+            species_clf = None
+            flight_clf = None
+            if self.enable_species:
+                from core.birdid_adapter import BirdIDAdapter
+                species_clf = BirdIDAdapter()
+            if self.enable_flight:
+                from core.flight_adapter import FlightAdapter
+                flight_clf = FlightAdapter()
+
             self.model_loaded.emit()
 
             analyzer = VideoAnalyzer(
@@ -181,6 +270,9 @@ class _AnalysisWorker(QThread):
                 max_frames=self.max_frames,
                 yolo_threshold=self.yolo_threshold,
                 min_segment_frames=self.min_segment_frames,
+                species_classifier=species_clf,
+                flight_classifier=flight_clf,
+                species_mode=self.species_mode,
             )
 
             total = len(self.video_paths)
@@ -279,6 +371,11 @@ class VideoAnalyzerWindow(QMainWindow):
         cfg_row = self._build_config_row()
         outer.addLayout(cfg_row)
 
+        # Phase 2: 鸟种识别 + 飞行检测 开关组
+        # Phase 2: species ID + flight detection toggle group
+        p2_box = self._build_phase2_box()
+        outer.addWidget(p2_box)
+
         # 进度区
         self.progress_label = QLabel("就绪")
         self.progress_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
@@ -306,18 +403,26 @@ class VideoAnalyzerWindow(QMainWindow):
         ctrl_row.addWidget(self.btn_save_srt)
         outer.addLayout(ctrl_row)
 
-        # 结果表
+        # 结果表（含状态列：⏳ 等待 / 🔄 处理中 / ✅ 完成）
+        # Results table with status column
+        from PySide6.QtWidgets import QHeaderView
         self.result_table = QTableWidget()
-        self.result_table.setColumnCount(5)
+        self.result_table.setColumnCount(6)
         self.result_table.setHorizontalHeaderLabels(
-            ["文件名", "有鸟?", "段数", "抽帧", "耗时"]
+            ["状态", "文件名", "时间段 (鸟种 / 飞行)", "段数", "抽帧", "耗时"]
         )
-        self.result_table.horizontalHeader().setStretchLastSection(False)
-        self.result_table.setColumnWidth(0, 320)
-        self.result_table.setColumnWidth(1, 70)
-        self.result_table.setColumnWidth(2, 70)
-        self.result_table.setColumnWidth(3, 100)
-        self.result_table.setColumnWidth(4, 120)
+        self.result_table.setColumnWidth(0, 100)   # 状态列加宽避免 ✅ 完成 换行
+        self.result_table.setColumnWidth(1, 260)   # 文件名带时长后稍宽
+        self.result_table.setColumnWidth(3, 50)
+        self.result_table.setColumnWidth(4, 80)
+        self.result_table.setColumnWidth(5, 80)
+        # 时间段列拉伸，且允许换行
+        self.result_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.result_table.setWordWrap(True)
+        # 行高自适应（多段视频会自动撑高）
+        self.result_table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        # 文件路径 → 表格行索引，便于状态更新
+        self._row_by_path: dict[str, int] = {}
         outer.addWidget(self.result_table, 1)
 
         # 状态栏
@@ -326,6 +431,66 @@ class VideoAnalyzerWindow(QMainWindow):
 
         # 队列：待分析文件路径
         self._queue: List[str] = []
+
+    def _build_phase2_box(self) -> QGroupBox:
+        """
+        Phase 2 控件：鸟种识别 + 飞行检测 开关 + 识别模式选择
+
+        Phase 2 controls: species ID + flight detection toggles + mode selector.
+        """
+        box = QGroupBox("识别选项 (Phase 2)")
+        box.setStyleSheet(f"""
+            QGroupBox {{
+                color: {COLORS['text_secondary']};
+                font-weight: 500;
+                border: 1px solid {COLORS['border']};
+                border-radius: 6px;
+                padding-top: 14px;
+                margin-top: 4px;
+            }}
+            QGroupBox::title {{
+                left: 10px;
+                padding: 0 4px;
+            }}
+        """)
+        layout = QHBoxLayout(box)
+        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setSpacing(16)
+
+        # 鸟种识别开关
+        self.species_check = QCheckBox("启用鸟种识别")
+        self.species_check.setChecked(True)
+        self.species_check.toggled.connect(self._on_species_toggled)
+        layout.addWidget(self.species_check)
+
+        # 识别模式下拉（默认极速 — 大多数视频是单一鸟种，跑一帧足够）
+        # Mode combo (default 'instant' — most clips have one species, one frame suffices)
+        layout.addWidget(QLabel("识别模式:"))
+        self.species_mode_combo = QComboBox()
+        self.species_mode_combo.addItem("极速（识别到即停）", "instant")
+        self.species_mode_combo.addItem("标准（每段一帧，含时间轴）", "fast")
+        self.species_mode_combo.addItem("完整（多帧加权投票）", "full")
+        self.species_mode_combo.setCurrentIndex(0)
+        self.species_mode_combo.setFixedWidth(220)
+        self.species_mode_combo.setToolTip(
+            "极速：找到第一只鸟即停，无时间轴信息（最快）\n"
+            "标准：扫完抽帧得到时间轴，每段最佳帧识别\n"
+            "完整：每段所有帧加权投票（最准，最慢）")
+        layout.addWidget(self.species_mode_combo)
+
+        layout.addSpacing(16)
+
+        # 飞行检测开关
+        self.flight_check = QCheckBox("启用飞行检测")
+        self.flight_check.setChecked(True)
+        layout.addWidget(self.flight_check)
+
+        layout.addStretch()
+        return box
+
+    def _on_species_toggled(self, checked: bool):
+        """鸟种识别开关切换：未启用时禁用模式选择"""
+        self.species_mode_combo.setEnabled(checked)
 
     def _build_config_row(self) -> QHBoxLayout:
         """构建配置参数行 / Build the config parameter row"""
@@ -389,8 +554,38 @@ class VideoAnalyzerWindow(QMainWindow):
         self._refresh_queue_status()
 
     def _refresh_queue_status(self):
+        """
+        刷新队列状态：把待处理视频填进结果表（状态=⏳ 等待）
+
+        让用户立刻看到「我选了什么」，避免拖放后没反馈。
+        Populate the results table with pending entries so the user can see
+        what was selected immediately after drop / pick.
+        """
         n = len(self._queue)
         self.btn_start.setEnabled(n > 0)
+        # 清空旧待处理行（但保留已完成结果），重新填充
+        # Clear previous pending rows; refill with new queue + duration probe.
+        from core.video_analyzer import probe_video_metadata
+        self.result_table.setRowCount(0)
+        self._row_by_path.clear()
+        for path in self._queue:
+            row = self.result_table.rowCount()
+            self.result_table.insertRow(row)
+            self._row_by_path[path] = row
+            self.result_table.setItem(row, 0, QTableWidgetItem("⏳ 等待"))
+            # 文件名列附加视频时长（轻量 header 探测，每个视频 ~10-20ms）
+            # Filename column shows duration probed from the header (~10-20ms per video).
+            base = os.path.basename(path)
+            meta = probe_video_metadata(path)
+            if meta is not None and meta.duration_sec > 0:
+                display_name = f"{base}  ({_fmt_duration_short(meta.duration_sec)})"
+            else:
+                display_name = base
+            self.result_table.setItem(row, 1, QTableWidgetItem(display_name))
+            self.result_table.setItem(row, 2, QTableWidgetItem(""))
+            self.result_table.setItem(row, 3, QTableWidgetItem(""))
+            self.result_table.setItem(row, 4, QTableWidgetItem(""))
+            self.result_table.setItem(row, 5, QTableWidgetItem(""))
         self.statusBar().showMessage(f"已添加 {n} 个视频，点「开始分析」开始")
         self.progress_label.setText(f"待处理：{n} 个视频")
 
@@ -399,9 +594,10 @@ class VideoAnalyzerWindow(QMainWindow):
     def _on_start(self):
         if not self._queue:
             return
-        # 清空旧结果
+        # 注意：不清空 result_table，因为 _refresh_queue_status 已把待处理行写入。
+        # 这里只清空内部 _results 缓存。状态会在 file_started / file_done 中原地更新。
+        # Do NOT reset result_table here; pending rows are already there.
         self._results = []
-        self.result_table.setRowCount(0)
         self.progress_bar.setValue(0)
 
         # UI 状态切换
@@ -417,6 +613,9 @@ class VideoAnalyzerWindow(QMainWindow):
             max_frames=self.max_frames_spin.value(),
             yolo_threshold=self.conf_slider.value() / 100.0,
             min_segment_frames=2,
+            enable_species=self.species_check.isChecked(),
+            species_mode=self.species_mode_combo.currentData(),
+            enable_flight=self.flight_check.isChecked(),
         )
         self._worker.model_loading.connect(
             lambda: self.progress_label.setText("正在加载 YOLO 模型…"))
@@ -438,6 +637,12 @@ class VideoAnalyzerWindow(QMainWindow):
     def _on_file_started(self, name: str, idx: int, total: int):
         self.progress_label.setText(f"[{idx}/{total}] 分析中：{name}")
         self.progress_bar.setRange(0, 0)  # 不定进度（每文件首次重置为忙）
+        # 找到对应行并把状态改为 🔄 处理中
+        # Find the row for this file and update status to 🔄
+        # 用 idx-1 即可（idx 是 1-based，按队列顺序）
+        row = idx - 1
+        if 0 <= row < self.result_table.rowCount():
+            self.result_table.setItem(row, 0, QTableWidgetItem("🔄 处理中"))
 
     def _on_file_progress(self, done: int, total: int):
         if total > 0:
@@ -445,17 +650,26 @@ class VideoAnalyzerWindow(QMainWindow):
             self.progress_bar.setValue(done)
 
     def _on_file_done(self, result):
+        """
+        单个视频处理完成：原地更新对应行
+
+        Update the row in place rather than appending a new one.
+        """
         self._results.append(result)
-        row = self.result_table.rowCount()
-        self.result_table.insertRow(row)
-        name = os.path.basename(result.video_path)
-        self.result_table.setItem(row, 0, QTableWidgetItem(name))
-        self.result_table.setItem(row, 1, QTableWidgetItem("🐦 是" if result.has_bird else "—"))
-        self.result_table.setItem(row, 2, QTableWidgetItem(str(len(result.segments))))
-        self.result_table.setItem(row, 3, QTableWidgetItem(
-            f"{result.sampled_frames}/{result.strategy_used}"))
+        row = self._row_by_path.get(result.video_path)
+        if row is None or row >= self.result_table.rowCount():
+            return
+        self.result_table.setItem(row, 0, QTableWidgetItem("✅ 完成"))
+        # 列 1 文件名已存在，不动 / Column 1 (filename) already set
+        self.result_table.setItem(row, 2, QTableWidgetItem(
+            _format_segments_detail(result.segments)))
+        self.result_table.setItem(row, 3, QTableWidgetItem(str(len(result.segments))))
         self.result_table.setItem(row, 4, QTableWidgetItem(
+            f"{result.sampled_frames}/{result.strategy_used}"))
+        self.result_table.setItem(row, 5, QTableWidgetItem(
             f"{result.total_wall_ms/1000:.1f}s"))
+        # 触发行高自适应 / Trigger row height adjustment
+        self.result_table.resizeRowToContents(row)
 
     def _on_all_done(self):
         self.btn_start.setEnabled(True)
