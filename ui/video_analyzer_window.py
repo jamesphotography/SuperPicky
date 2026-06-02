@@ -386,7 +386,8 @@ class VideoAnalyzerWindow(QMainWindow):
         self.progress_bar.setValue(0)
         outer.addWidget(self.progress_bar)
 
-        # 控制按钮：开始 / 停止 / 保存 SRT
+        # 控制按钮：开始 / 停止 / 应用归类（Phase 3）
+        # Control buttons: start / stop / organize (Phase 3)
         ctrl_row = QHBoxLayout()
         self.btn_start = QPushButton("开始分析")
         self.btn_start.clicked.connect(self._on_start)
@@ -394,13 +395,16 @@ class VideoAnalyzerWindow(QMainWindow):
         self.btn_stop = QPushButton("停止")
         self.btn_stop.clicked.connect(self._on_stop)
         self.btn_stop.setEnabled(False)
-        self.btn_save_srt = QPushButton("保存 SRT 字幕到视频旁")
-        self.btn_save_srt.clicked.connect(self._on_save_srt)
-        self.btn_save_srt.setEnabled(False)
+        self.btn_organize = QPushButton("应用归类（移动 + 重命名 + SRT）")
+        self.btn_organize.clicked.connect(self._on_organize)
+        self.btn_organize.setEnabled(False)
+        self.btn_organize.setToolTip(
+            "把分析完成的视频按 主鸟种 + 拍摄日期 重命名，移动到\n"
+            "「原视频目录/{鸟种}/」子目录，同时生成同名 SRT 字幕")
         ctrl_row.addWidget(self.btn_start)
         ctrl_row.addWidget(self.btn_stop)
         ctrl_row.addStretch()
-        ctrl_row.addWidget(self.btn_save_srt)
+        ctrl_row.addWidget(self.btn_organize)
         outer.addLayout(ctrl_row)
 
         # 结果表（含状态列：⏳ 等待 / 🔄 处理中 / ✅ 完成）
@@ -484,6 +488,17 @@ class VideoAnalyzerWindow(QMainWindow):
         self.flight_check = QCheckBox("启用飞行检测")
         self.flight_check.setChecked(True)
         layout.addWidget(self.flight_check)
+
+        layout.addSpacing(16)
+
+        # Phase 3: 分析完成后自动整理（默认勾选）
+        # Phase 3: auto-organize after analysis (default ON)
+        self.auto_organize_check = QCheckBox("分析完成后自动整理")
+        self.auto_organize_check.setChecked(True)
+        self.auto_organize_check.setToolTip(
+            "勾选后：分析完成会自动按鸟种重命名 + 移动 + 写 SRT\n"
+            "取消勾选：需要手动点「应用归类」按钮")
+        layout.addWidget(self.auto_organize_check)
 
         layout.addStretch()
         return box
@@ -605,7 +620,7 @@ class VideoAnalyzerWindow(QMainWindow):
         self.btn_stop.setEnabled(True)
         self.btn_pick_files.setEnabled(False)
         self.btn_pick_dir.setEnabled(False)
-        self.btn_save_srt.setEnabled(False)
+        self.btn_organize.setEnabled(False)
 
         # 启动 worker
         self._worker = _AnalysisWorker(
@@ -676,39 +691,112 @@ class VideoAnalyzerWindow(QMainWindow):
         self.btn_stop.setEnabled(False)
         self.btn_pick_files.setEnabled(True)
         self.btn_pick_dir.setEnabled(True)
-        self.btn_save_srt.setEnabled(len(self._results) > 0)
+        # Phase 3: 有任何成功结果就启用归类按钮（无鸟段也归类到「无鸟/」）
+        # Phase 3: enable organize whenever any result is available.
+        has_results = len(self._results) > 0
+        self.btn_organize.setEnabled(has_results)
         n = len(self._results)
         total_ms = sum(r.total_wall_ms for r in self._results)
         self.progress_label.setText(
             f"完成：处理 {n} 个视频，总耗时 {total_ms/1000:.1f}s")
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(100)
-        self.statusBar().showMessage(
-            f"分析完成。点「保存 SRT」可把字幕写到每个视频旁边")
+
+        # Phase 3: 自动整理（如勾选）—— 跳过确认弹窗
+        # Phase 3: auto-organize if checkbox is on, bypassing confirmation
+        if has_results and self.auto_organize_check.isChecked():
+            self.statusBar().showMessage("分析完成，自动整理中…")
+            self._do_organize(skip_confirm=True)
+        else:
+            self.statusBar().showMessage(
+                "分析完成。点「应用归类」可把视频按鸟种重命名移动 + 生成 SRT")
 
     def _on_error(self, msg: str):
         self.statusBar().showMessage(f"⚠️ 错误: {msg}")
 
-    # ── SRT 保存 / SRT export ─────────────────────────────────────────
+    # ── Phase 3: 应用归类（移动 + 重命名 + SRT）/ Organize ─────────────────
 
-    def _on_save_srt(self):
-        from core.video_segment import write_srt
+    def _on_organize(self):
+        """
+        Phase 3 入口（按钮点击）：弹确认后整理
+
+        Phase 3 entry (button click): confirm then organize.
+        """
+        self._do_organize(skip_confirm=False)
+
+    def _do_organize(self, skip_confirm: bool = False):
+        """
+        实际整理逻辑：按主鸟种重命名 + 移动 + 写 SRT
+
+        参数:
+            skip_confirm (bool): True 时跳过确认弹窗（自动整理时使用）
+
+        Run the actual organize flow. skip_confirm=True bypasses the
+        confirmation dialog (used by auto-organize).
+        """
         if not self._results:
             return
-        saved, failed = 0, 0
+
+        n = len(self._results)
+        if not skip_confirm:
+            confirm = QMessageBox.question(
+                self, "确认应用归类",
+                f"将整理 {n} 个视频到原视频目录下的子目录：\n"
+                f"  • 有鸟种 → 「{{鸟种}}/」\n"
+                f"  • 有鸟无种类 → 「其他鸟/」\n"
+                f"  • 完全无鸟 → 「无鸟/」\n"
+                f"  • 重命名为「{{鸟种}}_{{拍摄日期}}_{{原文件名}}」\n"
+                f"  • 同时生成 SRT 字幕（同目录同名）\n\n"
+                f"原视频会被移动（不是复制），此操作不可撤销。\n确认继续吗？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            if confirm != QMessageBox.StandardButton.Yes:
+                return
+
+        from tools.video_organizer import VideoOrganizer, OrganizeOptions
+        organizer = VideoOrganizer(options=OrganizeOptions(operation='move'))
+
+        succeeded = 0
+        failed_msgs = []
         for r in self._results:
-            try:
-                video_path = r.video_path
-                base, _ = os.path.splitext(video_path)
-                srt_path = base + ".srt"
-                write_srt(r.segments, srt_path)
-                saved += 1
-            except Exception as e:
-                failed += 1
-                self.statusBar().showMessage(f"⚠️ SRT 写入失败: {e}")
-        QMessageBox.information(
-            self, "SRT 保存完成",
-            f"已保存 {saved} 个 SRT 字幕文件" + (f"，{failed} 个失败" if failed else ""))
+            org_result = organizer.organize(r.video_path, r.segments)
+            row = self._row_by_path.get(r.video_path)
+            if org_result.success:
+                succeeded += 1
+                if row is not None:
+                    self.result_table.setItem(row, 0, QTableWidgetItem("📁 已归类"))
+                    new_name = os.path.basename(org_result.target_video_path or '')
+                    if new_name:
+                        self.result_table.setItem(row, 1, QTableWidgetItem(new_name))
+                if org_result.error:
+                    failed_msgs.append(f"{os.path.basename(r.video_path)}: {org_result.error}")
+            else:
+                if row is not None:
+                    self.result_table.setItem(row, 0, QTableWidgetItem("⚠️ 失败"))
+                failed_msgs.append(f"{os.path.basename(r.video_path)}: {org_result.error}")
+
+        # 结果总结：自动模式只更新状态栏，避免打扰；手动模式弹对话框
+        # Summary: auto-mode quiet status update; manual mode shows dialog.
+        if skip_confirm:
+            self.statusBar().showMessage(
+                f"✅ 自动归类完成：{succeeded}/{n} 成功"
+                + (f"（{len(failed_msgs)} 个警告）" if failed_msgs else ""))
+        elif failed_msgs:
+            QMessageBox.warning(
+                self, "归类完成（有警告）",
+                f"成功 {succeeded} / {n}，失败/警告 {len(failed_msgs)} 个：\n\n"
+                + "\n".join(failed_msgs[:10])
+                + ("\n…" if len(failed_msgs) > 10 else "")
+            )
+        else:
+            QMessageBox.information(
+                self, "归类完成",
+                f"已整理 {succeeded} 个视频，全部成功。\n"
+                f"输出位置：「原视频目录/{{鸟种}}/」（含 SRT 字幕）"
+            )
+        self.btn_organize.setEnabled(False)
+        if not skip_confirm:
+            self.statusBar().showMessage(f"归类完成：{succeeded}/{n} 成功")
 
     # ── 关闭处理 / Close handler ──────────────────────────────────────
 
