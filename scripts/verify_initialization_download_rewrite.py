@@ -7,9 +7,10 @@ Offline regression checks for the initialization download rewrite.
 
 from __future__ import annotations
 
-import tempfile
 import sys
+import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
@@ -23,7 +24,13 @@ from core.initialization_progress import (
 )
 from core.runtime_requirements import get_runtime_requirements
 from core.source_registry import get_official_pypi_url, get_pypi_sources, get_torch_sources
-from core.uv_runtime_manager import build_install_command
+from core.uv_runtime_manager import (
+    build_install_command,
+    build_uv_install_environment,
+    is_uv_managed_python_path_error,
+    repair_uv_managed_python_dir,
+    runtime_managed_python_dir,
+)
 from scripts.download_models import _parse_hf_cli_size, verify_resource
 
 
@@ -101,6 +108,121 @@ def verify_uv_command_uses_single_pypi_index() -> None:
         not any("pytorch" in part.lower() for part in command),
         "Torch mirror leaked into uv index arguments",
     )
+
+
+def verify_packaged_target_uv_uses_app_managed_python() -> None:
+    """
+    Verify packaged target installs use an app-scoped uv managed Python.
+
+    校验打包态 target 安装使用应用自有的 uv managed Python。
+    """
+    with tempfile.TemporaryDirectory(prefix="superpicky_uv_target_verify_") as tmp:
+        tmp_path = Path(tmp)
+        requirements_file = tmp_path / "requirements.txt"
+        runtime_dir = tmp_path / "user_selected_runtime_env"
+        managed_python_dir = runtime_managed_python_dir(runtime_dir)
+        target_dir = runtime_dir / "site-packages.__installing__"
+        requirements_file.write_text("timm>=0.9.0\n", encoding="utf-8")
+        command = build_install_command(
+            uv_path="uv",
+            requirements_file=requirements_file,
+            index_url=get_official_pypi_url(),
+            target_dir=target_dir,
+            cache_dir=runtime_dir / "uv-cache",
+            use_managed_python=True,
+        )
+        with patch.dict(
+            "os.environ",
+            {
+                "UV_MANAGED_PYTHON": "1",
+                "UV_NO_MANAGED_PYTHON": "1",
+                "UV_PYTHON_PREFERENCE": "system",
+            },
+        ):
+            env = build_uv_install_environment(managed_python_dir)
+
+    _assert("--managed-python" in command, "packaged target install must use managed Python")
+    _assert("--python" in command, "packaged target install must pin the uv Python request")
+    _assert(
+        str(target_dir) in command,
+        "packaged target install must keep the user-selected runtime target",
+    )
+    _assert(
+        "--python-version" in command,
+        "packaged target install must pin target Python version",
+    )
+    if sys.platform == "win32":
+        _assert(
+            "--python-platform" in command and "windows" in command,
+            "Windows target install must pin the target platform",
+        )
+    _assert(
+        "--no-python-downloads" not in command,
+        "packaged target install must allow app-scoped managed Python bootstrap",
+    )
+    _assert(env["UV_NO_CONFIG"] == "1", "uv must ignore user-global config")
+    _assert(
+        env["UV_PYTHON_INSTALL_DIR"] == str(managed_python_dir),
+        "uv managed Python dir must stay under the app runtime",
+    )
+    _assert(
+        managed_python_dir.parent == runtime_dir,
+        "uv managed Python dir must be derived from the selected runtime dir",
+    )
+    _assert(
+        env["UV_PYTHON_DOWNLOADS"] == "automatic",
+        "uv must be allowed to bootstrap the app-scoped managed Python",
+    )
+    _assert(
+        "UV_PYTHON_PREFERENCE" not in env,
+        "uv --managed-python must not conflict with UV_PYTHON_PREFERENCE",
+    )
+    _assert(
+        "UV_NO_MANAGED_PYTHON" not in env,
+        "uv --managed-python must not conflict with UV_NO_MANAGED_PYTHON",
+    )
+
+
+def verify_uv_managed_python_path_repair_helpers() -> None:
+    """
+    Verify local uv managed Python path errors are detected and repairable.
+
+    校验 uv managed Python 本地路径错误可识别，且可清理应用自有目录。
+    """
+    error_text = (
+        "error: Failed to inspect Python interpreter from managed installations at "
+        "`_internal\\runtime_env\\.uv-python\\cpython-3.13-windows-x86_64-none\\python.exe`\n"
+        "Caused by: Failed to query Python interpreter\n"
+        "Caused by: failed to query metadata of file "
+        "`C:\\Users\\demo\\AppData\\Local\\Programs\\SuperPicky\\_internal\\runtime_env\\"
+        ".uv-python\\cpython-3.13-windows-x86_64-none\\python.exe`: "
+        "无法遍历该路径，因为它包含不受信任的装入点。 (os error 448)"
+    )
+    _assert(
+        is_uv_managed_python_path_error(error_text),
+        "uv managed Python mount-point failure was not detected",
+    )
+    with tempfile.TemporaryDirectory(prefix="superpicky_uv_python_repair_") as tmp:
+        runtime_dir = Path(tmp) / "user_selected_runtime_env"
+        default_runtime_dir = Path(tmp) / "default_runtime_env"
+        managed_python_dir = runtime_managed_python_dir(runtime_dir)
+        default_marker = default_runtime_dir / "keep.txt"
+        python_dir = managed_python_dir / "cpython-3.13-windows-x86_64-none"
+        python_dir.mkdir(parents=True, exist_ok=True)
+        default_runtime_dir.mkdir(parents=True, exist_ok=True)
+        (python_dir / "python.exe").write_text("placeholder\n", encoding="utf-8")
+        default_marker.write_text("default runtime placeholder\n", encoding="utf-8")
+
+        repair_uv_managed_python_dir(managed_python_dir)
+        _assert(
+            not managed_python_dir.exists(),
+            "uv managed Python repair did not remove the app-owned directory",
+        )
+        _assert(
+            default_marker.exists(),
+            "uv managed Python repair touched a non-selected runtime directory",
+        )
+        repair_uv_managed_python_dir(managed_python_dir)
 
 
 def verify_lite_spec_uses_downloaded_uv() -> None:
@@ -229,6 +351,21 @@ def verify_runtime_install_attempt_matrix() -> None:
         first_attempt,
         "torch",
     )
+    local_runtime_error = (
+        "Failed to inspect Python interpreter from managed installations at "
+        "`.uv-python\\cpython-3.13-windows-x86_64-none\\python.exe`: "
+        "untrusted mount point (os error 448)"
+    )
+    failed_pool = InitializationManager._classify_runtime_install_failure(
+        local_runtime_error,
+        first_attempt,
+    )
+    next_after_local_runtime = InitializationManager._next_runtime_install_attempt(
+        attempts,
+        tried_pairs,
+        first_attempt,
+        failed_pool,
+    )
     _assert(
         (next_after_pypi.pypi_url, next_after_pypi.torch_url)
         == ("https://pypi-b.example/simple", "https://torch-a.example/cu118"),
@@ -239,6 +376,14 @@ def verify_runtime_install_attempt_matrix() -> None:
         == ("https://pypi-a.example/simple", "https://torch-b.example/cu118"),
         "Torch failure did not switch only the Torch pool",
     )
+    _assert(
+        failed_pool == "local_runtime",
+        "uv managed Python local path error was not classified as local runtime",
+    )
+    _assert(
+        next_after_local_runtime is None,
+        "local runtime path failure must not rotate PyPI/Torch source pools",
+    )
 
 
 def main() -> int:
@@ -246,6 +391,8 @@ def main() -> int:
         verify_source_registry_isolation,
         verify_torch_direct_wheel_urls,
         verify_uv_command_uses_single_pypi_index,
+        verify_packaged_target_uv_uses_app_managed_python,
+        verify_uv_managed_python_path_repair_helpers,
         verify_lite_spec_uses_downloaded_uv,
         verify_lite_build_tracks_latest_uv,
         verify_progress_terminal_is_fast,

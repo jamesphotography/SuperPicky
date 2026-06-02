@@ -672,6 +672,8 @@ class SuperPickyMainWindow(QMainWindow):
         self._background_mode = False  # V4.0: 标记是否进入后台模式（不停止服务器）
         self._suppress_results_browser_once = False
         self._resume_prompt_handled = False
+        self._initialization_dialog_open = False
+        self._initialization_prompt_dismissed = False
         
         # osk flex,countly.com 63fda2e
         self._startup_prompts_ran = False
@@ -3545,6 +3547,9 @@ class SuperPickyMainWindow(QMainWindow):
     
     def _show_first_run_skill_level_dialog(self):
         """首次运行：显示轻量欢迎向导。"""
+        if self._initialization_dialog_open or self._initialization_prompt_dismissed:
+            return
+
         # Safety guard: onboarding 只允许作为首启流程出现。
         # 如果未来旧代码路径误调用这里，非首次运行时直接跳过，避免重复打断用户。
         # NOTE:
@@ -3556,7 +3561,16 @@ class SuperPickyMainWindow(QMainWindow):
 
         dialog = WelcomeOnboardingDialog(self.i18n, self)
         dialog.onboarding_completed.connect(self._on_welcome_onboarding_completed)
-        dialog.exec()
+        self._initialization_dialog_open = True
+        result = QDialog.DialogCode.Rejected
+        try:
+            result = dialog.exec()
+        finally:
+            self._initialization_dialog_open = False
+
+        if result == QDialog.DialogCode.Rejected and dialog.interrupted_by_user:
+            self._initialization_prompt_dismissed = True
+            QTimer.singleShot(0, QApplication.quit)
 
     def _initialization_ready(self) -> bool:
         return self._init_manager.is_ready_for_main_ui()
@@ -3633,6 +3647,8 @@ class SuperPickyMainWindow(QMainWindow):
 
     def _on_welcome_onboarding_completed(self, level_key: str, auto_update_enabled: bool):
         """处理首次启动欢迎向导完成。"""
+        self._initialization_prompt_dismissed = False
+
         # Keep signal payload order stable: (level_key, auto_update_enabled)
         # 这里同时负责首启设置持久化与立即生效，避免状态已保存但主界面仍停留在旧阈值。
         self.config.set_skill_level(level_key)

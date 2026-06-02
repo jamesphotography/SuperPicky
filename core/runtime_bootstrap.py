@@ -25,7 +25,10 @@ from core.source_registry import get_official_pypi_url
 from core.uv_runtime_manager import (
     build_install_command,
     ensure_uv_bootstrapped,
+    is_uv_managed_python_path_error,
+    repair_uv_managed_python_dir,
     run_uv_install,
+    runtime_managed_python_dir,
 )
 
 
@@ -79,6 +82,8 @@ def run_runtime_bootstrap(argv: list[str]) -> int:
     args = _parse_args(argv)
     runtime_dir = Path(args.runtime_dir).resolve()
     site_packages_dir = runtime_dir / "site-packages"
+    use_managed_python = getattr(sys, "frozen", False) and sys.platform == "win32"
+    uv_python_dir = runtime_managed_python_dir(runtime_dir) if use_managed_python else None
     site_packages_dir.mkdir(parents=True, exist_ok=True)
 
     uv_path = ensure_uv_bootstrapped(runtime_dir)
@@ -88,6 +93,7 @@ def run_runtime_bootstrap(argv: list[str]) -> int:
         index_url=args.index_url or get_official_pypi_url(),
         target_dir=site_packages_dir,
         cache_dir=runtime_dir / "uv-cache",
+        use_managed_python=use_managed_python,
     )
     print(f"[runtime-bootstrap] target={site_packages_dir}")
     try:
@@ -96,10 +102,39 @@ def run_runtime_bootstrap(argv: list[str]) -> int:
             command,
             "runtime bootstrap uv install",
             progress_cb=None,
+            uv_managed_python_dir=uv_python_dir,
         )
     except Exception as exc:
-        print(f"[runtime-bootstrap] uv install failed: {exc}", file=sys.stderr)
-        return 1
+        if uv_python_dir is None or not is_uv_managed_python_path_error(str(exc)):
+            print(f"[runtime-bootstrap] uv install failed: {exc}", file=sys.stderr)
+            return 1
+        print(
+            "[runtime-bootstrap] uv managed Python path issue detected; "
+            "cleaning app runtime Python and retrying",
+            file=sys.stderr,
+        )
+        try:
+            repair_uv_managed_python_dir(uv_python_dir)
+        except RuntimeError as repair_exc:
+            print(
+                f"[runtime-bootstrap] uv managed Python repair failed: {repair_exc}",
+                file=sys.stderr,
+            )
+            return 1
+        try:
+            run_uv_install(
+                uv_path,
+                command,
+                "runtime bootstrap uv install after managed Python repair",
+                progress_cb=None,
+                uv_managed_python_dir=uv_python_dir,
+            )
+        except Exception as retry_exc:
+            print(
+                f"[runtime-bootstrap] uv install failed after repair: {retry_exc}",
+                file=sys.stderr,
+            )
+            return 1
 
     if str(site_packages_dir) not in sys.path:
         sys.path.insert(0, str(site_packages_dir))

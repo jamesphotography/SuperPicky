@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import os
 import queue
+import shutil
 import subprocess
 import sys
 import threading
@@ -35,6 +36,110 @@ logging.basicConfig(level=logging.INFO)
 _UV_BINARY_CACHE: Optional[Path] = None
 _UV_HEARTBEAT_SECONDS = 5.0
 _UV_MAX_SYNTHETIC_RATIO = 0.92
+
+
+def runtime_managed_python_dir(runtime_dir: Path) -> Path:
+    """
+    返回 uv 专用的应用自有 Python 安装目录。
+
+    参数:
+    runtime_dir (Path): 当前运行时目录。
+
+    返回:
+    Path: 只属于当前应用安装/runtime 的 uv managed Python 目录。
+
+    Return the app-owned Python installation directory used by uv.
+
+    Parameters:
+    runtime_dir (Path): The current runtime directory.
+
+    Return:
+    Path: The uv managed Python directory scoped to this app runtime only.
+    """
+    return runtime_dir / ".uv-python"
+
+
+def is_uv_managed_python_path_error(error_text: str) -> bool:
+    """
+    判断 uv managed Python 是否因本地路径/装入点状态而失败。
+
+    参数:
+    error_text (str): uv 安装命令输出或异常文本。
+
+    返回:
+    bool: 如果错误指向 uv managed Python 本地路径不可访问，则返回 True。
+
+    Detect whether uv managed Python failed because the local install path or a
+    Windows mount-point state is inaccessible.
+
+    Parameters:
+    error_text (str): uv install output or exception text.
+
+    Return:
+    bool: True when the failure points to an inaccessible uv managed Python path.
+    """
+    lowered = (error_text or "").lower()
+    managed_python_tokens = (
+        "failed to inspect python interpreter from managed installations",
+        "failed to query python interpreter",
+        "failed to query metadata of file",
+    )
+    local_path_tokens = (
+        "untrusted mount point",
+        "os error 448",
+        "无法遍历该路径",
+        "不受信任的装入点",
+        ".uv-python",
+    )
+    return any(token in lowered for token in managed_python_tokens) and any(
+        token in lowered for token in local_path_tokens
+    )
+
+
+def repair_uv_managed_python_dir(uv_managed_python_dir: Path) -> None:
+    """
+    清理应用自有 uv managed Python 目录，让 uv 在下一次运行时重新安装。
+
+    参数:
+    uv_managed_python_dir (Path): 由 runtime_managed_python_dir() 返回的目录。
+
+    异常:
+    RuntimeError: 当目录无法删除时抛出，调用方应停止源轮换并报告本地路径问题。
+
+    Remove the app-owned uv managed Python directory so uv can reinstall it on
+    the next run.
+
+    Parameters:
+    uv_managed_python_dir (Path): Directory returned by runtime_managed_python_dir().
+
+    Raises:
+    RuntimeError: Raised when the directory cannot be removed; callers should
+    stop source retries and report the local path problem.
+    """
+    if uv_managed_python_dir.name != ".uv-python":
+        raise RuntimeError(
+            "uv managed Python repair refused to remove unexpected path: "
+            f"{uv_managed_python_dir}"
+        )
+    try:
+        shutil.rmtree(uv_managed_python_dir)
+    except FileNotFoundError:
+        return
+    except NotADirectoryError:
+        try:
+            uv_managed_python_dir.unlink()
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            raise RuntimeError(
+                f"uv managed Python repair failed: cannot remove "
+                f"{uv_managed_python_dir} ({exc})"
+            ) from exc
+    except OSError as exc:
+        raise RuntimeError(
+            f"uv managed Python repair failed: cannot remove "
+            f"{uv_managed_python_dir} ({exc})"
+        ) from exc
 
 
 def _uv_binary_name() -> str:
@@ -199,12 +304,14 @@ def build_install_command(
     target_dir: Path | None = None,
     python_executable: Path | None = None,
     cache_dir: Path | None = None,
+    use_managed_python: bool = False,
 ) -> list[str]:
     """
     Build a uv pip install command with one authoritative PyPI index.
 
     构建只使用一个权威 PyPI 索引的 uv pip install 命令。
     """
+    python_version = f"{sys.version_info.major}.{sys.version_info.minor}"
     cmd = [
         uv_path,
         "--color",
@@ -220,19 +327,62 @@ def build_install_command(
         "--link-mode",
         "copy",
         "--compile-bytecode",
-        "--no-python-downloads",
         "-r",
         str(requirements_file),
     ]
     if target_dir is not None:
         cmd.extend(["--target", str(target_dir)])
+        cmd.extend(["--python-version", python_version])
+        if os.name == "nt":
+            cmd.extend(["--python-platform", "windows"])
+        if use_managed_python:
+            cmd.extend(["--managed-python", "--python", python_version])
+        else:
+            cmd.append("--no-python-downloads")
     elif python_executable is not None:
+        cmd.append("--no-python-downloads")
         cmd.extend(["--python", str(python_executable)])
     else:
         raise ValueError("target_dir or python_executable is required")
     if cache_dir is not None:
         cmd.extend(["--cache-dir", str(cache_dir)])
     return cmd
+
+
+def build_uv_install_environment(
+    uv_managed_python_dir: Path | None = None,
+) -> dict[str, str]:
+    """
+    构建 uv 安装子进程环境，避免打包应用读取用户全局 uv 配置。
+
+    参数:
+    uv_managed_python_dir (Path | None): 当需要 uv managed Python 时，指定应用自有目录。
+
+    返回:
+    dict[str, str]: 可传给 subprocess 的环境变量。
+
+    Build the uv install subprocess environment without reading user-global uv state.
+
+    Parameters:
+    uv_managed_python_dir (Path | None): App-owned directory for uv managed Python when needed.
+
+    Return:
+    dict[str, str]: Environment variables suitable for subprocess.
+    """
+    env = os.environ.copy()
+    env["UV_PRINT_PIP_LOG"] = "1"
+    env["UV_NO_CONFIG"] = "1"
+    if uv_managed_python_dir is not None:
+        uv_managed_python_dir.mkdir(parents=True, exist_ok=True)
+        env["UV_PYTHON_DOWNLOADS"] = "automatic"
+        env["UV_PYTHON_INSTALL_DIR"] = str(uv_managed_python_dir)
+        env["UV_PYTHON_INSTALL_REGISTRY"] = "0"
+        env["UV_PYTHON_NO_REGISTRY"] = "1"
+        env.pop("UV_MANAGED_PYTHON", None)
+        env.pop("UV_NO_MANAGED_PYTHON", None)
+        env.pop("UV_PYTHON_PREFERENCE", None)
+        env.pop("UV_PYTHON_SEARCH_PATH", None)
+    return env
 
 
 def _synthetic_uv_ratio(event_count: int) -> float:
@@ -277,14 +427,14 @@ def run_uv_install(
     label: str,
     *,
     progress_cb=None,
+    uv_managed_python_dir: Path | None = None,
 ) -> str:
     """
     Run uv pip install, returning combined stdout+stderr output.
 
     运行 uv pip install，返回合并的 stdout+stderr 输出。
     """
-    env = os.environ.copy()
-    env["UV_PRINT_PIP_LOG"] = "1"
+    env = build_uv_install_environment(uv_managed_python_dir)
     popen_kwargs = {
         "stdout": subprocess.PIPE,
         "stderr": subprocess.STDOUT,

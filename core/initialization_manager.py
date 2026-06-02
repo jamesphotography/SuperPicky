@@ -62,7 +62,10 @@ from core.uv_runtime_manager import (
     build_install_command,
     create_venv,
     ensure_uv_bootstrapped,
+    is_uv_managed_python_path_error,
+    repair_uv_managed_python_dir,
     run_uv_install,
+    runtime_managed_python_dir,
 )
 from scripts.download_models import (
     download_resource,
@@ -1316,6 +1319,14 @@ class InitializationManager(QObject):
                 f"({attempt.attempt_index}/{attempt.attempt_count}, "
                 f"PyPI={attempt.pypi_url}, Torch={attempt.torch_url or 'pypi'})"
             )
+            use_managed_python = (
+                target_dir is not None and self._use_packaged_runtime_bootstrap()
+            )
+            uv_python_dir = (
+                runtime_managed_python_dir(self._runtime_dir)
+                if use_managed_python
+                else None
+            )
             try:
                 self._emit_item_status("runtime", "progress", label)
                 command = build_install_command(
@@ -1325,15 +1336,48 @@ class InitializationManager(QObject):
                     target_dir=target_dir,
                     python_executable=python_executable,
                     cache_dir=self._uv_cache_dir(),
+                    use_managed_python=use_managed_python,
                 )
                 run_uv_install(
                     uv_path,
                     command,
                     label,
                     progress_cb=self._uv_progress_cb(),
+                    uv_managed_python_dir=uv_python_dir,
                 )
                 return attempt
             except Exception as exc:
+                if uv_python_dir is not None and is_uv_managed_python_path_error(str(exc)):
+                    last_error = exc
+                    self._emit_item_status(
+                        "runtime",
+                        "warning",
+                        "uv managed Python path issue detected; cleaning app runtime Python and retrying",
+                    )
+                    try:
+                        repair_uv_managed_python_dir(uv_python_dir)
+                    except RuntimeError as repair_exc:
+                        raise RuntimeError(
+                            "uv managed Python repair failed before local retry; "
+                            f"local path may be inaccessible: {uv_python_dir}"
+                        ) from repair_exc
+                    try:
+                        run_uv_install(
+                            uv_path,
+                            command,
+                            f"{label} after managed Python repair",
+                            progress_cb=self._uv_progress_cb(),
+                            uv_managed_python_dir=uv_python_dir,
+                        )
+                        return attempt
+                    except Exception as retry_exc:
+                        last_error = retry_exc
+                        if is_uv_managed_python_path_error(str(retry_exc)):
+                            raise RuntimeError(
+                                "uv managed Python remains inaccessible after cleanup; "
+                                f"local path may contain an untrusted mount point: {uv_python_dir}"
+                            ) from retry_exc
+                        exc = retry_exc
                 last_error = exc
                 failed_pool = self._classify_runtime_install_failure(
                     str(exc),
@@ -1376,6 +1420,8 @@ class InitializationManager(QObject):
         torch_url = (attempt.torch_url or "").lower()
         pypi_url = (attempt.pypi_url or "").lower()
 
+        if is_uv_managed_python_path_error(lowered):
+            return "local_runtime"
         if torch_url and torch_url in lowered:
             return "torch"
         if pypi_url and pypi_url in lowered:
@@ -1420,6 +1466,8 @@ class InitializationManager(QObject):
         def _untried(candidate: RuntimeInstallAttempt) -> bool:
             return (candidate.pypi_url, candidate.torch_url) not in tried_pairs
 
+        if failed_pool == "local_runtime":
+            return None
         if failed_pool == "pypi":
             for candidate in attempts:
                 if candidate.torch_url == current.torch_url and _untried(candidate):
@@ -1921,6 +1969,7 @@ class InitializationManager(QObject):
             runtime_dir / "site-packages",
             runtime_dir / "site-packages.__installing__",
             runtime_dir / "Lib" / "site-packages",
+            runtime_managed_python_dir(runtime_dir),
             runtime_dir / "runtime_install_manifest.json",
         ]
         for candidate in removable_paths:
