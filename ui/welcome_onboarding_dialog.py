@@ -731,7 +731,7 @@ class WelcomeOnboardingDialog(QDialog):
 
     def _nav_state_for_page(self, page_index: int) -> _NavState:
         is_init_page = self._is_initialization_page(page_index)
-        if self._initialization_complete and is_init_page:
+        if is_init_page:
             next_text = self.i18n.t("onboarding.finish")
         elif self._is_preparation_page(page_index) and self._preparation_can_finish():
             next_text = self.i18n.t("onboarding.finish")

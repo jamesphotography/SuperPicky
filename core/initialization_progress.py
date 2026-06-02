@@ -22,6 +22,7 @@ from dataclasses import dataclass
 
 PROGRESS_KIND_RUNTIME = "runtime_install"
 PROGRESS_KIND_DOWNLOAD = "resource_download"
+PROGRESS_KIND_UV_INSTALL = "uv_install"
 
 STAGE_PROBING = "probing_sources"
 STAGE_CHECKING_UPDATES = "checking_updates"
@@ -133,6 +134,19 @@ def phase_from_stage(stage: str) -> str | None:
     return None
 
 
+def phase_from_progress_kind(progress_kind: str) -> str | None:
+    """
+    Map a progress kind to the owning visual phase.
+
+    将进度类型映射到对应的视觉动画阶段。
+    """
+    if progress_kind in (PROGRESS_KIND_RUNTIME, PROGRESS_KIND_UV_INSTALL):
+        return PROGRESS_KIND_RUNTIME
+    if progress_kind == PROGRESS_KIND_DOWNLOAD:
+        return PROGRESS_KIND_DOWNLOAD
+    return None
+
+
 def parse_pip_raw_progress_line(line: str) -> tuple[int, int] | None:
     """
     Parse `pip --progress-bar raw` lines into byte counters.
@@ -163,16 +177,16 @@ class InitializationProgressModel:
         PROGRESS_KIND_RUNTIME: ProgressPhaseProfile(
             key=PROGRESS_KIND_RUNTIME,
             start_percent=0.0,
-            end_percent=30.0,
-            min_duration_seconds=2.0,
-            max_duration_seconds=420.0,
+            end_percent=40.0,
+            min_duration_seconds=0.0,
+            max_duration_seconds=0.0,
         ),
         PROGRESS_KIND_DOWNLOAD: ProgressPhaseProfile(
             key=PROGRESS_KIND_DOWNLOAD,
-            start_percent=30.0,
+            start_percent=40.0,
             end_percent=99.0,
-            min_duration_seconds=250.0,
-            max_duration_seconds=420.0,
+            min_duration_seconds=0.0,
+            max_duration_seconds=0.0,
         ),
     }
 
@@ -242,6 +256,8 @@ class InitializationProgressModel:
         使用结构化子系统事件更新真实进度。
         """
         phase_key = event.progress_kind if event.progress_kind in self.PHASES else phase_from_stage(event.stage)
+        if phase_key is None:
+            phase_key = phase_from_progress_kind(event.progress_kind)
         if phase_key is not None:
             self._activate_phase(
                 phase_key,
@@ -255,6 +271,7 @@ class InitializationProgressModel:
             if ratio is not None:
                 actual = phase.start_percent + (phase.span * ratio)
                 self._actual_percent = max(self._actual_percent, actual)
+                self._display_percent = max(self._display_percent, actual)
             if event.is_terminal:
                 self._actual_percent = max(self._actual_percent, phase.end_percent)
         return self.advance(now)
@@ -398,34 +415,28 @@ class InitializationProgressModel:
         event: InitializationProgressEvent | None,
     ) -> float:
         """
-        Choose a phase duration inside the configured long-task window.
+        Return 0.0 — progress is now data-driven, not time-driven.
 
-        在配置好的长任务窗口内选择当前阶段的目标时长。
+        返回 0.0 —— 进度模型现已切换为数据驱动，不再由时间驱动。
+
+        The max_duration_seconds serves as a safety fallback: if no real
+        progress arrives within 30 seconds, gentle time-based advancement
+        begins to prevent the bar from appearing completely stuck.
+        max_duration_seconds 用作安全兜底：如果 30 秒内没有真实进度到达，
+        则开始温和的时间推动以避免进度条看起来完全卡住。
         """
-        if profile.key == PROGRESS_KIND_RUNTIME:
-            if event is not None and event.is_terminal and not self._phase_was_observed:
-                return 4.0 + self._small_duration_jitter(profile.key)
-            base = 180.0 + self._large_duration_jitter(profile.key)
-            if bytes_total and bytes_total > 0:
-                base += min(35.0, bytes_total / float(1024 ** 3) * 20.0)
-            return min(profile.max_duration_seconds, max(profile.min_duration_seconds, base))
-
-        base = 300.0 + self._large_duration_jitter(profile.key)
-        if bytes_total and bytes_total > 0:
-            size_gib = bytes_total / float(1024 ** 3)
-            base += min(55.0, size_gib * 45.0)
-        if item_count and item_count > 1:
-            base += min(35.0, float(item_count - 1) * 8.0)
-        return min(profile.max_duration_seconds, max(profile.min_duration_seconds, base))
+        return profile.max_duration_seconds if profile.max_duration_seconds > 0 else 0.0
 
     def _compute_time_target(self, now: float) -> float:
         """
-        Compute the monotonic time-driven target for the active phase.
+        Return the current display value when data-driven, or a time target otherwise.
 
-        计算当前活动阶段的单调时间驱动目标值。
+        数据驱动模式返回当前显示值，否则计算时间驱动目标。
         """
         assert self._active_phase is not None
         profile = self.PHASES[self._active_phase]
+        if profile.max_duration_seconds <= 0.0:
+            return self._display_percent
         elapsed = max(0.0, now - self._phase_started_at)
         duration = max(1.0, self._phase_target_seconds)
         progress_ratio = min(0.985, elapsed / duration)
@@ -484,6 +495,8 @@ class InitializationProgressModel:
         """
         if self._active_phase is None:
             return False
+        if self._phase_target_seconds <= 0.0:
+            return True
         elapsed = max(0.0, now - self._phase_started_at)
         return elapsed >= self._phase_target_seconds * 0.92
 

@@ -73,6 +73,11 @@ except Exception:
     pick_best_source = None
     probe_sources = None
 
+try:
+    from core.source_probe_parallel import probe_sources_parallel
+except Exception:
+    probe_sources_parallel = None
+
 from core.initialization_progress import (
     InitializationProgressEvent,
     PROGRESS_KIND_DOWNLOAD,
@@ -210,9 +215,11 @@ def _sha256_file(file_path: Path, chunk_size: int = 1024 * 1024) -> str:
 
 def verify_resource(resource: Dict[str, Any], file_path: Path) -> bool:
     expected_sha256 = resource.get("sha256")
+    if not file_path.exists() or file_path.stat().st_size <= 0:
+        return False
     if not expected_sha256:
-        return file_path.exists()
-    return file_path.exists() and _sha256_file(file_path) == expected_sha256.lower()
+        return True
+    return _sha256_file(file_path) == expected_sha256.lower()
 
 
 # 镜像源相对官方源的最大可接受延迟倍率：mirror 延迟 ≤ official 延迟 × 此值
@@ -230,7 +237,10 @@ def _resolve_hf_endpoints() -> List[Tuple[str, str]]:
         return list(DOWNLOAD_ENDPOINTS)
 
     probe_input = [{"name": name, "url": endpoint} for name, endpoint in DOWNLOAD_ENDPOINTS]
-    results = probe_sources("huggingface-models", probe_input)
+    if probe_sources_parallel is not None:
+        results = probe_sources_parallel("huggingface-models", probe_input)
+    else:
+        results = probe_sources("huggingface-models", probe_input)
     successful = [item for item in results if item.ok]
     if not successful:
         return list(DOWNLOAD_ENDPOINTS)
@@ -567,6 +577,19 @@ def _download_via_cli(
             return None
 
         file_size = dest_path.stat().st_size
+        if file_size <= 0:
+            logging.warning("hf CLI %s 完成但目标文件为空: %s", source_name, dest_path)
+            dest_path.unlink(missing_ok=True)
+            return None
+        if expected_bytes and file_size < expected_bytes:
+            logging.warning(
+                "hf CLI %s 文件大小不足: %d < %d",
+                source_name,
+                file_size,
+                expected_bytes,
+            )
+            dest_path.unlink(missing_ok=True)
+            return None
         logging.info(
             "hf CLI 成功: %s 通过 %s 完成, %d 字节 (%.1f MB), 耗时 %.2f 秒",
             filename,
@@ -705,6 +728,10 @@ def _download_via_httpx(
                                     is_terminal=ratio >= 1.0,
                                 ),
                             )
+                if expected_bytes and bytes_written < expected_bytes:
+                    raise RuntimeError(
+                        f"incomplete download: {bytes_written} < {expected_bytes}"
+                    )
 
         elapsed = time.perf_counter() - start
 
@@ -744,6 +771,111 @@ def _download_via_httpx(
             _format_download_error(exc),
         )
         return None
+
+
+def _urllib_direct_download(
+    repo_id: str,
+    filename: str,
+    full_dest_dir: str,
+    endpoints: List[Tuple[str, str]],
+    expected_bytes: int | None = None,
+    progress_cb: Optional[Callable[[InitializationProgressEvent], None]] = None,
+    resource: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    """
+    Final raw URL fallback using urllib.
+
+    使用 urllib 直拉 raw URL 的最终兜底方案。
+    """
+    import urllib.request
+
+    dest_path = Path(full_dest_dir) / filename
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = dest_path.with_suffix(dest_path.suffix + ".part")
+    effective_resource = resource or _make_dummy_resource(repo_id, filename)
+
+    for source_name, endpoint in endpoints:
+        url = f"{endpoint.rstrip('/')}/{repo_id}/resolve/main/{filename}"
+        logging.info("urllib 直拉: 尝试 %s → %s", source_name, url)
+        _emit_resource_progress(
+            progress_cb,
+            _build_resource_progress_event(
+                effective_resource,
+                f"{filename}: starting urllib download via {source_name}",
+                ratio=0.0 if expected_bytes else None,
+                bytes_done=0,
+                bytes_total=expected_bytes,
+                source=source_name,
+            ),
+        )
+        try:
+            request = urllib.request.Request(
+                url,
+                headers={"User-Agent": "SuperPicky-Downloader/4.2.6"},
+            )
+            start = time.perf_counter()
+            bytes_written = 0
+            tmp_path.unlink(missing_ok=True)
+            with urllib.request.urlopen(request, timeout=120) as response:
+                content_length = response.headers.get("Content-Length")
+                if not expected_bytes and content_length and content_length.isdigit():
+                    expected_bytes = int(content_length)
+                with open(tmp_path, "wb") as handle:
+                    while True:
+                        chunk = response.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        handle.write(chunk)
+                        bytes_written += len(chunk)
+                        if progress_cb is not None and expected_bytes and expected_bytes > 0:
+                            ratio = min(1.0, bytes_written / expected_bytes)
+                            _emit_resource_progress(
+                                progress_cb,
+                                _build_resource_progress_event(
+                                    effective_resource,
+                                    f"{filename}: downloading from {source_name} (urllib)",
+                                    ratio=ratio,
+                                    bytes_done=bytes_written,
+                                    bytes_total=expected_bytes,
+                                    source=source_name,
+                                    is_terminal=ratio >= 1.0,
+                                ),
+                            )
+            if expected_bytes and bytes_written < expected_bytes:
+                raise RuntimeError(
+                    f"incomplete download: {bytes_written} < {expected_bytes}"
+                )
+            dest_path.unlink(missing_ok=True)
+            tmp_path.rename(dest_path)
+            file_size = dest_path.stat().st_size
+            if file_size <= 0:
+                raise RuntimeError("downloaded file is empty")
+            elapsed = time.perf_counter() - start
+            logging.info(
+                "urllib 直拉成功: %s 通过 %s 完成, %d 字节 (%.1f MB), 耗时 %.2f 秒",
+                filename,
+                source_name,
+                file_size,
+                file_size / 1048576,
+                elapsed,
+            )
+            _emit_resource_progress(
+                progress_cb,
+                _build_resource_progress_event(
+                    effective_resource,
+                    f"{filename}: downloaded via {source_name} (urllib fallback)",
+                    ratio=1.0,
+                    bytes_done=file_size,
+                    bytes_total=file_size,
+                    source=source_name,
+                    is_terminal=True,
+                ),
+            )
+            return str(dest_path)
+        except Exception as exc:
+            tmp_path.unlink(missing_ok=True)
+            logging.warning("urllib 直拉 %s 失败: %s", source_name, _format_download_error(exc))
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -831,7 +963,15 @@ def _download_with_fallback(
         filename,
         repo_id,
     )
-    return None
+    return _urllib_direct_download(
+        repo_id=repo_id,
+        filename=filename,
+        full_dest_dir=full_dest_dir,
+        endpoints=endpoints,
+        expected_bytes=expected_bytes,
+        progress_cb=progress_cb,
+        resource=resource,
+    )
 
 
 # ---------------------------------------------------------------------------

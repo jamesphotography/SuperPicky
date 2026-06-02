@@ -1,5 +1,6 @@
 import os
 import site
+import subprocess
 import sys
 from PyInstaller.utils.hooks import collect_data_files, copy_metadata
 
@@ -13,6 +14,29 @@ def _optional_copy_metadata(package_name):
         return copy_metadata(package_name)
     except Exception:
         return []
+
+
+def _find_uv_binary():
+    explicit = os.environ.get('SUPERPICKY_UV_BINARY')
+    if not explicit:
+        raise RuntimeError(
+            'Windows Lite builds must set SUPERPICKY_UV_BINARY. '
+            'Run build_release_win.py so uv is downloaded into build_tools/uv '
+            'instead of using the build machine PATH.'
+        )
+    uv_path = os.path.abspath(explicit)
+    if not os.path.exists(uv_path):
+        raise RuntimeError(f'SUPERPICKY_UV_BINARY does not exist: {uv_path}')
+    result = subprocess.run(
+        [uv_path, '--version'],
+        text=True,
+        capture_output=True,
+        timeout=20,
+    )
+    if result.returncode != 0:
+        output = (result.stdout or '') + (result.stderr or '')
+        raise RuntimeError(f'SUPERPICKY_UV_BINARY is not executable: {uv_path}\n{output}')
+    return uv_path
 
 
 sp = [p for p in site.getsitepackages() if os.path.isdir(p)]
@@ -30,6 +54,7 @@ ultralytics_datas = collect_data_files('ultralytics')
 imageio_datas = collect_data_files('imageio')
 rawpy_datas = collect_data_files('rawpy')
 pillow_heif_datas = collect_data_files('pillow_heif')
+uv_binaries = [(_find_uv_binary(), 'uv')]
 
 all_datas = [
     (os.path.join(base_path, 'exiftools_win'), 'exiftools_win'),
@@ -88,10 +113,15 @@ runtime_bootstrap_stdlib_hiddenimports = [
     'gzip',
     'hashlib',
     'heapq',
+    'html',
+    'html.entities',
+    'html.parser',
     'inspect',
     'ipaddress',
     'linecache',
     'locale',
+    'logging.config',
+    'logging.handlers',
     'modulefinder',
     'numbers',
     'pickletools',
@@ -115,6 +145,7 @@ runtime_bootstrap_stdlib_hiddenimports = [
     'weakref',
     'xml',
     'zipfile',
+    '_markupbase',
 ]
 
 app_hiddenimports = [
@@ -145,8 +176,11 @@ app_hiddenimports = [
     'core.photo_processor',
     'core.rating_engine',
     'core.runtime_bootstrap',
+    'core.source_registry',
     'core.source_probe',
+    'core.source_probe_parallel',
     'core.stats_formatter',
+    'core.uv_runtime_manager',
     'scripts',
     'scripts.download_models',
     'multiprocessing',
@@ -161,6 +195,11 @@ app_hiddenimports = [
     'server_manager',
     'flask',
     'flask.json',
+    'httpx',
+    'httpcore',
+    'h11',
+    'anyio',
+    'sniffio',
     'cryptography',
     'cryptography.fernet',
     '_telemetry_build',
@@ -175,7 +214,7 @@ app_hiddenimports = [
 a = Analysis(
     ['main.py'],
     pathex=[base_path],
-    binaries=[],
+    binaries=uv_binaries,
     datas=all_datas,
     hiddenimports=app_hiddenimports + runtime_bootstrap_stdlib_hiddenimports,
     hookspath=[],

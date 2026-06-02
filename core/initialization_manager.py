@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import json
 import logging
 import os
 import shutil
@@ -24,7 +25,7 @@ import sys
 import tempfile
 import threading
 import time
-import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
@@ -37,6 +38,12 @@ from config import (
     get_app_internal_dir,
     get_bundled_resource_dir,
 )
+from core.source_registry import (
+    get_official_pypi_url,
+    get_pypi_sources,
+    get_torch_sources,
+    sources_to_probe_dicts,
+)
 from core.initialization_progress import (
     InitializationProgressEvent,
     PROGRESS_KIND_DOWNLOAD,
@@ -46,30 +53,32 @@ from core.initialization_progress import (
     parse_pip_raw_progress_line,
 )
 from core.runtime_requirements import RuntimeRequirements, get_runtime_requirements
-from core.source_probe import pick_best_source, probe_sources
+from core.source_probe import pick_best_source
+from core.source_probe_parallel import (
+    pick_best_with_geo_and_ratio,
+    probe_sources_parallel,
+)
+from core.uv_runtime_manager import (
+    build_install_command,
+    create_venv,
+    ensure_uv_bootstrapped,
+    run_uv_install,
+)
 from scripts.download_models import (
     download_resource,
     resolve_download_plan,
     resolve_resource_destination_dir,
+    verify_resource,
 )
 
 logging.basicConfig(level=logging.INFO)
 
 
-PIPY_SOURCES = [
-    {"name": "tsinghua", "url": "https://pypi.tuna.tsinghua.edu.cn/simple"},
-    {"name": "aliyun", "url": "https://mirrors.aliyun.com/pypi/simple/"},
-    {"name": "cernet", "url": "https://mirrors.cernet.edu.cn/pypi/web/simple"},
-    {"name": "official", "url": "https://pypi.org/simple"},
-]
+# ── 镜像核心选择策略 ───────────────────────────────────────────────────
+# 沿用 2× 比率阈值，但源列表现在来自 source_registry.py 以满足全球覆盖。
+# The 2× ratio threshold is preserved; source lists now come from
+# source_registry.py for worldwide coverage.
 
-# 镜像源相对官方源的最大可接受延迟倍率：在此倍率以内时优先选用镜像（降低对官方源
-# 的请求负载、对大陆用户加速），超出后改用官方避免边缘地区被慢镜像拖累
-# （例如 HK/SG ISP 偶尔能通 cernet 但延迟 800ms 而 pypi.org 仅 50ms 的场景）。
-# Maximum acceptable mirror-to-official latency ratio: prefer the mirror when it
-# is within this ratio of the fastest official source, otherwise fall back to
-# the official source so edge-locale users (e.g. HK/SG ISPs that can reach
-# cernet at 800ms while pypi.org responds in 50ms) don't get slowed down.
 PREFERRED_SOURCE_MIRROR_RATIO_THRESHOLD = 2.0
 
 
@@ -156,6 +165,20 @@ class ResourceProgressState:
     last_logged_source: str | None = None
 
 
+@dataclass(frozen=True)
+class RuntimeInstallAttempt:
+    """
+    One isolated runtime install attempt.
+
+    单次隔离运行时安装尝试。
+    """
+
+    pypi_url: str
+    torch_url: str
+    attempt_index: int
+    attempt_count: int
+
+
 class InitializationManager(QObject):
     """
     Coordinate runtime repair, resource preparation, and structured progress events.
@@ -187,7 +210,7 @@ class InitializationManager(QObject):
         self._runtime_dir = self.resolve_runtime_dir(
             self.config.runtime_install_location_preference
         )
-        self._source_map: Dict[str, str] = {}
+        self._source_map: Dict[str, Any] = {}
         self._cancel_requested = threading.Event()
         self._active_process: Optional[subprocess.Popen[str]] = None
         self._resource_progress: dict[str, ResourceProgressState] = {}
@@ -235,12 +258,24 @@ class InitializationManager(QObject):
                 os.environ[key] = value
                 logging.debug("已设置 %s = %s", key, value)
 
-    def _resolve_runtime_requirements_path(self, runtime_variant: str) -> Path:
-        """Resolve runtime requirements file path for backward compatibility."""
-        requirements = get_runtime_requirements(runtime_variant) # pyright: ignore[reportArgumentType]
+    def _resolve_runtime_requirements_path(
+        self,
+        runtime_variant: str,
+        *,
+        torch_source_url: str | None = None,
+    ) -> Path:
+        """
+        Write an install-attempt-specific requirements file.
+
+        写入与单次安装尝试绑定的 requirements 文件。
+        """
+        requirements = get_runtime_requirements(runtime_variant)  # pyright: ignore[reportArgumentType]
         requirements_content = requirements.to_requirements_string(
             include_indexes=False,
-            package_urls=self._selected_torch_package_urls(runtime_variant),
+            package_urls=self._selected_torch_package_urls(
+                runtime_variant,
+                torch_source_url=torch_source_url,
+            ),
         )
 
         temp_file = tempfile.NamedTemporaryFile(
@@ -267,61 +302,42 @@ class InitializationManager(QObject):
         """
         return get_runtime_requirements(runtime_variant)  # pyright: ignore[reportArgumentType]
 
-    def _selected_torch_package_urls(self, runtime_variant: str) -> dict[str, str]:
+    def _selected_torch_package_urls(
+        self,
+        runtime_variant: str,
+        *,
+        torch_source_url: str | None = None,
+    ) -> dict[str, str]:
         """
         Build direct wheel references for Torch packages on Windows runtime installs.
 
         为 Windows 运行时安装构建 Torch 系列包的直链引用。
         """
-        if runtime_variant not in ("cpu", "cuda"):
+        if runtime_variant not in ("cpu", "cuda") or sys.platform != "win32":
             return {}
-        primary_source = self._source_map.get("torch_primary", "").strip()
-        if not primary_source or sys.platform != "win32":
+        primary_source = (torch_source_url or self._source_map.get("torch_primary", "")).strip()
+        if not primary_source:
             return {}
-
-        requirements = self._runtime_requirements(runtime_variant)
-        python_tag = f"cp{sys.version_info.major}{sys.version_info.minor}"
-        abi_tag = python_tag
-        platform_tag = "win_amd64"
-        source_base = primary_source.rstrip("/")
-
-        package_versions = {
-            "torch": requirements.torch_version,
-            "torchvision": requirements.torchvision_version,
-            "torchaudio": requirements.torchaudio_version,
-        }
-        selected_urls: dict[str, str] = {}
-        for package_name, version in package_versions.items():
-            normalized_version = (version or "").strip()
-            if not normalized_version:
-                continue
-            filename = (
-                f"{package_name}-{normalized_version}-{python_tag}-{abi_tag}-{platform_tag}.whl"
-            )
-            quoted_filename = urllib.parse.quote(filename)
-            selected_urls[package_name] = (
-                f"{package_name} @ {source_base}/{quoted_filename}"
-            )
-        return selected_urls
+        return self._runtime_requirements(runtime_variant).torch_wheel_urls(primary_source)
 
     @staticmethod
     def _torch_source_candidates(runtime_variant: str) -> list[dict[str, str]]:
         """
-        Build Torch wheel source candidates from the shared runtime requirements.
+        Build Torch wheel source candidates from the global mirror registry.
 
-        基于统一运行时依赖定义构建 Torch wheel 源候选列表。
+        从全球镜像注册表构建 Torch wheel 源候选列表。
         """
+        if runtime_variant not in ("cpu", "cuda") or sys.platform != "win32":
+            return []
         requirements = get_runtime_requirements(runtime_variant)  # pyright: ignore[reportArgumentType]
         candidates: list[dict[str, str]] = []
-        for index, url in enumerate(requirements.extra_index_urls):
-            lowered = url.lower()
-            if "mirror" in lowered or "nju" in lowered:
-                name = f"mirror-{index}"
-            elif "download.pytorch.org" in lowered:
-                name = f"official-{index}"
-            else:
-                name = f"torch-{index}"
-            candidates.append({"name": name, "url": url})
+        for source in get_torch_sources(runtime_variant):
+            payload = source.to_probe_dict()
+            torch_urls = requirements.torch_wheel_urls(source.url)
+            torch_requirement = torch_urls.get("torch", "")
+            if " @ " in torch_requirement:
+                payload["probe_url"] = torch_requirement.split(" @ ", 1)[1]
+            candidates.append(payload)
         return candidates
 
     @staticmethod
@@ -831,6 +847,8 @@ class InitializationManager(QObject):
                     "Initialization completed with missing runtime or resources"
                 )
 
+            self._cleanup_uv_cache_after_initialization()
+
             success_updates: dict[str, object] = {
                 "initialization_in_progress": False,
                 "last_init_mode": "none",
@@ -1034,27 +1052,68 @@ class InitializationManager(QObject):
         except Exception as exc:
             self._emit_item_status("updates", "warning", f"Update probe skipped: {exc}")
 
-    def _resolve_best_sources(self, runtime_variant: str) -> Dict[str, str]:
-        pypi_results = probe_sources("pypi", PIPY_SOURCES)
-        best_pypi = self._pick_preferred_source(pypi_results)
+    def _resolve_best_sources(self, runtime_variant: str) -> Dict[str, Any]:
+        """
+        Probe PyPI and Torch mirrors in parallel, then select best with geo bias.
 
-        pypi_primary = best_pypi.url if best_pypi else PIPY_SOURCES[0]["url"]
-        pypi_fallback = self._resolve_fallback_url(pypi_results, pypi_primary)
+        并行探测 PyPI 和 Torch 镜像，结合地理偏好选出最佳源。
+        """
+        pypi_sources = get_pypi_sources()
+        pypi_probe_sources = sources_to_probe_dicts(pypi_sources)
+        torch_sources = self._torch_source_candidates(runtime_variant)
 
+        # PyPI 与 Torch 源池彼此独立，使用线程并行调度两个 asyncio 探测器。
+        # PyPI and Torch source pools are independent; run both asyncio probes
+        # concurrently so wall-clock time is bounded by the slower pool only.
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="sp-source-probe") as executor:
+            pypi_future = executor.submit(
+                probe_sources_parallel,
+                "pypi",
+                pypi_probe_sources,
+            )
+            torch_future = (
+                executor.submit(
+                    probe_sources_parallel,
+                    f"torch-{runtime_variant}",
+                    torch_sources,
+                )
+                if torch_sources
+                else None
+            )
+            pypi_results = pypi_future.result()
+            torch_results = torch_future.result() if torch_future is not None else []
+
+        best_pypi = pick_best_with_geo_and_ratio(pypi_results)
+
+        pypi_candidates = self._rank_source_urls(
+            pypi_results,
+            [source.url for source in pypi_sources],
+            preferred_url=best_pypi.url if best_pypi else get_official_pypi_url(),
+        )
+        pypi_primary = pypi_candidates[0] if pypi_candidates else get_official_pypi_url()
+        pypi_fallback = pypi_candidates[1] if len(pypi_candidates) > 1 else pypi_primary
+
+        # ── Torch 源并行探测 ───────────────────────────────────────────
         torch_primary = ""
         torch_fallback = ""
-        torch_sources = self._torch_source_candidates(runtime_variant)
+        torch_candidates: list[str] = []
         if torch_sources:
-            torch_results = probe_sources(f"torch-{runtime_variant}", torch_sources)
-            best_torch = self._pick_preferred_source(torch_results)
-            torch_primary = best_torch.url if best_torch else torch_sources[0]["url"]
-            torch_fallback = self._resolve_fallback_url(torch_results, torch_primary)
+            best_torch = pick_best_with_geo_and_ratio(torch_results)
+            torch_candidates = self._rank_source_urls(
+                torch_results,
+                [source["url"] for source in torch_sources],
+                preferred_url=best_torch.url if best_torch else torch_sources[0]["url"],
+            )
+            torch_primary = torch_candidates[0] if torch_candidates else torch_sources[0]["url"]
+            torch_fallback = torch_candidates[1] if len(torch_candidates) > 1 else torch_primary
 
         selected = {
             "pypi_primary": pypi_primary,
             "pypi_fallback": pypi_fallback,
+            "pypi_candidates": pypi_candidates,
             "torch_primary": torch_primary,
             "torch_fallback": torch_fallback,
+            "torch_candidates": torch_candidates,
         }
         return selected
 
@@ -1072,11 +1131,43 @@ class InitializationManager(QObject):
         fallback = _pick_preferred_with_ratio(successful)
         return fallback.url if fallback else primary_url
 
+    @staticmethod
+    def _rank_source_urls(
+        results,
+        fallback_urls: Iterable[str],
+        *,
+        preferred_url: str | None = None,
+    ) -> list[str]:
+        """
+        Build a deterministic URL order from probe results plus fallback URLs.
+
+        基于探测结果和兜底 URL 构建确定性的源顺序。
+        """
+        ranked: list[str] = []
+        seen: set[str] = set()
+
+        def _add(url: str | None) -> None:
+            normalized = (url or "").strip()
+            if not normalized or normalized in seen:
+                return
+            seen.add(normalized)
+            ranked.append(normalized)
+
+        _add(preferred_url)
+        for result in sorted(
+            [item for item in results if item.ok],
+            key=lambda item: (item.total_ms, item.first_byte_ms),
+        ):
+            _add(result.url)
+        for url in fallback_urls:
+            _add(url)
+        return ranked
+
     def _prepare_runtime(self, runtime_variant: str) -> None:
         """
-        Create or repair the runtime environment for the selected variant.
+        Create or repair the runtime environment using uv for speed.
 
-        为当前选择的运行时变体创建或修复运行环境。
+        使用 uv 快速创建或修复运行环境。
         """
         if self._uses_bundled_runtime():
             raise RuntimeError(
@@ -1087,58 +1178,23 @@ class InitializationManager(QObject):
             self._prepare_runtime_with_packaged_bootstrap(runtime_variant)
             return
 
-        python_cmd = self._resolve_python_command()
-        if not self._runtime_dir.exists():
-            self._run_subprocess(
-                [*python_cmd, "-m", "venv", str(self._runtime_dir)],
-                "Create runtime venv",
-            )
+        uv_path = ensure_uv_bootstrapped(self._runtime_dir)
 
-        pip_executable = (
-            self._runtime_dir
-            / ("Scripts" if os.name == "nt" else "bin")
-            / ("pip.exe" if os.name == "nt" else "pip")
-        )
-        requirements_file = self._resolve_runtime_requirements_path(runtime_variant)
-        runtime_requirements = self._runtime_requirements(runtime_variant)
-        install_cmd = self._build_runtime_install_command(
+        if not self._runtime_dir.exists():
+            create_venv(uv_path, self._runtime_dir)
+
+        successful_attempt = self._install_runtime_with_uv(
+            uv_path=uv_path,
             runtime_variant=runtime_variant,
-            requirements_file=requirements_file,
-            runtime_requirements=runtime_requirements,
-            pypi_index_url=self._source_map["pypi_primary"],
-            pypi_extra_urls=[self._source_map["pypi_fallback"]],
-            pip_executable=pip_executable,
+            python_executable=self._runtime_python_executable(),
         )
-        try:
-            self._run_subprocess(
-                install_cmd,
-                f"Install {runtime_variant} runtime",
-                progress_stage=STAGE_PREPARING_RUNTIME,
-                progress_kind=PROGRESS_KIND_RUNTIME,
-            )
-        except RuntimeError as exc:
-            if self._should_retry_pypi_mirror(str(exc)):
-                fallback_cmd = self._build_runtime_install_command(
-                    runtime_variant=runtime_variant,
-                    requirements_file=requirements_file,
-                    runtime_requirements=runtime_requirements,
-                    pypi_index_url=self._official_pypi_url(),
-                    pypi_extra_urls=[
-                        self._source_map["pypi_primary"],
-                        self._source_map["pypi_fallback"],
-                    ],
-                    pip_executable=pip_executable,
-                )
-                self._run_subprocess(
-                    fallback_cmd,
-                    f"Install {runtime_variant} runtime (fallback)",
-                    progress_stage=STAGE_PREPARING_RUNTIME,
-                    progress_kind=PROGRESS_KIND_RUNTIME,
-                )
-            else:
-                raise
         self._inject_runtime_site_packages()
         self._verify_runtime_import(runtime_variant)
+        self._write_runtime_install_manifest(
+            runtime_variant,
+            successful_attempt,
+            install_mode="venv",
+        )
 
     def _use_packaged_runtime_bootstrap(self) -> bool:
         return getattr(sys, "frozen", False) and sys.platform == "win32"
@@ -1169,125 +1225,431 @@ class InitializationManager(QObject):
         return self._runtime_dir / "bin" / "python3"
 
     def _prepare_runtime_with_packaged_bootstrap(self, runtime_variant: str) -> None:
-        requirements_file = self._resolve_runtime_requirements_path(runtime_variant)
+        """Install runtime via uv into the packaged bootstrap directory."""
+        uv_path = ensure_uv_bootstrapped(self._runtime_dir)
         runtime_site_packages = self._runtime_dir / "site-packages"
-        runtime_site_packages.mkdir(parents=True, exist_ok=True)
-        runtime_requirements = self._runtime_requirements(runtime_variant)
-        command = self._build_runtime_install_command(
-            runtime_variant=runtime_variant,
-            requirements_file=requirements_file,
-            runtime_requirements=runtime_requirements,
-            pypi_index_url=self._source_map["pypi_primary"],
-            pypi_extra_urls=[self._source_map["pypi_fallback"]],
-            runtime_dir=self._runtime_dir,
-        )
+        staging_site_packages = self._runtime_dir / "site-packages.__installing__"
+        shutil.rmtree(staging_site_packages, ignore_errors=True)
+        staging_site_packages.mkdir(parents=True, exist_ok=True)
         try:
-            self._run_subprocess(
-                command,
-                f"Install {runtime_variant} runtime",
-                progress_stage=STAGE_PREPARING_RUNTIME,
-                progress_kind=PROGRESS_KIND_RUNTIME,
+            successful_attempt = self._install_runtime_with_uv(
+                uv_path=uv_path,
+                runtime_variant=runtime_variant,
+                target_dir=staging_site_packages,
             )
-        except RuntimeError as exc:
-            if self._should_retry_pypi_mirror(str(exc)):
-                fallback_cmd = self._build_runtime_install_command(
-                    runtime_variant=runtime_variant,
-                    requirements_file=requirements_file,
-                    runtime_requirements=runtime_requirements,
-                    pypi_index_url=self._official_pypi_url(),
-                    pypi_extra_urls=[
-                        self._source_map["pypi_primary"],
-                        self._source_map["pypi_fallback"],
-                    ],
-                    runtime_dir=self._runtime_dir,
-                )
-                self._run_subprocess(
-                    fallback_cmd,
-                    f"Install {runtime_variant} runtime (fallback)",
-                    progress_stage=STAGE_PREPARING_RUNTIME,
-                    progress_kind=PROGRESS_KIND_RUNTIME,
-                )
-            else:
-                raise
-        self._inject_runtime_site_packages()
-        self._verify_runtime_import(runtime_variant)
+            shutil.rmtree(runtime_site_packages, ignore_errors=True)
+            staging_site_packages.rename(runtime_site_packages)
+            self._inject_runtime_site_packages()
+            self._verify_runtime_import(runtime_variant)
+            self._write_runtime_install_manifest(
+                runtime_variant,
+                successful_attempt,
+                install_mode="target",
+            )
+        except Exception:
+            shutil.rmtree(staging_site_packages, ignore_errors=True)
+            shutil.rmtree(runtime_site_packages, ignore_errors=True)
+            raise
 
-    def _build_runtime_install_command(
+    def _uv_progress_cb(self):
+        """Create a progress callback that adapts uv/pip raw output to progress events."""
+        last_logged_message = ""
+        last_logged_at = 0.0
+
+        def _callback(event: InitializationProgressEvent) -> None:
+            nonlocal last_logged_at, last_logged_message
+            self._emit_progress_event(event)
+            message = event.message.strip()
+            now = time.monotonic()
+            lowered = message.lower()
+            should_log = event.is_terminal or any(
+                token in lowered
+                for token in (
+                    "started",
+                    "resolved",
+                    "download",
+                    "prepared",
+                    "installed",
+                    "still working",
+                    "completed",
+                )
+            )
+            if should_log and message != last_logged_message and now - last_logged_at >= 1.5:
+                last_logged_message = message
+                last_logged_at = now
+                self._emit_item_status("runtime", "progress", message)
+
+        return _callback
+
+    def _install_runtime_with_uv(
         self,
         *,
+        uv_path: str,
         runtime_variant: str,
-        requirements_file: Path,
-        runtime_requirements: RuntimeRequirements,
-        pypi_index_url: str,
-        pypi_extra_urls: Iterable[str],
-        runtime_dir: Path | None = None,
-        pip_executable: Path | None = None,
-    ) -> list[str]:
-        if runtime_dir is None:
-            runtime_dir = self._runtime_dir
-        if pip_executable is not None:
-            command = [
-                str(pip_executable),
-                "install",
-                "--no-cache-dir",
-                "--progress-bar",
-                "raw",
-                "-r",
-                str(requirements_file),
+        target_dir: Path | None = None,
+        python_executable: Path | None = None,
+    ) -> RuntimeInstallAttempt:
+        """
+        Install runtime dependencies by trying isolated PyPI/Torch source pairs.
+
+        通过隔离的 PyPI/Torch 源组合尝试安装运行时依赖。
+        """
+        attempts = self._runtime_install_attempts(runtime_variant)
+        current_attempt = attempts[0]
+        tried_pairs: set[tuple[str, str]] = set()
+        last_error: Exception | None = None
+        for display_index in range(1, len(attempts) + 1):
+            self._raise_if_cancelled()
+            attempt = RuntimeInstallAttempt(
+                pypi_url=current_attempt.pypi_url,
+                torch_url=current_attempt.torch_url,
+                attempt_index=display_index,
+                attempt_count=len(attempts),
+            )
+            tried_pairs.add((attempt.pypi_url, attempt.torch_url))
+            requirements_file = self._resolve_runtime_requirements_path(
+                runtime_variant,
+                torch_source_url=attempt.torch_url or None,
+            )
+            label = (
+                f"Install {runtime_variant} runtime "
+                f"({attempt.attempt_index}/{attempt.attempt_count}, "
+                f"PyPI={attempt.pypi_url}, Torch={attempt.torch_url or 'pypi'})"
+            )
+            try:
+                self._emit_item_status("runtime", "progress", label)
+                command = build_install_command(
+                    uv_path=uv_path,
+                    requirements_file=requirements_file,
+                    index_url=attempt.pypi_url,
+                    target_dir=target_dir,
+                    python_executable=python_executable,
+                    cache_dir=self._uv_cache_dir(),
+                )
+                run_uv_install(
+                    uv_path,
+                    command,
+                    label,
+                    progress_cb=self._uv_progress_cb(),
+                )
+                return attempt
+            except Exception as exc:
+                last_error = exc
+                failed_pool = self._classify_runtime_install_failure(
+                    str(exc),
+                    attempt,
+                )
+                logging.warning(
+                    "运行时安装源组合失败 (%d/%d): failed_pool=%s, PyPI=%s, Torch=%s, error=%s",
+                    attempt.attempt_index,
+                    attempt.attempt_count,
+                    failed_pool,
+                    attempt.pypi_url,
+                    attempt.torch_url or "pypi",
+                    exc,
+                )
+                current_attempt = self._next_runtime_install_attempt(
+                    attempts,
+                    tried_pairs,
+                    attempt,
+                    failed_pool,
+                )
+                if current_attempt is None:
+                    break
+            finally:
+                requirements_file.unlink(missing_ok=True)
+        raise RuntimeError(
+            f"All runtime install source attempts failed: {last_error}"
+        )
+
+    @staticmethod
+    def _classify_runtime_install_failure(
+        error_text: str,
+        attempt: RuntimeInstallAttempt,
+    ) -> str:
+        """
+        Best-effort classification for deciding which source pool to switch next.
+
+        为下一次重试应切换哪个源池做尽力分类。
+        """
+        lowered = (error_text or "").lower()
+        torch_url = (attempt.torch_url or "").lower()
+        pypi_url = (attempt.pypi_url or "").lower()
+
+        if torch_url and torch_url in lowered:
+            return "torch"
+        if pypi_url and pypi_url in lowered:
+            return "pypi"
+
+        torch_tokens = (
+            "download.pytorch.org",
+            "pytorch-wheels",
+            "pytorch/whl",
+            "torch-",
+            "torchvision-",
+            "torchaudio-",
+            "+cu",
+            "+cpu",
+        )
+        pypi_tokens = (
+            "pypi",
+            "simple",
+            "timm",
+            "no matching distribution found for timm",
+            "failed to fetch",
+        )
+        if attempt.torch_url and any(token in lowered for token in torch_tokens):
+            return "torch"
+        if any(token in lowered for token in pypi_tokens):
+            return "pypi"
+        return "unknown"
+
+    @staticmethod
+    def _next_runtime_install_attempt(
+        attempts: list[RuntimeInstallAttempt],
+        tried_pairs: set[tuple[str, str]],
+        current: RuntimeInstallAttempt,
+        failed_pool: str,
+    ) -> RuntimeInstallAttempt | None:
+        """
+        Pick the next source pair, switching only the failed pool when possible.
+
+        选择下一组源；如果能识别失败源池，则优先只切换该源池。
+        """
+
+        def _untried(candidate: RuntimeInstallAttempt) -> bool:
+            return (candidate.pypi_url, candidate.torch_url) not in tried_pairs
+
+        if failed_pool == "pypi":
+            for candidate in attempts:
+                if candidate.torch_url == current.torch_url and _untried(candidate):
+                    return candidate
+        elif failed_pool == "torch":
+            for candidate in attempts:
+                if candidate.pypi_url == current.pypi_url and _untried(candidate):
+                    return candidate
+
+        for candidate in attempts:
+            if _untried(candidate):
+                return candidate
+        return None
+
+    def _runtime_install_attempts(self, runtime_variant: str) -> list[RuntimeInstallAttempt]:
+        """
+        Build deterministic source-pair attempts.
+
+        构建确定性的源组合尝试顺序。
+        """
+        pypi_urls = self._source_candidates("pypi_candidates", "pypi_primary")
+        if not pypi_urls:
+            pypi_urls = [get_official_pypi_url()]
+
+        torch_urls = self._source_candidates("torch_candidates", "torch_primary")
+        if runtime_variant not in ("cpu", "cuda") or sys.platform != "win32":
+            torch_urls = [""]
+        elif not torch_urls:
+            torch_urls = [
+                source["url"] for source in self._torch_source_candidates(runtime_variant)
             ]
-            index_flag = "-i"
+
+        pairs: list[tuple[str, str]] = []
+        for torch_url in torch_urls:
+            for pypi_url in pypi_urls:
+                pairs.append((pypi_url, torch_url))
+        total = max(1, len(pairs))
+        return [
+            RuntimeInstallAttempt(
+                pypi_url=pypi_url,
+                torch_url=torch_url,
+                attempt_index=index,
+                attempt_count=total,
+            )
+            for index, (pypi_url, torch_url) in enumerate(pairs, start=1)
+        ]
+
+    def _source_candidates(self, list_key: str, primary_key: str) -> list[str]:
+        values = self._source_map.get(list_key)
+        if isinstance(values, list):
+            candidates = [str(value).strip() for value in values if str(value).strip()]
         else:
-            command = [
-                str(Path(sys.executable).resolve()),
-                "--runtime-bootstrap",
-                "--runtime-dir",
-                str(runtime_dir),
-                "--requirements",
-                str(requirements_file),
-            ]
-            index_flag = "--index-url"
-
-        if pypi_index_url:
-            command.extend([index_flag, pypi_index_url])
-        for extra_url in self._unique_urls(pypi_extra_urls):
-            command.extend(["--extra-index-url", extra_url])
-
-        if runtime_requirements.extra_index_urls:
-            torch_primary = self._source_map.get("torch_primary")
-            torch_fallback = self._source_map.get("torch_fallback")
-            if torch_primary:
-                command.extend(["--extra-index-url", torch_primary])
-            if torch_fallback and torch_fallback != torch_primary:
-                command.extend(["--extra-index-url", torch_fallback])
-        return command
-
-    def _unique_urls(self, urls: Iterable[str]) -> list[str]:
-        unique: list[str] = []
+            candidates = []
+        primary = str(self._source_map.get(primary_key) or "").strip()
+        if primary and primary not in candidates:
+            candidates.insert(0, primary)
         seen: set[str] = set()
-        for url in urls:
-            normalized = (url or "").strip()
-            if not normalized or normalized in seen:
+        unique: list[str] = []
+        for candidate in candidates:
+            if candidate in seen:
                 continue
-            seen.add(normalized)
-            unique.append(normalized)
+            seen.add(candidate)
+            unique.append(candidate)
         return unique
 
-    def _official_pypi_url(self) -> str:
-        for source in PIPY_SOURCES:
-            if source.get("name") == "official":
-                return source.get("url", "https://pypi.org/simple")
-        return "https://pypi.org/simple"
+    def _uv_cache_dir(self) -> Path:
+        cache_dir = get_app_internal_dir() / "uv-cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        return cache_dir
+
+    def _uv_cache_cleanup_roots(self) -> list[Path]:
+        """
+        Return app-owned uv cache directories that may be removed after success.
+
+        返回初始化成功后可以删除的应用自有 uv 缓存目录。
+        """
+        roots = [
+            get_app_internal_dir() / "uv-cache",
+            self._runtime_dir / "uv-cache",
+        ]
+        unique_roots: list[Path] = []
+        seen: set[Path] = set()
+        for root in roots:
+            try:
+                resolved = root.resolve()
+            except OSError:
+                resolved = root
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            unique_roots.append(root)
+        return unique_roots
+
+    def _cleanup_uv_cache_after_initialization(self) -> None:
+        """
+        Remove app-owned uv caches after initialization has fully succeeded.
+
+        在初始化完全成功后删除应用自有 uv 缓存。
+
+        The install commands use dedicated cache directories under the app
+        internal directory or runtime directory. Cleaning only these paths keeps
+        user/global uv caches intact while preventing large wheel downloads from
+        occupying storage after the runtime has been verified.
+
+        安装命令只使用应用内部目录或运行时目录下的专用缓存。这里只清理这些路径，
+        不触碰用户或系统全局 uv 缓存，从而避免大型 wheel 下载文件在运行时校验
+        完成后继续占用存储空间。
+        """
+        total_bytes = 0
+        removed_count = 0
+        for cache_root in self._uv_cache_cleanup_roots():
+            if not cache_root.exists():
+                continue
+            try:
+                total_bytes += self._directory_size_bytes(cache_root)
+                if cache_root.is_dir():
+                    shutil.rmtree(cache_root, ignore_errors=True)
+                else:
+                    cache_root.unlink(missing_ok=True)
+                removed_count += 1
+            except Exception as exc:
+                self._emit_item_status(
+                    "runtime",
+                    "warning",
+                    f"uv cache cleanup skipped for {cache_root}: {exc}",
+                )
+        if removed_count:
+            self._emit_item_status(
+                "runtime",
+                "done",
+                f"uv cache cleaned ({self._format_bytes(total_bytes)})",
+            )
+
+    @staticmethod
+    def _directory_size_bytes(path: Path) -> int:
+        """
+        Calculate total bytes below a file or directory, ignoring vanished files.
+
+        计算文件或目录下的总字节数，并忽略遍历期间消失的文件。
+        """
+        if path.is_file():
+            try:
+                return path.stat().st_size
+            except OSError:
+                return 0
+        total = 0
+        for child in path.rglob("*"):
+            try:
+                if child.is_file():
+                    total += child.stat().st_size
+            except OSError:
+                continue
+        return total
+
+    @staticmethod
+    def _format_bytes(value: int) -> str:
+        """
+        Format byte counts for initialization logs.
+
+        为初始化日志格式化字节数。
+        """
+        size = float(max(0, value))
+        for unit in ("B", "KB", "MB", "GB"):
+            if size < 1024.0 or unit == "GB":
+                if unit == "B":
+                    return f"{int(size)} {unit}"
+                return f"{size:.1f} {unit}"
+            size /= 1024.0
+
+    def _write_runtime_install_manifest(
+        self,
+        runtime_variant: str,
+        attempt: RuntimeInstallAttempt,
+        *,
+        install_mode: str,
+    ) -> None:
+        """
+        Persist a successful runtime install manifest.
+
+        持久化运行时安装成功清单。
+        """
+        manifest = {
+            "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "runtime_variant": runtime_variant,
+            "install_mode": install_mode,
+            "runtime_dir": str(self._runtime_dir),
+            "pypi_url": attempt.pypi_url,
+            "torch_url": attempt.torch_url,
+            "attempt_index": attempt.attempt_index,
+            "attempt_count": attempt.attempt_count,
+            "python_version": sys.version,
+            "source_map": self._source_map,
+        }
+        manifest_path = self._runtime_dir / "runtime_install_manifest.json"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
 
     def _should_retry_pypi_mirror(self, error_text: str) -> bool:
+        """
+        判断是否应从镜像回退至官方 pypi.org 重试。
+
+        Decide whether to fall back from a mirror to pypi.org for retry.
+
+        回退条件 / Retry conditions:
+        - 镜像返回 404（包或 wheel 在该镜像上不存在）
+        - 连接超时 / connection timeout
+        - TLS/SSL 错误 / TLS/SSL errors
+        - 但如果 primary 已是官方源则不再回退
+        """
         primary = (self._source_map.get("pypi_primary") or "").strip()
         if not primary:
             return False
-        if primary == self._official_pypi_url():
+        if primary == get_official_pypi_url():
             return False
         lowered = error_text.lower()
-        if "http error 404" in lowered or "404 client error" in lowered:
-            return True
-        return False
+        retryable = (
+            "404" in lowered
+            or "403" in lowered
+            or "timeout" in lowered
+            or "timed out" in lowered
+            or "ssl" in lowered
+            or "tls" in lowered
+            or "connection reset" in lowered
+            or "connection refused" in lowered
+            or "could not find a version" in lowered
+        )
+        return bool(retryable)
 
     def _run_subprocess(
         self,
@@ -1423,6 +1785,7 @@ class InitializationManager(QObject):
                 return
             importlib.invalidate_caches()
             self._inject_runtime_site_packages()
+            self._verify_packaged_runtime_stdlib_imports()
             runtime_python = self._runtime_python_executable()
             if runtime_python.exists():
                 result = subprocess.run(
@@ -1432,7 +1795,8 @@ class InitializationManager(QObject):
                         (
                             "import torch, sys; "
                             "print(torch.__version__); "
-                            "print(sys.executable)"
+                            "print(sys.executable); "
+                            "print(getattr(torch.version, 'cuda', '') or '')"
                         ),
                     ],
                     stdout=subprocess.PIPE,
@@ -1445,6 +1809,12 @@ class InitializationManager(QObject):
                 runtime_lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
                 torch_version = runtime_lines[0] if runtime_lines else "unknown"
                 runtime_executable = runtime_lines[1] if len(runtime_lines) > 1 else str(runtime_python)
+                cuda_version = runtime_lines[2] if len(runtime_lines) > 2 else ""
+                self._validate_runtime_torch_variant(
+                    runtime_variant,
+                    torch_version,
+                    cuda_version,
+                )
                 self._emit_item_status(
                     "runtime",
                     "done",
@@ -1453,6 +1823,12 @@ class InitializationManager(QObject):
                 return
             torch_module = importlib.import_module("torch")
             torch_version = getattr(torch_module, "__version__", "unknown")
+            cuda_version = getattr(getattr(torch_module, "version", None), "cuda", "") or ""
+            self._validate_runtime_torch_variant(
+                runtime_variant,
+                str(torch_version),
+                str(cuda_version),
+            )
             self._emit_item_status(
                 "runtime",
                 "done",
@@ -1460,11 +1836,65 @@ class InitializationManager(QObject):
             )
         except Exception as exc:
             raise RuntimeError(
-                f"Runtime installed but Torch import failed: {exc}"
+                f"Runtime installed but import verification failed: {exc}"
             ) from exc
+
+    @staticmethod
+    def _validate_runtime_torch_variant(
+        runtime_variant: str,
+        torch_version: str,
+        cuda_version: str,
+    ) -> None:
+        """
+        Validate that the imported Torch build matches the selected runtime.
+
+        校验导入的 Torch 构建是否匹配所选运行时。
+        """
+        normalized_version = (torch_version or "").lower()
+        normalized_cuda = (cuda_version or "").strip()
+        if runtime_variant == "cuda":
+            if "+cu" not in normalized_version and not normalized_cuda:
+                raise RuntimeError(
+                    f"Expected CUDA Torch runtime, got torch {torch_version}"
+                )
+        elif runtime_variant == "cpu":
+            if "+cu" in normalized_version:
+                raise RuntimeError(
+                    f"Expected CPU Torch runtime, got torch {torch_version}"
+                )
+
+    @staticmethod
+    def _verify_packaged_runtime_stdlib_imports() -> None:
+        """
+        Verify stdlib modules required by packages loaded from the target runtime.
+
+        校验 target runtime 中第三方包会依赖的标准库模块。
+
+        The Windows Lite build installs heavy packages into an app-local
+        ``site-packages`` directory and imports them from the frozen process.
+        PyInstaller must therefore bundle stdlib modules that those runtime
+        packages import indirectly; checking them here fails early during
+        initialization instead of during model preload or API startup.
+
+        Windows Lite 包会把重型依赖安装到应用本地 ``site-packages``，并在冻结进程
+        中直接导入这些包。因此 PyInstaller 必须同时打入这些运行时包间接依赖的标准
+        库模块；这里提前检查，避免延迟到模型预加载或 API 启动阶段才失败。
+        """
+        if not getattr(sys, "frozen", False):
+            return
+        for module_name in (
+            "html",
+            "html.entities",
+            "html.parser",
+            "_markupbase",
+            "logging.config",
+            "logging.handlers",
+        ):
+            importlib.import_module(module_name)
 
     def _runtime_import_ok(self) -> bool:
         try:
+            self._verify_packaged_runtime_stdlib_imports()
             if self._uses_bundled_runtime():
                 importlib.invalidate_caches()
                 importlib.import_module("torch")
@@ -1489,6 +1919,7 @@ class InitializationManager(QObject):
 
         removable_paths = [
             runtime_dir / "site-packages",
+            runtime_dir / "site-packages.__installing__",
             runtime_dir / "Lib" / "site-packages",
             runtime_dir / "runtime_install_manifest.json",
         ]
@@ -1548,7 +1979,10 @@ class InitializationManager(QObject):
             resolve_resource_destination_dir(self._project_root, item)
             / item["filename"]
         )
-        return path.exists()
+        try:
+            return verify_resource(item, path)
+        except Exception:
+            return False
 
     def _detect_cuda_capable(self) -> bool:
         if sys.platform != "win32":
