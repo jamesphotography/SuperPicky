@@ -128,6 +128,15 @@ class AdvancedConfig:
 
         # 最近选鸟目录历史（最多保留 10 个，按最近使用时间倒序）
         "recent_directories": [],
+
+        # V4.3 Phase 1: 视频分析配置 / Video analysis config
+        # video_max_frames        : 单视频抽帧总数上限（处理时间与视频时长解耦）
+        #                           范围 30-240，默认 60（macOS MPS 下 ~15-25s/视频）
+        # video_yolo_threshold    : YOLO 鸟类检测置信度阈值 (0.3-0.9)
+        # video_min_segment_frames: 时间段最少帧数（过滤误检），默认 2 帧
+        "video_max_frames": 60,
+        "video_yolo_threshold": 0.5,
+        "video_min_segment_frames": 2,
     }
 
     def __init__(self, config_file=None):

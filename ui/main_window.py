@@ -748,6 +748,14 @@ class SuperPickyMainWindow(QMainWindow):
         self.birdid_dock_action.triggered.connect(self._toggle_birdid_dock)
         birdid_menu.addAction(self.birdid_dock_action)
 
+        # ── V4.3 Phase 1: 视频分析菜单 ─────────────────────────
+        # Standalone video analysis window (YOLO bird/no-bird, macOS only).
+        video_menu = menubar.addMenu("视频")
+        video_analyze_action = QAction("视频分析…", self)
+        video_analyze_action.triggered.connect(self._open_video_analyzer)
+        video_menu.addAction(video_analyze_action)
+        self._video_analyzer_window = None  # 懒加载 / lazy-loaded singleton
+
         # ── 最近目录子菜单 ──────────────────────────────────
         self._recent_menu = menubar.addMenu(self.i18n.t("menu.recent_dirs"))
         self._refresh_recent_menu()
@@ -2437,6 +2445,21 @@ class SuperPickyMainWindow(QMainWindow):
         self._log(self.i18n.t("messages.post_adjust_complete"))
 
     @Slot()
+    def _open_video_analyzer(self):
+        """
+        打开视频分析独立窗口（Phase 1）
+
+        懒加载：首次点击时才 import 并创建窗口；之后复用同一实例。
+
+        Open the standalone video analyzer window (Phase 1). Lazy-loaded singleton.
+        """
+        if self._video_analyzer_window is None:
+            from ui.video_analyzer_window import VideoAnalyzerWindow
+            self._video_analyzer_window = VideoAnalyzerWindow(self)
+        self._video_analyzer_window.show()
+        self._video_analyzer_window.raise_()
+        self._video_analyzer_window.activateWindow()
+
     def _show_advanced_settings(self):
         """显示高级设置"""
         from .advanced_settings_dialog import AdvancedSettingsDialog
