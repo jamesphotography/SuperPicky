@@ -15,12 +15,14 @@ from __future__ import annotations
 import argparse
 import ast
 import hashlib
+import json
 import logging
 import os
 import re
 import shutil
 import subprocess
 import sys
+import urllib.request
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -50,6 +52,10 @@ CUDA_INSTALLER_STAGING_DIRNAME = "installer_cuda"
 LITE_INSTALLER_STAGING_DIRNAME = "installer_lite"
 CUDA_PATCH_PORTABLE_DIRNAME = "cuda_patch"
 CUDA_PATCH_INSTALLER_STAGING_DIRNAME = "cuda_patch_installer"
+UV_RELEASE_VERSION = os.environ.get("SUPERPICKY_UV_VERSION", "latest")
+UV_RELEASE_ASSET = "uv-x86_64-pc-windows-msvc.zip"
+UV_LATEST_RELEASE_API = "https://api.github.com/repos/astral-sh/uv/releases/latest"
+UV_DOWNLOAD_ROOT = ROOT_DIR / "build_tools" / "uv"
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +169,150 @@ def copy_file(src: Path, dst: Path) -> None:
         raise FileNotFoundError(f"复制源文件不存在: {src}")
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, dst)
+
+
+def validate_uv_binary(uv_exe: Path, expected_version: str) -> None:
+    """
+    校验 uv 二进制可直接执行，避免把本机构建工具的 shim 打进 Lite 包。
+
+    Validate that uv is directly executable so local build-tool shims are not
+    packaged into the Lite bundle.
+
+    参数:
+    uv_exe (Path): 待校验的 uv.exe 路径。
+    expected_version (str): 构建期固定的 uv 版本号。
+
+    Parameters:
+    uv_exe (Path): The uv.exe path to validate.
+    expected_version (str): The pinned uv version for this build.
+
+    异常:
+    RuntimeError: 当 uv 不存在、无法执行或版本不匹配时抛出。
+
+    Raises:
+    RuntimeError: Raised when uv is missing, not executable, or mismatched.
+    """
+    if not uv_exe.exists():
+        raise RuntimeError(f"uv 二进制不存在: {uv_exe}")
+    result = subprocess.run(
+        [str(uv_exe), "--version"],
+        text=True,
+        capture_output=True,
+        timeout=20,
+    )
+    output = " ".join(part.strip() for part in (result.stdout, result.stderr) if part.strip())
+    if result.returncode != 0:
+        raise RuntimeError(f"uv 自检失败: {uv_exe} -> {output or '(no output)'}")
+    if expected_version not in output:
+        raise RuntimeError(
+            f"uv 版本不匹配: 期望 {expected_version}, 实际输出 {output or '(no output)'}"
+        )
+
+
+def normalize_uv_version_tag(version_tag: str) -> str:
+    """
+    规范化 uv 发布标签，供缓存目录与 `uv --version` 输出校验使用。
+
+    Normalize a uv release tag for cache directories and `uv --version` checks.
+
+    参数:
+    version_tag (str): GitHub 发布标签或环境变量版本号。
+
+    Parameters:
+    version_tag (str): A GitHub release tag or environment version value.
+
+    返回:
+    str: 去除前导 `v` 后的版本号。
+
+    Return:
+    str: The version without a leading `v`.
+    """
+    normalized = version_tag.strip()
+    if normalized.lower().startswith("v"):
+        normalized = normalized[1:]
+    return normalized
+
+
+def resolve_lite_uv_release() -> tuple[str, str]:
+    """
+    解析 Lite 构建要下载的 uv 发布标签与校验版本。
+
+    Resolve the uv release tag and validation version for Lite builds.
+
+    返回:
+    tuple[str, str]: 第一个值是 GitHub 下载标签，第二个值是规范化版本号。
+
+    Return:
+    tuple[str, str]: The GitHub download tag and normalized version.
+    """
+    requested_version = UV_RELEASE_VERSION.strip()
+    if not requested_version:
+        raise RuntimeError("SUPERPICKY_UV_VERSION 不能为空")
+    if requested_version.lower() != "latest":
+        return requested_version, normalize_uv_version_tag(requested_version)
+
+    request = urllib.request.Request(
+        UV_LATEST_RELEASE_API,
+        headers={"User-Agent": "SuperPicky-build"},
+    )
+    with urllib.request.urlopen(request, timeout=60) as response:
+        release = json.loads(response.read().decode("utf-8"))
+    tag_name = str(release.get("tag_name") or "").strip()
+    if not tag_name:
+        raise RuntimeError("无法从 GitHub latest release 响应中解析 uv 版本")
+    return tag_name, normalize_uv_version_tag(tag_name)
+
+
+def ensure_lite_uv_binary() -> Path:
+    """
+    下载并缓存官方 Windows x64 uv 二进制，供 Lite spec 打包使用。
+
+    Download and cache the official Windows x64 uv binary for the Lite spec.
+
+    返回:
+    Path: 可直接执行的 uv.exe 路径。
+
+    Return:
+    Path: The directly executable uv.exe path.
+    """
+    release_tag, version = resolve_lite_uv_release()
+
+    uv_dir = UV_DOWNLOAD_ROOT / version
+    uv_exe = uv_dir / "uv.exe"
+    try:
+        validate_uv_binary(uv_exe, version)
+        logger.info("复用已缓存 uv: %s", uv_exe)
+        os.environ["SUPERPICKY_UV_BINARY"] = str(uv_exe)
+        return uv_exe
+    except Exception as exc:
+        logger.info("需要下载 uv %s: %s", version, exc)
+
+    uv_dir.mkdir(parents=True, exist_ok=True)
+    archive_path = uv_dir / UV_RELEASE_ASSET
+    temp_extract_dir = uv_dir / "__extract__"
+    remove_path(temp_extract_dir)
+
+    url = (
+        "https://github.com/astral-sh/uv/releases/download/"
+        f"{release_tag}/{UV_RELEASE_ASSET}"
+    )
+    logger.info("下载 uv %s: %s", version, url)
+    with urllib.request.urlopen(url, timeout=120) as response:
+        archive_path.write_bytes(response.read())
+
+    with zipfile.ZipFile(archive_path) as archive:
+        archive.extractall(temp_extract_dir)
+
+    extracted_uv = next(temp_extract_dir.rglob("uv.exe"), None)
+    if extracted_uv is None:
+        raise RuntimeError(f"uv 发布包中未找到 uv.exe: {archive_path}")
+    copy_file(extracted_uv, uv_exe)
+    remove_path(temp_extract_dir)
+
+    validate_uv_binary(uv_exe, version)
+    os.environ["SUPERPICKY_UV_BINARY"] = str(uv_exe)
+    logger.info("uv 已准备完成: %s", uv_exe)
+    return uv_exe
 
 
 def get_build_paths(label: str) -> BuildPaths:
@@ -711,6 +861,7 @@ def run_lite_build(config: BuildConfig) -> None:
     bootstrap_python = Path(sys.executable)
     build_python = ensure_cpu_environment(bootstrap_python)
 
+    ensure_lite_uv_binary()
     clean_build_outputs()
     _, final_bundle, zip_path, installer_script_path = build_single_target(config, "lite", build_python)
     logger.info("[========================================]")
