@@ -74,3 +74,12 @@ IMAGE_EXTENSIONS = (
     [ext.lower() for ext in JPG_EXTENSIONS] +
     [ext.upper() for ext in JPG_EXTENSIONS]
 )
+
+# V4.3 Phase 1: 视频分析支持的扩展名
+# macOS 优先：OpenCV 原生支持 + AVFoundation 后端解码
+# Supported video extensions for video analysis (Phase 1, macOS first)
+VIDEO_EXTENSIONS = ['.mp4', '.mov', '.m4v']
+VIDEO_EXTENSIONS_ALL = (
+    [ext.lower() for ext in VIDEO_EXTENSIONS] +
+    [ext.upper() for ext in VIDEO_EXTENSIONS]
+)

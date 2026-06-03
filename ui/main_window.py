@@ -122,6 +122,9 @@ class WorkerThread(threading.Thread):
         try:
             self._start_caffeinate()
             self.process_files()
+            # V4.3 Phase 4: 照片处理完后追加视频处理（共用 signals/stop_event）
+            # Phase 4: append video processing after photos (shared signals).
+            self._process_videos()
             self.signals.finished.emit(self.stats)
         except Exception as e:
             if e.__class__.__name__ == "ProcessingCancelled":
@@ -130,6 +133,82 @@ class WorkerThread(threading.Thread):
                 self.signals.error.emit(str(e))
         finally:
             self._stop_caffeinate()
+
+    # ──────────────────────────────────────────────────────────────────
+    # V4.3 Phase 4: 视频处理阶段
+    # V4.3 Phase 4: Video processing stage
+    # ──────────────────────────────────────────────────────────────────
+
+    def _process_videos(self):
+        """
+        WorkerThread 内的视频处理阶段：
+            - 从 self.scan_results 收集所有视频路径
+            - 检查 advanced_config 是否启用主流程视频处理
+            - 调用 VideoBatchEngine 串行处理
+            - 共用主信号 (log / progress / 中断)
+
+        Video stage inside WorkerThread: pull videos from scan_results,
+        call VideoBatchEngine with shared signals.
+        """
+        # 收集所有目录中的视频文件 / Gather all videos across scanned dirs
+        if not self.scan_results:
+            return
+        video_paths = []
+        for item in self.scan_results:
+            video_paths.extend(item.video_files)
+        if not video_paths:
+            return
+
+        # 读配置 / Read config
+        try:
+            from advanced_config import get_advanced_config
+            cfg = get_advanced_config()
+        except Exception:
+            return
+        if not cfg.config.get("video_auto_process_in_main"):
+            self.signals.log.emit(
+                f"⏭ 检测到 {len(video_paths)} 个视频，但视频处理未启用（参数设置可开启）",
+                "info"
+            )
+            return
+
+        # 实例化批量引擎 / Build batch engine
+        from core.video_batch_engine import VideoBatchEngine
+        engine = VideoBatchEngine(
+            max_frames=int(cfg.config.get("video_max_frames") or 60),
+            yolo_threshold=float(cfg.config.get("video_yolo_threshold") or 0.5),
+            min_segment_frames=int(cfg.config.get("video_min_segment_frames") or 2),
+            species_mode=str(cfg.config.get("video_species_mode") or "instant"),
+            enable_species=bool(cfg.config.get("video_enable_species_id", True)),
+            enable_flight=bool(cfg.config.get("video_enable_flight", True)),
+        )
+
+        # 包装回调 → 转发到 WorkerSignals / Wrap callbacks to forward to signals
+        def _log_cb(msg: str, level: str):
+            self.signals.log.emit(msg, level)
+
+        def _progress_cb(cur: int, total: int):
+            # 视频阶段进度独立显示在状态条；总进度条由照片阶段已经占满
+            # Video stage progress shown in status bar; main bar stays at 100%.
+            pass
+
+        def _stop_cb() -> bool:
+            return self._stop_event.is_set()
+
+        stats = engine.process(
+            video_paths=video_paths,
+            log_cb=_log_cb,
+            progress_cb=_progress_cb,
+            stop_cb=_stop_cb,
+        )
+
+        # 把视频统计合并到主 stats（便于 finished 弹窗显示）
+        # Merge video stats into main stats for the finished dialog.
+        self.stats['video_total'] = stats.total
+        self.stats['video_organized'] = stats.organized
+        self.stats['video_failed'] = stats.failed
+        self.stats['video_species_counts'] = dict(stats.species_counts)
+        self.stats['video_total_time'] = stats.total_wall_ms / 1000.0
 
     def request_stop(self):
         self._stop_event.set()
@@ -749,6 +828,14 @@ class SuperPickyMainWindow(QMainWindow):
         self.birdid_dock_action.setChecked(True)
         self.birdid_dock_action.triggered.connect(self._toggle_birdid_dock)
         birdid_menu.addAction(self.birdid_dock_action)
+
+        # ── V4.3 Phase 1: 视频分析菜单 ─────────────────────────
+        # Standalone video analysis window (YOLO bird/no-bird, macOS only).
+        video_menu = menubar.addMenu("视频")
+        video_analyze_action = QAction("视频分析…", self)
+        video_analyze_action.triggered.connect(self._open_video_analyzer)
+        video_menu.addAction(video_analyze_action)
+        self._video_analyzer_window = None  # 懒加载 / lazy-loaded singleton
 
         # ── 最近目录子菜单 ──────────────────────────────────
         self._recent_menu = menubar.addMenu(self.i18n.t("menu.recent_dirs"))
@@ -1925,6 +2012,10 @@ class SuperPickyMainWindow(QMainWindow):
         if reply != StyledMessageBox.Yes:
             return
 
+        # V4.3 Phase 4: 视频首次提示 — 检测到视频且用户从未被提示过时弹一次
+        # V4.3 Phase 4: First-run prompt — show once when videos are found
+        self._maybe_prompt_video_first_run()
+
         resume_processing = False
         try:
             from tools.resume_state import ResumeStateManager
@@ -2450,6 +2541,67 @@ class SuperPickyMainWindow(QMainWindow):
         self._log(self.i18n.t("messages.post_adjust_complete"))
 
     @Slot()
+    def _maybe_prompt_video_first_run(self):
+        """
+        V4.3 Phase 4: 首次发现视频时弹一次性提示
+
+        触发条件：当前目录扫描到至少 1 个视频文件 + 用户从未被提示过
+        提示内容：告知主流程会自动处理视频；用户可关闭
+        副作用：写 advanced_config 标记已提示，下次不再弹
+
+        First-run prompt when videos are detected; one-time only.
+        """
+        try:
+            from advanced_config import get_advanced_config
+            cfg = get_advanced_config()
+        except Exception:
+            return
+        if cfg.config.get("video_first_run_prompted"):
+            return
+        # 检测是否有视频 / Check if any video exists
+        try:
+            from core.recursive_scanner import scan_directories
+            results = scan_directories(self.directory_path)
+            total_videos = sum(item.video_count for item in results)
+        except Exception:
+            return
+        if total_videos == 0:
+            return
+
+        # 弹一次性提示 / Show one-time dialog
+        msg = (
+            f"📹 检测到目录中有 {total_videos} 个视频文件。\n\n"
+            f"SuperPicky 现已支持视频鸟类分析 + 自动归类。\n"
+            f"分析完成后会按鸟种分目录（与照片共享同一鸟种目录），\n"
+            f"同时生成 SRT 字幕。\n\n"
+            f"是否启用视频处理？\n"
+            f"（之后可在「参数设置」中切换）"
+        )
+        reply = StyledMessageBox.question(
+            self, "视频处理 — 首次提示", msg,
+            yes_text="启用", no_text="暂不启用"
+        )
+        # 不论用户怎么选，都标记已提示
+        # Mark as prompted regardless of choice
+        cfg.config["video_first_run_prompted"] = True
+        cfg.config["video_auto_process_in_main"] = (reply == StyledMessageBox.Yes)
+        cfg.save()
+
+    def _open_video_analyzer(self):
+        """
+        打开视频分析独立窗口（Phase 1）
+
+        懒加载：首次点击时才 import 并创建窗口；之后复用同一实例。
+
+        Open the standalone video analyzer window (Phase 1). Lazy-loaded singleton.
+        """
+        if self._video_analyzer_window is None:
+            from ui.video_analyzer_window import VideoAnalyzerWindow
+            self._video_analyzer_window = VideoAnalyzerWindow(self)
+        self._video_analyzer_window.show()
+        self._video_analyzer_window.raise_()
+        self._video_analyzer_window.activateWindow()
+
     def _show_advanced_settings(self):
         """显示高级设置"""
         from .advanced_settings_dialog import AdvancedSettingsDialog
@@ -2734,6 +2886,11 @@ class SuperPickyMainWindow(QMainWindow):
 
     def _play_completion_sound(self):
         """播放完成音效"""
+        from advanced_config import get_advanced_config
+
+        if not get_advanced_config().completion_sound_enabled:
+            return
+
         sound_path = os.path.join(
             os.path.dirname(__file__), "..",
             "img", "toy-story-short-happy-audio-logo-short-cartoony-intro-outro-music-125627.mp3"

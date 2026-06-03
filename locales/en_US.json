@@ -647,6 +647,8 @@
     "preview_management": "Preview Management",
     "keep_preview": "Keep preview images",
     "keep_preview_hint": "Retain AI crop previews and temp files (cache/debug_crops)",
+    "completion_sound": "Play completion sound",
+    "completion_sound_hint": "Play a short sound when photo processing finishes",
     "auto_cleanup": "Auto cleanup period",
     "cleanup_3_days": "3 days",
     "cleanup_7_days": "7 days",
