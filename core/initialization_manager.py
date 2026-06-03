@@ -61,9 +61,11 @@ from core.source_probe_parallel import (
 from core.uv_runtime_manager import (
     build_install_command,
     create_venv,
+    ensure_uv_managed_python_ready,
     ensure_uv_bootstrapped,
     is_uv_managed_python_path_error,
-    repair_uv_managed_python_dir,
+    is_uv_windows_mount_point_error,
+    is_uv_python_interpreter_unavailable,
     run_uv_install,
     runtime_managed_python_dir,
 )
@@ -581,8 +583,31 @@ class InitializationManager(QObject):
         if process is not None and process.poll() is None:
             try:
                 process.terminate()
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                try:
+                    process.kill()
+                    process.wait(timeout=5)
+                except Exception:
+                    pass
             except Exception:
                 pass
+
+    def _set_active_process(self, process: Optional[subprocess.Popen[str]]) -> None:
+        """
+        注册当前初始化子进程，确保取消和退出时可以统一清理。
+
+        参数:
+        process (Optional[subprocess.Popen[str]]): 正在运行的子进程；None 表示清空。
+
+        Register the current initialization subprocess so cancellation and app
+        exit can clean it up consistently.
+
+        Parameters:
+        process (Optional[subprocess.Popen[str]]): Running subprocess, or None
+        to clear the registration.
+        """
+        self._active_process = process
 
     def is_ready_for_main_ui(
         self, selected_features: Optional[Iterable[str]] = None
@@ -1297,6 +1322,16 @@ class InitializationManager(QObject):
 
         通过隔离的 PyPI/Torch 源组合尝试安装运行时依赖。
         """
+        allow_managed_python_fallback = (
+            target_dir is not None and self._use_packaged_runtime_bootstrap()
+        )
+        uv_python_dir = (
+            runtime_managed_python_dir(self._runtime_dir)
+            if allow_managed_python_fallback
+            else None
+        )
+        managed_python_prepared = False
+
         attempts = self._runtime_install_attempts(runtime_variant)
         current_attempt = attempts[0]
         tried_pairs: set[tuple[str, str]] = set()
@@ -1319,14 +1354,6 @@ class InitializationManager(QObject):
                 f"({attempt.attempt_index}/{attempt.attempt_count}, "
                 f"PyPI={attempt.pypi_url}, Torch={attempt.torch_url or 'pypi'})"
             )
-            use_managed_python = (
-                target_dir is not None and self._use_packaged_runtime_bootstrap()
-            )
-            uv_python_dir = (
-                runtime_managed_python_dir(self._runtime_dir)
-                if use_managed_python
-                else None
-            )
             try:
                 self._emit_item_status("runtime", "progress", label)
                 command = build_install_command(
@@ -1336,48 +1363,108 @@ class InitializationManager(QObject):
                     target_dir=target_dir,
                     python_executable=python_executable,
                     cache_dir=self._uv_cache_dir(),
-                    use_managed_python=use_managed_python,
+                    use_managed_python=managed_python_prepared,
                 )
                 run_uv_install(
                     uv_path,
                     command,
                     label,
                     progress_cb=self._uv_progress_cb(),
-                    uv_managed_python_dir=uv_python_dir,
+                    uv_managed_python_dir=(
+                        uv_python_dir if managed_python_prepared else None
+                    ),
+                    raise_if_cancelled=self._raise_if_cancelled,
+                    active_process_cb=self._set_active_process,
+                    cwd=self._runtime_dir,
                 )
                 return attempt
             except Exception as exc:
-                if uv_python_dir is not None and is_uv_managed_python_path_error(str(exc)):
-                    last_error = exc
+                if (
+                    allow_managed_python_fallback
+                    and not managed_python_prepared
+                    and uv_python_dir is not None
+                    and (
+                        is_uv_python_interpreter_unavailable(str(exc))
+                        or is_uv_windows_mount_point_error(str(exc))
+                    )
+                ):
                     self._emit_item_status(
                         "runtime",
                         "warning",
-                        "uv managed Python path issue detected; cleaning app runtime Python and retrying",
+                        "System Python search path is unavailable for uv target install; "
+                        "trying uv managed Python fallback",
                     )
                     try:
-                        repair_uv_managed_python_dir(uv_python_dir)
-                    except RuntimeError as repair_exc:
+                        self._emit_item_status(
+                            "runtime",
+                            "progress",
+                            f"Prepare uv managed Python at {uv_python_dir}",
+                        )
+                        ensure_uv_managed_python_ready(
+                            uv_path,
+                            uv_python_dir,
+                            progress_cb=self._uv_progress_cb(),
+                            raise_if_cancelled=self._raise_if_cancelled,
+                            active_process_cb=self._set_active_process,
+                            cwd=self._runtime_dir,
+                        )
+                    except Exception as fallback_exc:
+                        if is_uv_managed_python_path_error(str(fallback_exc)):
+                            raise RuntimeError(
+                                "uv managed Python fallback failed before runtime "
+                                "source attempts; please launch SuperPicky from "
+                                "Explorer or Windows Terminal and avoid terminals "
+                                "that trigger ERROR_UNTRUSTED_MOUNT_POINT. "
+                                f"Path: {uv_python_dir}"
+                            ) from fallback_exc
                         raise RuntimeError(
-                            "uv managed Python repair failed before local retry; "
-                            f"local path may be inaccessible: {uv_python_dir}"
-                        ) from repair_exc
+                            "uv managed Python fallback failed before runtime "
+                            f"source attempts: {fallback_exc}"
+                        ) from fallback_exc
+                    managed_python_prepared = True
                     try:
+                        managed_command = build_install_command(
+                            uv_path=uv_path,
+                            requirements_file=requirements_file,
+                            index_url=attempt.pypi_url,
+                            target_dir=target_dir,
+                            python_executable=python_executable,
+                            cache_dir=self._uv_cache_dir(),
+                            use_managed_python=True,
+                        )
                         run_uv_install(
                             uv_path,
-                            command,
-                            f"{label} after managed Python repair",
+                            managed_command,
+                            f"{label} with managed Python fallback",
                             progress_cb=self._uv_progress_cb(),
                             uv_managed_python_dir=uv_python_dir,
+                            raise_if_cancelled=self._raise_if_cancelled,
+                            active_process_cb=self._set_active_process,
+                            cwd=self._runtime_dir,
                         )
                         return attempt
-                    except Exception as retry_exc:
-                        last_error = retry_exc
-                        if is_uv_managed_python_path_error(str(retry_exc)):
-                            raise RuntimeError(
-                                "uv managed Python remains inaccessible after cleanup; "
-                                f"local path may contain an untrusted mount point: {uv_python_dir}"
-                            ) from retry_exc
-                        exc = retry_exc
+                    except Exception as managed_exc:
+                        exc = managed_exc
+                if uv_python_dir is not None and is_uv_managed_python_path_error(str(exc)):
+                    raise RuntimeError(
+                        "uv managed Python local path failed during runtime "
+                        "install; please launch SuperPicky from Explorer or "
+                        "Windows Terminal and avoid terminals that trigger "
+                        f"ERROR_UNTRUSTED_MOUNT_POINT. Path: {uv_python_dir}"
+                    ) from exc
+                if (
+                    not allow_managed_python_fallback
+                    and not managed_python_prepared
+                    and is_uv_windows_mount_point_error(str(exc))
+                ):
+                    raise RuntimeError(
+                        "uv hit a Windows mount-point traversal failure during "
+                        "runtime install. This is often caused by launching from "
+                        "the Inno Setup completion screen or another installer "
+                        "context. Please close SuperPicky and start it again from "
+                        "the Start menu or Explorer, then retry initialization. "
+                        f"Original error: {exc}"
+                    ) from exc
                 last_error = exc
                 failed_pool = self._classify_runtime_install_failure(
                     str(exc),
@@ -1420,7 +1507,7 @@ class InitializationManager(QObject):
         torch_url = (attempt.torch_url or "").lower()
         pypi_url = (attempt.pypi_url or "").lower()
 
-        if is_uv_managed_python_path_error(lowered):
+        if is_uv_managed_python_path_error(lowered) or is_uv_windows_mount_point_error(lowered):
             return "local_runtime"
         if torch_url and torch_url in lowered:
             return "torch"

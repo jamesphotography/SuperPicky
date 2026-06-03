@@ -1000,6 +1000,11 @@ class SuperPickyMainWindow(QMainWindow):
                 self.worker.join(timeout=5)
             except Exception:
                 pass
+        if hasattr(self, '_init_manager') and self._init_manager is not None:
+            try:
+                self._init_manager.cancel()
+            except Exception:
+                pass
         if hasattr(self, '_results_browser') and self._results_browser:
             try:
                 self._results_browser.cleanup()

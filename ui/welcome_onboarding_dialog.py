@@ -522,6 +522,9 @@ class EnvironmentRepairDialog(QDialog):
             parent=self,
         )
         self.retry_btn.clicked.connect(self.start_repair)
+        app = QApplication.instance()
+        if app is not None:
+            app.aboutToQuit.connect(self.manager.cancel)
 
     def _setup_ui(self) -> None:
         self.setWindowTitle(self.i18n.t("repair.window_title"))
@@ -681,6 +684,9 @@ class WelcomeOnboardingDialog(QDialog):
         )
         self._sync_defaults()
         self._set_current_page(0, force=True)
+        app = QApplication.instance()
+        if app is not None:
+            app.aboutToQuit.connect(self.initialization_manager.cancel)
 
     def get_selected_options(self) -> dict:
         return {
