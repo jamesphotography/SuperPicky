@@ -647,6 +647,8 @@
     "preview_management": "预览图管理",
     "keep_preview": "保留预览图片",
     "keep_preview_hint": "保留 AI 分析裁切图和临时预览（cache/debug_crops 目录）",
+    "completion_sound": "播放完成提示音",
+    "completion_sound_hint": "照片处理完成后播放一段简短提示音",
     "auto_cleanup": "自动清理周期",
     "cleanup_3_days": "3 天",
     "cleanup_7_days": "7 天",

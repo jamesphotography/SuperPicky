@@ -2721,6 +2721,11 @@ class SuperPickyMainWindow(QMainWindow):
 
     def _play_completion_sound(self):
         """播放完成音效"""
+        from advanced_config import get_advanced_config
+
+        if not get_advanced_config().completion_sound_enabled:
+            return
+
         sound_path = os.path.join(
             os.path.dirname(__file__), "..",
             "img", "toy-story-short-happy-audio-logo-short-cartoony-intro-outro-music-125627.mp3"
