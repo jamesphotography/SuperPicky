@@ -12,42 +12,83 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import List, Optional, Set, Tuple
 
-from constants import RAW_EXTENSIONS, JPG_EXTENSIONS, HEIF_EXTENSIONS, RATING_FOLDER_NAMES, RATING_FOLDER_NAMES_EN
+from constants import (
+    HEIF_EXTENSIONS,
+    JPG_EXTENSIONS,
+    RATING_FOLDER_NAMES,
+    RATING_FOLDER_NAMES_EN,
+    RAW_EXTENSIONS,
+    VIDEO_EXTENSIONS,
+)
 
 # 所有照片扩展名（小写）
 _PHOTO_EXTENSIONS: Set[str] = set(RAW_EXTENSIONS + JPG_EXTENSIONS + HEIF_EXTENSIONS)
 
+# V4.3 Phase 4: 所有视频扩展名（小写）
+# V4.3 Phase 4: All video extensions (lowercase)
+_VIDEO_EXTENSIONS: Set[str] = set(VIDEO_EXTENSIONS)
+
 # 星级目录名（中 + 英）
 _RATING_DIR_NAMES: Set[str] = set(RATING_FOLDER_NAMES.values()) | set(RATING_FOLDER_NAMES_EN.values())
+
+# V4.3 Phase 4: 视频归类后产生的目录名（防止扫描进入避免循环扫到新生成视频）
+# V4.3 Phase 4: Video sub-folder names produced by Phase 3 organizer.
+_VIDEO_SUBFOLDER_NAMES: Set[str] = {"其他鸟", "无鸟"}
 
 DEFAULT_SCAN_MAX_DEPTH = 16
 
 
 @dataclass(frozen=True)
 class ScannedDirectory:
-    """扫描结果条目"""
+    """
+    扫描结果条目
+
+    V4.3 Phase 4: 新增 video_count + video_files 字段以支持视频处理。
+    """
 
     path: str
     depth: int
     photo_count: int
+    # V4.3 Phase 4: 视频文件数和路径列表（默认 0/空，保持向后兼容）
+    # V4.3 Phase 4: Video file count + absolute paths (defaults preserve compatibility)
+    video_count: int = 0
+    video_files: Tuple[str, ...] = ()
 
 
 def is_excluded(dirname: str) -> bool:
-    """判断目录是否应被排除（非用户照片目录）"""
+    """
+    判断目录是否应被排除（非用户照片/视频目录）
+
+    V4.3 Phase 4: 扩展排除 Phase 3 视频整理产生的「其他鸟」「无鸟」目录，
+    避免再次扫描时把已归类的视频又当成原始素材处理。
+    """
     if dirname.startswith('.'):
         return True
     if dirname.startswith('burst_'):
         return True
     if dirname in _RATING_DIR_NAMES:
         return True
+    if dirname in _VIDEO_SUBFOLDER_NAMES:
+        return True
     if dirname in ('__pycache__', 'node_modules'):
         return True
     return False
 
 
-def _scan_directory_once(dir_path: str) -> Tuple[int, List[str]]:
-    """单次扫描目录，返回直接照片数量与可继续扫描的子目录。"""
+def _scan_directory_once(dir_path: str) -> Tuple[int, List[str], List[str]]:
+    """
+    单次扫描目录
+
+    V4.3 Phase 4: 同时返回照片数量、视频文件路径列表、子目录列表
+
+    Returns:
+        (photo_count, video_files, child_dirs)
+        - photo_count: 直接照片数量
+        - video_files: 直接视频文件绝对路径列表
+        - child_dirs: 可继续扫描的子目录绝对路径列表
+    """
     photo_count = 0
+    video_files: List[str] = []
     child_dirs: List[str] = []
 
     try:
@@ -57,6 +98,8 @@ def _scan_directory_once(dir_path: str) -> Tuple[int, List[str]]:
                     ext = os.path.splitext(entry.name)[1].lower()
                     if ext in _PHOTO_EXTENSIONS:
                         photo_count += 1
+                    elif ext in _VIDEO_EXTENSIONS:
+                        video_files.append(entry.path)
                     continue
 
                 if not entry.is_dir(follow_symlinks=False):
@@ -66,13 +109,19 @@ def _scan_directory_once(dir_path: str) -> Tuple[int, List[str]]:
 
                 child_dirs.append(entry.path)
     except (FileNotFoundError, NotADirectoryError, PermissionError):
-        return 0, []
+        return 0, [], []
 
+    video_files.sort(key=lambda value: os.path.basename(value).casefold())
     child_dirs.sort(key=lambda value: os.path.basename(value).casefold())
-    return photo_count, child_dirs
+    return photo_count, video_files, child_dirs
 
 
 def _scan_directories_dfs(root: str, max_depth: int) -> List[ScannedDirectory]:
+    """
+    V4.3 Phase 4: 同时收集照片和视频。
+    保留原有逻辑「只把有照片的目录加进结果」，但额外附带该目录下的视频。
+    目录如果只有视频没照片也会被加进结果（让用户处理纯视频目录）。
+    """
     root = os.path.abspath(root)
     if max_depth < 0:
         return []
@@ -81,9 +130,16 @@ def _scan_directories_dfs(root: str, max_depth: int) -> List[ScannedDirectory]:
     stack: List[Tuple[str, int]] = [(root, 0)]
     while stack:
         dir_path, depth = stack.pop()
-        photo_count, child_dirs = _scan_directory_once(dir_path)
-        if photo_count > 0:
-            result.append(ScannedDirectory(path=dir_path, depth=depth, photo_count=photo_count))
+        photo_count, video_files, child_dirs = _scan_directory_once(dir_path)
+        # 只要有照片或视频之一，就计入结果 / Include if has photos OR videos
+        if photo_count > 0 or video_files:
+            result.append(ScannedDirectory(
+                path=dir_path,
+                depth=depth,
+                photo_count=photo_count,
+                video_count=len(video_files),
+                video_files=tuple(video_files),
+            ))
         if depth >= max_depth:
             continue
         for child_dir in reversed(child_dirs):
@@ -174,8 +230,18 @@ def is_dangerous_root(
 
 def has_photos(dir_path: str) -> bool:
     """判断目录是否直接包含至少 1 个照片文件"""
-    photo_count, _ = _scan_directory_once(dir_path)
+    photo_count, _video_files, _child_dirs = _scan_directory_once(dir_path)
     return photo_count > 0
+
+
+def has_videos(dir_path: str) -> bool:
+    """
+    V4.3 Phase 4: 判断目录是否直接包含至少 1 个视频文件
+
+    Phase 4: check if a directory directly contains at least one video file.
+    """
+    _photo_count, video_files, _child_dirs = _scan_directory_once(dir_path)
+    return bool(video_files)
 
 
 def is_processed(dir_path: str) -> bool:
@@ -212,5 +278,11 @@ def scan_recursive(root: str, max_depth: int = DEFAULT_SCAN_MAX_DEPTH) -> List[s
 
 def count_photos(dir_path: str) -> int:
     """统计目录中直接包含的照片文件数量"""
-    count, _ = _scan_directory_once(dir_path)
+    count, _video_files, _child_dirs = _scan_directory_once(dir_path)
     return count
+
+
+def count_videos(dir_path: str) -> int:
+    """V4.3 Phase 4: 统计目录中直接包含的视频文件数量"""
+    _photo_count, video_files, _child_dirs = _scan_directory_once(dir_path)
+    return len(video_files)
