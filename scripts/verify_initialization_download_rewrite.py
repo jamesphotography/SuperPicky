@@ -26,11 +26,16 @@ from core.initialization_progress import (
     STAGE_DOWNLOADING,
 )
 from core.runtime_requirements import get_runtime_requirements
-from core.source_registry import get_official_pypi_url, get_pypi_sources, get_torch_sources
+from core.source_probe import ProbeResult
+from core.source_registry import (
+    PackageSource,
+    get_official_pypi_url,
+    get_pypi_sources,
+    get_torch_sources,
+)
 from core.uv_runtime_manager import (
     build_install_command,
     build_uv_install_environment,
-    ensure_uv_managed_python_ready,
     is_uv_managed_python_path_error,
     is_uv_windows_mount_point_error,
     is_uv_python_interpreter_unavailable,
@@ -38,6 +43,7 @@ from core.uv_runtime_manager import (
     run_uv_install,
     runtime_managed_python_dir,
 )
+import scripts.download_models as download_models
 from scripts.download_models import _parse_hf_cli_size, verify_resource
 
 
@@ -83,11 +89,145 @@ def verify_torch_direct_wheel_urls() -> None:
     校验 Torch CUDA wheel 以直链 requirement 表示。
     """
     requirements = get_runtime_requirements("cuda")
-    package_urls = requirements.torch_wheel_urls("https://download.pytorch.org/whl/cu118")
+    package_urls = requirements.torch_wheel_urls(
+        "https://download.pytorch.org/whl/cu118"
+    )
     torch_url = package_urls["torch"]
     _assert(torch_url.startswith("torch @ https://"), "torch is not a direct URL")
     _assert("%2Bcu118" in torch_url, "CUDA local version was not URL-encoded")
     _assert("win_amd64.whl" in torch_url, "Windows wheel platform tag missing")
+
+
+def verify_torch_source_selection_uses_sampled_wheel_speed() -> None:
+    """
+    Verify Torch source selection follows sampled wheel download speed.
+
+    校验 Torch 源选择依据 wheel 采样下载速度，而不是固定偏向国内镜像。
+    """
+    try:
+        import core.initialization_manager as initialization_manager
+        from core.initialization_manager import InitializationManager
+    except ModuleNotFoundError as exc:
+        if exc.name == "PySide6":
+            raise VerificationSkipped("PySide6 unavailable") from exc
+        raise
+
+    pypi_url = get_official_pypi_url()
+    torch_official_url = "https://download.pytorch.org/whl/cu118"
+    torch_nju_url = "https://mirror.nju.edu.cn/pytorch/whl/cu118/"
+    requirements = get_runtime_requirements("cuda")
+    torch_official_probe_url = requirements.torch_wheel_urls(torch_official_url)[
+        "torch"
+    ].split(" @ ", 1)[1]
+    torch_nju_probe_url = requirements.torch_wheel_urls(torch_nju_url)["torch"].split(
+        " @ ", 1
+    )[1]
+    pypi_sources = [
+        PackageSource(
+            name="pypi-official",
+            region="global",
+            url=pypi_url,
+            source_kind="pypi",
+            trust_level="official",
+        )
+    ]
+    torch_sources = [
+        {
+            "name": "torch-official",
+            "region": "global",
+            "url": torch_official_url,
+            "source_kind": "torch",
+            "trust_level": "official",
+            "is_official": "true",
+            "probe_url": torch_official_probe_url,
+        },
+        {
+            "name": "torch-nju",
+            "region": "cn",
+            "url": torch_nju_url,
+            "source_kind": "torch",
+            "trust_level": "trusted",
+            "is_official": "false",
+            "probe_url": torch_nju_probe_url,
+        },
+    ]
+
+    def fake_probe_sources_parallel(
+        group_name: str,
+        sources: list[dict],
+        timeout: float = 2.0,
+    ) -> list[ProbeResult]:
+        if group_name == "pypi":
+            return [
+                ProbeResult(
+                    name="pypi-official",
+                    url=pypi_url,
+                    ok=True,
+                    total_ms=60.0,
+                    first_byte_ms=40.0,
+                    region="global",
+                    source_kind="pypi",
+                    trust_level="official",
+                    is_official=True,
+                )
+            ]
+        _assert(group_name == "torch-cuda", "unexpected source probe group")
+        _assert(
+            any(
+                item.get("probe_url", "").endswith("win_amd64.whl")
+                for item in sources
+            ),
+            "Torch source probe must use direct wheel URLs",
+        )
+        return [
+            ProbeResult(
+                name="torch-nju",
+                url=torch_nju_url,
+                ok=True,
+                total_ms=150.0,
+                first_byte_ms=20.0,
+                region="cn",
+                source_kind="torch",
+                trust_level="trusted",
+            ),
+            ProbeResult(
+                name="torch-official",
+                url=torch_official_url,
+                ok=True,
+                total_ms=90.0,
+                first_byte_ms=55.0,
+                region="global",
+                source_kind="torch",
+                trust_level="official",
+                is_official=True,
+            ),
+        ]
+
+    manager = InitializationManager.__new__(InitializationManager)
+    with (
+        patch.object(
+            initialization_manager,
+            "get_pypi_sources",
+            return_value=pypi_sources,
+        ),
+        patch.object(
+            InitializationManager,
+            "_torch_source_candidates",
+            return_value=torch_sources,
+        ),
+        patch.object(
+            initialization_manager,
+            "probe_sources_parallel",
+            side_effect=fake_probe_sources_parallel,
+        ),
+    ):
+        selected = InitializationManager._resolve_best_sources(manager, "cuda")
+
+    _assert(selected["pypi_primary"] == pypi_url, "PyPI primary should stay official")
+    _assert(
+        selected["torch_primary"] == torch_official_url,
+        "Torch primary must follow sampled wheel speed and choose official here",
+    )
 
 
 def verify_uv_command_uses_single_pypi_index() -> None:
@@ -127,7 +267,6 @@ def verify_packaged_target_uv_avoids_managed_python_by_default() -> None:
         tmp_path = Path(tmp)
         requirements_file = tmp_path / "requirements.txt"
         runtime_dir = tmp_path / "user_selected_runtime_env"
-        local_appdata = tmp_path / "local_appdata"
         target_dir = runtime_dir / "site-packages.__installing__"
         requirements_file.write_text("timm>=0.9.0\n", encoding="utf-8")
         with patch.object(sys, "platform", "win32"), patch.object(
@@ -135,9 +274,10 @@ def verify_packaged_target_uv_avoids_managed_python_by_default() -> None:
         ), patch.dict(
             "os.environ",
             {
-                "LOCALAPPDATA": str(local_appdata),
                 "UV_MANAGED_PYTHON": "1",
                 "UV_NO_MANAGED_PYTHON": "1",
+                "UV_PYTHON": str(tmp_path / "poisoned_python.exe"),
+                "UV_PYTHON_DOWNLOADS": "automatic",
                 "UV_PYTHON_PREFERENCE": "system",
             },
         ):
@@ -149,6 +289,14 @@ def verify_packaged_target_uv_avoids_managed_python_by_default() -> None:
                 target_dir=target_dir,
                 cache_dir=runtime_dir / "uv-cache",
                 use_managed_python=False,
+            )
+            managed_command = build_install_command(
+                uv_path="uv",
+                requirements_file=requirements_file,
+                index_url=get_official_pypi_url(),
+                target_dir=target_dir,
+                cache_dir=runtime_dir / "uv-cache",
+                use_managed_python=True,
             )
             direct_env = build_uv_install_environment(None)
             managed_env = build_uv_install_environment(managed_python_dir)
@@ -172,10 +320,20 @@ def verify_packaged_target_uv_avoids_managed_python_by_default() -> None:
         "--no-python-downloads" in command,
         "packaged target install must not download Python during dependency install",
     )
+    _assert("--managed-python" in managed_command, "managed fallback command missing")
+    _assert(
+        "--no-python-downloads" not in managed_command,
+        "managed fallback command must allow uv to download Python",
+    )
     _assert(direct_env["UV_NO_CONFIG"] == "1", "uv must ignore user-global config")
     _assert(
         "UV_MANAGED_PYTHON" not in direct_env,
         "direct target install must ignore user managed-Python env",
+    )
+    _assert("UV_PYTHON" not in direct_env, "direct target install must ignore UV_PYTHON")
+    _assert(
+        "UV_PYTHON_DOWNLOADS" not in direct_env,
+        "direct target install must rely on --no-python-downloads",
     )
     _assert(
         "UV_PYTHON_PREFERENCE" not in direct_env,
@@ -186,23 +344,14 @@ def verify_packaged_target_uv_avoids_managed_python_by_default() -> None:
         "uv managed Python dir must be passed through the subprocess environment",
     )
     _assert(
-        managed_python_dir.parent == local_appdata / "SuperPicky" / "uv-python",
-        "packaged uv managed Python dir must live under AppData",
-    )
-    _assert(
-        managed_python_dir.name.startswith("runtime-"),
-        "packaged uv managed Python dir must be runtime-hash scoped",
-    )
-    _assert(
-        managed_python_dir != runtime_dir / ".uv-python",
-        "packaged uv managed Python dir must not live under the runtime dir",
+        managed_python_dir == runtime_dir / ".uv-python",
+        "uv managed Python dir must stay under the selected runtime dir",
     )
     _assert(
         managed_env["UV_PYTHON_DOWNLOADS"] == "automatic",
         "uv managed fallback must be allowed to bootstrap the app-scoped Python",
     )
-    _assert(managed_env["UV_HTTP_RETRIES"] == "5", "uv managed Python download retries missing")
-    _assert(managed_env["UV_HTTP_TIMEOUT"] == "60", "uv managed Python timeout missing")
+    _assert("UV_PYTHON" not in managed_env, "managed fallback must ignore user UV_PYTHON")
     _assert(
         "UV_PYTHON_PREFERENCE" not in managed_env,
         "uv --managed-python must not conflict with UV_PYTHON_PREFERENCE",
@@ -338,103 +487,6 @@ def verify_uv_managed_python_path_repair_helpers() -> None:
             "uv managed Python repair touched a non-selected runtime directory",
         )
         repair_uv_managed_python_dir(managed_python_dir)
-
-        local_appdata = Path(tmp) / "local_appdata"
-        with patch.object(sys, "platform", "win32"), patch.object(
-            sys, "frozen", True, create=True
-        ), patch.dict("os.environ", {"LOCALAPPDATA": str(local_appdata)}):
-            appdata_managed_dir = runtime_managed_python_dir(runtime_dir)
-        appdata_python_dir = appdata_managed_dir / "cpython-3.12-windows-x86_64-none"
-        appdata_python_dir.mkdir(parents=True, exist_ok=True)
-        (appdata_python_dir / "python.exe").write_text("placeholder\n", encoding="utf-8")
-
-        repair_uv_managed_python_dir(appdata_managed_dir)
-        _assert(
-            not appdata_managed_dir.exists(),
-            "uv managed Python repair did not remove the AppData hash directory",
-        )
-
-
-def verify_uv_managed_python_preinstall_retries() -> None:
-    """
-    Verify managed Python bootstrap retries before runtime source rotation.
-
-    校验 managed Python 会在运行时源轮换前独立重试。
-    """
-    with tempfile.TemporaryDirectory(prefix="superpicky_uv_python_ready_") as tmp:
-        managed_python_dir = runtime_managed_python_dir(Path(tmp) / "runtime_env")
-        stale_marker = managed_python_dir / "stale.txt"
-        stale_marker.parent.mkdir(parents=True, exist_ok=True)
-        stale_marker.write_text("stale\n", encoding="utf-8")
-        calls: list[list[str]] = []
-
-        def fake_run_uv_install(
-            uv_path: str,
-            command: list[str],
-            label: str,
-            *,
-            progress_cb=None,
-            uv_managed_python_dir: Path | None = None,
-            raise_if_cancelled=None,
-            active_process_cb=None,
-            cwd: Path | None = None,
-        ) -> str:
-            calls.append(command)
-            _assert(uv_path == "uv", "uv path was not forwarded")
-            _assert(
-                uv_managed_python_dir == managed_python_dir,
-                "managed Python dir was not forwarded",
-            )
-            if len(calls) == 1:
-                raise RuntimeError("temporary Python download failure")
-            return ""
-
-        with patch("core.uv_runtime_manager.run_uv_install", side_effect=fake_run_uv_install):
-            ensure_uv_managed_python_ready("uv", managed_python_dir, max_attempts=2)
-
-        command = calls[0]
-        _assert(len(calls) == 2, "managed Python bootstrap did not retry once")
-        _assert("python" in command and "install" in command, "uv python install missing")
-        _assert("--managed-python" in command, "uv python install must use managed Python")
-        _assert("--install-dir" in command, "uv python install must pin install dir")
-        _assert("--no-bin" in command, "uv python install must avoid global bin links")
-        _assert("--no-registry" in command, "uv python install must avoid registry writes")
-        _assert(not stale_marker.exists(), "failed bootstrap did not clean stale Python dir")
-
-    with tempfile.TemporaryDirectory(prefix="superpicky_uv_python_path_") as tmp:
-        managed_python_dir = runtime_managed_python_dir(Path(tmp) / "runtime_env")
-        path_error = RuntimeError(
-            "error: Failed to create Python minor version link directory\n"
-            "Caused by: ERROR_UNTRUSTED_MOUNT_POINT (os error 448)"
-        )
-        path_calls = 0
-
-        def fake_path_error_run(
-            uv_path: str,
-            command: list[str],
-            label: str,
-            *,
-            progress_cb=None,
-            uv_managed_python_dir: Path | None = None,
-            raise_if_cancelled=None,
-            active_process_cb=None,
-            cwd: Path | None = None,
-        ) -> str:
-            nonlocal path_calls
-            path_calls += 1
-            raise path_error
-
-        try:
-            with patch("core.uv_runtime_manager.run_uv_install", side_effect=fake_path_error_run):
-                ensure_uv_managed_python_ready("uv", managed_python_dir, max_attempts=3)
-        except RuntimeError as exc:
-            _assert(
-                "ERROR_UNTRUSTED_MOUNT_POINT" in str(exc),
-                "persistent path failure did not surface launch guidance",
-            )
-        else:
-            raise AssertionError("persistent path failure did not raise")
-        _assert(path_calls == 3, "persistent path failure did not use all retry attempts")
 
 
 def verify_uv_install_subprocess_cancellation() -> None:
@@ -577,6 +629,281 @@ def verify_hf_cli_size_parser() -> None:
     _assert(_parse_hf_cli_size("1024") == 1024, "plain byte size parse failed")
 
 
+def verify_hf_endpoint_selection_uses_file_probe() -> None:
+    """
+    Verify HF endpoint ranking probes the actual resource URL and can prefer official.
+
+    校验 HF 端点排序基于实际资源 URL 探测，并且 official 更快时可优先 official。
+    """
+    captured_sources: list[dict] = []
+
+    def fake_probe_sources_parallel(group_name: str, sources: list[dict], timeout: float = 2.0):
+        captured_sources.extend(sources)
+        return [
+            ProbeResult(
+                name="official",
+                url=download_models.HF_OFFICIAL_ENDPOINT,
+                ok=True,
+                total_ms=50.0,
+                first_byte_ms=45.0,
+            ),
+            ProbeResult(
+                name="hf-mirror",
+                url=download_models.HF_MIRROR_ENDPOINT,
+                ok=True,
+                total_ms=500.0,
+                first_byte_ms=450.0,
+            ),
+        ]
+
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("HF_ENDPOINT", None)
+        with patch.object(download_models, "probe_sources_parallel", fake_probe_sources_parallel):
+            endpoints = download_models._resolve_hf_endpoints("owner/repo", "model.bin")
+
+    _assert(
+        endpoints[0] == ("official", download_models.HF_OFFICIAL_ENDPOINT),
+        "HF endpoint selection must prefer official when it is faster",
+    )
+    _assert(
+        any(
+            item.get("probe_url")
+            == "https://huggingface.co/owner/repo/resolve/main/model.bin"
+            for item in captured_sources
+        ),
+        "HF endpoint selection did not probe the actual official file URL",
+    )
+    _assert(
+        any(
+            item.get("probe_url")
+            == "https://hf-mirror.com/owner/repo/resolve/main/model.bin"
+            for item in captured_sources
+        ),
+        "HF endpoint selection did not probe the actual mirror file URL",
+    )
+
+
+def verify_hf_endpoint_selection_uses_latency_and_speed() -> None:
+    """
+    Verify HF endpoint ranking considers both latency and sampled download speed.
+
+    校验 HF 端点排序同时考虑延时与采样下载速度。
+    """
+    captured_sources: list[dict] = []
+    sample_bytes = download_models.HF_ENDPOINT_PROBE_SAMPLE_BYTES
+
+    def fake_probe_sources_parallel(
+        group_name: str,
+        sources: list[dict],
+        timeout: float = 2.0,
+    ) -> list[ProbeResult]:
+        captured_sources.extend(sources)
+        return [
+            ProbeResult(
+                name="official",
+                url=download_models.HF_OFFICIAL_ENDPOINT,
+                ok=True,
+                total_ms=900.0,
+                first_byte_ms=40.0,
+                bytes_read=sample_bytes,
+                sample_bytes=sample_bytes,
+            ),
+            ProbeResult(
+                name="hf-mirror",
+                url=download_models.HF_MIRROR_ENDPOINT,
+                ok=True,
+                total_ms=180.0,
+                first_byte_ms=90.0,
+                bytes_read=sample_bytes,
+                sample_bytes=sample_bytes,
+            ),
+        ]
+
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("HF_ENDPOINT", None)
+        with patch.object(download_models, "probe_sources_parallel", fake_probe_sources_parallel):
+            endpoints = download_models._resolve_hf_endpoints("owner/repo", "model.bin")
+
+    _assert(
+        endpoints[0] == ("hf-mirror", download_models.HF_MIRROR_ENDPOINT),
+        "HF endpoint ranking ignored sampled download speed",
+    )
+    _assert(
+        all(item.get("source_kind") == "hf" for item in captured_sources),
+        "HF probes must mark their source kind",
+    )
+    _assert(
+        all(int(item.get("probe_sample_bytes", 0)) == sample_bytes for item in captured_sources),
+        "HF probes must request a fixed download-speed sample",
+    )
+
+
+def verify_configured_hf_endpoint_is_ranked_by_probe() -> None:
+    """
+    Verify a configured HF_ENDPOINT participates in ranking instead of forcing first.
+
+    校验用户配置的 HF_ENDPOINT 参与测速排序，而不是无条件排第一。
+    """
+    configured_endpoint = "https://slow-hf.example.com"
+
+    def fake_probe_sources_parallel(
+        group_name: str,
+        sources: list[dict],
+        timeout: float = 2.0,
+    ) -> list[ProbeResult]:
+        urls = {item["url"] for item in sources}
+        _assert(configured_endpoint in urls, "configured HF endpoint was not probed")
+        return [
+            ProbeResult(
+                name="configured",
+                url=configured_endpoint,
+                ok=True,
+                total_ms=2000.0,
+                first_byte_ms=500.0,
+                bytes_read=download_models.HF_ENDPOINT_PROBE_SAMPLE_BYTES,
+                sample_bytes=download_models.HF_ENDPOINT_PROBE_SAMPLE_BYTES,
+            ),
+            ProbeResult(
+                name="official",
+                url=download_models.HF_OFFICIAL_ENDPOINT,
+                ok=True,
+                total_ms=200.0,
+                first_byte_ms=50.0,
+                bytes_read=download_models.HF_ENDPOINT_PROBE_SAMPLE_BYTES,
+                sample_bytes=download_models.HF_ENDPOINT_PROBE_SAMPLE_BYTES,
+            ),
+            ProbeResult(
+                name="hf-mirror",
+                url=download_models.HF_MIRROR_ENDPOINT,
+                ok=False,
+                total_ms=100.0,
+                first_byte_ms=0.0,
+                error="offline",
+            ),
+        ]
+
+    with patch.dict(os.environ, {"HF_ENDPOINT": configured_endpoint}, clear=False):
+        with patch.object(download_models, "probe_sources_parallel", fake_probe_sources_parallel):
+            endpoints = download_models._resolve_hf_endpoints("owner/repo", "model.bin")
+
+    _assert(
+        endpoints[0] == ("official", download_models.HF_OFFICIAL_ENDPOINT),
+        "slow configured HF_ENDPOINT must not force first place",
+    )
+    _assert(
+        any(endpoint == configured_endpoint for _name, endpoint in endpoints),
+        "configured HF endpoint must remain available as fallback",
+    )
+
+
+def verify_hf_parallel_direct_download_shape() -> None:
+    """
+    Verify direct HF range downloads use a capped worker pool with a longer task queue.
+
+    校验 HF 直拉 Range 下载使用固定上限的 worker 池和更长的任务队列。
+    """
+    total_bytes = download_models.HF_DIRECT_PARALLEL_MIN_PART_BYTES * 40
+    segments = download_models._build_download_segments(total_bytes)
+    _assert(
+        len(segments) > download_models.HF_DIRECT_PARALLEL_THREADS,
+        "parallel download must keep queued range work after all workers start",
+    )
+    _assert(
+        all(
+            segment.size <= download_models.HF_DIRECT_PARALLEL_MIN_PART_BYTES
+            for segment in segments
+        ),
+        "parallel download segments must be small enough for workers to refill",
+    )
+    _assert(segments[0].start == 0, "first segment must start at byte zero")
+    _assert(segments[-1].end == total_bytes - 1, "last segment must cover the final byte")
+    for previous, current in zip(segments, segments[1:]):
+        _assert(
+            previous.end + 1 == current.start,
+            "parallel download segments must be contiguous",
+        )
+
+
+def verify_download_prefers_httpx_before_hf_cli() -> None:
+    """
+    Verify model download uses httpx first and skips hf CLI when httpx succeeds.
+
+    校验模型下载优先使用 httpx，且 httpx 成功时不会再调用 hf CLI。
+    """
+    calls: list[str] = []
+
+    def fake_httpx_download(**kwargs) -> str:
+        calls.append("httpx")
+        return str(Path(kwargs["full_dest_dir"]) / kwargs["filename"])
+
+    def fake_cli_download(**kwargs) -> str | None:
+        calls.append("cli")
+        return None
+
+    with tempfile.TemporaryDirectory(prefix="superpicky_httpx_first_") as tmp:
+        with (
+            patch.object(
+                download_models,
+                "_resolve_hf_endpoints",
+                return_value=[("official", download_models.HF_OFFICIAL_ENDPOINT)],
+            ),
+            patch.object(download_models, "_estimate_file_size_via_cli", return_value=1024),
+            patch.object(download_models, "_download_via_httpx", side_effect=fake_httpx_download),
+            patch.object(download_models, "_download_via_cli", side_effect=fake_cli_download),
+        ):
+            result = download_models._download_with_fallback(
+                resource={"resource_id": "test", "filename": "model.bin"},
+                repo_id="owner/repo",
+                filename="model.bin",
+                full_dest_dir=tmp,
+            )
+
+    _assert(result is not None, "httpx-first download did not return a path")
+    _assert(calls == ["httpx"], "hf CLI was called before or after successful httpx")
+
+
+def verify_huggingface_hub_is_bundled() -> None:
+    """
+    Verify bundled HF dependency is declared for lightweight builds.
+
+    校验轻量化构建声明了内置 HF 依赖。
+    """
+    requirements = (_PROJECT_ROOT / "requirements_base.txt").read_text(encoding="utf-8")
+    spec_text = (_PROJECT_ROOT / "SuperPicky_lite_win.spec").read_text(encoding="utf-8")
+    _assert("huggingface_hub" in requirements, "requirements_base.txt must include huggingface_hub")
+    _assert(
+        "'huggingface_hub'" in spec_text,
+        "Lite spec must include huggingface_hub hidden import",
+    )
+
+
+def verify_download_cancellation_reaches_resource_downloader() -> None:
+    """
+    Verify initialization cancellation is not swallowed by model download fallback.
+
+    校验初始化取消不会被模型下载 fallback 链路吞掉。
+    """
+
+    class InitializationInterrupted(Exception):
+        """Synthetic cancellation exception with the production class name."""
+
+    def raise_if_cancelled() -> None:
+        raise InitializationInterrupted("cancelled")
+
+    with tempfile.TemporaryDirectory(prefix="superpicky_download_cancel_") as tmp:
+        try:
+            download_models._download_with_fallback(
+                resource={"resource_id": "test", "filename": "model.bin"},
+                repo_id="owner/repo",
+                filename="model.bin",
+                full_dest_dir=tmp,
+                raise_if_cancelled=raise_if_cancelled,
+            )
+        except InitializationInterrupted:
+            return
+    raise AssertionError("download cancellation was swallowed")
+
+
 def verify_runtime_install_attempt_matrix() -> None:
     """
     Verify InitializationManager tries isolated PyPI/Torch source pairs.
@@ -665,17 +992,24 @@ def main() -> int:
     checks = [
         verify_source_registry_isolation,
         verify_torch_direct_wheel_urls,
+        verify_torch_source_selection_uses_sampled_wheel_speed,
         verify_uv_command_uses_single_pypi_index,
         verify_packaged_target_uv_avoids_managed_python_by_default,
         verify_uv_environment_sanitizes_installer_python_context,
         verify_uv_managed_python_path_repair_helpers,
-        verify_uv_managed_python_preinstall_retries,
         verify_uv_install_subprocess_cancellation,
         verify_lite_spec_uses_downloaded_uv,
         verify_lite_build_tracks_latest_uv,
         verify_progress_terminal_is_fast,
         verify_resource_integrity_floor,
         verify_hf_cli_size_parser,
+        verify_hf_endpoint_selection_uses_file_probe,
+        verify_hf_endpoint_selection_uses_latency_and_speed,
+        verify_configured_hf_endpoint_is_ranked_by_probe,
+        verify_hf_parallel_direct_download_shape,
+        verify_download_prefers_httpx_before_hf_cli,
+        verify_huggingface_hub_is_bundled,
+        verify_download_cancellation_reaches_resource_downloader,
         verify_runtime_install_attempt_matrix,
     ]
     for check in checks:

@@ -61,11 +61,11 @@ from core.source_probe_parallel import (
 from core.uv_runtime_manager import (
     build_install_command,
     create_venv,
-    ensure_uv_managed_python_ready,
     ensure_uv_bootstrapped,
     is_uv_managed_python_path_error,
     is_uv_windows_mount_point_error,
     is_uv_python_interpreter_unavailable,
+    repair_uv_managed_python_dir,
     run_uv_install,
     runtime_managed_python_dir,
 )
@@ -79,47 +79,16 @@ from scripts.download_models import (
 logging.basicConfig(level=logging.INFO)
 
 
-# ── 镜像核心选择策略 ───────────────────────────────────────────────────
-# 沿用 2× 比率阈值，但源列表现在来自 source_registry.py 以满足全球覆盖。
-# The 2× ratio threshold is preserved; source lists now come from
-# source_registry.py for worldwide coverage.
-
-PREFERRED_SOURCE_MIRROR_RATIO_THRESHOLD = 2.0
-
-
-def _pick_preferred_with_ratio(successful):
+def _subprocess_no_window_kwargs() -> dict[str, int]:
     """
-    在镜像与官方源之间按"镜像优先、但不显著慢于官方"的规则挑选最佳源。
+    返回 Windows 子进程隐藏控制台窗口所需的参数。
 
-    Pick the best source preferring mirrors when they aren't dramatically
-    slower than the fastest official. ``successful`` 是已经过滤为 ok=True 的
-    ``ProbeResult`` 列表。
-
-    规则 / Rule:
-    - 仅有官方或仅有镜像 → 返回该侧最快
-    - 两侧都有 → 取镜像最快；若 mirror.total_ms 超过
-      ``official.total_ms * PREFERRED_SOURCE_MIRROR_RATIO_THRESHOLD``
-      则改用官方。这样大陆用户（镜像几百 ms vs 官方超时）继续走镜像，
-      海外/边缘地区用户（镜像 800ms vs 官方 50ms）正确走官方。
+    Return subprocess keyword arguments that hide child console windows on
+    Windows.
     """
-    if not successful:
-        return None
-
-    non_official = [
-        item for item in successful if "official" not in item.name.lower()
-    ]
-    official = [
-        item for item in successful if "official" in item.name.lower()
-    ]
-
-    best_mirror = pick_best_source(non_official) if non_official else None
-    best_official = pick_best_source(official) if official else None
-
-    if best_mirror and best_official:
-        if best_mirror.total_ms <= best_official.total_ms * PREFERRED_SOURCE_MIRROR_RATIO_THRESHOLD:
-            return best_mirror
-        return best_official
-    return best_mirror or best_official
+    if os.name != "nt":
+        return {}
+    return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
 
 
 FULL_FEATURE_SET = ("core_detection", "quality", "keypoint", "flight", "birdid")
@@ -239,22 +208,19 @@ class InitializationManager(QObject):
 
     def _ensure_hf_endpoint_configured(self) -> None:
         """
-        确保 Hugging Face 端点环境变量已正确设置。
+        配置 Hugging Face 工具链的稳定性环境变量。
 
-        Ensure Hugging Face endpoint environment variables are properly configured.
+        Configure Hugging Face toolchain stability environment variables.
         """
-        hf_mirror_endpoint = "https://hf-mirror.com"
-
-        if (
-            "HF_ENDPOINT" not in os.environ
-            or os.environ["HF_ENDPOINT"] != hf_mirror_endpoint
-        ):
-            os.environ["HF_ENDPOINT"] = hf_mirror_endpoint
-            logging.info("已设置 HF_ENDPOINT = %s", hf_mirror_endpoint)
+        configured_endpoint = os.environ.get("HF_ENDPOINT")
+        if configured_endpoint:
+            logging.info("保留用户配置的 HF_ENDPOINT = %s", configured_endpoint)
 
         env_vars = {
             "HF_HUB_DISABLE_TELEMETRY": "1",
             "HF_HUB_DISABLE_XET": "1",
+            "HF_HUB_DOWNLOAD_TIMEOUT": "120",
+            "HF_HUB_ETAG_TIMEOUT": "30",
             "DO_NOT_TRACK": "1",
         }
 
@@ -755,7 +721,10 @@ class InitializationManager(QObject):
                     resource,
                     project_root=self._project_root,
                     progress_cb=self._resource_progress_cb(index, total_items, resource_id),
+                    raise_if_cancelled=self._raise_if_cancelled,
+                    active_process_cb=self._set_active_process,
                 )
+                self._raise_if_cancelled()
                 success_count += 1
                 self._emit_item_status(resource_id, "done", f"{label} ready")
                 logging.info("资源 [%s] 下载成功", resource_id)
@@ -1126,7 +1095,13 @@ class InitializationManager(QObject):
         torch_fallback = ""
         torch_candidates: list[str] = []
         if torch_sources:
-            best_torch = pick_best_with_geo_and_ratio(torch_results)
+            # Torch wheel 下载是数百 MB 级大文件；并行探测器会读取一小段真实
+            # wheel 数据，因此这里按采样后的实际耗时选最快源，而不是沿用 PyPI
+            # 的“镜像在 2× 内优先”策略。
+            # Torch wheel downloads are hundreds of MB. The parallel probe reads
+            # a small real wheel sample, so choose the fastest measured source
+            # instead of reusing PyPI's mirror-preferred 2x policy.
+            best_torch = pick_best_source(torch_results)
             torch_candidates = self._rank_source_urls(
                 torch_results,
                 [source["url"] for source in torch_sources],
@@ -1144,20 +1119,6 @@ class InitializationManager(QObject):
             "torch_candidates": torch_candidates,
         }
         return selected
-
-    @staticmethod
-    def _pick_preferred_source(results):
-        return _pick_preferred_with_ratio(
-            [item for item in results if item.ok]
-        )
-
-    @staticmethod
-    def _resolve_fallback_url(results, primary_url: str) -> str:
-        successful = [item for item in results if item.ok and item.url != primary_url]
-        if not successful:
-            return primary_url
-        fallback = _pick_preferred_with_ratio(successful)
-        return fallback.url if fallback else primary_url
 
     @staticmethod
     def _rank_source_urls(
@@ -1330,7 +1291,7 @@ class InitializationManager(QObject):
             if allow_managed_python_fallback
             else None
         )
-        managed_python_prepared = False
+        use_managed_python = False
 
         attempts = self._runtime_install_attempts(runtime_variant)
         current_attempt = attempts[0]
@@ -1363,7 +1324,7 @@ class InitializationManager(QObject):
                     target_dir=target_dir,
                     python_executable=python_executable,
                     cache_dir=self._uv_cache_dir(),
-                    use_managed_python=managed_python_prepared,
+                    use_managed_python=use_managed_python,
                 )
                 run_uv_install(
                     uv_path,
@@ -1371,7 +1332,7 @@ class InitializationManager(QObject):
                     label,
                     progress_cb=self._uv_progress_cb(),
                     uv_managed_python_dir=(
-                        uv_python_dir if managed_python_prepared else None
+                        uv_python_dir if use_managed_python else None
                     ),
                     raise_if_cancelled=self._raise_if_cancelled,
                     active_process_cb=self._set_active_process,
@@ -1381,12 +1342,9 @@ class InitializationManager(QObject):
             except Exception as exc:
                 if (
                     allow_managed_python_fallback
-                    and not managed_python_prepared
+                    and not use_managed_python
                     and uv_python_dir is not None
-                    and (
-                        is_uv_python_interpreter_unavailable(str(exc))
-                        or is_uv_windows_mount_point_error(str(exc))
-                    )
+                    and is_uv_python_interpreter_unavailable(str(exc))
                 ):
                     self._emit_item_status(
                         "runtime",
@@ -1394,44 +1352,17 @@ class InitializationManager(QObject):
                         "System Python search path is unavailable for uv target install; "
                         "trying uv managed Python fallback",
                     )
+                    use_managed_python = True
+                    managed_command = build_install_command(
+                        uv_path=uv_path,
+                        requirements_file=requirements_file,
+                        index_url=attempt.pypi_url,
+                        target_dir=target_dir,
+                        python_executable=python_executable,
+                        cache_dir=self._uv_cache_dir(),
+                        use_managed_python=True,
+                    )
                     try:
-                        self._emit_item_status(
-                            "runtime",
-                            "progress",
-                            f"Prepare uv managed Python at {uv_python_dir}",
-                        )
-                        ensure_uv_managed_python_ready(
-                            uv_path,
-                            uv_python_dir,
-                            progress_cb=self._uv_progress_cb(),
-                            raise_if_cancelled=self._raise_if_cancelled,
-                            active_process_cb=self._set_active_process,
-                            cwd=self._runtime_dir,
-                        )
-                    except Exception as fallback_exc:
-                        if is_uv_managed_python_path_error(str(fallback_exc)):
-                            raise RuntimeError(
-                                "uv managed Python fallback failed before runtime "
-                                "source attempts; please launch SuperPicky from "
-                                "Explorer or Windows Terminal and avoid terminals "
-                                "that trigger ERROR_UNTRUSTED_MOUNT_POINT. "
-                                f"Path: {uv_python_dir}"
-                            ) from fallback_exc
-                        raise RuntimeError(
-                            "uv managed Python fallback failed before runtime "
-                            f"source attempts: {fallback_exc}"
-                        ) from fallback_exc
-                    managed_python_prepared = True
-                    try:
-                        managed_command = build_install_command(
-                            uv_path=uv_path,
-                            requirements_file=requirements_file,
-                            index_url=attempt.pypi_url,
-                            target_dir=target_dir,
-                            python_executable=python_executable,
-                            cache_dir=self._uv_cache_dir(),
-                            use_managed_python=True,
-                        )
                         run_uv_install(
                             uv_path,
                             managed_command,
@@ -1444,6 +1375,30 @@ class InitializationManager(QObject):
                         )
                         return attempt
                     except Exception as managed_exc:
+                        if is_uv_managed_python_path_error(str(managed_exc)):
+                            try:
+                                repair_uv_managed_python_dir(uv_python_dir)
+                                run_uv_install(
+                                    uv_path,
+                                    managed_command,
+                                    f"{label} after managed Python repair",
+                                    progress_cb=self._uv_progress_cb(),
+                                    uv_managed_python_dir=uv_python_dir,
+                                    raise_if_cancelled=self._raise_if_cancelled,
+                                    active_process_cb=self._set_active_process,
+                                    cwd=self._runtime_dir,
+                                )
+                                return attempt
+                            except Exception as retry_exc:
+                                if is_uv_managed_python_path_error(str(retry_exc)):
+                                    raise RuntimeError(
+                                        "uv managed Python local path failed during "
+                                        "runtime install; please launch SuperPicky "
+                                        "from Explorer or Windows Terminal and avoid "
+                                        "terminals that trigger "
+                                        f"ERROR_UNTRUSTED_MOUNT_POINT. Path: {uv_python_dir}"
+                                    ) from retry_exc
+                                managed_exc = retry_exc
                         exc = managed_exc
                 if uv_python_dir is not None and is_uv_managed_python_path_error(str(exc)):
                     raise RuntimeError(
@@ -1454,9 +1409,8 @@ class InitializationManager(QObject):
                     ) from exc
                 if (
                     not allow_managed_python_fallback
-                    and not managed_python_prepared
-                    and is_uv_windows_mount_point_error(str(exc))
-                ):
+                    or not use_managed_python
+                ) and is_uv_windows_mount_point_error(str(exc)):
                     raise RuntimeError(
                         "uv hit a Windows mount-point traversal failure during "
                         "runtime install. This is often caused by launching from "
@@ -1806,8 +1760,7 @@ class InitializationManager(QObject):
             "encoding": "utf-8",
             "errors": "replace",
         }
-        if os.name == "nt":
-            popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        popen_kwargs.update(_subprocess_no_window_kwargs())
 
         process = subprocess.Popen(command, **popen_kwargs)
         self._active_process = process
@@ -1891,6 +1844,7 @@ class InitializationManager(QObject):
                     stderr=subprocess.PIPE,
                     check=True,
                     text=True,
+                    **_subprocess_no_window_kwargs(),
                 )
                 return candidate
             except Exception:
@@ -1940,6 +1894,7 @@ class InitializationManager(QObject):
                     encoding="utf-8",
                     errors="replace",
                     check=True,
+                    **_subprocess_no_window_kwargs(),
                 )
                 runtime_lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
                 torch_version = runtime_lines[0] if runtime_lines else "unknown"
@@ -2130,7 +2085,7 @@ class InitializationManager(QObject):
                 stderr=subprocess.PIPE,
                 text=True,
                 timeout=4,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                **_subprocess_no_window_kwargs(),
             )
             return result.returncode == 0 and bool(result.stdout.strip())
         except Exception:

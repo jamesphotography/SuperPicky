@@ -46,6 +46,12 @@ class ProbeResult:
         error (Optional[str]): 错误信息（如果失败）
         status_code (Optional[int]): HTTP 状态码
         response_headers (Optional[Dict[str, str]]): 响应头
+        region (Optional[str]): 源的地理区域提示 / Geographic source hint
+        source_kind (Optional[str]): 源池类型，例如 pypi 或 torch / Source pool type
+        trust_level (Optional[str]): 源可信级别，例如 official 或 trusted / Trust level
+        is_official (bool): 是否为官方上游源 / Whether this is the official upstream
+        bytes_read (int): 探测实际读取的字节数 / Bytes read during the probe
+        sample_bytes (int): 探测请求的样本字节数 / Requested probe sample bytes
     """
 
     name: str
@@ -56,6 +62,12 @@ class ProbeResult:
     error: Optional[str] = None
     status_code: Optional[int] = None
     response_headers: Optional[Dict[str, str]] = None
+    region: Optional[str] = None
+    source_kind: Optional[str] = None
+    trust_level: Optional[str] = None
+    is_official: bool = False
+    bytes_read: int = 0
+    sample_bytes: int = 0
 
 
 _PROBE_CACHE: Dict[str, List[ProbeResult]] = {}

@@ -24,13 +24,10 @@ from pathlib import Path
 from core.source_registry import get_official_pypi_url
 from core.uv_runtime_manager import (
     build_install_command,
-    ensure_uv_managed_python_ready,
     ensure_uv_bootstrapped,
     is_uv_managed_python_path_error,
     is_uv_windows_mount_point_error,
-    is_uv_python_interpreter_unavailable,
     run_uv_install,
-    runtime_managed_python_dir,
 )
 
 
@@ -84,8 +81,6 @@ def run_runtime_bootstrap(argv: list[str]) -> int:
     args = _parse_args(argv)
     runtime_dir = Path(args.runtime_dir).resolve()
     site_packages_dir = runtime_dir / "site-packages"
-    use_managed_python = getattr(sys, "frozen", False) and sys.platform == "win32"
-    uv_python_dir = runtime_managed_python_dir(runtime_dir) if use_managed_python else None
     site_packages_dir.mkdir(parents=True, exist_ok=True)
 
     uv_path = ensure_uv_bootstrapped(runtime_dir)
@@ -104,62 +99,22 @@ def run_runtime_bootstrap(argv: list[str]) -> int:
             command,
             "runtime bootstrap uv install",
             progress_cb=None,
-            uv_managed_python_dir=None,
             cwd=runtime_dir,
         )
     except Exception as exc:
         if (
-            use_managed_python
-            and uv_python_dir is not None
-            and is_uv_python_interpreter_unavailable(str(exc))
+            is_uv_managed_python_path_error(str(exc))
+            or is_uv_windows_mount_point_error(str(exc))
         ):
-            try:
-                ensure_uv_managed_python_ready(
-                    uv_path,
-                    uv_python_dir,
-                    progress_cb=None,
-                    cwd=runtime_dir,
-                )
-                managed_command = build_install_command(
-                    uv_path=uv_path,
-                    requirements_file=Path(args.requirements).resolve(),
-                    index_url=args.index_url or get_official_pypi_url(),
-                    target_dir=site_packages_dir,
-                    cache_dir=runtime_dir / "uv-cache",
-                    use_managed_python=True,
-                )
-                run_uv_install(
-                    uv_path,
-                    managed_command,
-                    "runtime bootstrap uv install with managed Python fallback",
-                    progress_cb=None,
-                    uv_managed_python_dir=uv_python_dir,
-                    cwd=runtime_dir,
-                )
-            except Exception as fallback_exc:
-                print(
-                    "[runtime-bootstrap] uv managed Python fallback failed: "
-                    f"{fallback_exc}",
-                    file=sys.stderr,
-                )
-                return 1
-        else:
-            if (
-                uv_python_dir is not None
-                and (
-                    is_uv_managed_python_path_error(str(exc))
-                    or is_uv_windows_mount_point_error(str(exc))
-                )
-            ):
-                print(
-                    "[runtime-bootstrap] uv hit a Windows mount-point traversal "
-                    "failure. Close SuperPicky and start it again from the "
-                    "Start menu or Explorer, then retry initialization.",
-                    file=sys.stderr,
-                )
-                return 1
-            print(f"[runtime-bootstrap] uv install failed: {exc}", file=sys.stderr)
+            print(
+                "[runtime-bootstrap] uv hit a Windows mount-point traversal "
+                "failure. Close SuperPicky and start it again from the "
+                "Start menu or Explorer, then retry initialization.",
+                file=sys.stderr,
+            )
             return 1
+        print(f"[runtime-bootstrap] uv install failed: {exc}", file=sys.stderr)
+        return 1
 
     if str(site_packages_dir) not in sys.path:
         sys.path.insert(0, str(site_packages_dir))

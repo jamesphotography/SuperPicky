@@ -31,12 +31,20 @@ logging.basicConfig(level=logging.INFO)
 
 DEFAULT_TIMEOUT_SECONDS = 2.0
 _PREFERRED_SOURCE_MIRROR_RATIO_THRESHOLD = 2.0
+_TORCH_WHEEL_SAMPLE_BYTES = 1024 * 1024
+_TORCH_WHEEL_PROBE_TIMEOUT_SECONDS = 6.0
 
 
 async def _httpx_probe_url_async(
     name: str,
     url: str,
     probe_url: str | None = None,
+    region: str | None = None,
+    source_kind: str | None = None,
+    trust_level: str | None = None,
+    is_official: bool = False,
+    sample_bytes_override: int | None = None,
+    timeout_override: float | None = None,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
 ) -> ProbeResult:
     """
@@ -44,29 +52,68 @@ async def _httpx_probe_url_async(
 
     异步探测单个 URL 的响应能力。
     """
+    normalized_kind = (source_kind or "").strip().lower()
+    normalized_trust = (trust_level or "").strip().lower()
+    official = (
+        is_official
+        or normalized_trust == "official"
+        or "official" in name.lower()
+    )
     try:
         import httpx
     except ImportError:
         return ProbeResult(
-            name=name, url=url, ok=False, total_ms=0.0, first_byte_ms=0.0,
+            name=name,
+            url=url,
+            ok=False,
+            total_ms=0.0,
+            first_byte_ms=0.0,
             error="httpx not available",
+            region=region,
+            source_kind=normalized_kind or None,
+            trust_level=normalized_trust or None,
+            is_official=official,
+            sample_bytes=max(0, sample_bytes_override or 0),
         )
 
+    # Torch wheel 是大文件，首字节延迟不能代表真实下载速度；普通索引只需轻探测。
+    # Torch 独立使用稍长超时，避免慢但可用的镜像被 2 秒默认值误判失败。
+    # Torch wheels are large; first-byte latency is not enough, while ordinary
+    # indexes only need a lightweight reachability probe. Torch gets a slightly
+    # longer timeout so slow-but-usable mirrors are not rejected by the default.
+    sample_bytes = (
+        sample_bytes_override
+        if sample_bytes_override and sample_bytes_override > 0
+        else (_TORCH_WHEEL_SAMPLE_BYTES if normalized_kind == "torch" else 1)
+    )
+    effective_timeout = (
+        max(timeout, timeout_override or 0.0, _TORCH_WHEEL_PROBE_TIMEOUT_SECONDS)
+        if normalized_kind == "torch"
+        else max(timeout, timeout_override or 0.0)
+    )
+    range_end = max(0, sample_bytes - 1)
+    headers = {
+        "User-Agent": "SuperPicky-InitProbe/2.0",
+        "Range": f"bytes=0-{range_end}",
+    }
     start = time.perf_counter()
     _normalized = probe_url or _normalize_probe_url(url)
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout), follow_redirects=True) as client:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(effective_timeout),
+            follow_redirects=True,
+        ) as client:
             async with client.stream(
                 "GET",
                 _normalized,
-                headers={
-                    "User-Agent": "SuperPicky-InitProbe/2.0",
-                    "Range": "bytes=0-0",
-                },
+                headers=headers,
             ) as response:
                 first_byte_ms = (time.perf_counter() - start) * 1000.0
-                async for _chunk in response.aiter_bytes(chunk_size=256):
-                    break
+                bytes_read = 0
+                async for chunk in response.aiter_bytes(chunk_size=64 * 1024):
+                    bytes_read += len(chunk)
+                    if bytes_read >= sample_bytes:
+                        break
                 total_ms = (time.perf_counter() - start) * 1000.0
                 ok = 200 <= response.status_code < 400
                 status_code = response.status_code
@@ -78,6 +125,12 @@ async def _httpx_probe_url_async(
                 first_byte_ms=first_byte_ms,
                 status_code=status_code,
                 error=None if ok else f"HTTP {status_code}",
+                region=region,
+                source_kind=normalized_kind or None,
+                trust_level=normalized_trust or None,
+                is_official=official,
+                bytes_read=bytes_read,
+                sample_bytes=sample_bytes,
             )
     except Exception as exc:
         total_ms = (time.perf_counter() - start) * 1000.0
@@ -85,6 +138,12 @@ async def _httpx_probe_url_async(
         return ProbeResult(
             name=name, url=url, ok=False, total_ms=total_ms, first_byte_ms=0.0,
             error=f"{type(exc).__name__}: {exc}",
+            region=region,
+            source_kind=normalized_kind or None,
+            trust_level=normalized_trust or None,
+            is_official=official,
+            bytes_read=0,
+            sample_bytes=sample_bytes,
         )
 
 
@@ -93,6 +152,32 @@ def _normalize_probe_url(url: str) -> str:
     if normalized.endswith("/simple"):
         return normalized + "/pip/"
     return url
+
+
+def _coerce_positive_int(value: object) -> int | None:
+    """
+    转换正整数配置值。
+
+    Coerce a positive integer configuration value.
+    """
+    try:
+        parsed = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _coerce_positive_float(value: object) -> float | None:
+    """
+    转换正浮点配置值。
+
+    Coerce a positive float configuration value.
+    """
+    try:
+        parsed = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0.0 else None
 
 
 def probe_sources_parallel(
@@ -126,6 +211,14 @@ def probe_sources_parallel(
                 item["name"],
                 item["url"],
                 probe_url=item.get("probe_url"),
+                region=item.get("region"),
+                source_kind=item.get("source_kind"),
+                trust_level=item.get("trust_level"),
+                is_official=str(item.get("is_official", "")).lower() == "true",
+                sample_bytes_override=_coerce_positive_int(
+                    item.get("probe_sample_bytes")
+                ),
+                timeout_override=_coerce_positive_float(item.get("probe_timeout")),
                 timeout=timeout,
             )
             for item in sources
@@ -166,9 +259,14 @@ def pick_best_with_geo_and_ratio(
     threshold = fastest.total_ms * _PREFERRED_SOURCE_MIRROR_RATIO_THRESHOLD
 
     if region_bias:
+        normalized_bias = [
+            bias.strip().lower() for bias in region_bias if bias.strip()
+        ]
         region_matches = [
             r for r in ok
-            if r.total_ms <= threshold and any(bias in r.name.lower() for bias in region_bias)
+            if r.total_ms <= threshold and any(
+                _result_matches_bias(r, bias) for bias in normalized_bias
+            )
         ]
         if region_matches:
             best = min(region_matches, key=lambda r: r.total_ms)
@@ -181,6 +279,33 @@ def pick_best_with_geo_and_ratio(
     return best
 
 
+def _result_matches_bias(result: ProbeResult, bias: str) -> bool:
+    """
+    判断探测结果是否匹配地区或源名偏好。
+
+    Check whether a probe result matches a region or source-name bias.
+    """
+    lowered_name = result.name.lower()
+    lowered_region = (result.region or "").lower()
+    lowered_trust = (result.trust_level or "").lower()
+    if bias == "official":
+        return _is_official_result(result)
+    return bias in lowered_name or bias == lowered_region or bias == lowered_trust
+
+
+def _is_official_result(result: ProbeResult) -> bool:
+    """
+    判断探测结果是否来自官方上游源。
+
+    Check whether a probe result points at the official upstream source.
+    """
+    return (
+        result.is_official
+        or (result.trust_level or "").lower() == "official"
+        or "official" in result.name.lower()
+    )
+
+
 def _pick_preferred_with_ratio(results: List[ProbeResult]) -> Optional[ProbeResult]:
     """
     Mirror-preferred selection within a 2× ratio of the fastest official.
@@ -189,12 +314,15 @@ def _pick_preferred_with_ratio(results: List[ProbeResult]) -> Optional[ProbeResu
     """
     if not results:
         return None
-    non_official = [r for r in results if "official" not in r.name.lower()]
-    official = [r for r in results if "official" in r.name.lower()]
+    non_official = [r for r in results if not _is_official_result(r)]
+    official = [r for r in results if _is_official_result(r)]
     best_mirror = pick_best_source(non_official) if non_official else None
     best_official = pick_best_source(official) if official else None
     if best_mirror and best_official:
-        if best_mirror.total_ms <= best_official.total_ms * _PREFERRED_SOURCE_MIRROR_RATIO_THRESHOLD:
+        if (
+            best_mirror.total_ms
+            <= best_official.total_ms * _PREFERRED_SOURCE_MIRROR_RATIO_THRESHOLD
+        ):
             return best_mirror
         return best_official
     return best_mirror or best_official

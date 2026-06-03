@@ -629,6 +629,11 @@ class EnvironmentRepairDialog(QDialog):
             if not self._confirm_interrupt_repair():
                 return
             self._closing_after_interrupt = True
+            self.config.set_initialization_in_progress(False)
+            self.config.set_last_init_error(None)
+            self.config.set_last_init_exit_reason("interrupted")
+            self.config.set_last_init_mode("repair")
+            self.config.save()
             self.manager.cancel()
         super().reject()
 
@@ -638,6 +643,11 @@ class EnvironmentRepairDialog(QDialog):
                 event.ignore()
                 return
             self._closing_after_interrupt = True
+            self.config.set_initialization_in_progress(False)
+            self.config.set_last_init_error(None)
+            self.config.set_last_init_exit_reason("interrupted")
+            self.config.set_last_init_mode("repair")
+            self.config.save()
             self.manager.cancel()
         super().closeEvent(event)
 
@@ -645,7 +655,13 @@ class EnvironmentRepairDialog(QDialog):
 class WelcomeOnboardingDialog(QDialog):
     onboarding_completed = Signal(str, bool)
 
-    def __init__(self, i18n, parent=None):
+    def __init__(
+        self,
+        i18n,
+        parent=None,
+        *,
+        auto_start_initialization: bool = False,
+    ):
         super().__init__(parent)
         self.i18n = i18n
         self.config = get_advanced_config()
@@ -684,6 +700,11 @@ class WelcomeOnboardingDialog(QDialog):
         )
         self._sync_defaults()
         self._set_current_page(0, force=True)
+        if (
+            auto_start_initialization
+            and self.initialization_manager.needs_initialization(FULL_FEATURE_SET)
+        ):
+            QTimer.singleShot(0, self._start_initialization)
         app = QApplication.instance()
         if app is not None:
             app.aboutToQuit.connect(self.initialization_manager.cancel)
@@ -1099,6 +1120,11 @@ class WelcomeOnboardingDialog(QDialog):
         """
         self._closing_after_interrupt = True
         self._interrupted_by_user = True
+        self.config.set_initialization_in_progress(False)
+        self.config.set_last_init_error(None)
+        self.config.set_last_init_exit_reason("interrupted")
+        self.config.set_last_init_mode("init")
+        self.config.save()
         self.initialization_manager.cancel()
 
     def reject(self) -> None:
