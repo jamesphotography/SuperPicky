@@ -468,6 +468,18 @@ class AdvancedSettingsDialog(QDialog):
         """)
         preview_layout.addWidget(keep_preview_hint)
 
+        completion_sound_check = QCheckBox(self.i18n.t("advanced_settings.completion_sound"))
+        self.vars["completion_sound_enabled"] = completion_sound_check
+        preview_layout.addWidget(completion_sound_check)
+
+        completion_sound_hint = QLabel(self.i18n.t("advanced_settings.completion_sound_hint"))
+        completion_sound_hint.setStyleSheet(f"""
+            color: {COLORS['text_muted']};
+            font-size: 11px;
+            margin-left: 24px;
+        """)
+        preview_layout.addWidget(completion_sound_hint)
+
         # 说明：不保留预览图时，选鸟完成后自动打开 Finder 显示结果目录
 
         layout.addWidget(preview_group_widget)
@@ -622,6 +634,9 @@ class AdvancedSettingsDialog(QDialog):
         # 加载预览图设置
         keep_temp = self.config.keep_temp_files
         self.vars["keep_temp_files"].setChecked(keep_temp)
+        self.vars["completion_sound_enabled"].setChecked(
+            self.config.completion_sound_enabled
+        )
 
         # V4.3 Phase 5: 加载视频处理设置 / Load video processing config
         # 直接读 config dict（这些键没有 property，由 Phase 4 直接存 dict）
@@ -695,6 +710,9 @@ class AdvancedSettingsDialog(QDialog):
 
         # 保存预览图设置
         self.config.set_keep_temp_files(self.vars["keep_temp_files"].isChecked())
+        self.config.set_completion_sound_enabled(
+            self.vars["completion_sound_enabled"].isChecked()
+        )
 
         # 保存外部应用列表
         self.config.set_external_apps(self._apps_data)

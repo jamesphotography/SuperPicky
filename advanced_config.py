@@ -65,6 +65,7 @@ class AdvancedConfig:
         
         # 临时文件管理 V4.1
         "keep_temp_files": True,        # 保留临时预览图片（统一控制 tmp JPG + debug crops）
+        "completion_sound_enabled": True,  # 处理完成提示音 / Completion sound after processing
 
         # 鸟种英文名显示格式 V4.x (AviList mapping)
         #   "default"    = OSEA model original names
@@ -367,6 +368,13 @@ class AdvancedConfig:
 
     def set_keep_temp_files(self, value):
         self.config["keep_temp_files"] = bool(value)
+
+    @property
+    def completion_sound_enabled(self) -> bool:
+        return self.config.get("completion_sound_enabled", True)
+
+    def set_completion_sound_enabled(self, value: bool):
+        self.config["completion_sound_enabled"] = bool(value)
 
     # V4.x: 鸟种英文名显示格式
     @property
