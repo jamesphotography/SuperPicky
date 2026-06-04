@@ -522,6 +522,9 @@ class EnvironmentRepairDialog(QDialog):
             parent=self,
         )
         self.retry_btn.clicked.connect(self.start_repair)
+        app = QApplication.instance()
+        if app is not None:
+            app.aboutToQuit.connect(self.manager.cancel)
 
     def _setup_ui(self) -> None:
         self.setWindowTitle(self.i18n.t("repair.window_title"))
@@ -626,6 +629,11 @@ class EnvironmentRepairDialog(QDialog):
             if not self._confirm_interrupt_repair():
                 return
             self._closing_after_interrupt = True
+            self.config.set_initialization_in_progress(False)
+            self.config.set_last_init_error(None)
+            self.config.set_last_init_exit_reason("interrupted")
+            self.config.set_last_init_mode("repair")
+            self.config.save()
             self.manager.cancel()
         super().reject()
 
@@ -635,6 +643,11 @@ class EnvironmentRepairDialog(QDialog):
                 event.ignore()
                 return
             self._closing_after_interrupt = True
+            self.config.set_initialization_in_progress(False)
+            self.config.set_last_init_error(None)
+            self.config.set_last_init_exit_reason("interrupted")
+            self.config.set_last_init_mode("repair")
+            self.config.save()
             self.manager.cancel()
         super().closeEvent(event)
 
@@ -642,7 +655,13 @@ class EnvironmentRepairDialog(QDialog):
 class WelcomeOnboardingDialog(QDialog):
     onboarding_completed = Signal(str, bool)
 
-    def __init__(self, i18n, parent=None):
+    def __init__(
+        self,
+        i18n,
+        parent=None,
+        *,
+        auto_start_initialization: bool = False,
+    ):
         super().__init__(parent)
         self.i18n = i18n
         self.config = get_advanced_config()
@@ -657,6 +676,7 @@ class WelcomeOnboardingDialog(QDialog):
         self._initialization_complete = False
         self._initialization_running = False
         self._closing_after_interrupt = False
+        self._interrupted_by_user = False
 
         self.initialization_manager = InitializationManager(self)
         self.selected_runtime_install_location = (
@@ -680,6 +700,14 @@ class WelcomeOnboardingDialog(QDialog):
         )
         self._sync_defaults()
         self._set_current_page(0, force=True)
+        if (
+            auto_start_initialization
+            and self.initialization_manager.needs_initialization(FULL_FEATURE_SET)
+        ):
+            QTimer.singleShot(0, self._start_initialization)
+        app = QApplication.instance()
+        if app is not None:
+            app.aboutToQuit.connect(self.initialization_manager.cancel)
 
     def get_selected_options(self) -> dict:
         return {
@@ -731,7 +759,7 @@ class WelcomeOnboardingDialog(QDialog):
 
     def _nav_state_for_page(self, page_index: int) -> _NavState:
         is_init_page = self._is_initialization_page(page_index)
-        if self._initialization_complete and is_init_page:
+        if is_init_page:
             next_text = self.i18n.t("onboarding.finish")
         elif self._is_preparation_page(page_index) and self._preparation_can_finish():
             next_text = self.i18n.t("onboarding.finish")
@@ -1063,12 +1091,47 @@ class WelcomeOnboardingDialog(QDialog):
         )
         return reply == StyledMessageBox.Yes
 
+    @property
+    def interrupted_by_user(self) -> bool:
+        """
+        返回用户是否已确认中断初始化。
+
+        返回:
+        bool: 用户确认中断时为 True。
+
+        Return whether the user confirmed interrupting initialization.
+
+        Return:
+        bool: True when the user confirmed the interruption.
+        """
+        return self._interrupted_by_user
+
+    def _request_initialization_interrupt(self) -> None:
+        """
+        标记并请求中断当前初始化任务。
+
+        该方法集中维护关闭状态，避免 reject() 与 closeEvent() 走不同路径时遗漏
+        “用户已中断”的结果。
+
+        Mark and request interruption for the current initialization task.
+
+        This keeps close state in one place so reject() and closeEvent() cannot
+        disagree about whether the user interrupted initialization.
+        """
+        self._closing_after_interrupt = True
+        self._interrupted_by_user = True
+        self.config.set_initialization_in_progress(False)
+        self.config.set_last_init_error(None)
+        self.config.set_last_init_exit_reason("interrupted")
+        self.config.set_last_init_mode("init")
+        self.config.save()
+        self.initialization_manager.cancel()
+
     def reject(self) -> None:
         if self._initialization_running and not self._closing_after_interrupt:
             if not self._confirm_interrupt_initialization():
                 return
-            self._closing_after_interrupt = True
-            self.initialization_manager.cancel()
+            self._request_initialization_interrupt()
         super().reject()
 
     def closeEvent(self, event) -> None:
@@ -1076,6 +1139,5 @@ class WelcomeOnboardingDialog(QDialog):
             if not self._confirm_interrupt_initialization():
                 event.ignore()
                 return
-            self._closing_after_interrupt = True
-            self.initialization_manager.cancel()
+            self._request_initialization_interrupt()
         super().closeEvent(event)

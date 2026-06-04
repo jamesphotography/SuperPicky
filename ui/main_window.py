@@ -751,6 +751,8 @@ class SuperPickyMainWindow(QMainWindow):
         self._background_mode = False  # V4.0: 标记是否进入后台模式（不停止服务器）
         self._suppress_results_browser_once = False
         self._resume_prompt_handled = False
+        self._initialization_dialog_open = False
+        self._initialization_prompt_dismissed = False
         
         # osk flex,countly.com 63fda2e
         self._startup_prompts_ran = False
@@ -1085,6 +1087,11 @@ class SuperPickyMainWindow(QMainWindow):
                 self.worker.join(timeout=5)
             except Exception:
                 pass
+        if hasattr(self, '_init_manager') and self._init_manager is not None:
+            try:
+                self._init_manager.cancel()
+            except Exception:
+                pass
         if hasattr(self, '_results_browser') and self._results_browser:
             try:
                 self._results_browser.cleanup()
@@ -1228,9 +1235,15 @@ class SuperPickyMainWindow(QMainWindow):
         if not commit_hash:
             try:
                 import subprocess
+                subprocess_kwargs = {}
+                if sys.platform == "win32":
+                    subprocess_kwargs["creationflags"] = getattr(
+                        subprocess, "CREATE_NO_WINDOW", 0
+                    )
                 commit_hash = subprocess.check_output(
                     ['git', 'rev-parse', '--short', 'HEAD'],
-                    stderr=subprocess.DEVNULL
+                    stderr=subprocess.DEVNULL,
+                    **subprocess_kwargs,
                 ).strip().decode('utf-8')
             except Exception:
                 commit_hash = 'dev'
@@ -3700,8 +3713,15 @@ class SuperPickyMainWindow(QMainWindow):
         dialog.level_selected.connect(self._on_skill_level_selected)
         dialog.exec()
     
-    def _show_first_run_skill_level_dialog(self):
+    def _show_first_run_skill_level_dialog(
+        self,
+        *,
+        auto_start_initialization: bool = False,
+    ):
         """首次运行：显示轻量欢迎向导。"""
+        if self._initialization_dialog_open or self._initialization_prompt_dismissed:
+            return
+
         # Safety guard: onboarding 只允许作为首启流程出现。
         # 如果未来旧代码路径误调用这里，非首次运行时直接跳过，避免重复打断用户。
         # NOTE:
@@ -3711,9 +3731,22 @@ class SuperPickyMainWindow(QMainWindow):
         if not self.config.is_first_run and self._initialization_ready():
             return
 
-        dialog = WelcomeOnboardingDialog(self.i18n, self)
+        dialog = WelcomeOnboardingDialog(
+            self.i18n,
+            self,
+            auto_start_initialization=auto_start_initialization,
+        )
         dialog.onboarding_completed.connect(self._on_welcome_onboarding_completed)
-        dialog.exec()
+        self._initialization_dialog_open = True
+        result = QDialog.DialogCode.Rejected
+        try:
+            result = dialog.exec()
+        finally:
+            self._initialization_dialog_open = False
+
+        if result == QDialog.DialogCode.Rejected and dialog.interrupted_by_user:
+            self._initialization_prompt_dismissed = True
+            QTimer.singleShot(0, QApplication.quit)
 
     def _initialization_ready(self) -> bool:
         return self._init_manager.is_ready_for_main_ui()
@@ -3759,6 +3792,11 @@ class SuperPickyMainWindow(QMainWindow):
         # 这样 telemetry / consent 完成后只会决策一次，避免 onboarding 被其他启动路径重复触发。
         self._startup_prompts_ran = True
         needs_init = self._init_manager.needs_initialization()
+        resume_initialization = (
+            needs_init
+            and self.config.last_init_exit_reason == "interrupted"
+            and self.config.last_init_mode == "init"
+        )
         if (
             needs_init
             and not self.config.is_first_run
@@ -3768,7 +3806,9 @@ class SuperPickyMainWindow(QMainWindow):
             self._show_environment_repair_dialog()
             return
         if self.config.is_first_run or needs_init:
-            self._show_first_run_skill_level_dialog()
+            self._show_first_run_skill_level_dialog(
+                auto_start_initialization=resume_initialization,
+            )
         else:
             # 非首次运行不再进入 onboarding，只恢复上次保存的摄影等级阈值。
             self._apply_skill_level_thresholds(self.config.skill_level)
@@ -3790,6 +3830,8 @@ class SuperPickyMainWindow(QMainWindow):
 
     def _on_welcome_onboarding_completed(self, level_key: str, auto_update_enabled: bool):
         """处理首次启动欢迎向导完成。"""
+        self._initialization_prompt_dismissed = False
+
         # Keep signal payload order stable: (level_key, auto_update_enabled)
         # 这里同时负责首启设置持久化与立即生效，避免状态已保存但主界面仍停留在旧阈值。
         self.config.set_skill_level(level_key)

@@ -16,6 +16,7 @@ type-safe configuration access.
 from __future__ import annotations
 
 import sys
+import urllib.parse
 from dataclasses import dataclass
 from typing import Literal
 
@@ -35,8 +36,17 @@ class RuntimeRequirements:
     torchvision_version: str
     torchaudio_version: str
     timm_version: str
-    extra_index_urls: list[str]
+    torch_index_urls: list[str]
     index_url: str | None = None
+
+    @property
+    def extra_index_urls(self) -> list[str]:
+        """
+        Backward-compatible alias for Torch-only index URLs.
+
+        Torch 专用索引 URL 的向后兼容别名。
+        """
+        return list(self.torch_index_urls)
 
     @staticmethod
     def _format_pinned_requirement(package_name: str, version: str) -> str:
@@ -67,7 +77,7 @@ class RuntimeRequirements:
         if include_indexes and self.index_url:
             lines.append(f"--index-url {self.index_url}")
         if include_indexes:
-            for url in self.extra_index_urls:
+            for url in self.torch_index_urls:
                 lines.append(f"--extra-index-url {url}")
         lines.append(
             package_urls.get(
@@ -90,6 +100,72 @@ class RuntimeRequirements:
         lines.append(f"timm{self.timm_version}")
         return "\n".join(lines)
 
+    def to_requirements_lines(
+        self,
+        *,
+        package_urls: dict[str, str] | None = None,
+    ) -> list[str]:
+        """
+        Return requirement lines without index headers, suitable for uv.
+
+        返回不含索引头的依赖行列表，适合 uv 使用。
+        """
+        lines: list[str] = []
+        package_urls = package_urls or {}
+        lines.append(
+            package_urls.get(
+                "torch",
+                self._format_pinned_requirement("torch", self.torch_version),
+            )
+        )
+        lines.append(
+            package_urls.get(
+                "torchvision",
+                self._format_pinned_requirement("torchvision", self.torchvision_version),
+            )
+        )
+        lines.append(
+            package_urls.get(
+                "torchaudio",
+                self._format_pinned_requirement("torchaudio", self.torchaudio_version),
+            )
+        )
+        lines.append(f"timm{self.timm_version}")
+        return lines
+
+    def torch_wheel_urls(
+        self,
+        source_base: str,
+    ) -> dict[str, str]:
+        """
+        Build direct wheel URL references for Torch packages on Windows.
+
+        为 Windows 构建 Torch 系列包的直链 wheel URL 引用。
+        """
+        if not source_base.strip():
+            return {}
+        python_tag = f"cp{sys.version_info.major}{sys.version_info.minor}"
+        abi_tag = python_tag
+        platform_tag = "win_amd64"
+        base = source_base.strip().rstrip("/")
+        package_versions = {
+            "torch": self.torch_version,
+            "torchvision": self.torchvision_version,
+            "torchaudio": self.torchaudio_version,
+        }
+        result: dict[str, str] = {}
+        for package_name, version in package_versions.items():
+            normalized = (version or "").strip()
+            if not normalized:
+                continue
+            filename = (
+                f"{package_name}-{normalized}-{python_tag}-{abi_tag}-{platform_tag}.whl"
+            )
+            result[package_name] = (
+                f"{package_name} @ {base}/{urllib.parse.quote(filename)}"
+            )
+        return result
+
 
 def get_cpu_requirements() -> RuntimeRequirements:
     """Get runtime requirements for CPU builds. / 获取 CPU 构建的运行时依赖。"""
@@ -103,7 +179,7 @@ def get_cpu_requirements() -> RuntimeRequirements:
         # Multiple mirrors guard against single-point failure: NJU (fast on
         # campus nets), Aliyun (reachable both inside and outside CN), and the
         # official source as a fallback. Latency is probed at install time.
-        extra_index_urls=[
+        torch_index_urls=[
             "https://mirror.nju.edu.cn/pytorch/whl/cpu/",
             "https://mirrors.aliyun.com/pytorch-wheels/cpu/",
             "https://download.pytorch.org/whl/cpu",
@@ -118,7 +194,7 @@ def get_cuda_requirements() -> RuntimeRequirements:
         torchvision_version="0.22.1+cu118",
         torchaudio_version="2.7.1+cu118",
         timm_version=">=0.9.0",
-        extra_index_urls=[
+        torch_index_urls=[
             "https://mirror.nju.edu.cn/pytorch/whl/cu118/",
             "https://mirrors.aliyun.com/pytorch-wheels/cu118/",
             "https://download.pytorch.org/whl/cu118",
@@ -133,7 +209,7 @@ def get_mac_requirements() -> RuntimeRequirements:
         torchvision_version="",
         torchaudio_version="",
         timm_version=">=0.9.0",
-        extra_index_urls=[],
+        torch_index_urls=[],
     )
 
 

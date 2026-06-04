@@ -67,6 +67,7 @@ temp_models/
 
 # 构建和发布文件
 *.log
+build_tools/
 test_*.sh
 quick_test.sh
 DEBUG_VERSION_README.md
