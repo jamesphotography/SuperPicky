@@ -112,6 +112,10 @@ jobs:
           name: ${{ steps.release_meta.outputs.name }}
           body_path: ChangeLog.md
           fail_on_unmatched_files: true
+          # RC / 预发布 tag 标记为 prerelease，避免被当成正式版 / latest 推给用户。
+          # Mark RC / pre-release tags as prerelease so they are not treated as
+          # the latest stable release.
+          prerelease: ${{ contains(steps.release_meta.outputs.tag, '-RC') || contains(steps.release_meta.outputs.tag, '-rc') }}
           files: |
             release_assets/*
 
@@ -228,6 +232,10 @@ jobs:
           name: ${{ steps.release_meta.outputs.name }}
           body_path: ChangeLog.md
           fail_on_unmatched_files: true
+          # RC / 预发布 tag 标记为 prerelease，避免被当成正式版 / latest 推给用户。
+          # Mark RC / pre-release tags as prerelease so they are not treated as
+          # the latest stable release.
+          prerelease: ${{ contains(steps.release_meta.outputs.tag, '-RC') || contains(steps.release_meta.outputs.tag, '-rc') }}
           files: |
             output/mac/*.dmg
             output/mac/code_patch_*.zip
