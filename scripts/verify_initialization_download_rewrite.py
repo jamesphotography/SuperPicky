@@ -922,7 +922,14 @@ def verify_runtime_install_attempt_matrix() -> None:
         "pypi_candidates": ["https://pypi-a.example/simple", "https://pypi-b.example/simple"],
         "torch_candidates": ["https://torch-a.example/cu118", "https://torch-b.example/cu118"],
     }
-    attempts = InitializationManager._runtime_install_attempts(manager, "cuda")
+    # Torch 直链 wheel 矩阵只在 Windows 上展开（其它平台 torch 走 PyPI、
+    # torch_url 为空），因此固定模拟 win32 以校验源对隔离逻辑，
+    # 保证该回归检查在 mac/Linux 上同样可复现 21/21。
+    # Torch direct-wheel pairs only expand on Windows (other platforms install
+    # torch via PyPI with an empty torch_url), so pin sys.platform to win32 so
+    # this regression check is reproducible on mac/Linux too.
+    with patch.object(sys, "platform", "win32"):
+        attempts = InitializationManager._runtime_install_attempts(manager, "cuda")
     pairs = [(attempt.pypi_url, attempt.torch_url) for attempt in attempts]
     _assert(
         pairs == [
