@@ -624,8 +624,15 @@ def verify_resource_integrity_floor() -> None:
 
 
 def verify_hf_cli_size_parser() -> None:
-    """Verify hf CLI human size parsing."""
-    _assert(_parse_hf_cli_size("1.5M") == int(1.5 * 1024 * 1024), "M size parse failed")
+    """
+    Verify hf CLI human size parsing uses decimal units.
+
+    校验 hf CLI 人类可读大小按十进制（M=10^6）解析。hf CLI 把 56096965 字节显示为
+    "56.1M"，若误用二进制（1024^2）会放大到 58825113，导致完整下载被误判为未完成。
+    """
+    _assert(_parse_hf_cli_size("1.5M") == int(1.5 * 1000 * 1000), "decimal M size parse failed")
+    _assert(_parse_hf_cli_size("56.1M") == 56_100_000, "decimal M rounding parse failed")
+    _assert(_parse_hf_cli_size("2G") == 2_000_000_000, "decimal G size parse failed")
     _assert(_parse_hf_cli_size("1024") == 1024, "plain byte size parse failed")
 
 
@@ -862,6 +869,90 @@ def verify_download_prefers_httpx_before_hf_cli() -> None:
     _assert(calls == ["httpx"], "hf CLI was called before or after successful httpx")
 
 
+def verify_direct_download_trusts_server_size_over_estimate() -> None:
+    """
+    Verify a complete httpx download is accepted when the server-reported size is
+    smaller than the (rounded) hf CLI estimate.
+
+    校验当服务器返回的真实大小小于 hf CLI 的四舍五入估算值时，完整下载不被误判为未完成。
+
+    回归 PR#98 的真实事故：Xet 文件 Ultralytics/YOLO11/yolo11l-seg.pt 真实大小
+    56096965 字节，hf CLI 显示 "56.1M" 被旧解析器按二进制放大到 58825113。Xet CDN
+    对该直链返回 200 + 完整 Content-Length，下载完整拿到 56096965 字节，却因
+    bytes_written(56096965) < expected_bytes(58825113) 被误判为 incomplete，
+    五个下载策略全部失败、mac 打包中止。
+    """
+    real_size = 56096965 % 200000 + 4096  # 任意小体积，关键在比例而非大小
+    inflated_estimate = real_size + 512  # 模拟二进制/十进制换算导致的偏大估算
+    body = b"\x7f" * real_size
+
+    class _Resp:
+        def __init__(self, status_code: int, headers: dict, body: bytes = b"") -> None:
+            self.status_code = status_code
+            self.headers = headers
+            self._body = body
+
+        def raise_for_status(self) -> None:
+            if self.status_code >= 400:
+                raise RuntimeError(f"HTTP {self.status_code}")
+
+        def iter_bytes(self, chunk_size: int = 65536):
+            for index in range(0, len(self._body), chunk_size):
+                yield self._body[index:index + chunk_size]
+
+    class _StreamCtx:
+        def __init__(self, resp: _Resp) -> None:
+            self._resp = resp
+
+        def __enter__(self) -> _Resp:
+            return self._resp
+
+        def __exit__(self, *exc) -> bool:
+            return False
+
+    class _Client:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self) -> "_Client":
+            return self
+
+        def __exit__(self, *exc) -> bool:
+            return False
+
+        def get(self, url: str, headers=None) -> _Resp:
+            # 元数据探测：200 且无 accept-ranges → 不走并行分段，直接退到单流。
+            return _Resp(200, {"content-length": str(real_size)})
+
+        def stream(self, method: str, url: str, headers=None) -> _StreamCtx:
+            # Xet 行为：无视 Range，返回 200 + 完整 Content-Length。
+            return _StreamCtx(_Resp(200, {"content-length": str(real_size)}, body))
+
+    class _FakeHttpx:
+        Client = _Client
+
+        @staticmethod
+        def Timeout(*args, **kwargs):
+            return None
+
+    with tempfile.TemporaryDirectory(prefix="superpicky_size_floor_") as tmp:
+        with patch.object(download_models, "httpx", _FakeHttpx):
+            result = download_models._download_via_httpx(
+                repo_id="Ultralytics/YOLO11",
+                filename="model.bin",
+                full_dest_dir=tmp,
+                endpoint=download_models.HF_OFFICIAL_ENDPOINT,
+                source_name="official",
+                expected_bytes=inflated_estimate,
+            )
+        _assert(result is not None, "complete download rejected because estimate exceeded real size")
+        written = Path(result).stat().st_size
+        _assert(
+            written == real_size,
+            f"downloaded size mismatch: {written} != {real_size}",
+        )
+
+
 def verify_huggingface_hub_is_bundled() -> None:
     """
     Verify bundled HF dependency is declared for lightweight builds.
@@ -1015,6 +1106,7 @@ def main() -> int:
         verify_configured_hf_endpoint_is_ranked_by_probe,
         verify_hf_parallel_direct_download_shape,
         verify_download_prefers_httpx_before_hf_cli,
+        verify_direct_download_trusts_server_size_over_estimate,
         verify_huggingface_hub_is_bundled,
         verify_download_cancellation_reaches_resource_downloader,
         verify_runtime_install_attempt_matrix,

@@ -383,6 +383,50 @@ def _parse_content_range_total(content_range: str | None) -> int | None:
     return int(total_text)
 
 
+def _authoritative_total_size(
+    *,
+    status_code: int,
+    content_range: str | None,
+    content_length: str | None,
+    partial_bytes: int = 0,
+) -> int | None:
+    """
+    从下载响应推导文件的权威总大小（字节）。
+
+    优先使用 206 响应的 Content-Range 总数，其次使用 Content-Length；
+    206 续传时用 partial_bytes + Content-Length 还原完整大小。该值来自服务器，
+    必须用来「覆盖」而不是与来自 hf CLI 的四舍五入估算取 max——否则估算偏大时
+    会把已经下载完整的文件误判为未完成（例如 Xet 文件真实 56096965 字节、
+    估算 58825113）。无任何权威头时返回 None，由调用方退回估算值或交给
+    下载后的 sha256/size 校验。
+
+    Derive the authoritative total file size (in bytes) from a download response.
+    Prefer the 206 Content-Range total, then Content-Length (a 206 resume is
+    partial_bytes + Content-Length). This value comes from the server and must
+    OVERRIDE rather than be max'd with the rounded hf CLI estimate; otherwise an
+    over-estimate marks a complete download as incomplete. Returns None when the
+    response carries no authoritative size header.
+
+    参数 Parameters:
+        status_code (int): 下载响应状态码 / Download response status code.
+        content_range (str | None): Content-Range 响应头 / Content-Range header.
+        content_length (str | None): Content-Length 响应头 / Content-Length header.
+        partial_bytes (int): 已缓存的续传字节数 / Already-buffered resume bytes.
+
+    返回 Returns:
+        int | None: 权威总大小，或在无法判定时返回 None。
+    """
+    total_from_range = _parse_content_range_total(content_range)
+    if total_from_range:
+        return total_from_range
+    if content_length is not None and str(content_length).isdigit():
+        length_value = int(content_length)
+        if status_code == 206:
+            return partial_bytes + length_value
+        return length_value
+    return None
+
+
 def _sha256_file(file_path: Path, chunk_size: int = 1024 * 1024) -> str:
     digest = hashlib.sha256()
     with file_path.open("rb") as handle:
@@ -744,7 +788,16 @@ def _parse_hf_cli_size(size_text: str) -> int | None:
     if not size_text:
         return None
     size_text = size_text.strip().upper()
-    multipliers = {"K": 1024, "M": 1024**2, "G": 1024**3, "T": 1024**4}
+    # hf CLI 的人类可读大小使用十进制单位（M = 10^6），例如 56096965 字节显示为
+    # "56.1M"。早前误用二进制（1024^2）换算会把它放大到 58825113（≈ ×1.048576），
+    # 进而把完整下载误判为未完成。此处按十进制换算；该值仅作估算/进度用途，真正的
+    # 完整性判定由 _authoritative_total_size 基于服务器响应头决定。
+    # hf CLI human-readable sizes are decimal (M = 10^6): 56096965 bytes prints as
+    # "56.1M". The previous binary (1024^2) parsing inflated it to 58825113
+    # (~x1.048576), which marked complete downloads as incomplete. Parse as decimal;
+    # this value is only an estimate/progress hint — real completeness is decided by
+    # _authoritative_total_size from the server response headers.
+    multipliers = {"K": 1000, "M": 1000**2, "G": 1000**3, "T": 1000**4}
     for suffix, multiplier in multipliers.items():
         if size_text.endswith(suffix):
             try:
@@ -1097,17 +1150,26 @@ def _resolve_http_download_metadata(
             response = client.get(url, headers=headers)
             if response.status_code == 206:
                 supports_range = True
-                total_from_range = _parse_content_range_total(
-                    response.headers.get("content-range")
+                # 服务器权威总数覆盖估算值；估算偏大时若取 max 会切出越界分段 → 416。
+                # Server-authoritative total overrides the estimate; max() would keep
+                # an over-estimate and build out-of-range segments → 416.
+                authoritative_total = _authoritative_total_size(
+                    status_code=response.status_code,
+                    content_range=response.headers.get("content-range"),
+                    content_length=response.headers.get("content-length"),
                 )
-                if total_from_range:
-                    total_bytes = max(total_bytes or 0, total_from_range)
+                if authoritative_total:
+                    total_bytes = authoritative_total
             elif 200 <= response.status_code < 400:
                 accept_ranges = response.headers.get("accept-ranges", "").lower()
                 supports_range = "bytes" in accept_ranges
-                content_length = response.headers.get("content-length")
-                if content_length and content_length.isdigit():
-                    total_bytes = max(total_bytes or 0, int(content_length))
+                authoritative_total = _authoritative_total_size(
+                    status_code=response.status_code,
+                    content_range=response.headers.get("content-range"),
+                    content_length=response.headers.get("content-length"),
+                )
+                if authoritative_total:
+                    total_bytes = authoritative_total
             else:
                 response.raise_for_status()
     except Exception as exc:
@@ -1539,7 +1601,17 @@ def _download_via_httpx(
             with httpx.Client(follow_redirects=True, timeout=timeout) as client:
                 with client.stream("GET", url, headers=headers) as resp:
                     if resp.status_code == 416:
-                        if expected_bytes and partial_bytes >= expected_bytes:
+                        # 416 的 Content-Range（bytes */TOTAL）给出权威总数；据此判断
+                        # 已缓存的 .part 是否其实已完整，避免误删完好文件。
+                        # A 416 Content-Range (bytes */TOTAL) carries the authoritative
+                        # total; use it to detect an already-complete .part instead of
+                        # deleting a good file.
+                        resume_target = _authoritative_total_size(
+                            status_code=resp.status_code,
+                            content_range=resp.headers.get("content-range"),
+                            content_length=resp.headers.get("content-length"),
+                        ) or expected_bytes
+                        if resume_target and partial_bytes >= resume_target:
                             dest_path.unlink(missing_ok=True)
                             tmp_path.rename(dest_path)
                             return str(dest_path)
@@ -1551,20 +1623,17 @@ def _download_via_httpx(
                         tmp_path.unlink(missing_ok=True)
                         raise RuntimeError("server ignored resume range")
 
-                    total_from_range = _parse_content_range_total(
-                        resp.headers.get("content-range")
+                    # 服务器权威大小覆盖 hf CLI 估算值；只有它能作为完整性下限。
+                    # Server-authoritative size overrides the hf CLI estimate and is
+                    # the only valid completeness floor.
+                    authoritative_total = _authoritative_total_size(
+                        status_code=resp.status_code,
+                        content_range=resp.headers.get("content-range"),
+                        content_length=resp.headers.get("content-length"),
+                        partial_bytes=partial_bytes,
                     )
-                    if total_from_range:
-                        expected_bytes = max(expected_bytes or 0, total_from_range)
-                    elif not expected_bytes:
-                        content_length = resp.headers.get("content-length")
-                        if content_length and content_length.isdigit():
-                            length_value = int(content_length)
-                            expected_bytes = (
-                                partial_bytes + length_value
-                                if resp.status_code == 206
-                                else length_value
-                            )
+                    if authoritative_total:
+                        expected_bytes = authoritative_total
 
                     bytes_written = partial_bytes if resp.status_code == 206 else 0
                     file_mode = "ab" if bytes_written else "wb"
@@ -1593,9 +1662,14 @@ def _download_via_httpx(
                                         is_terminal=ratio >= 1.0,
                                     ),
                                 )
-                    if expected_bytes and bytes_written < expected_bytes:
+                    # 仅以服务器权威大小判定未完成；只有估算值时不硬判，交由
+                    # 下载后的 sha256/size 校验，避免四舍五入估算导致误报。
+                    # Only flag "incomplete" against the server-authoritative size; when
+                    # only an estimate exists, defer to post-download sha256/size checks
+                    # so a rounded estimate cannot cause a false negative.
+                    if authoritative_total and bytes_written < authoritative_total:
                         raise RuntimeError(
-                            f"incomplete download: {bytes_written} < {expected_bytes}"
+                            f"incomplete download: {bytes_written} < {authoritative_total}"
                         )
 
             elapsed = time.perf_counter() - start
@@ -1712,18 +1786,17 @@ def _urllib_direct_download(
                 if partial_bytes > 0 and status_code != 206:
                     tmp_path.unlink(missing_ok=True)
                     raise RuntimeError("server ignored resume range")
-                total_from_range = _parse_content_range_total(
-                    response.headers.get("Content-Range")
+                # 服务器权威大小覆盖估算值；只有它能作为完整性下限。
+                # Server-authoritative size overrides the estimate and is the only
+                # valid completeness floor.
+                authoritative_total = _authoritative_total_size(
+                    status_code=status_code,
+                    content_range=response.headers.get("Content-Range"),
+                    content_length=response.headers.get("Content-Length"),
+                    partial_bytes=partial_bytes,
                 )
-                if total_from_range:
-                    expected_bytes = max(expected_bytes or 0, total_from_range)
-                content_length = response.headers.get("Content-Length")
-                if not expected_bytes and content_length and content_length.isdigit():
-                    expected_bytes = (
-                        partial_bytes + int(content_length)
-                        if status_code == 206
-                        else int(content_length)
-                    )
+                if authoritative_total:
+                    expected_bytes = authoritative_total
                 file_mode = "ab" if partial_bytes > 0 else "wb"
                 with open(tmp_path, file_mode) as handle:
                     while True:
@@ -1747,9 +1820,12 @@ def _urllib_direct_download(
                                     is_terminal=ratio >= 1.0,
                                 ),
                             )
-            if expected_bytes and bytes_written < expected_bytes:
+            # 仅以服务器权威大小判定未完成；只有估算值时交由 sha256/size 校验。
+            # Only flag "incomplete" against the server-authoritative size; defer to
+            # post-download sha256/size checks when only an estimate exists.
+            if authoritative_total and bytes_written < authoritative_total:
                 raise RuntimeError(
-                    f"incomplete download: {bytes_written} < {expected_bytes}"
+                    f"incomplete download: {bytes_written} < {authoritative_total}"
                 )
             dest_path.unlink(missing_ok=True)
             tmp_path.rename(dest_path)
