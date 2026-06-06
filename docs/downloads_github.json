@@ -1,21 +1,26 @@
 {
   "beta": {
-    "tag": "v4.3.0-RC3",
-    "updated_at": "2026-06-01T08:00:00.0000000+00:00",
+    "tag": "v4.3.0-RC5",
+    "updated_at": "2026-06-06T00:00:00.0000000+00:00",
     "files": {
-      "mac_arm64": "SuperPicky_v4.3.0-RC3_arm64_e006d5b.dmg",
-      "win_cpu": "SuperPicky_Setup_Full_Win64_v4.3.0-RC3_e006d5b.exe",
-      "win_cuda": "SuperPicky_Setup_FullCUDA_Win64_v4.3.0-RC3_e006d5b.exe"
+      "mac_arm64": "SuperPicky_v4.3.0-RC5_arm64_34c0c7c.dmg",
+      "mac_intel": "SuperPicky_v4.3.0-RC3_x86_64_763dfbf.dmg",
+      "win_cpu": "SuperPicky_Setup_Full_Win64_v4.3.0-RC5_34c0c7c.exe",
+      "win_lite": "SuperPicky_Setup_Lite_Win64_v4.3.0-RC5_34c0c7c.exe"
     },
     "drive": {
-      "mac_arm64": "https://drive.google.com/file/d/1wNyAnxo-dhFcz7QYqM5pclybgGjtrRJ5/view?usp=sharing",
-      "win_cpu": "https://drive.google.com/file/d/1zGXCwTBZSa08rMmDYze1KIJhNYe-1zCR/view?usp=sharing",
-      "win_cuda": "https://drive.google.com/file/d/1zZy6GZehFNOLiVhgSNkVK3Sa7ife9lQ1/view?usp=sharing"
+      "mac_arm64": "https://drive.google.com/file/d/1V3eM0lrfcVHL8S_Kgelpkp73wtfDc8mm/view?usp=sharing",
+      "mac_intel": "https://drive.google.com/file/d/1u-nl2pLwnlGyNLf6DMffCxWertUbTgxw/view?usp=sharing",
+      "win_cpu": "https://drive.google.com/file/d/1WzSgFo-pez4Cv8tWbzHX1p5vZGl4FCyd/view?usp=sharing",
+      "win_cuda": "https://drive.google.com/file/d/1OqRIljyDmr6TpHIxlhFyFVXsnLScFROF/view?usp=sharing",
+      "win_lite": "https://drive.google.com/file/d/1o0fdNTmzKdQO3XYCKu1W3l7kw5CEusx-/view?usp=sharing"
     },
     "baidu": {
-      "mac_arm64": "https://pan.baidu.com/s/1PObeGz_idjQ7SkFF7Bs2wg?pwd=tkgu",
-      "win_cpu": "https://pan.baidu.com/s/1JU_xSLXW4mSia6PzdXYdCA?pwd=9f3h",
-      "win_cuda": "https://pan.baidu.com/s/1TBt-IHruy4VZZHWH49Ipmg?pwd=ayt8"
+      "mac_arm64": "https://pan.baidu.com/s/1thjevDevFWcPBlQw5nLi0Q?pwd=3i6b",
+      "mac_intel": "https://pan.baidu.com/s/1-fCJ0LeNIZ1AUF5TL2Nn4Q?pwd=bwha",
+      "win_cpu": "https://pan.baidu.com/s/1wZPQyqCayW4s7sXc2Q1-1g?pwd=7ju3",
+      "win_cuda": "https://pan.baidu.com/s/1RSGUCqQmoqSkS4nU9j86YA?pwd=anc3",
+      "win_lite": "https://pan.baidu.com/s/19PFGBkTT7eaMeE-h3PoLKQ?pwd=vic3"
     }
   }
 }
