@@ -13,6 +13,15 @@ build, this is the recommended version to settle on.
 - Automatic per-species grouping, with synchronized SRT subtitle handling
 - New dedicated "Video Processing" tab in Settings
 
+**Global Rarity Index** *(new GBIF-based scoring)*
+- Every identified bird now gets a 0–100 global rarity score derived from GBIF
+  occurrence data (3 billion+ records), with an IUCN-status floor
+- Shown in the detail panel as a 5-tier glyph (○ ◔ ◑ ◕ ●) — Common / Occasional /
+  Uncommon / Rare / Legendary — and written to a dedicated EXIF field
+- Batch runs print a rarity-tier distribution summary, so the standout shots are
+  easy to spot
+- Replaces the previous rarity source with an open, citable GBIF-derived system
+
 **More Reliable First Launch (rewritten download & runtime pipeline)**
 - Faster, sturdier first-run setup: parallel mirror probing, multi-strategy
   downloads with automatic fallback and resume-on-interrupt
@@ -60,6 +69,12 @@ build, this is the recommended version to settle on.
 - 不再局限于静态照片，可直接分析视频中的鸟类
 - 自动按鸟种归类，并同步处理 SRT 字幕
 - 设置中新增独立的「视频处理」标签页
+
+**全球罕见度指数**（全新 GBIF 评分）
+- 每只识别出的鸟现在都有一个 0–100 的全球罕见度分数，基于 GBIF 全球观察数据（30 亿+ 记录），并以 IUCN 濒危等级兜底
+- 详情面板以 5 级图标呈现（○ ◔ ◑ ◕ ●）：常见 / 能见 / 少见 / 罕见 / 传奇，并写入独立的 EXIF 字段
+- 跑批结束输出罕见度分级分布统计，一眼挑出最难得的那张
+- 从旧的罕见度来源全面切换到开放、可引用的 GBIF 派生体系
 
 **更可靠的首次启动（下载与运行时链路重写）**
 - 首启准备更快更稳：并行镜像探测、多策略下载、自动回退与中断续传
