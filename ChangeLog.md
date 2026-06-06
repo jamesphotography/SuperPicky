@@ -1,98 +1,93 @@
-## What's New in v4.2.6
+# SuperPicky 4.3.0 LTS
 
-**Smarter First-Run Experience**
-- Brand-new welcome wizard guides you through skill-level setup, optional auto-update preferences, and AI model preparation — all visualized with real-time progress
-- The app now auto-picks the right AI runtime for your hardware: NVIDIA GPU users get CUDA acceleration, others stay on CPU — no manual choice needed
-
-**Windows: One Smarter Installer**
-- New 182 MB lightweight installer replaces the previous 750 MB "CPU only" build
-- First launch automatically downloads the matching AI engine for your hardware (CUDA for NVIDIA cards, CPU otherwise)
-- Subsequent updates keep your downloaded models, so you only re-download the app shell
-
-**One-Click In-App Updates**
-- "Check for updates" now downloads the new installer in the background and prompts you to install when ready — no more hunting on the download page
-- Built-in integrity check ensures the installer arrived intact before you run it
-
-**Environment Repair**
-- New "Environment Repair" entry in Settings: rerun model preparation any time something feels off — no need to reinstall the whole app
-
-**ExifTool 13.55**
-- The bundled metadata engine is upgraded to ExifTool 13.55, with significantly better RAW support for the latest cameras (Canon, DJI, etc.) and improved tag coverage
-
-**Faster, More Reliable Downloads**
-- Improved automatic mirror selection: mainland China users get optimized routing through faster mirrors; overseas users automatically use official sources
-- Hardened recovery: AI model downloads now fall back through multiple mirrors with progress display and retry — slow networks no longer mean stuck setup
-
-**Mac: Smooth Long-Batch Processing**
-- Fixed a memory pressure issue on Apple Silicon: processing thousands of photos in one batch now stays steady throughout, no slowdown toward the end
-
-**Smarter Folder Scanning**
-- Corrupted (zero-byte) photo files are automatically skipped instead of stopping the batch
-- Recursive scan now refuses to walk into protected system folders by mistake
-- Folder summaries show file counts and skipped reasons before processing begins
+**4.3.0 is a Long-Term Support (LTS) release** — the new stable baseline that
+consolidates every major improvement made since 4.1.0. If you're on an older
+build, this is the recommended version to settle on.
 
 ---
 
-**Distribution Changes**
+## 🎬 New in 4.3.0
 
-- **Apple Silicon Mac users**: Same single full installer as before.
-- **Intel Mac users**: Sorry — Apple Silicon has been the focus since 2020, and PyTorch (the underlying AI engine) no longer publishes updates for Intel Macs. Please continue using v4.2.1, which remains the last Intel-supported release.
-- **Windows users**: We've consolidated to a single Lite installer (182 MB). The previous "Full" 750 MB CPU-only build is discontinued because the Lite installer covers all Windows configurations more efficiently.
+**Video Bird Analysis** *(headline feature)*
+- Analyze birds directly in video footage, not just stills
+- Automatic per-species grouping, with synchronized SRT subtitle handling
+- New dedicated "Video Processing" tab in Settings
 
----
+**More Reliable First Launch (rewritten download & runtime pipeline)**
+- Faster, sturdier first-run setup: parallel mirror probing, multi-strategy
+  downloads with automatic fallback and resume-on-interrupt
+- Switched the packaged Python toolchain to `uv` for much faster, more reliable
+  AI-runtime installation — a big improvement for mainland-China and slow networks
 
-## v4.2.6 更新内容
-
-**更聪明的首次运行体验**
-- 全新欢迎向导引导设置摄影水平、自动更新偏好与 AI 模型准备，全程可视化进度
-- 应用会根据你的硬件自动选择最合适的 AI 运行引擎：NVIDIA 显卡用户获得 CUDA 加速，其他用户用 CPU —— 无需手动选择
-
-**Windows：一个更智能的安装包**
-- 新的 182 MB 轻量安装包，替代原有 750 MB 的 "CPU only" 完整安装包
-- 首次启动时自动按你的硬件下载匹配的 AI 引擎（NVIDIA 显卡走 CUDA，其他走 CPU）
-- 后续升级会保留你已下载的模型，只更新应用主体
-
-**一键应用内升级**
-- "检查更新"现在会后台下载新版安装包，下载完成后弹窗提示安装 —— 不再需要自己去下载页找文件
-- 内置完整性校验，确保安装包没有传输损坏才让你执行
-
-**环境修复**
-- 设置菜单新增"环境修复"入口：当 AI 模型或运行环境出问题时，一键重新走一遍准备流程 —— 不用重装整个应用
-
-**ExifTool 13.55**
-- 包内元数据引擎升级到 ExifTool 13.55，显著增强对最新相机 RAW 文件的支持（佳能、大疆等品牌），覆盖更多元数据标签
-
-**更快、更稳定的下载**
-- 改进自动镜像选择：大陆用户自动走最快的镜像源，海外用户自动走官方源
-- 强化容错：AI 模型下载会在多个镜像之间智能切换 + 显示进度 + 自动重试，慢网不再卡死
-
-**Mac：长批次处理更流畅**
-- 修复了 Apple Silicon 上的内存压力问题：批量处理数千张照片时全程保持稳定，不再在后期变慢
-
-**更聪明的目录扫描**
-- 自动跳过损坏（零字节）的照片文件，不再中断整个批次
-- 递归扫描拒绝误入系统目录
-- 扫描前显示文件计数和跳过原因预览
+**Completion Sound**
+- Optional sound when a batch finishes, so you can step away during long runs
 
 ---
 
-**发行版调整**
+## Highlights since 4.1.0 (the 4.2.x line)
 
-- **Apple Silicon Mac 用户**：跟以前一样，单一完整安装包。
-- **Intel Mac 用户**：抱歉 —— Apple Silicon 从 2020 年起一直是主流，PyTorch（底层 AI 引擎）也已经停止为 Intel Mac 发布新版本。请继续使用 v4.2.1，它仍然是最后一个支持 Intel Mac 的版本。
-- **Windows 用户**：我们将发布版本简化为单一轻量安装包（182 MB）。之前 750 MB 的"完整版"已经停发，因为新的轻量包配合首次启动的自动适配，覆盖所有 Windows 配置更高效。
+- **Smart first-run wizard** with automatic AI-runtime selection (CUDA for NVIDIA, CPU otherwise)
+- **Windows Lite installer** (~190 MB) + a separate CUDA GPU package
+- **One-click in-app updates** with background download and integrity check
+- **Environment Repair** in Settings — re-run model prep without reinstalling
+- **ExifTool 13.55** — better RAW support for the latest cameras
+- **Smarter mirror selection** — optimized routing for China, official sources overseas
+- **IOC bird-name search** — standalone CN/EN lookup
+- **Keypoint model slimmed** ~283 MB → ~95 MB for faster loading
+- **Recursive subfolder batch processing** in both CLI and GUI; directory switching + recent history
+- **Star-rating sync** back to the original file's EXIF Rating
+- **macOS**: fixed memory pressure on long batches — thousands of photos stay steady throughout
+- Many stability fixes: Chinese-path compatibility, Windows console encoding, macOS packaging paths, ExifTool process cleanup
 
 ---
 
-## 致谢 / Acknowledgements
-
-感谢 **张钧涛 (Juntao Zhang)** 赞助本项目 AI 编程工具使用费。
-Thanks to **张钧涛 (Juntao Zhang)** for sponsoring AI coding tools for this project.
-
-本版本也包含来自 **@yblpoi** 的代码贡献（首次启动初始化框架、扫描安全、ExifTool 自动同步）。
-This release also includes code contributions from **@yblpoi** (first-run initialization framework, scanner safety, ExifTool sync automation).
+## Distribution Notes
+- **Apple Silicon Mac**: single full installer (`.dmg`) — see Release assets
+- **Intel Mac**: please stay on **v4.2.1**, the last Intel-supported release (PyTorch no longer ships for Intel Macs)
+- **Windows**: the **Lite** installer covers all configurations; the **CUDA/GPU** build is distributed separately (large file) — ask if you need it
 
 ---
 
-> 本版本仍处于 RC 测试阶段（当前 v4.2.6-RC13）。如需稳定生产环境，推荐继续使用 v4.1.0 LTS 直至 v4.2.6 正式版发布。
-> This release is still in RC testing (currently v4.2.6-RC13). For a stable production environment, please continue using v4.1.0 LTS until v4.2.6 GA.
+# SuperPicky 4.3.0 LTS（中文）
+
+**4.3.0 是长期支持（LTS）稳定版** —— 汇总了自 4.1.0 以来的所有重要改进，作为新的稳定基线。仍在旧版本的用户，建议升级到此版本长期使用。
+
+---
+
+## 🎬 4.3.0 全新功能
+
+**视频鸟类分析**（核心新功能）
+- 不再局限于静态照片，可直接分析视频中的鸟类
+- 自动按鸟种归类，并同步处理 SRT 字幕
+- 设置中新增独立的「视频处理」标签页
+
+**更可靠的首次启动（下载与运行时链路重写）**
+- 首启准备更快更稳：并行镜像探测、多策略下载、自动回退与中断续传
+- 打包的 Python 工具链改用 `uv`，AI 运行时安装显著更快更稳 —— 对中国大陆与慢速网络改善明显
+
+**完成提示音**
+- 批量处理完成时可选播放提示音，长任务期间可放心离开
+
+---
+
+## 自 4.1.0 以来的重点更新（4.2.x 系列）
+
+- **智能首启向导**，自动选择 AI 运行引擎（NVIDIA 走 CUDA，其余走 CPU）
+- **Windows Lite 安装包**（约 190 MB）+ 独立的 CUDA GPU 包
+- **一键应用内升级**：后台下载 + 完整性校验
+- **环境修复**：设置内一键重跑模型准备，无需重装
+- **ExifTool 13.55**：更好支持最新相机的 RAW
+- **更智能的镜像选择**：大陆优化路由，海外走官方源
+- **IOC 鸟名检索**：独立的中英文鸟名查询
+- **关键点模型瘦身** 约 283 MB → 95 MB，加载更快
+- **子目录递归批处理**（CLI 与 GUI 均支持）；浏览器支持目录切换与最近目录历史
+- **星级同步**：评分修改写回原始文件的 EXIF Rating
+- **macOS**：修复长批量处理的内存压力 —— 数千张照片全程稳定
+- 大量稳定性修复：中文路径兼容、Windows 控制台编码、macOS 打包路径、ExifTool 进程清理
+
+---
+
+## 分发说明
+- **Apple Silicon Mac**：单一完整安装包（`.dmg`），见 Release 资产
+- **Intel Mac**：请继续使用 **v4.2.1**（最后一个支持 Intel 的版本，PyTorch 已不再为 Intel Mac 发布更新）
+- **Windows**：**Lite** 安装包覆盖所有配置；**CUDA/GPU** 版本因体积较大单独分发，需要可联系获取
