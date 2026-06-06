@@ -654,11 +654,25 @@ def create_dmg(config: BuildConfig, paths: BuildPaths) -> None:
 
 def prepare_signing(config: BuildConfig) -> SigningContext | None:
     """
-    如果提供 .p12，则导入临时 keychain / Import a temporary keychain when a .p12 is provided.
+    如果提供 .p12，则导入临时 keychain；若仅提供 sign_identity，则直接使用系统 keychain。
+    If a .p12 is provided, import it into a temporary keychain.
+    If only sign_identity is provided, use the certificate already in the system keychain.
     """
 
     if config.sign_p12 is None:
-        return None
+        # 没有 .p12 但有 sign_identity：使用系统 keychain 中已有的证书直接签名。
+        # No .p12 but sign_identity given: use the certificate already in the system keychain.
+        if config.sign_identity is None:
+            return None
+        log_step("步骤 8: 使用系统 keychain 中的证书")
+        system_keychain = Path.home() / "Library" / "Keychains" / "login.keychain-db"
+        log_verbose("[信息] 使用系统 keychain identity: %s", config.sign_identity)
+        return SigningContext(
+            keychain_path=system_keychain,
+            keychain_password="",
+            imported_p12_path=system_keychain,
+            identity=config.sign_identity,
+        )
 
     log_step("步骤 8: 导入签名证书")
     if not config.sign_p12.exists():
@@ -935,10 +949,16 @@ def publish_artifacts(paths: BuildPaths, config: BuildConfig) -> tuple[Path, Pat
 
 def cleanup_signing_context(signing_context: SigningContext | None) -> None:
     """
-    清理临时 keychain 和证书文件 / Clean up the temporary keychain and certificate file.
+    清理临时 keychain 和证书文件；系统 keychain 不做任何操作。
+    Clean up the temporary keychain and certificate file; skip if using the system keychain.
     """
 
     if signing_context is None:
+        return
+
+    system_keychain = Path.home() / "Library" / "Keychains" / "login.keychain-db"
+    if signing_context.keychain_path == system_keychain:
+        # 使用系统 keychain 时无需清理 / No cleanup needed when using the system keychain.
         return
 
     parent_dir = signing_context.keychain_path.parent
