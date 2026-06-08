@@ -67,8 +67,31 @@ def _inject_patch_path():
         _patch_dir = os.path.join(
             os.path.expanduser("~"), ".config", "SuperPicky", "code_updates"
         )
-    if _should_enable_patch_overlay() and os.path.isdir(_patch_dir) and _patch_dir not in sys.path:
-        sys.path.insert(0, _patch_dir)
+    # 4.3.0 起在线补丁系统已暂停：进入注入环节前先查运行时总闸，
+    # 若补丁被停用（或状态不可用）则清理历史残留补丁目录，且不再注入覆盖层；
+    # 这样跨版本升级后残留的旧补丁不会在本次启动被 import 覆盖新代码（issue #100）。
+    # Online patch overlay is suspended since 4.3.0: clear any residual patch
+    # directory and skip sys.path injection so stale patches cannot shadow new code.
+    if _should_enable_patch_overlay() and os.path.isdir(_patch_dir):
+        try:
+            from tools.patch_manager import (
+                get_patch_runtime_block_reason,
+                safe_clear_patch,
+            )
+
+            block_reason = get_patch_runtime_block_reason()
+        except Exception:
+            # 导入失败时保守处理：不注入覆盖层。
+            # Be conservative on import failure: do not inject the overlay.
+            block_reason = "补丁系统状态不可用，跳过覆盖层注入"
+
+        if block_reason:
+            try:
+                safe_clear_patch()
+            except Exception:
+                pass
+        elif _patch_dir not in sys.path:
+            sys.path.insert(0, _patch_dir)
     if get_runtime_app_root() is None:
         if getattr(sys, "frozen", False) and sys.platform == "win32":
             set_runtime_app_root(os.path.dirname(os.path.abspath(sys.executable)))
