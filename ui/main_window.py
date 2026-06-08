@@ -3052,16 +3052,18 @@ class SuperPickyMainWindow(QMainWindow):
     # ========== V4.0.1: 更新检测功能 ==========
 
     def _show_update_center(self):
-        """显示在线更新中心对话框"""
+        """显示版本信息对话框：展示当前版本/渠道 + 前往官网下载入口。
+
+        4.3.0 起应用内在线更新检测已停用（见 tools/update_checker.ONLINE_UPDATE_CHECK_DISABLED）；
+        升级一律前往官网手动下载，故此对话框不再提供检查/自动更新设置。
+        Show a version-info dialog linking to the official download page. Online
+        update checking is disabled since 4.3.0, so upgrades go through the website.
+        """
         from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout,
-                                       QLabel, QPushButton, QFrame, QCheckBox)
-        from PySide6.QtCore import Qt
-        from advanced_config import get_advanced_config as _get_cfg
-        from tools.patch_manager import read_local_meta, clear_patch
+                                       QLabel, QPushButton, QFrame)
         from tools.update_checker import get_version_channel
         from constants import APP_VERSION
-
-        cfg = _get_cfg()
+        import webbrowser
 
         # 读取实际渠道（优先 build_info.RELEASE_CHANNEL）
         try:
@@ -3070,7 +3072,12 @@ class SuperPickyMainWindow(QMainWindow):
         except Exception:
             channel = get_version_channel(APP_VERSION)
 
-        local_meta = read_local_meta()
+        # 官网下载页（升级走网页手动下载）
+        try:
+            from config import config as _cfg
+            download_page = _cfg.endpoints.UPDATE_DOWNLOAD_PAGE
+        except Exception:
+            download_page = "https://superpicky.jamesphotography.com.au/#download"
 
         dialog = QDialog(self)
         dialog.setWindowTitle(self.i18n.t("update.update_center_title"))
@@ -3109,54 +3116,22 @@ class SuperPickyMainWindow(QMainWindow):
             info_layout.addLayout(row)
             return val
 
-        # 版本：合并 base + patch 显示，普通用户一眼看懂
-        patch_version = local_meta.get('patch_version', '') if local_meta else ''
-        if patch_version:
-            version_display = f"V{APP_VERSION}  +  {patch_version}"
-            version_color = COLORS['accent']
-        else:
-            version_display = f"V{APP_VERSION}"
-            version_color = COLORS['text_primary']
-        patch_val_ref = [None]  # 用列表传引用，供 _check 回调更新
-        _row(self.i18n.t("update.current_version_label"), version_display, version_color)
-
-        # 检查结果行（动态更新，打开时默认提示点检查）
-        result_val = _row(
-            self.i18n.t("update.update_center_result_label"),
-            self.i18n.t("update.update_center_result_pending"),
-            COLORS['text_muted']
-        )
+        # 版本 + 渠道（只读展示；升级走官网手动下载）
+        channel_text = {
+            'official': self.i18n.t("update.update_center_channel_official"),
+            'nightly': self.i18n.t("update.update_center_channel_nightly"),
+            'dev': self.i18n.t("update.update_center_channel_dev"),
+        }.get(channel, channel)
+        _row(self.i18n.t("update.current_version_label"), f"V{APP_VERSION}")
+        _row(self.i18n.t("update.update_center_channel_label"), channel_text)
 
         layout.addWidget(info_frame)
 
-        # ── 設置區 ─────────────────────────────────
-        settings_frame = QFrame()
-        settings_frame.setStyleSheet(f"background-color: {COLORS['bg_elevated']}; border-radius: 8px;")
-        settings_layout = QVBoxLayout(settings_frame)
-        settings_layout.setContentsMargins(16, 12, 16, 12)
-        settings_layout.setSpacing(6)
-
-        cb_style = f"color: {COLORS['text_secondary']}; font-size: 13px;"
-
-        auto_cb = QCheckBox(self.i18n.t("update.update_center_auto_check"))
-        auto_cb.setStyleSheet(cb_style)
-        auto_cb.setChecked(cfg.auto_check_updates)
-        def _on_auto(checked):
-            _c = _get_cfg(); _c.set_auto_check_updates(checked); _c.save()
-        auto_cb.toggled.connect(_on_auto)
-        settings_layout.addWidget(auto_cb)
-
-        # 「接收 RC 测试版」只对正式版用户显示（RC 用户天然收到 RC 更新，无需此选项）
-        if channel == 'official':
-            prerelease_cb = QCheckBox(self.i18n.t("update.update_center_include_prerelease"))
-            prerelease_cb.setStyleSheet(cb_style)
-            prerelease_cb.setChecked(cfg.include_prerelease)
-            def _on_prerelease(checked):
-                _c = _get_cfg(); _c.set_include_prerelease(checked); _c.save()
-            prerelease_cb.toggled.connect(_on_prerelease)
-            settings_layout.addWidget(prerelease_cb)
-
-        layout.addWidget(settings_frame)
+        # ── 下载指引 ───────────────────────────────
+        hint = QLabel(self.i18n.t("update.download_hint"))
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 13px;")
+        layout.addWidget(hint)
 
         # ── 按鈕行 ─────────────────────────────────
         btn_row = QHBoxLayout()
@@ -3181,67 +3156,10 @@ class SuperPickyMainWindow(QMainWindow):
             QPushButton:hover {{ border-color: {COLORS['text_muted']}; color: {COLORS['text_primary']}; }}
         """
 
-        check_btn = QPushButton(self.i18n.t("update.update_center_btn_check"))
-        check_btn.setStyleSheet(btn_style_primary)
-
-        def _do_check():
-            check_btn.setEnabled(False)
-            check_btn.setText(self.i18n.t("update.update_center_checking"))
-            result_val.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 13px; font-weight: 500;")
-            result_val.setText(self.i18n.t("update.update_center_checking"))
-
-            import threading
-            from PySide6.QtCore import QTimer
-            def _check():
-                try:
-                    from tools.update_checker import UpdateChecker
-                    checker = UpdateChecker()
-                    _cfg = _get_cfg()
-                    has_update, info = checker.check_for_updates(
-                        include_prerelease=_cfg.include_prerelease
-                    )
-                    info = info or {}
-                    if has_update:
-                        text  = f"{self.i18n.t('update.update_center_result_has_update')} V{info.get('version','')}"
-                        color = COLORS['accent']
-                    elif info.get('patch_applied'):
-                        text  = self.i18n.t("update.update_center_result_patch_applied")
-                        color = COLORS['accent']
-                    elif info.get('error'):
-                        text  = self.i18n.t("update.update_center_result_failed")
-                        color = COLORS['warning']
-                    else:
-                        text  = self.i18n.t("update.update_center_result_latest")
-                        color = COLORS['success']
-                except Exception as e:
-                    text  = self.i18n.t("update.update_center_result_failed")
-                    color = COLORS['warning']
-                    has_update = False
-                    info = {}
-
-                def _update_ui():
-                    result_val.setText(text)
-                    result_val.setStyleSheet(f"color: {color}; font-size: 13px; font-weight: 500;")
-                    check_btn.setEnabled(True)
-                    check_btn.setText(self.i18n.t("update.update_center_btn_check"))
-                    if has_update and info.get('download_url'):
-                        import webbrowser
-                        webbrowser.open(info['download_url'])
-                QTimer.singleShot(0, _update_ui)
-            threading.Thread(target=_check, daemon=True).start()
-
-        check_btn.clicked.connect(_do_check)
-        btn_row.addWidget(check_btn)
-
-        # 清除補丁按鈕（只在有補丁時顯示）
-        if local_meta:
-            clear_btn = QPushButton(self.i18n.t("update.update_center_btn_clear_patch"))
-            clear_btn.setStyleSheet(btn_style_secondary)
-            def _do_clear():
-                clear_patch()
-                clear_btn.setVisible(False)
-            clear_btn.clicked.connect(_do_clear)
-            btn_row.addWidget(clear_btn)
+        visit_btn = QPushButton(self.i18n.t("update.update_center_btn_visit_site"))
+        visit_btn.setStyleSheet(btn_style_primary)
+        visit_btn.clicked.connect(lambda: webbrowser.open(download_page))
+        btn_row.addWidget(visit_btn)
 
         btn_row.addStretch()
 

@@ -825,6 +825,7 @@
     "update_center_include_prerelease": "接收 RC 测试版本更新",
     "update_center_btn_check": "检查更新",
     "update_center_btn_clear_patch": "清除补丁",
+    "update_center_btn_visit_site": "前往官网下载",
     "update_center_checking": "检查中...",
     "download_and_install": "📥 下载并安装",
     "downloading_title": "下载安装包",

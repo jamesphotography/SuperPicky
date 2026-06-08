@@ -78,6 +78,14 @@ def _mark_patch_check_skipped(update_info: Dict, reason: str) -> None:
     update_info['patch_message'] = reason
 
 
+# === 4.3.0 起：应用内在线版本更新检测整体停用 ===
+# 所有版本（mac dmg / Win Lite / Win Full CPU·CUDA）都不再在应用内检测或提示新版本。
+# Full 版因 CUDA 安装包 >2GB 无法进 GitHub Release，升级一律走官网/网盘手动下载；
+# Lite 的「首启下载模型/库」属于初始化（core/initialization_manager），与本开关无关、照常工作。
+# Online version-update checking is fully disabled since 4.3.0; set back to False to re-enable.
+ONLINE_UPDATE_CHECK_DISABLED = True
+
+
 class UpdateChecker:
     """更新检测器"""
 
@@ -101,7 +109,9 @@ class UpdateChecker:
         return get_version_channel(self.current_version)
 
     def should_check_updates(self) -> bool:
-        """是否需要检查更新（dev 渠道不检查）"""
+        """是否需要检查更新（4.3.0 起整体停用；dev 渠道本就不检查）"""
+        if ONLINE_UPDATE_CHECK_DISABLED:
+            return False
         return self.channel != 'dev'
 
     def check_for_updates(self, timeout: int = 10, include_prerelease: bool = False) -> Tuple[bool, Optional[Dict]]:

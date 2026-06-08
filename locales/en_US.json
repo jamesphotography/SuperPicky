@@ -851,6 +851,7 @@
     "update_center_include_prerelease": "Receive RC pre-release updates",
     "update_center_btn_check": "Check for Updates",
     "update_center_btn_clear_patch": "Clear Patch",
+    "update_center_btn_visit_site": "Visit Download Page",
     "update_center_checking": "Checking...",
     "download_and_install": "📥 Download and Install",
     "downloading_title": "Downloading Installer",
