@@ -1,3 +1,65 @@
+## What's New in v4.3.0-RC6
+
+**Video Bird Analysis (New)**
+- Annotate bird / no-bird segments along a video timeline (YOLO detection) and generate matching SRT subtitles
+- Identify species and detect birds in flight, with three recognition modes
+- Automatically sort clips by species, moving the SRT subtitles along with them
+- New "Video Processing" tab in Settings
+
+**Global Rarity Index (GBIF)**
+- Worldwide rarity score (0-100, with an IUCN floor) derived from GBIF data, replacing the previous rarity index
+- A five-tier filled-circle rarity scale with photographer-oriented tier names
+- IUCN Red List category written to a dedicated EXIF field and shown as a third metric in the detail panel
+
+**Library & Browser**
+- Folder organization: rating-first or species-first layouts; low-rated photos go to an "Other Birds" folder
+- Browser: Cmd+A to select all, Cmd+Backspace to delete
+
+**Streamlined Update Process**
+- In-app update checking is now turned off across all builds — to upgrade, download the new version from the official download page. This keeps the update path simple and avoids the previous online hot-patch system's pitfall, where leftover patches could override the new version's code after an upgrade.
+- The in-app "Update Center" is now a simple version-info panel with a link to the official download page.
+
+**Cleaner Windows Installs**
+- Upgrades now clear the previous program files before installing, so leftover modules/DLLs from an older version can't linger and cause conflicts.
+- New Windows Uninstaller tool (SuperPickyUpdateCleaner.exe) — recommended before switching between Lite and Full installer types, or for a clean reinstall.
+
+**Available Builds**
+- **macOS**: Apple Silicon (arm64, signed & notarized); a separate Intel build is also available.
+- **Windows**: Lite (≈196 MB, downloads the AI engine + models on first launch), Full CPU (≈749 MB, install-and-run, fully offline), and Full CUDA (≈2 GB, NVIDIA GPU acceleration — distributed via netdisk due to GitHub's 2 GiB single-file cap).
+
+---
+
+## v4.3.0-RC6 更新内容
+
+**视频鸟类分析（全新）**
+- 在视频时间轴上标注有鸟 / 无鸟片段（YOLO 检测），并生成对应的 SRT 字幕
+- 识别鸟种 + 飞行检测，提供三档识别模式
+- 按鸟种自动归类片段，SRT 字幕同步移动
+- 参数设置新增「视频处理」标签页
+
+**全球罕见度（GBIF）**
+- 基于 GBIF 数据的全球罕见度评分（0-100，含 IUCN 下限），取代原有的罕见度指数
+- 五档圆形充填的罕见度等级 + 摄影师视角的分级名称
+- IUCN 红色名录等级写入独立 EXIF 字段，并在详情面板作为第三项指标展示
+
+**图库与浏览**
+- 文件夹整理：按评分优先或按鸟种优先两种布局；低星照片归入「其他鸟类」文件夹
+- 浏览器：Cmd+A 全选，Cmd+Backspace 删除
+
+**简化的升级流程**
+- 所有版本均已关闭应用内更新检测 —— 升级请前往官网下载页获取新版本。这让更新路径更简单，并规避了原在线热补丁机制的问题：升级后残留的旧补丁可能覆盖新版本代码。
+- 应用内"更新中心"改为简洁的版本信息面板，并提供官网下载入口。
+
+**更干净的 Windows 安装**
+- 升级时会先清空上一版的程序文件，避免旧版本残留的模块/DLL 干扰新版本引发冲突。
+- 新增 Windows 卸载工具（SuperPickyUpdateCleaner.exe）—— 在 Lite 与 Full 安装类型之间切换、或需要全新重装时推荐使用。
+
+**提供的版本**
+- **macOS**：Apple Silicon（arm64，已签名公证）；另单独提供 Intel 版本。
+- **Windows**：Lite（约 196 MB，首启下载 AI 引擎与模型）、Full CPU（约 749 MB，装完即用、完全离线）、Full CUDA（约 2 GB，NVIDIA 显卡加速 —— 因 GitHub 单文件 2 GiB 上限走网盘分发）。
+
+---
+
 ## What's New in v4.2.6
 
 **Smarter First-Run Experience**
