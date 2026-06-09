@@ -545,7 +545,13 @@ class ExifToolManager:
             except Exception:
                 args.append(f'-XMP:Description={caption}')
 
-        args.append('-overwrite_original_in_place' if in_place else '-overwrite_original')
+        # V4.3.0: 统一用 -overwrite_original_in_place（原地写，不创建 temp、不 rename）。
+        # 旧的裸 -overwrite_original 在 ExFAT 外置盘/存储卡上 rename() 失败时会导致
+        # 原文件被删后无法恢复（b6d4d77 当年只修了 EXIF reset，此写入路径残留隐患）。
+        # _in_place 对所有格式安全，且保留文件 inode / Birth Time。in_place 形参保留以兼容调用。
+        # V4.3.0: Always use -overwrite_original_in_place to avoid the ExFAT rename-failure
+        # data loss that bare -overwrite_original can cause on memory cards.
+        args.append('-overwrite_original_in_place')
         args.append(file_path)
 
         try:
@@ -614,7 +620,7 @@ class ExifToolManager:
             except Exception as e:
                 args.append(f'-XMP:Description={caption}')
 
-        args.extend(['-overwrite_original', xmp_path])
+        args.extend(['-overwrite_original_in_place', xmp_path])  # V4.3.0: ExFAT 安全，避免 rename 删文件
 
         try:
             success = self._send_to_process(args, timeout=30)
@@ -648,7 +654,7 @@ class ExifToolManager:
             '-XMP:Title=',
             '-XMP-iptcCore:IntellectualGenre=',
             '-XMP-iptcExt:Event=',
-            '-overwrite_original',
+            '-overwrite_original_in_place',  # V4.3.0: ExFAT 安全，避免 rename 删文件
             xmp_path
         ]
         try:
