@@ -1927,6 +1927,29 @@ class SuperPickyMainWindow(QMainWindow):
             """)
 
     @Slot()
+    def _is_removable_source(self) -> bool:
+        """
+        检测源目录是否位于可移动磁盘（存储卡 / U 盘）。检测失败时保守返回 False。
+        Detect whether the source folder sits on a removable drive (card / USB).
+        Returns False on any detection error so it never blocks legitimate use.
+        """
+        path = self.directory_path
+        if not path:
+            return False
+        try:
+            if sys.platform == "win32":
+                import ctypes
+                drive = os.path.splitdrive(os.path.abspath(path))[0]
+                if not drive:
+                    return False
+                DRIVE_REMOVABLE = 2
+                return ctypes.windll.kernel32.GetDriveTypeW(drive + "\\") == DRIVE_REMOVABLE
+            if sys.platform == "darwin":
+                return os.path.realpath(path).startswith("/Volumes/")
+        except Exception:
+            return False
+        return False
+
     def _start_processing(self):
         """开始处理"""
         if not self._require_initialization_for_processing():
@@ -1939,6 +1962,19 @@ class SuperPickyMainWindow(QMainWindow):
                 self.i18n.t("messages.select_dir_first")
             )
             return
+
+        # V4.3.0: 源目录在存储卡/可移动磁盘上时强烈警告。直接在卡上处理会移动上千个
+        # 文件，卡 IO 慢、文件系统脆弱，中途中断或拔卡极易丢照片；建议先复制到硬盘。
+        if self._is_removable_source():
+            reply = StyledMessageBox.question(
+                self,
+                self.i18n.t("messages.removable_warning_title"),
+                self.i18n.t("messages.removable_warning_message"),
+                yes_text=self.i18n.t("labels.yes"),
+                no_text=self.i18n.t("labels.no")
+            )
+            if reply != StyledMessageBox.Yes:
+                return
 
         if self.worker and self.worker.is_alive():
             StyledMessageBox.warning(

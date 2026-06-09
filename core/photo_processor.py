@@ -2892,22 +2892,29 @@ class PhotoProcessor:
             self._log("\n📂 No files to move")
             return
         
-        self._log(f"\n📂 Moving {len(files_to_move)} photos to rating folders...")
-        
+        # V4.3.0: 文件整理阶段进度反馈。主进度条在 AI 分析阶段已占满 100%，此后
+        # 移动上千个文件（尤其在存储卡上）很耗时；持续上报进度并提示「请勿关闭」，
+        # 避免用户误以为程序卡死而强制结束，导致文件移动到一半、照片散落各文件夹。
+        # V4.3.0: Progress feedback for the file-organizing stage. The main bar is
+        # already at 100% after AI analysis; moving thousands of files (especially on
+        # a memory card) is slow, so keep reporting progress and warn against closing.
+        total_to_move = len(files_to_move)
+        self._log("\n" + self.i18n.t("logs.organizing_start", count=total_to_move), "info")
+
         # 创建文件夹（使用实际的目录名，支持多层）
         folders_in_use = set(f['folder'] for f in files_to_move)
         for folder_name in folders_in_use:
             folder_path = os.path.join(self.dir_path, folder_name)
             if not os.path.exists(folder_path):
                 os.makedirs(folder_path)
-        
+
         # 移动文件
         moved_count = 0
-        for file_info in files_to_move:
+        for idx, file_info in enumerate(files_to_move, 1):
             src_path = os.path.join(self.dir_path, file_info['filename'])
             dst_folder = os.path.join(self.dir_path, file_info['folder'])
             dst_path = os.path.join(dst_folder, file_info['filename'])
-            
+
             try:
                 if os.path.exists(dst_path):
                     continue
@@ -2915,6 +2922,12 @@ class PhotoProcessor:
                 moved_count += 1
             except Exception as e:
                 self._log(self.i18n.t("logs.move_failed", filename=file_info['filename'], error=str(e)), "warning")
+
+            # 每 50 张或最后一张上报一次，让用户看到「100% 之后仍在整理文件」
+            if idx % 50 == 0 or idx == total_to_move:
+                self._log(self.i18n.t("logs.organizing_progress", done=idx, total=total_to_move), "info")
+
+        self._log(self.i18n.t("logs.organizing_complete", moved=moved_count), "info")
         
         # V4.0.5: 更正 current_path - 更新数据库中所有移动文件的位置
         # 这确保 current_path 指向最新的原始文件位置 (如 3star_excellent/Bird/DSC_1234.NEF)
