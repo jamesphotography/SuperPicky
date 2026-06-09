@@ -1,26 +1,26 @@
 {
   "beta": {
-    "tag": "v4.3.0-RC5",
-    "updated_at": "2026-06-06T00:00:00.0000000+00:00",
+    "tag": "v4.3.0-RC6",
+    "updated_at": "2026-06-08T00:00:00.0000000+00:00",
     "files": {
-      "mac_arm64": "SuperPicky_v4.3.0-RC5_arm64_34c0c7c.dmg",
-      "mac_intel": "SuperPicky_v4.3.0-RC3_x86_64_763dfbf.dmg",
-      "win_cpu": "SuperPicky_Setup_Full_Win64_v4.3.0-RC5_34c0c7c.exe",
-      "win_lite": "SuperPicky_Setup_Lite_Win64_v4.3.0-RC5_34c0c7c.exe"
+      "mac_arm64": "SuperPicky_v4.3.0-RC6_arm64_de0f3fb.dmg",
+      "mac_intel": "SuperPicky_v4.3.0-RC6_Intel_be2f41a3.dmg",
+      "win_cpu": "SuperPicky_Setup_Full_Win64_v4.3.0-RC6_de0f3fb.exe",
+      "win_lite": "SuperPicky_Setup_Lite_Win64_v4.3.0-RC6_de0f3fb.exe"
     },
     "drive": {
-      "mac_arm64": "https://drive.google.com/file/d/1V3eM0lrfcVHL8S_Kgelpkp73wtfDc8mm/view?usp=sharing",
-      "mac_intel": "https://drive.google.com/file/d/1u-nl2pLwnlGyNLf6DMffCxWertUbTgxw/view?usp=sharing",
-      "win_cpu": "https://drive.google.com/file/d/1WzSgFo-pez4Cv8tWbzHX1p5vZGl4FCyd/view?usp=sharing",
-      "win_cuda": "https://drive.google.com/file/d/1OqRIljyDmr6TpHIxlhFyFVXsnLScFROF/view?usp=sharing",
-      "win_lite": "https://drive.google.com/file/d/1o0fdNTmzKdQO3XYCKu1W3l7kw5CEusx-/view?usp=sharing"
+      "mac_arm64": "https://drive.google.com/file/d/1jNxLcOw3pucV5BybiKqrhTITUnZ9wb0z/view?usp=sharing",
+      "mac_intel": "https://drive.google.com/file/d/1UDsTOB4Chij77XlEoJ3tOA-eiNHu-p0h/view?usp=sharing",
+      "win_cpu": "https://drive.google.com/file/d/1fQ9SCFVbJg_3NbPyzt9EgYLhEpWsMwlO/view?usp=sharing",
+      "win_cuda": "https://drive.google.com/file/d/1HND3k2rvR908KblzffbInfsUr9FqJKGv/view?usp=sharing",
+      "win_lite": "https://drive.google.com/file/d/162ggn1-j3HT6WTNhjB8tFikUzg3cZnMW/view?usp=sharing"
     },
     "baidu": {
-      "mac_arm64": "https://pan.baidu.com/s/1thjevDevFWcPBlQw5nLi0Q?pwd=3i6b",
-      "mac_intel": "https://pan.baidu.com/s/1-fCJ0LeNIZ1AUF5TL2Nn4Q?pwd=bwha",
-      "win_cpu": "https://pan.baidu.com/s/1wZPQyqCayW4s7sXc2Q1-1g?pwd=7ju3",
-      "win_cuda": "https://pan.baidu.com/s/1RSGUCqQmoqSkS4nU9j86YA?pwd=anc3",
-      "win_lite": "https://pan.baidu.com/s/19PFGBkTT7eaMeE-h3PoLKQ?pwd=vic3"
+      "mac_arm64": "https://pan.baidu.com/s/1IXZ-Wgyd7Qqn9h3pNkqvhw?pwd=ivbp",
+      "mac_intel": "https://pan.baidu.com/s/1OIECxPhAbMgo0jxgIQzTnw?pwd=jwsg",
+      "win_cpu": "https://pan.baidu.com/s/1S24kTqTWZDfAuZg71qPOlA?pwd=tfsk",
+      "win_cuda": "https://pan.baidu.com/s/1CZ2733XHb8G1dg_AQK0L-Q?pwd=fdah",
+      "win_lite": "https://pan.baidu.com/s/1tNDxVEdzTWQjtpUNjlDy_A?pwd=5da5"
     }
   }
 }
