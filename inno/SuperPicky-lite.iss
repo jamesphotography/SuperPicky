@@ -47,6 +47,12 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkablealone
 
+[InstallDelete]
+; 升级前先清空旧 _internal，避免上一版残留的 .pyd/.dll 干扰新版本（参见 issue #100 讨论）
+; Wipe stale _internal before copying so old modules/DLLs can't shadow the new build.
+; 注意：Lite 的 runtime/模型在 ~/AppData/Local/SuperPicky/runtime_env，不在 {app}，不受影响。
+Type: filesandordirs; Name: "{app}\_internal"
+
 [Files]
 Source: "{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "_internal\*"; DestDir: "{app}\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs

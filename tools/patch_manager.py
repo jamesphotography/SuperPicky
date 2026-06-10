@@ -69,8 +69,21 @@ def get_patch_runtime_channel() -> str:
     return "dev"
 
 
+# === 4.3.0 起：在线补丁系统整体暂停，仅保留安装器（installer）更新流程 ===
+# 背景见 issue #100：补丁覆盖层（sys.path 注入 code_updates/）在跨版本升级后
+# 会以旧代码覆盖新代码，且与 installer_updater 形成两套并存的更新机制。
+# 暂停而非删除：保留下载/应用/清理等函数结构，未来恢复时将开关置回 False 即可。
+# Online patch system is suspended since 4.3.0; only the installer flow remains.
+# Set this flag back to False to re-enable the online patch overlay.
+PATCH_SYSTEM_SUSPENDED = True
+_PATCH_SUSPENDED_REASON = "在线补丁系统自 4.3.0 起暂停，已改用安装器更新流程"
+
+
 def get_patch_runtime_block_reason() -> Optional[str]:
     """返回当前环境禁止在线补丁的原因；允许时返回 None。"""
+    if PATCH_SYSTEM_SUSPENDED:
+        return _PATCH_SUSPENDED_REASON
+
     if not getattr(sys, "frozen", False):
         return "源码运行环境禁用在线补丁"
 
