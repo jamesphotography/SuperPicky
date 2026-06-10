@@ -413,6 +413,37 @@ class YOLOBirdDetector:
             return None, f"检测失败: {e}"
 
 
+def _auto_orient(img: Image.Image, raw_flip: int = 0) -> Image.Image:
+    """
+    将图片旋转到正确朝向，再交给识别流程。
+    优先用图自带的 EXIF Orientation（相机 thumb/JpgFromRaw/JPEG 通常带 274 标签）；
+    rawpy postprocess / BITMAP 等无 EXIF 的情形回退 libraw 的 flip 值。
+    必须在 convert("RGB") 之前调用——convert 会丢弃 EXIF。
+
+    Rotate an image upright before identification: prefer the embedded EXIF
+    Orientation, fall back to libraw's flip for EXIF-less RAW bitmaps.
+    Must run before convert("RGB"), which drops EXIF.
+
+    背景：竖拍 RAW（如 Orientation=Rotate 270 CW）的 thumb/传感器数据是横向的，
+    若不旋转，鸟会"横躺"送进 YOLO+分类器，导致识别错误且置信度极低。
+    """
+    from PIL import ImageOps
+    try:
+        if img.getexif().get(274, 1) != 1:
+            return ImageOps.exif_transpose(img)
+    except Exception:
+        pass
+    # libraw flip → PIL transpose（把传感器原始方向转正）
+    flip_map = {3: Image.ROTATE_180, 5: Image.ROTATE_90, 6: Image.ROTATE_270}
+    transpose = flip_map.get(raw_flip)
+    if transpose is not None:
+        try:
+            return img.transpose(transpose)
+        except Exception:
+            pass
+    return img
+
+
 def load_image(image_path: str) -> Image.Image:
     if not os.path.exists(image_path):
         raise FileNotFoundError(f"文件不存在: {image_path}")
@@ -461,16 +492,19 @@ def load_image(image_path: str) -> Image.Image:
             )
             try:
                 with rawpy.imread(image_path) as raw:
+                    raw_flip = int(getattr(raw.sizes, "flip", 0) or 0)
                     try:
                         thumb = raw.extract_thumb()
                         if thumb.format == jpeg_thumb_format:
                             from io import BytesIO
 
-                            img = Image.open(BytesIO(thumb.data)).convert("RGB")
-                            return img
+                            # V4.3.0: thumb JPEG 自带 EXIF Orientation，先按方向旋转再 convert，
+                            # 否则竖拍照片被当横图送入识别，鸟"横躺"导致识别错（见 _auto_orient）。
+                            img = Image.open(BytesIO(thumb.data))
+                            return _auto_orient(img, raw_flip).convert("RGB")
                         elif thumb.format == bitmap_thumb_format:
-                            img = Image.fromarray(thumb.data).convert("RGB")
-                            return img
+                            img = _auto_orient(Image.fromarray(thumb.data), raw_flip)
+                            return img.convert("RGB")
                     except Exception as e:
                         pass
 
@@ -481,7 +515,8 @@ def load_image(image_path: str) -> Image.Image:
                         auto_bright_thr=0.01,
                         half_size=True,
                     )
-                    img = Image.fromarray(rgb)
+                    # postprocess 输出传感器原始方向（无 EXIF），按 libraw flip 旋转
+                    img = _auto_orient(Image.fromarray(rgb), raw_flip)
                     return img
             except Exception as e:
                 if unsupported_error is not None and isinstance(e, unsupported_error):
@@ -490,7 +525,8 @@ def load_image(image_path: str) -> Image.Image:
         else:
             raise ImportError("需要安装 rawpy 来处理 RAW 格式")
     else:
-        return Image.open(image_path).convert("RGB")
+        # V4.3.0: JPEG 等自带 Orientation，按方向旋转后再转 RGB
+        return _auto_orient(Image.open(image_path)).convert("RGB")
 
 
 def _load_raw_via_exiftool(image_path: str) -> Image.Image:
@@ -520,7 +556,8 @@ def _load_raw_via_exiftool(image_path: str) -> Image.Image:
                 [exiftool, "-b", tag, image_path], capture_output=True, timeout=15
             )
             if result.returncode == 0 and result.stdout and len(result.stdout) > 1000:
-                img = Image.open(BytesIO(result.stdout)).convert("RGB")
+                # V4.3.0: JpgFromRaw/Preview 自带 Orientation，按方向旋转再转 RGB
+                img = _auto_orient(Image.open(BytesIO(result.stdout))).convert("RGB")
                 return img
         except Exception as e:
             continue
