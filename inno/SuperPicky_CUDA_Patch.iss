@@ -1,6 +1,9 @@
 ; SuperPicky CUDA 补丁安装脚本
 ; SuperPicky CUDA Patch installer script
 ; Non-commercial use only
+;
+; 本脚本是 Full CPU 安装包的 CUDA 差异更新包，不是独立应用安装包。
+; This script is a CUDA delta update for the Full CPU installer, not a standalone app installer.
 
 #define MyAppName "SuperPicky"
 #define MyAppVersion "unknown"
@@ -8,135 +11,82 @@
 #define MyAppURL "superpicky.app"
 #define MyAppExeName "SuperPicky.exe"
 #define MyAppCommitHash "unknown"
-#define OutputBaseFilename "SuperPicky_CUDA_Patch_Win64_{#MyAppVersion}_{#MyAppCommitHash}"
+#define OutputBaseFilename "SuperPicky_CUDA_Patch_Win64_" + MyAppVersion + "_" + MyAppCommitHash
 
 [Setup]
-AppId=SuperPicky.CUDAPatch
+; 与 Full CPU/CUDA 安装包保持同一个 AppId，使补丁作为同一应用的更新写入卸载日志。
+; Keep the same AppId as the Full CPU/CUDA installers so this patch is logged as an update of the same app.
+AppId={{B7E3F2A1-8D4C-4F5A-9E6B-1C2D3E4F5A6B}
 AppName={#MyAppName} CUDA Patch
 AppVersion={#MyAppVersion}
 AppVerName={#MyAppName} CUDA Patch {#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
+AppSupportURL={#MyAppURL}
+AppUpdatesURL={#MyAppURL}
 DefaultDirName={autopf}\SuperPicky
-DefaultGroupName=SuperPicky
+UninstallDisplayIcon={app}\{#MyAppExeName}
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
+DisableProgramGroupPage=yes
+PrivilegesRequired=lowest
 OutputDir=output
 OutputBaseFilename={#OutputBaseFilename}
+SetupIconFile=img\icon.ico
 Compression=lzma2/ultra64
 LZMAUseSeparateProcess=yes
 LZMADictionarySize=1048576
 LZMANumFastBytes=273
 SolidCompression=yes
-CreateAppDir=yes
-Uninstallable=no
-SetupIconFile=img\icon.ico
 WizardStyle=modern
 WizardImageFile=img\icon.png
 WizardSmallImageFile=img\icon.png
-DisableProgramGroupPage=yes
-DisableDirPage=no
-DisableReadyPage=no
-DisableFinishedPage=no
-DirExistsWarning=no
-ArchitecturesAllowed=x64compatible
-ArchitecturesInstallIn64BitMode=x64compatible
-PrivilegesRequired=admin
 CloseApplications=yes
 RestartApplications=no
-UsePreviousAppDir=no
+CreateUninstallRegKey=no
+UpdateUninstallLogAppName=no
 
-[Registry]
-Root: HKLM64; Subkey: "SOFTWARE\SuperPicky"; ValueType: string; ValueName: "InstallDir"; ValueData: "{app}"
-Root: HKLM64; Subkey: "SOFTWARE\SuperPicky"; ValueType: string; ValueName: "Version"; ValueData: "{#SetupSetting('AppVersion')}"
-Root: HKLM64; Subkey: "SOFTWARE\SuperPicky"; ValueType: string; ValueName: "CUDA_Patch_Installed"; ValueData: "1"
-Root: HKLM64; Subkey: "SOFTWARE\SuperPicky"; ValueType: string; ValueName: "CUDA_Patch_Version"; ValueData: "{#SetupSetting('AppVersion')}"
-Root: HKLM64; Subkey: "SOFTWARE\SuperPicky"; ValueType: string; ValueName: "CUDA_Patch_TargetDir"; ValueData: "{app}"
-Root: HKLM64; Subkey: "SOFTWARE\SuperPicky"; ValueType: string; ValueName: "CUDA_Patch_FileList"; ValueData: "{app}\_internal\cuda_patch_manifest.txt"
-Root: HKLM64; Subkey: "SOFTWARE\SuperPicky"; ValueType: string; ValueName: "CUDA_Patch_InstalledAt"; ValueData: "{code:GetPatchInstallTimestamp}"
+[Languages]
+Name: "chinesesimplified"; MessagesFile: "ChineseSimplified.isl"
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[CustomMessages]
+chinesesimplified.PatchTargetMissing=所选目录中未找到 SuperPicky.exe。请先安装 SuperPicky Full CPU 版本，再将 CUDA 补丁安装到该目录。
+english.PatchTargetMissing=SuperPicky.exe was not found in the selected folder. Install SuperPicky Full CPU first, then install the CUDA patch into that folder.
+chinesesimplified.PatchInternalMissing=所选目录中未找到 _internal 目录。该目录不像有效的 SuperPicky Full 安装目录。
+english.PatchInternalMissing=The _internal folder was not found in the selected folder. This does not look like a valid SuperPicky Full installation folder.
+
+[Files]
+; build_release_win.py 会把 CUDA 差异文件放在脚本同级目录；排除安装器资源和脚本本身。
+; build_release_win.py places CUDA delta files beside this script; exclude installer resources and the script itself.
+Source: "*"; DestDir: "{app}"; Excludes: "\img\*,\output\*,\*.iss,\ChineseSimplified.isl"; Flags: ignoreversion recursesubdirs
+
+[Run]
+Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
 
 [Code]
-const
-  AppRegistryKey = 'SOFTWARE\SuperPicky';
-  UninstallKeyAppId = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\SuperPicky';
-  UninstallKeyLegacy = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\SuperPicky_is1';
-  PatchManifestRelativePath = '_internal\cuda_patch_manifest.txt';
-
+function IsValidPatchTarget(const TargetDir: string; var ErrorMessage: string): Boolean;
 var
-  PreviousInstallDir: string;
-
-function QueryStringValue(const RootKey: Integer; const SubKey, ValueName: string; var Value: string): Boolean;
-begin
-  Result := RegQueryStringValue(RootKey, SubKey, ValueName, Value) and (Trim(Value) <> '');
-end;
-
-function QueryInstallDir(var Value: string): Boolean;
-begin
-  Result :=
-    QueryStringValue(HKLM64, AppRegistryKey, 'InstallDir', Value) or
-    QueryStringValue(HKLM64, UninstallKeyAppId, 'Inno Setup: App Path', Value) or
-    QueryStringValue(HKLM64, UninstallKeyLegacy, 'Inno Setup: App Path', Value) or
-    QueryStringValue(HKLM, AppRegistryKey, 'InstallDir', Value) or
-    QueryStringValue(HKLM, UninstallKeyAppId, 'Inno Setup: App Path', Value) or
-    QueryStringValue(HKLM, UninstallKeyLegacy, 'Inno Setup: App Path', Value) or
-    QueryStringValue(HKCU, AppRegistryKey, 'InstallDir', Value) or
-    QueryStringValue(HKCU, UninstallKeyAppId, 'Inno Setup: App Path', Value) or
-    QueryStringValue(HKCU, UninstallKeyLegacy, 'Inno Setup: App Path', Value);
-end;
-
-function NormalizePath(const Value: string): string;
-begin
-  Result := Trim(Value);
-  StringChangeEx(Result, '/', '\', True);
-  while (Length(Result) > 3) and (Result[Length(Result)] = '\') do
-    Delete(Result, Length(Result), 1);
-  Result := Uppercase(Result);
-end;
-
-function PathsEqual(const A, B: string): Boolean;
-begin
-  Result := NormalizePath(A) = NormalizePath(B);
-end;
-
-function ValidatePatchTarget(const TargetDir: string; var ErrorMessage: string): Boolean;
-var
-  ExpectedDir: string;
-  MainExePath: string;
+  NormalizedTargetDir: string;
 begin
   ErrorMessage := '';
-  MainExePath := AddBackslash(TargetDir) + 'SuperPicky.exe';
+  NormalizedTargetDir := AddBackslash(Trim(TargetDir));
 
-  if not FileExists(MainExePath) then
+  if not FileExists(NormalizedTargetDir + '{#MyAppExeName}') then
   begin
-    ErrorMessage := '所选目录中未找到 SuperPicky.exe，请先安装主程序，再将 CUDA 补丁安装到该目录。';
+    ErrorMessage := ExpandConstant('{cm:PatchTargetMissing}');
     Result := False;
     exit;
   end;
 
-  if QueryInstallDir(ExpectedDir) and (ExpectedDir <> '') and (not PathsEqual(ExpectedDir, TargetDir)) then
+  if not DirExists(NormalizedTargetDir + '_internal') then
   begin
-    ErrorMessage := '所选目录与注册表中的 SuperPicky 安装目录不一致。请将 CUDA 补丁安装到现有 SuperPicky 安装目录。';
+    ErrorMessage := ExpandConstant('{cm:PatchInternalMissing}');
     Result := False;
     exit;
   end;
 
   Result := True;
-end;
-
-function GetPatchInstallTimestamp(Param: string): string;
-begin
-  Result := GetDateTimeString('yyyy-mm-dd hh:nn:ss', '-', ':');
-end;
-
-function InitializeSetup(): Boolean;
-begin
-  PreviousInstallDir := '';
-  QueryInstallDir(PreviousInstallDir);
-  Result := True;
-end;
-
-procedure InitializeWizard;
-begin
-  if PreviousInstallDir <> '' then
-    WizardForm.DirEdit.Text := PreviousInstallDir;
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
@@ -147,7 +97,7 @@ begin
   if CurPageID <> wpSelectDir then
     exit;
 
-  Result := ValidatePatchTarget(WizardForm.DirEdit.Text, ErrorMessage);
+  Result := IsValidPatchTarget(WizardForm.DirEdit.Text, ErrorMessage);
   if not Result then
     MsgBox(ErrorMessage, mbCriticalError, MB_OK);
 end;
@@ -156,19 +106,8 @@ function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ErrorMessage: string;
 begin
-  if ValidatePatchTarget(ExpandConstant('{app}'), ErrorMessage) then
+  if IsValidPatchTarget(ExpandConstant('{app}'), ErrorMessage) then
     Result := ''
   else
     Result := ErrorMessage;
 end;
-
-[Files]
-Source: "{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "_internal\*"; DestDir: "{app}\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs
-
-[Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
-
-[Languages]
-Name: "chinesesimplified"; MessagesFile: "ChineseSimplified.isl"
-Name: "english"; MessagesFile: "compiler:Default.isl"
