@@ -31,13 +31,17 @@ build, this is the recommended version to settle on.
 **Completion Sound**
 - Optional sound when a batch finishes, so you can step away during long runs
 
+**Streamlined Updates**
+- In-app update checking is now turned off across all builds — to upgrade, download the new version from the official download page. This replaces the previous in-app auto-update and sidesteps stale-patch issues after upgrades.
+- Windows installers now wipe old program files before installing; a new Uninstaller tool is provided for switching between Lite and Full builds.
+
 ---
 
 ## Highlights since 4.1.0 (the 4.2.x line)
 
 - **Smart first-run wizard** with automatic AI-runtime selection (CUDA for NVIDIA, CPU otherwise)
 - **Windows Lite installer** (~190 MB) + a separate CUDA GPU package
-- **One-click in-app updates** with background download and integrity check
+- **One-click in-app updates** with background download and integrity check *(replaced in 4.3.0 — updates now go through the official website; see "Streamlined Updates" above)*
 - **Environment Repair** in Settings — re-run model prep without reinstalling
 - **ExifTool 13.55** — better RAW support for the latest cameras
 - **Smarter mirror selection** — optimized routing for China, official sources overseas
@@ -83,13 +87,17 @@ build, this is the recommended version to settle on.
 **完成提示音**
 - 批量处理完成时可选播放提示音，长任务期间可放心离开
 
+**简化的升级方式**
+- 所有版本均已关闭应用内更新检测 —— 升级请前往官网下载页获取新版本。这取代了原先的应用内自动更新，并规避了升级后旧补丁覆盖新代码的问题。
+- Windows 安装包升级时会先清空旧程序文件；并新增卸载工具，用于在 Lite 与 Full 之间切换。
+
 ---
 
 ## 自 4.1.0 以来的重点更新（4.2.x 系列）
 
 - **智能首启向导**，自动选择 AI 运行引擎（NVIDIA 走 CUDA，其余走 CPU）
 - **Windows Lite 安装包**（约 190 MB）+ 独立的 CUDA GPU 包
-- **一键应用内升级**：后台下载 + 完整性校验
+- **一键应用内升级**：后台下载 + 完整性校验 *（4.3.0 起已改为前往官网手动更新，详见上方「简化的升级方式」）*
 - **环境修复**：设置内一键重跑模型准备，无需重装
 - **ExifTool 13.55**：更好支持最新相机的 RAW
 - **更智能的镜像选择**：大陆优化路由，海外走官方源
