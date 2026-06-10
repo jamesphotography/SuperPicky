@@ -189,6 +189,200 @@ class BirdDatabaseManager:
             # avilist_map 表可能不存在（旧版数据库），静默降级
             return None
 
+    def get_gbif_rarity_by_scientific_name(
+        self, scientific_name: str
+    ) -> Optional[float]:
+        """
+        直接按学名查询「全球 GBIF 罕见度」（0-100 分），不经 model_class_id。
+
+        gbif_rarity_100 表自带 scientific_name 列，其学名取自 GBIF backbone，
+        与 BirdCountInfo.scientific_name（eBird/Clements 体系）并不完全一致。
+        因此「按学名直查 gbif」能命中一批「经 BirdCountInfo 跳转会丢」的种
+        （实测对 IOC 名覆盖 95.3% vs 经 BirdCountInfo 的 94.7%）。命中后同样
+        应用 core.rarity_tier.HARDCODE_OVERRIDES 学名级硬编码降级。
+
+        Args:
+            scientific_name: 学名/拉丁名，按库内存储原样匹配（区分大小写）。
+
+        Returns:
+            全球罕见度 (0-100, 越大越罕见)；未命中或无分数返回 None。
+
+        Fetch the global GBIF rarity score directly from gbif_rarity_100 by its
+        own scientific_name column, bypassing the BirdCountInfo → model_class_id
+        hop. Returns None on miss.
+        """
+        if not scientific_name:
+            return None
+        name = scientific_name.strip()
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT gbif_rarity_100, scientific_name FROM gbif_rarity_100 "
+                    "WHERE scientific_name = ? AND gbif_rarity_100 IS NOT NULL LIMIT 1",
+                    (name,),
+                )
+                row = cursor.fetchone()
+            if row and row[0] is not None:
+                try:
+                    from core.rarity_tier import get_score_override
+                    override = get_score_override(row[1])
+                    if override is not None:
+                        return override
+                except Exception:
+                    pass
+                return float(row[0])
+            return None
+        except Exception:
+            # gbif_rarity_100 表不存在（旧库）→ 静默降级 / Missing table → None.
+            return None
+
+    def get_extra_info_by_scientific_name(
+        self, scientific_name: str
+    ) -> Optional[Dict]:
+        """
+        按学名（拉丁名）查询鸟种的「罕见度 + IUCN + 简介」补充信息。
+
+        供「查询鸟名」面板使用：IOC 鸟名库与本库通过学名关联。
+        罕见度采用「直查 gbif 学名优先 + 经 model_class_id 回退」的并集策略
+        （实测 IOC 名覆盖 95.65%，高于任一单路径），IUCN 与简介仍依赖
+        BirdCountInfo 命中（经 model_class_id → avilist_map / short_description_zh）。
+
+        Args:
+            scientific_name: 学名/拉丁名，按库内存储原样匹配（区分大小写）。
+
+        Returns:
+            命中（罕见度或 BirdCountInfo 任一可得）返回字典：{
+                'model_class_id': Optional[int],        # BirdCountInfo 未命中时为 None
+                'gbif_rarity_100': Optional[float],     # 全球罕见度 0-100，越大越罕见
+                'iucn_category':   Optional[str],       # LC/NT/VU/EN/CR/...
+                'short_description_zh': Optional[str],  # 中文简介
+            }
+            罕见度与 BirdCountInfo 均未命中时返回 None（调用方显示「—」）。
+
+        Look up supplementary rarity / IUCN / intro info for a species by its
+        scientific name, taking the union of the direct-gbif and the
+        BirdCountInfo→model_class_id paths for rarity.
+        """
+        if not scientific_name:
+            return None
+        name = scientific_name.strip()
+
+        # 1) BirdCountInfo 命中拿 class_id + 简介（约 5% 学名差异会落空，不致命）
+        class_id: Optional[int] = None
+        description: Optional[str] = None
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT model_class_id, short_description_zh "
+                    "FROM BirdCountInfo WHERE scientific_name = ? LIMIT 1",
+                    (name,),
+                )
+                row = cursor.fetchone()
+            if row:
+                class_id, description = row[0], row[1]
+        except Exception as e:
+            # 不直接 return：仍尝试按学名直查罕见度 / Keep going for direct rarity.
+            print(_t("logs.db_query_failed", id=name, e=e))
+
+        # 2) 罕见度：直查 gbif 学名优先，未命中再经 model_class_id 回退
+        rarity = self.get_gbif_rarity_by_scientific_name(name)
+        if rarity is None and class_id is not None:
+            rarity = self.get_gbif_rarity_by_class_id(class_id)
+
+        # 3) IUCN：仅 BirdCountInfo 命中（拿到 class_id）时可查
+        iucn = self.get_iucn_by_class_id(class_id) if class_id is not None else None
+
+        # 罕见度与 BirdCountInfo 均落空 → 整体无补充信息
+        if class_id is None and rarity is None:
+            return None
+
+        return {
+            'model_class_id': class_id,
+            'gbif_rarity_100': rarity,
+            'iucn_category': iucn,
+            'short_description_zh': description,
+        }
+
+    def get_gbif_scores_by_scientific_names(
+        self, scientific_names: List[str]
+    ) -> Dict[str, float]:
+        """
+        批量按学名查询「全球 GBIF 罕见度」（0-100 分）。
+
+        供「查询鸟名」结果列表一次性给每行算罕见度图标用，避免逐行开连接。
+        覆盖策略与 get_extra_info_by_scientific_name 一致——直查 gbif 学名优先，
+        未命中的再经 BirdCountInfo.model_class_id 回退，取两者并集（实测对
+        IOC 名覆盖 95.65%）。仅返回成功匹配且有分数的项；同样应用
+        core.rarity_tier.HARDCODE_OVERRIDES 学名级硬编码降级。
+
+        Args:
+            scientific_names: 学名列表（自动去空白、去空项）。
+
+        Returns:
+            {scientific_name: gbif_rarity_100}，键为去空白后的学名，仅含命中项。
+
+        Batch-fetch global GBIF rarity for a list of scientific names in one
+        connection, taking the union of the direct-gbif and BirdCountInfo
+        fallback paths and applying the manual override table.
+        """
+        result: Dict[str, float] = {}
+        names = [n.strip() for n in scientific_names if n and n.strip()]
+        if not names:
+            return result
+
+        try:
+            from core.rarity_tier import get_score_override
+        except Exception:
+            def get_score_override(_n):  # type: ignore[misc]
+                return None
+
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+
+                # 1) 直查 gbif_rarity_100.scientific_name（覆盖更广）
+                placeholders = ",".join("?" * len(names))
+                cursor.execute(
+                    "SELECT scientific_name, gbif_rarity_100 FROM gbif_rarity_100 "
+                    f"WHERE scientific_name IN ({placeholders}) "
+                    "AND gbif_rarity_100 IS NOT NULL",
+                    names,
+                )
+                for sci, score in cursor.fetchall():
+                    if sci is None or score is None:
+                        continue
+                    override = get_score_override(sci)
+                    result[sci] = (
+                        float(override) if override is not None else float(score)
+                    )
+
+                # 2) 对直查未命中的学名，经 BirdCountInfo.model_class_id 回退
+                remaining = [n for n in names if n not in result]
+                if remaining:
+                    ph2 = ",".join("?" * len(remaining))
+                    cursor.execute(
+                        "SELECT b.scientific_name, g.scientific_name, g.gbif_rarity_100 "
+                        "FROM BirdCountInfo b "
+                        "JOIN gbif_rarity_100 g ON g.model_class_id = b.model_class_id "
+                        f"WHERE b.scientific_name IN ({ph2}) "
+                        "AND g.gbif_rarity_100 IS NOT NULL",
+                        remaining,
+                    )
+                    for query_name, gbif_name, score in cursor.fetchall():
+                        if query_name is None or score is None or query_name in result:
+                            continue
+                        override = get_score_override(gbif_name)
+                        result[query_name] = (
+                            float(override) if override is not None else float(score)
+                        )
+        except Exception:
+            # gbif_rarity_100 表不存在（旧库）→ 返回已有结果（可能为空）
+            # Missing gbif_rarity_100 table (legacy DB) → return what we have.
+            return result
+        return result
+
     def get_ebird_code_by_english_name(self, english_name: str) -> Optional[str]:
         """
         根据英文名获取eBird代码

@@ -29,10 +29,33 @@ from ui.styles import COLORS, FONTS
 from tools.i18n import get_i18n
 from config import get_birdname_settings_path, get_install_scoped_resource_path
 
+# 罕见度分级 / IUCN 展示复用既有组件（与识别详情面板保持一致的视觉与配色）
+# Reuse the existing rarity-tier and IUCN formatting helpers so this panel
+# matches the recognition detail panel visually.
+from core.rarity_tier import gbif_score_to_tier, tier_name, tier_icon, tier_color
+from ui.detail_panel import _format_iucn
+
 
 def get_birdname_db_path() -> str:
     """获取鸟类名称数据库路径"""
     return str(get_install_scoped_resource_path(os.path.join("ioc", "birdname.db")))
+
+
+def get_bird_reference_db_path() -> str:
+    """
+    获取 birdid 参考库 bird_reference.sqlite 的路径（罕见度/IUCN/简介数据源）。
+
+    与 get_birdname_db_path 一样借助 get_install_scoped_resource_path 跨
+    Windows Lite 安装目录、PyInstaller bundle、源码目录三种环境解析。
+
+    Return the path to the birdid reference DB (rarity / IUCN / intro source),
+    resolved across install-scoped, frozen and source environments.
+    """
+    return str(
+        get_install_scoped_resource_path(
+            os.path.join("birdid", "data", "bird_reference.sqlite")
+        )
+    )
 
 
 def get_birdname_ini_path() -> str:
@@ -87,21 +110,88 @@ class ClickableLabel(QLabel):
 
 
 class BirdResultCard(QFrame):
-    """单个鸟类搜索结果卡片 - 固定高度，点击复制"""
+    """
+    单个鸟类搜索结果卡片 - 固定高度。
+
+    左侧中/英文名点击可复制（ClickableLabel）；整卡点击发 selected 信号，
+    供上层展开下方详情。右侧显示一个罕见度分级图标（○◔◑◕●），无数据则不显示。
+
+    A single search-result card: clickable Chinese/English names (copy), a
+    rarity-tier glyph on the right, and a `selected` signal emitted on click so
+    the parent can expand the detail area below the list.
+    """
 
     CARD_HEIGHT = 52
 
-    def __init__(self, bird_data: Dict, parent=None):
+    # 整卡被点击时发出，携带本行 bird_data（含 latin_name 供查补充信息）
+    # Emitted on card click, carrying this row's bird_data (incl. latin_name).
+    selected = Signal(dict)
+
+    def __init__(
+        self, bird_data: Dict, tier_index: Optional[int] = None, parent=None
+    ):
         super().__init__(parent)
         self.bird_data = bird_data
+        self._is_selected = False
 
         self.setFixedHeight(self.CARD_HEIGHT)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setCursor(Qt.PointingHandCursor)
+        self._apply_style(False)
 
+        root = QHBoxLayout(self)
+        root.setContentsMargins(10, 6, 10, 6)
+        root.setSpacing(8)
+
+        text_col = QVBoxLayout()
+        text_col.setContentsMargins(0, 0, 0, 0)
+        text_col.setSpacing(2)
+
+        cn_name = bird_data.get("chinese_name", "")
+        if cn_name:
+            cn_color = COLORS["text_primary"]
+            self.cn_label = ClickableLabel(cn_name, cn_color)
+            self.cn_label.setStyleSheet(
+                f"color: {cn_color}; font-size: 13px; font-weight: 500; "
+                f"background: transparent;"
+            )
+            self.cn_label.clicked.connect(lambda: self._copy_text(cn_name))
+            text_col.addWidget(self.cn_label)
+
+        en_name = bird_data.get("english_name", "")
+        if en_name:
+            en_color = COLORS["text_secondary"]
+            self.en_label = ClickableLabel(en_name, en_color)
+            self.en_label.setStyleSheet(
+                f"color: {en_color}; font-size: 11px; background: transparent;"
+            )
+            self.en_label.clicked.connect(lambda: self._copy_text(en_name))
+            text_col.addWidget(self.en_label)
+
+        root.addLayout(text_col, 1)
+
+        # 右侧罕见度图标（仅在拿到分级时显示），颜色随分级 gray→green→…→red
+        # Rarity glyph on the right, shown only when a tier is available.
+        if tier_index is not None:
+            color = tier_color(tier_index) or COLORS["text_secondary"]
+            self.rarity_label = QLabel(tier_icon(tier_index))
+            self.rarity_label.setAlignment(Qt.AlignCenter)
+            self.rarity_label.setFixedWidth(22)
+            self.rarity_label.setToolTip(tier_name(tier_index))
+            self.rarity_label.setStyleSheet(
+                f"color: {color}; font-size: 16px; background: transparent; "
+                f"border: none;"
+            )
+            root.addWidget(self.rarity_label, 0, Qt.AlignVCenter)
+
+    def _apply_style(self, selected: bool):
+        """根据选中态切换边框/背景；未选中保留 hover 高亮。"""
+        border = COLORS["accent"] if selected else COLORS["border"]
+        bg = COLORS["bg_elevated"] if selected else COLORS["bg_card"]
         self.setStyleSheet(f"""
             BirdResultCard {{
-                background-color: {COLORS['bg_card']};
-                border: 1px solid {COLORS['border']};
+                background-color: {bg};
+                border: 1px solid {border};
                 border-radius: 4px;
             }}
             BirdResultCard:hover {{
@@ -110,27 +200,17 @@ class BirdResultCard(QFrame):
             }}
         """)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 6, 10, 6)
-        layout.setSpacing(2)
+    def set_selected(self, selected: bool):
+        """设置选中态并刷新样式（由上层在选中变化时调用）。"""
+        if self._is_selected == selected:
+            return
+        self._is_selected = selected
+        self._apply_style(selected)
 
-        cn_name = bird_data.get("chinese_name", "")
-        if cn_name:
-            cn_color = COLORS["text_primary"]
-            self.cn_label = ClickableLabel(cn_name, cn_color)
-            self.cn_label.setStyleSheet(
-                f"color: {cn_color}; font-size: 13px; font-weight: 500;"
-            )
-            self.cn_label.clicked.connect(lambda: self._copy_text(cn_name))
-            layout.addWidget(self.cn_label)
-
-        en_name = bird_data.get("english_name", "")
-        if en_name:
-            en_color = COLORS["text_secondary"]
-            self.en_label = ClickableLabel(en_name, en_color)
-            self.en_label.setStyleSheet(f"color: {en_color}; font-size: 11px;")
-            self.en_label.clicked.connect(lambda: self._copy_text(en_name))
-            layout.addWidget(self.en_label)
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.selected.emit(self.bird_data)
+        super().mousePressEvent(event)
 
     def _copy_text(self, text: str):
         QApplication.clipboard().setText(text)
@@ -146,8 +226,32 @@ class BirdNameSearchWidget(QWidget):
         self.current_version_id = None
         self._loading_versions = False
 
+        # 当前结果卡片与选中卡片（用于选中高亮 + 展开详情）
+        # Current result cards and the selected one (highlight + detail expand).
+        self._cards: List[BirdResultCard] = []
+        self._selected_card: Optional[BirdResultCard] = None
+
+        # 参考库管理器（罕见度/IUCN/简介数据源）。缺库或加载失败时降级为 None，
+        # 此时列表不显示罕见度图标、不展开详情，搜索功能照常可用。
+        # Reference-DB manager (rarity/IUCN/intro). Degrades to None on missing
+        # DB or load failure; search still works, just without the extras.
+        self.db_manager = self._init_db_manager()
+
         self._setup_ui()
         self._load_versions()
+
+    @staticmethod
+    def _init_db_manager():
+        """尝试创建 BirdDatabaseManager；缺库或异常时返回 None（静默降级）。"""
+        try:
+            ref_path = get_bird_reference_db_path()
+            if not os.path.exists(ref_path):
+                return None
+            # 延迟导入：BirdDatabaseManager 仅依赖 sqlite3 + i18n，不引入 torch。
+            from birdid.bird_database_manager import BirdDatabaseManager
+            return BirdDatabaseManager(ref_path)
+        except Exception:
+            return None
 
     def _setup_ui(self):
         """设置UI"""
@@ -319,7 +423,15 @@ class BirdNameSearchWidget(QWidget):
 
         results_area_layout.addWidget(self.results_scroll)
 
-        main_layout.addWidget(self.results_area, 1)
+        main_layout.addWidget(self.results_area, 3)
+
+        # 详情展开区：选中某条结果后在列表下方展示「罕见度 / IUCN / 简介」，
+        # 视觉对齐识别详情面板。未选中时隐藏，不占空间；显示时与列表按 3:2
+        # 分享纵向空间，保证简介有足够高度并能滚动。
+        # Detail area shown below the list when a row is selected; it shares the
+        # vertical space with the list (3:2) so the intro has room to scroll.
+        self._build_detail_panel()
+        main_layout.addWidget(self.detail_frame, 2)
 
         self.stats_label = QLabel("")
         self.stats_label.setFixedHeight(16)
@@ -329,6 +441,106 @@ class BirdNameSearchWidget(QWidget):
         """)
         self.stats_label.hide()
         main_layout.addWidget(self.stats_label)
+
+    def _build_detail_panel(self):
+        """
+        构建详情展开区（默认隐藏）。
+
+        包含：标题行（中文名 + 学名）、罕见度行（图标+分级名+分数）、
+        IUCN 行（等级文本，带配色）、简介区（可滚动、自动换行）。
+        Build the (initially hidden) detail area: header, rarity row, IUCN row
+        and a scrollable Chinese intro.
+        """
+        self.detail_frame = QFrame()
+        # 可伸展 + 最小高度：去掉旧的 190 硬上限，避免简介区被压到只剩几十像素。
+        # Expanding with a sensible minimum so the intro area is never starved.
+        self.detail_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.detail_frame.setMinimumHeight(220)
+        self.detail_frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {COLORS['bg_card']};
+                border: 1px solid {COLORS['border_subtle']};
+                border-radius: 8px;
+            }}
+        """)
+        v = QVBoxLayout(self.detail_frame)
+        v.setContentsMargins(10, 8, 10, 8)
+        v.setSpacing(6)
+
+        # 标题：中文名 + 学名（学名灰色、斜体感）
+        self.detail_header = QLabel("")
+        self.detail_header.setWordWrap(True)
+        self.detail_header.setStyleSheet(
+            f"color: {COLORS['text_primary']}; font-size: 13px; "
+            f"font-weight: 600; background: transparent; border: none;"
+        )
+        v.addWidget(self.detail_header)
+
+        # 罕见度行
+        self.detail_rarity_label = self._make_detail_row(v, "罕见度")
+        # IUCN 行
+        self.detail_iucn_label = self._make_detail_row(v, "IUCN")
+
+        # 简介标题
+        intro_caption = QLabel("简介")
+        intro_caption.setStyleSheet(
+            f"color: {COLORS['text_tertiary']}; font-size: 10px; "
+            f"font-weight: 600; background: transparent; border: none;"
+        )
+        v.addWidget(intro_caption)
+
+        # 简介内容（滚动 + 自动换行）。显式开垂直滚动条 AsNeeded + 给最小高度，
+        # 确保长简介可滚动、短简介不留大片空白。
+        # Vertical scrollbar AsNeeded + a minimum height so long intros scroll.
+        intro_scroll = QScrollArea()
+        intro_scroll.setWidgetResizable(True)
+        intro_scroll.setMinimumHeight(90)
+        intro_scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        intro_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        intro_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        intro_scroll.setStyleSheet(f"""
+            QScrollArea {{ border: none; background: transparent; }}
+            QScrollBar:vertical {{
+                background: transparent; width: 6px; border-radius: 3px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {COLORS['border']}; border-radius: 3px; min-height: 20px;
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
+        """)
+        self.detail_intro_label = QLabel("—")
+        self.detail_intro_label.setWordWrap(True)
+        self.detail_intro_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        self.detail_intro_label.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 11px; "
+            f"line-height: 150%; background: transparent; border: none;"
+        )
+        intro_scroll.setWidget(self.detail_intro_label)
+        v.addWidget(intro_scroll, 1)
+
+        self.detail_frame.hide()
+
+    @staticmethod
+    def _make_detail_row(parent_layout: QVBoxLayout, caption: str) -> QLabel:
+        """生成一行「灰色小标题 + 值标签」，返回可后续更新的值标签。"""
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+        cap = QLabel(caption)
+        cap.setFixedWidth(44)
+        cap.setStyleSheet(
+            f"color: {COLORS['text_tertiary']}; font-size: 10px; "
+            f"font-weight: 600; background: transparent; border: none;"
+        )
+        row.addWidget(cap, 0, Qt.AlignVCenter)
+        value = QLabel("—")
+        value.setStyleSheet(
+            f"color: {COLORS['text_muted']}; font-size: 12px; "
+            f"background: transparent; border: none;"
+        )
+        row.addWidget(value, 1)
+        parent_layout.addLayout(row)
+        return value
 
     def _load_versions(self):
         """加载版本列表，并还原上次选择的版本"""
@@ -468,8 +680,8 @@ class BirdNameSearchWidget(QWidget):
         self.empty_label.hide()
         self.results_scroll.show()
 
-        for row in results:
-            bird_data = {
+        bird_rows = [
+            {
                 "bird_id": row["bird_id"],
                 "chinese_name": row["chinese_name"],
                 "english_name": row["english_name"],
@@ -477,16 +689,116 @@ class BirdNameSearchWidget(QWidget):
                 "pinyin_name": row["pinyin_name"],
                 "abbreviation": row["abbreviation"],
             }
-            self.results_layout.addWidget(BirdResultCard(bird_data))
+            for row in results
+        ]
+
+        # 一次性批量查全部行的全球罕见度（避免逐行开连接），再按学名取分级
+        # Batch-fetch global rarity for every row in one go, then derive tiers.
+        score_map: Dict[str, float] = {}
+        if self.db_manager:
+            latins = [b["latin_name"] for b in bird_rows if b["latin_name"]]
+            if latins:
+                try:
+                    score_map = self.db_manager.get_gbif_scores_by_scientific_names(
+                        latins
+                    )
+                except Exception:
+                    score_map = {}
+
+        for bird_data in bird_rows:
+            latin = (bird_data["latin_name"] or "").strip()
+            score = score_map.get(latin)
+            tier = gbif_score_to_tier(score) if score is not None else None
+            card = BirdResultCard(bird_data, tier_index=tier)
+            card.selected.connect(self._on_card_selected)
+            self.results_layout.addWidget(card)
+            self._cards.append(card)
 
         self.stats_label.setText(f"找到 {len(results)} 个结果")
         self.stats_label.show()
+
+    def _on_card_selected(self, bird_data: Dict):
+        """某行被点击：更新选中高亮并展开下方详情。"""
+        target = None
+        for card in self._cards:
+            is_target = card.bird_data is bird_data
+            card.set_selected(is_target)
+            if is_target:
+                target = card
+        self._selected_card = target
+        self._show_detail(bird_data)
+
+    def _show_detail(self, bird_data: Dict):
+        """查补充信息并填充详情区；无库/无匹配/无数据时各字段显示「—」。"""
+        cn = bird_data.get("chinese_name") or ""
+        en = bird_data.get("english_name") or ""
+        latin = (bird_data.get("latin_name") or "").strip()
+
+        # 标题：「中文名  学名」，无中文名时退回英文名
+        title = cn or en or latin or "—"
+        if latin:
+            title = f"{title}　<span style='color:{COLORS['text_muted']};'>{latin}</span>"
+        self.detail_header.setText(title)
+
+        info = None
+        if self.db_manager and latin:
+            try:
+                info = self.db_manager.get_extra_info_by_scientific_name(latin)
+            except Exception:
+                info = None
+
+        # 罕见度
+        score = info.get("gbif_rarity_100") if info else None
+        if score is not None:
+            tier = gbif_score_to_tier(score)
+            color = tier_color(tier) or COLORS["text_primary"]
+            self.detail_rarity_label.setText(
+                f"{tier_icon(tier)} {tier_name(tier)} ({score:.1f})"
+            )
+            self.detail_rarity_label.setStyleSheet(
+                f"color: {color}; font-size: 12px; font-weight: 600; "
+                f"background: transparent; border: none;"
+            )
+        else:
+            self._reset_detail_value(self.detail_rarity_label)
+
+        # IUCN
+        iucn = info.get("iucn_category") if info else None
+        if iucn:
+            text, color = _format_iucn(iucn, True)
+            self.detail_iucn_label.setText(text)
+            self.detail_iucn_label.setStyleSheet(
+                f"color: {color}; font-size: 12px; font-weight: 600; "
+                f"background: transparent; border: none;"
+            )
+        else:
+            self._reset_detail_value(self.detail_iucn_label)
+
+        # 简介
+        desc = (info.get("short_description_zh") if info else None) or ""
+        desc = desc.strip()
+        self.detail_intro_label.setText(desc if desc else "—")
+
+        self.detail_frame.show()
+
+    @staticmethod
+    def _reset_detail_value(label: QLabel):
+        """把某个值标签恢复为灰色「—」占位。"""
+        label.setText("—")
+        label.setStyleSheet(
+            f"color: {COLORS['text_muted']}; font-size: 12px; "
+            f"background: transparent; border: none;"
+        )
 
     def _clear_results(self):
         while self.results_layout.count():
             item = self.results_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
+        self._cards = []
+        self._selected_card = None
+        if hasattr(self, "detail_frame"):
+            self.detail_frame.hide()
         self.results_scroll.hide()
         self.empty_label.setText("请在上方输入关键词搜索")
         self.empty_label.show()
