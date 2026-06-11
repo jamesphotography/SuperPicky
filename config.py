@@ -673,8 +673,9 @@ def get_best_device():
     """
     返回当前环境下最合适的 Torch 设备对象 / Return the most appropriate Torch device object for the current environment.
 
-    顺序为：macOS 先 MPS 再 CPU，其他平台先 CUDA 再 CPU。
-    The order is: on macOS use MPS then CPU, on other platforms use CUDA then CPU.
+    顺序为：Apple Silicon 先 MPS 再 CPU，Intel Mac 直接 CPU，其他平台先 CUDA 再 CPU。
+    The order is: Apple Silicon uses MPS then CPU, Intel Mac uses CPU directly,
+    other platforms use CUDA then CPU.
 
     任意检测异常时保守回退到 CPU。
     On any detection failure, conservatively fall back to CPU.
@@ -685,7 +686,18 @@ def get_best_device():
             return _FallbackDevice("cpu")
         system = platform.system()
         if system == "Darwin":
-            if torch_module.backends.mps.is_available():
+            # 仅 Apple Silicon (arm64) 使用 MPS。Intel Mac 的 MPS 后端跑在老款
+            # AMD 独显（如 Radeon Pro 580X / GCN4）上：FP16 比 FP32 慢约 38×，
+            # 且 torchvision::nms 在 MPS 未实现需回退 CPU 重算，整体远慢于纯 CPU，
+            # 因此 Intel Mac 直接走 CPU（FP32）。
+            # Only Apple Silicon (arm64) uses MPS. On Intel Macs the MPS backend
+            # runs on legacy AMD dGPUs (e.g. Radeon Pro 580X / GCN4) where FP16 is
+            # ~38x slower than FP32 and torchvision::nms is unimplemented (forcing a
+            # CPU re-run), making MPS far slower than plain CPU — so Intel Mac uses CPU.
+            if (
+                platform.machine() == "arm64"
+                and torch_module.backends.mps.is_available()
+            ):
                 return torch_module.device("mps")
             return torch_module.device("cpu")
 

@@ -1595,8 +1595,14 @@ class PhotoProcessor:
         try:
             import torch as _torch_module
             import gc as _gc_module
-            _use_mps = hasattr(_torch_module, 'backends') and _torch_module.backends.mps.is_available()
-            _use_cuda = not _use_mps and _torch_module.cuda.is_available()
+            # 以 get_best_device() 为唯一真相源，与 Intel Mac 走 CPU 的策略保持一致，
+            # 避免 raw mps.is_available() 在 Intel+老 AMD 卡上误报 True 而做无谓的 mps 缓存清理。
+            # Use get_best_device() as the single source of truth so Intel Macs (which run on
+            # CPU) don't trigger pointless MPS cache clears from a raw is_available() check.
+            from config import get_best_device
+            _device_type = get_best_device().type
+            _use_mps = (_device_type == 'mps')
+            _use_cuda = (_device_type == 'cuda')
             _cache_interval = 50 if _use_mps else 200
         except Exception:
             _torch_module = None
