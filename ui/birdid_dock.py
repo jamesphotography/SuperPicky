@@ -391,6 +391,10 @@ class BirdIDDockWidget(QDockWidget):
         self._setup_title_bar()
 
         self.worker = None
+        # 用于持住已退休但仍在运行的 worker 引用，防止 GC 析构运行中的 QThread
+        # Keeps references to retired but still-running workers to prevent GC from
+        # destructing a running QThread (which calls qFatal and aborts).
+        self._retired_workers: list = []
         self.current_image_path = None
         self.identify_results = None
 
@@ -1289,10 +1293,26 @@ class BirdIDDockWidget(QDockWidget):
             try:
                 self.worker.finished.disconnect()
                 self.worker.error.disconnect()
-            except:
+            except Exception:
                 pass
             if self.worker.isRunning():
-                self.worker.wait(1000)
+                # 线程仍在运行：不能直接置 None（GC 析构运行中 QThread 会 qFatal 崩溃）
+                # 将其移入退休列表持住引用，等线程自然结束后通过 finished 信号自清理。
+                # Thread still running: setting None would let GC destruct a live QThread
+                # (which calls qFatal). Move it to _retired_workers to keep a reference
+                # alive; the finished signal will remove it once the thread ends.
+                old_worker = self.worker
+                self._retired_workers.append(old_worker)
+
+                def _retire(w=old_worker):
+                    """线程结束后从退休列表移除 / Remove from retired list when done."""
+                    try:
+                        self._retired_workers.remove(w)
+                    except ValueError:
+                        pass
+
+                old_worker.finished.connect(_retire)
+                old_worker.error.connect(lambda _e, w=old_worker: _retire(w))
             self.worker = None
 
         use_ebird = self.ebird_checkbox.isChecked()
@@ -1695,6 +1715,36 @@ class BirdIDDockWidget(QDockWidget):
                 selected = self.identify_results[self.selected_index]
                 self.status_label.setText(f"✓ {selected['cn_name']} ({selected['confidence']:.0f}%)")
                 self.status_label.setStyleSheet(f"font-size: 11px; color: {COLORS['success']};")
+
+    def cleanup(self):
+        """退出时清理所有后台识别线程，防止运行中的 QThread 被 GC 析构崩溃。
+
+        供 main_window._cleanup_on_quit() 在程序退出前调用。
+        Called by main_window._cleanup_on_quit() before the app exits.
+        """
+        # 断开并等待当前活跃 worker
+        # Disconnect and wait for the currently active worker.
+        if self.worker is not None:
+            try:
+                self.worker.finished.disconnect()
+                self.worker.error.disconnect()
+            except Exception:
+                pass
+            if self.worker.isRunning():
+                self.worker.wait(5000)
+            self.worker = None
+
+        # 等待所有退休但仍在运行的 worker
+        # Wait for all retired workers that may still be running.
+        for w in list(self._retired_workers):
+            try:
+                w.finished.disconnect()
+                w.error.disconnect()
+            except Exception:
+                pass
+            if w.isRunning():
+                w.wait(3000)
+        self._retired_workers.clear()
 
 
     def _switch_tab(self, index: int):

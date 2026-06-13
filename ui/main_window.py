@@ -1097,7 +1097,23 @@ class SuperPickyMainWindow(QMainWindow):
                 self._results_browser.cleanup()
             except Exception as e:
                 print(f"⚠️  Results browser cleanup failed: {e}")
+
+        # 先于 Python 解释器析构清理 QThread 密集型组件，防止 SIGABRT 崩溃
+        # Clean up QThread-heavy components before Python finalizer destructs them,
+        # preventing SIGABRT (QThread destroyed while still running -> qFatal).
+        if hasattr(self, 'birdid_dock') and self.birdid_dock is not None:
+            try:
+                self.birdid_dock.cleanup()
+            except Exception as e:
+                print(f"⚠️  BirdID dock cleanup failed: {e}")
+        if hasattr(self, '_video_analyzer_window') and self._video_analyzer_window is not None:
+            try:
+                self._video_analyzer_window.cleanup()
+            except Exception as e:
+                print(f"⚠️  Video analyzer cleanup failed: {e}")
+
         self._stop_birdid_server()        # 停止 Flask/BirdID 进程
+
         
         # 清理 ExifTool 进程
         try:

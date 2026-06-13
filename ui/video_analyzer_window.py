@@ -800,6 +800,25 @@ class VideoAnalyzerWindow(QMainWindow):
 
     # ── 关闭处理 / Close handler ──────────────────────────────────────
 
+    def cleanup(self):
+        """退出时优雅停止后台分析线程，防止运行中的 QThread 被 GC 析构崩溃。
+
+        供 main_window._cleanup_on_quit() 在程序退出前调用，
+        也在 closeEvent 中复用，避免重复逻辑。
+        Called by main_window._cleanup_on_quit() before the app exits,
+        and reused by closeEvent to avoid duplicated cleanup logic.
+        """
+        if self._worker is not None:
+            try:
+                self._worker.finished.disconnect()
+                self._worker.error.disconnect()
+            except Exception:
+                pass
+            if self._worker.isRunning():
+                self._worker.request_stop()
+                self._worker.wait(5000)
+            self._worker = None
+
     def closeEvent(self, event):
         if self._worker and self._worker.isRunning():
             reply = QMessageBox.question(
@@ -810,9 +829,12 @@ class VideoAnalyzerWindow(QMainWindow):
             if reply != QMessageBox.StandardButton.Yes:
                 event.ignore()
                 return
-            self._worker.request_stop()
-            self._worker.wait(3000)
+            # 复用 cleanup() 确保线程安全退出
+            # Reuse cleanup() to ensure thread is safely stopped before destruction.
+            self.cleanup()
         event.accept()
+
+
 
 
 # ============================================================================
