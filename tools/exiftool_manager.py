@@ -1225,55 +1225,63 @@ class ExifToolManager:
                 if not valid_files:
                     continue
 
-            # 构建批量重置参数 (V4.0.6: 使用常驻进程)
-            batch_args = []
-            for f in valid_files:
-                batch_args.extend([
-                    '-Rating=',
-                    '-XMP:Pick=',
-                    '-XMP:Label=',
-                    '-XMP:City=',
-                    '-XMP:State=',
-                    '-XMP:Country=',
-                    '-XMP:Description=',
-                    '-XMP:Title=',
-                    '-IPTC:City=',
-                    '-IPTC:Country-PrimaryLocationName=',
-                    '-IPTC:Province-State=',
-                    '-overwrite_original_in_place',
-                    f,
-                    '-execute'
-                ])
+            # 构建单次批量 execute：所有文件共用一个 -execute，避免 N 次往返。
+            # 标志位列出一次，所有文件路径追加在后，最后跟 -execute。
+            # -overwrite_original_in_place 已在 _start_process 的 -common_args 中；
+            # 此处不重复，减少参数量。
+            # Build a single -execute for all files to avoid N round-trips.
+            # Flags are listed once; all file paths follow; one -execute at the end.
+            batch_args = [
+                '-Rating=',
+                '-XMP:Pick=',
+                '-XMP:Label=',
+                '-XMP:City=',
+                '-XMP:State=',
+                '-XMP:Country=',
+                '-XMP:Description=',
+                '-XMP:Title=',
+                '-IPTC:City=',
+                '-IPTC:Country-PrimaryLocationName=',
+                '-IPTC:Province-State=',
+            ]
+            batch_args.extend(valid_files)
+            batch_args.append('-execute')
 
             try:
-                # 统计 execute 的次数
-                num_execs = batch_args.count('-execute')
-                
                 with self._lock:
                     self._start_process()
                     if not self._process:
                         raise RuntimeError("Process not started")
-                    
+
                     cmd_str = '\n'.join(batch_args) + '\n'
                     self._process.stdin.write(cmd_str.encode('utf-8'))
                     self._process.stdin.flush()
-                    
-                    # 批量读取 ready
-                    error_count = 0
-                    for _ in range(num_execs):
-                        output = self._read_until_ready(timeout=60)
-                        decoded = output.decode('utf-8', errors='replace')
-                        if "Error" in decoded and "Warning" not in decoded:
-                            error_count += 1
-                    
-                    batch_success = num_execs - error_count
-                    stats['success'] += batch_success
-                    stats['failed'] += error_count
-                    
-                    if i18n:
-                        log(i18n.t("logs.batch_progress", start=batch_start+1, end=batch_end, success=batch_success, skipped=0))
-                    else:
-                        log(f"  ✅ 批次 {batch_start+1}-{batch_end}: {batch_success} 个文件已处理")
+
+                    # 单次 -execute，读一次 {ready} / Single -execute, one {ready} read.
+                    output = self._read_until_ready(timeout=60)
+                    decoded = output.decode('utf-8', errors='replace')
+
+                # 锁已释放，再做日志和统计，不阻塞其他 ExifTool 调用。
+                # Lock released; compute stats and log without holding it.
+                import re as _re
+                m = _re.search(r'(\d+)\s+image files?\s+updated', decoded)
+                updated_count = int(m.group(1)) if m else 0
+                error_lines = [
+                    ln for ln in decoded.splitlines()
+                    if 'Error' in ln and 'Warning' not in ln and ln.strip()
+                ]
+                error_count = len(error_lines)
+                # 未能解析更新数（文件本已无元数据可清除）时按全成功算。
+                # If updated count cannot be parsed, treat all files as success.
+                batch_success = updated_count if (updated_count > 0 or error_count > 0) else len(valid_files)
+
+                stats['success'] += batch_success
+                stats['failed'] += error_count
+
+                if i18n:
+                    log(i18n.t("logs.batch_progress", start=batch_start+1, end=batch_end, success=batch_success, skipped=0))
+                else:
+                    log(f"  ✅ 批次 {batch_start+1}-{batch_end}: {batch_success} 个文件已处理")
 
             except Exception as e:
                 stats['failed'] += len(valid_files)
