@@ -1,0 +1,1030 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-lang="cn">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>第 05 章 读懂选鸟结果 - SuperPicky 慧眼选鸟 4.3.0 教程</title>
+    <meta name="description" content="SuperPicky 慧眼选鸟 4.3.0 选鸟结果详解：0–3 星定义、Pick 精选标记算法、连拍分组结构、输出目录布局与 EXIF 写入字段">
+    <link rel="stylesheet" href="../../css/style.css?v=20260612">
+    <link rel="icon" href="../../img/icon.png" type="image/png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        /* ── 章节页通用结构 ── */
+        .chapter-header-bar { padding: 100px 0 0; }
+
+        .breadcrumb {
+            font-size: 13px;
+            color: var(--text-tertiary);
+            margin-bottom: 40px;
+        }
+        .breadcrumb a {
+            color: var(--text-tertiary);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+        .breadcrumb a:hover { color: var(--accent); }
+        .breadcrumb span { margin: 0 6px; }
+
+        .chapter-hero {
+            padding: 40px 0 52px;
+            border-bottom: 1px solid var(--border-subtle);
+            margin-bottom: 52px;
+        }
+        .chapter-num-display {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--accent);
+            letter-spacing: 0.1em;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .chapter-hero h1 {
+            font-size: clamp(28px, 4vw, 44px);
+            font-weight: 700;
+            letter-spacing: -1px;
+            line-height: 1.2;
+            margin-bottom: 16px;
+            background: linear-gradient(135deg, var(--text-primary) 0%, var(--text-secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .chapter-hero p.subtitle {
+            font-size: 17px;
+            color: var(--text-secondary);
+            line-height: 1.7;
+            max-width: 640px;
+        }
+
+        /* ── 章节内目录 ── */
+        .chapter-toc {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 52px;
+        }
+        .chapter-toc a {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 14px;
+            border-radius: 999px;
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-elevated);
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 13px;
+            transition: all 0.18s ease;
+        }
+        .chapter-toc a:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+        .chapter-toc a .sec-num {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: var(--accent);
+        }
+
+        /* ── 正文内容 ── */
+        .chapter-body { padding: 0 0 80px; }
+
+        .content-section {
+            margin-bottom: 60px;
+            padding-bottom: 52px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .content-section:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+        }
+
+        .section-label-tag {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--accent);
+            letter-spacing: 0.08em;
+            display: block;
+            margin-bottom: 10px;
+        }
+
+        .section-heading {
+            font-size: 22px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 20px;
+            line-height: 1.3;
+        }
+
+        .content-section p {
+            font-size: 15px;
+            line-height: 1.9;
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+        }
+        .content-section p:last-child { margin-bottom: 0; }
+        .content-section strong { color: var(--text-primary); }
+
+        /* ── 表格 ── */
+        .content-table {
+            width: 100%;
+            border-collapse: collapse;
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            border: 1px solid var(--border-subtle);
+            margin: 20px 0;
+            font-size: 14px;
+        }
+        .content-table thead th {
+            background: var(--bg-card);
+            padding: 11px 16px;
+            text-align: left;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            border-bottom: 1px solid var(--border);
+        }
+        .content-table tbody td {
+            padding: 13px 16px;
+            line-height: 1.65;
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--border-subtle);
+            vertical-align: top;
+        }
+        .content-table tbody tr:last-child td { border-bottom: none; }
+        .content-table tbody tr:hover td { background: rgba(255,255,255,0.015); }
+        .content-table td:first-child {
+            color: var(--text-primary);
+            font-weight: 500;
+            white-space: nowrap;
+        }
+
+        /* ── 功能列表 ── */
+        .feature-list {
+            list-style: none;
+            padding: 0;
+            margin: 16px 0;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .feature-list li {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            font-size: 15px;
+            line-height: 1.7;
+            color: var(--text-secondary);
+            padding: 12px 16px;
+            background: var(--bg-elevated);
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border-subtle);
+        }
+        .feature-list li .f-num {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: var(--accent);
+            background: var(--accent-dim);
+            border-radius: 4px;
+            padding: 2px 6px;
+            flex-shrink: 0;
+            margin-top: 3px;
+        }
+
+        /* ── 提示框 ── */
+        .tip-box {
+            padding: 16px 20px;
+            border-radius: var(--radius-md);
+            border-left: 3px solid;
+            margin: 20px 0;
+            font-size: 14px;
+            line-height: 1.8;
+        }
+        .tip-box.info    { background: rgba(0, 212, 170, 0.05);  border-color: var(--accent); }
+        .tip-box.warning { background: rgba(245, 158, 11, 0.05); border-color: #f59e0b; }
+        .tip-box-label {
+            font-size: 10px;
+            font-weight: 700;
+            font-family: var(--font-mono);
+            letter-spacing: 0.1em;
+            margin-bottom: 6px;
+            display: block;
+        }
+        .tip-box.info    .tip-box-label { color: var(--accent); }
+        .tip-box.warning .tip-box-label { color: #f59e0b; }
+        .tip-box p { margin: 0; color: var(--text-secondary); font-size: 14px; }
+        .tip-box p + p { margin-top: 8px; }
+
+        /* ── 代码块（目录树） ── */
+        .code-block {
+            font-family: var(--font-mono);
+            font-size: 12.5px;
+            background: #09090f;
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            padding: 20px 24px;
+            margin: 20px 0;
+            overflow-x: auto;
+            line-height: 2;
+            color: var(--text-secondary);
+            white-space: pre;
+        }
+        .code-block .cb-dir  { color: var(--accent); }
+        .code-block .cb-file { color: var(--text-secondary); }
+        .code-block .cb-note { color: var(--text-tertiary); }
+        .code-block .cb-hi   { color: #fbbf24; }
+
+        /* ── Pick 步骤图示 ── */
+        .pick-steps {
+            display: flex;
+            align-items: center;
+            gap: 0;
+            margin: 20px 0;
+            flex-wrap: wrap;
+        }
+        .pick-step {
+            flex: 1;
+            min-width: 160px;
+            padding: 16px 18px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            font-size: 13px;
+            line-height: 1.7;
+            color: var(--text-secondary);
+        }
+        .pick-step .ps-label {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: var(--accent);
+            display: block;
+            margin-bottom: 6px;
+        }
+        .pick-arrow {
+            font-size: 18px;
+            color: var(--border);
+            padding: 0 10px;
+            flex-shrink: 0;
+        }
+        .pick-step.result {
+            border-color: var(--accent);
+            background: rgba(0,212,170,0.05);
+        }
+        .pick-step.result .ps-label { color: var(--accent); }
+
+        /* ── 颜色标签徽章 ── */
+        .color-label {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            vertical-align: middle;
+            margin-right: 5px;
+        }
+        .color-label.green  { background: #4ade80; }
+        .color-label.red    { background: #f87171; }
+
+        /* ── 图片占位符 ── */
+        .img-slot {
+            margin: 28px 0;
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-elevated);
+        }
+        .img-slot img {
+            max-width: 100%;
+            height: auto;
+            display: block;
+            margin: 0 auto;
+        }
+        .img-slot .img-pending {
+            padding: 32px 24px;
+            display: flex;
+            align-items: flex-start;
+            gap: 16px;
+        }
+        .img-slot .img-pending .pi-icon { font-size: 28px; flex-shrink: 0; }
+        .img-slot .img-pending .pi-info { display: flex; flex-direction: column; gap: 6px; }
+        .img-slot .img-pending .pi-filename {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--accent);
+            background: var(--accent-dim);
+            padding: 3px 9px;
+            border-radius: 4px;
+            display: inline-block;
+        }
+        .img-slot .img-pending .pi-desc {
+            font-size: 13px;
+            color: var(--text-tertiary);
+            line-height: 1.6;
+        }
+
+        /* ── 章节交叉引用链接 ── */
+        .xref {
+            color: var(--accent);
+            text-decoration: none;
+            border-bottom: 1px solid rgba(0, 212, 170, 0.3);
+            transition: border-color 0.18s;
+        }
+        .xref:hover { border-color: var(--accent); }
+
+        /* ── 底部章节导航 ── */
+        .chapter-nav {
+            padding: 32px 0 60px;
+            border-top: 1px solid var(--border-subtle);
+        }
+        .chapter-nav-inner {
+            display: flex;
+            justify-content: space-between;
+            align-items: stretch;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        .nav-btn {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding: 14px 20px;
+            border-radius: var(--radius-md);
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            text-decoration: none;
+            transition: all 0.2s ease;
+            flex: 1;
+            min-width: 180px;
+            max-width: 300px;
+        }
+        .nav-btn:hover { border-color: var(--accent); }
+        .nav-btn.next { align-items: flex-end; margin-left: auto; }
+        .nav-btn.prev { align-items: flex-start; }
+        .nav-direction {
+            font-size: 11px;
+            font-family: var(--font-mono);
+            color: var(--text-tertiary);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+        .nav-chapter-title {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            line-height: 1.4;
+        }
+        .nav-btn:hover .nav-chapter-title { color: var(--accent); }
+
+        @media (max-width: 600px) {
+            .chapter-nav-inner { flex-direction: column; }
+            .nav-btn { max-width: 100%; }
+            .nav-btn.next { align-items: flex-start; margin-left: 0; }
+            .pick-steps { flex-direction: column; }
+            .pick-arrow { transform: rotate(90deg); padding: 4px 0; }
+            .code-block { font-size: 11px; padding: 14px 16px; }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="grain"></div>
+
+    <!-- Header -->
+    <header>
+        <div class="header-inner">
+            <a href="../../index.html" class="logo">
+                <img src="../../img/icon.png" alt="SuperPicky">
+                <span>SuperPicky</span>
+            </a>
+            <div class="lang-switch">
+                <button class="lang-btn active" onclick="setLang('cn')">中</button>
+                <button class="lang-btn" onclick="setLang('en')">EN</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- 面包屑 -->
+    <div class="chapter-header-bar">
+        <div class="container">
+            <nav class="breadcrumb">
+                <a href="../../index.html">
+                    <span class="lang-cn">主页</span>
+                    <span class="lang-en">Home</span>
+                </a>
+                <span>/</span>
+                <a href="index.html">
+                    <span class="lang-cn">4.3.0 教程</span>
+                    <span class="lang-en">4.3.0 Tutorial</span>
+                </a>
+                <span>/</span>
+                <span>
+                    <span class="lang-cn">第 05 章</span>
+                    <span class="lang-en">Chapter 05</span>
+                </span>
+            </nav>
+        </div>
+    </div>
+
+    <!-- 章节 Hero -->
+    <section class="chapter-hero">
+        <div class="container">
+            <div class="chapter-num-display">
+                <span>CHAPTER 05 / 12</span>
+            </div>
+            <h1>
+                <span class="lang-cn">读懂选鸟结果</span>
+                <span class="lang-en">Reading the Results</span>
+            </h1>
+            <p class="subtitle">
+                <span class="lang-cn">0–3 星如何判定、Pick 精选是什么、连拍分组逻辑，以及输出目录结构和 EXIF 写入字段完全解析。</span>
+                <span class="lang-en">How star ratings are assigned, what Pick means, how burst groups work, and a complete breakdown of the output folder structure and EXIF fields written.</span>
+            </p>
+        </div>
+    </section>
+
+    <!-- 正文 -->
+    <section class="chapter-body">
+        <div class="container">
+
+            <!-- 章节内目录 -->
+            <nav class="chapter-toc">
+                <a href="#s5-1">
+                    <span class="sec-num">5.1</span>
+                    <span class="lang-cn">0–3 星的含义</span>
+                    <span class="lang-en">Star Ratings</span>
+                </a>
+                <a href="#s5-2">
+                    <span class="sec-num">5.2</span>
+                    <span class="lang-cn">Pick 精选标记</span>
+                    <span class="lang-en">Pick Flag</span>
+                </a>
+                <a href="#s5-3">
+                    <span class="sec-num">5.3</span>
+                    <span class="lang-cn">连拍分组</span>
+                    <span class="lang-en">Burst Groups</span>
+                </a>
+                <a href="#s5-4">
+                    <span class="sec-num">5.4</span>
+                    <span class="lang-cn">目录结构</span>
+                    <span class="lang-en">Folder Layout</span>
+                </a>
+                <a href="#s5-5">
+                    <span class="sec-num">5.5</span>
+                    <span class="lang-cn">EXIF 写入字段</span>
+                    <span class="lang-en">EXIF Fields Written</span>
+                </a>
+            </nav>
+
+            <!-- ══ 5.1 ══ -->
+            <div class="content-section" id="s5-1">
+                <span class="section-label-tag">5.1</span>
+                <h2 class="section-heading">
+                    <span class="lang-cn">0–3 星的含义</span>
+                    <span class="lang-en">Star Ratings</span>
+                </h2>
+
+                <p>
+                    <span class="lang-cn">SuperPicky 慧眼选鸟 用 0–3 星加「无鸟」标记描述每张照片的质量，评分规则如下：</span>
+                    <span class="lang-en">SuperPicky 慧眼选鸟 rates each photo from 0 to 3 stars, with a separate "no bird" marker. Here is how each level is determined:</span>
+                </p>
+
+                <table class="content-table">
+                    <thead>
+                        <tr>
+                            <th><span class="lang-cn">等级</span><span class="lang-en">Level</span></th>
+                            <th><span class="lang-cn">图标</span><span class="lang-en">Icon</span></th>
+                            <th><span class="lang-cn">含义</span><span class="lang-en">Meaning</span></th>
+                            <th><span class="lang-cn">核心判断依据</span><span class="lang-en">How it's decided</span></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>
+                                <span class="lang-cn">三星优选</span>
+                                <span class="lang-en">3-star</span>
+                            </td>
+                            <td>⭐⭐⭐</td>
+                            <td>
+                                <span class="lang-cn">精品</span>
+                                <span class="lang-en">Excellent</span>
+                            </td>
+                            <td>
+                                <span class="lang-cn">锐度 + 美学<strong>双达标</strong></span>
+                                <span class="lang-en"><strong>Both</strong> sharpness and aesthetics meet the threshold</span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>
+                                <span class="lang-cn">二星良好</span>
+                                <span class="lang-en">2-star</span>
+                            </td>
+                            <td>⭐⭐</td>
+                            <td>
+                                <span class="lang-cn">合格</span>
+                                <span class="lang-en">Good</span>
+                            </td>
+                            <td>
+                                <span class="lang-cn">锐度或美学<strong>仅达其一</strong></span>
+                                <span class="lang-en"><strong>Either</strong> sharpness or aesthetics meets the threshold (not both)</span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>
+                                <span class="lang-cn">一星普通</span>
+                                <span class="lang-en">1-star</span>
+                            </td>
+                            <td>⭐</td>
+                            <td>
+                                <span class="lang-cn">留档</span>
+                                <span class="lang-en">Average</span>
+                            </td>
+                            <td>
+                                <span class="lang-cn">通过最低门槛，但两项均未达标；或鸟眼 / 鸟喙完全不可见（角度不佳）</span>
+                                <span class="lang-en">Passes the minimum bar but neither threshold is met; or bird's eye and beak are not visible (unfavourable angle)</span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>
+                                <span class="lang-cn">零星放弃</span>
+                                <span class="lang-en">0-star</span>
+                            </td>
+                            <td>0⭐</td>
+                            <td>
+                                <span class="lang-cn">极低质量</span>
+                                <span class="lang-en">Reject</span>
+                            </td>
+                            <td>
+                                <span class="lang-cn">置信度不足、锐度极低，或严重过 / 欠曝</span>
+                                <span class="lang-en">Confidence too low, extremely low sharpness, or severely over- / under-exposed</span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>
+                                <span class="lang-cn">无鸟</span>
+                                <span class="lang-en">No bird</span>
+                            </td>
+                            <td>❌</td>
+                            <td>
+                                <span class="lang-cn">未检测到鸟</span>
+                                <span class="lang-en">No bird detected</span>
+                            </td>
+                            <td>
+                                <span class="lang-cn">AI 未在画面中定位到鸟；照片仍保留在 <code>0星_放弃</code> 目录，不会丢失</span>
+                                <span class="lang-en">AI found no bird in the frame; the photo is kept in the <code>0star_reject</code> folder, not deleted</span>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <p>
+                    <span class="lang-cn"><strong>两个影响评分的修正机制：</strong></span>
+                    <span class="lang-en"><strong>Two score modifiers you should know about:</strong></span>
+                </p>
+
+                <ul class="feature-list">
+                    <li>
+                        <span class="f-num">飞版加成</span>
+                        <span>
+                            <span class="lang-cn">开启飞鸟检测（见<a href="03-parameters.html#s3-4" class="xref">第 03 章 3.4</a>）后，检测到飞行状态的鸟自动获得锐度 ×1.2、美学 ×1.1 的加成，抵消飞版动态模糊对评分的影响，让飞版和栖鸟在同等真实质量下有公平的星级结果。</span>
+                            <span class="lang-en">When BIF detection is on (see <a href="03-parameters.html#s3-4" class="xref">Chapter 03, Section 3.4</a>), photos with a bird in flight receive a sharpness ×1.2 and aesthetics ×1.1 bonus — compensating for motion blur so flight shots compete fairly against perched birds of the same true quality.</span>
+                        </span>
+                    </li>
+                    <li>
+                        <span class="f-num">眼睛可见度</span>
+                        <span>
+                            <span class="lang-cn">鸟眼或鸟喙不可见（正背面、被羽毛遮挡等）时，评分权重随可见度下降，避免「构图差」的照片与「清晰正面」的照片平等竞争。所有关键点均不可见时直接给 1 星。</span>
+                            <span class="lang-en">When the bird's eye or beak is not visible (full back view, heavily obscured, etc.), the rating weight drops with visibility — preventing poorly composed shots from competing with sharp frontal ones. If all keypoints are invisible, the photo is capped at 1 star.</span>
+                        </span>
+                    </li>
+                </ul>
+
+                <div class="tip-box warning">
+                    <span class="tip-box-label lang-cn">无鸟 ≠ 废片</span>
+                    <span class="tip-box-label lang-en">No bird ≠ bad photo</span>
+                    <p>
+                        <span class="lang-cn">未检测到鸟有可能是鸟在极端角度、距离太远、AI 置信度略低于阈值。这类照片安全保留在 <code>0星_放弃</code> 目录，不会被删除，可以手动翻看。</span>
+                        <span class="lang-en">No bird detected can mean the bird was at an extreme angle, too distant, or just below the confidence threshold. These photos are kept safely in the <code>0star_reject</code> folder — never deleted — and can be reviewed manually.</span>
+                    </p>
+                </div>
+
+            </div>
+
+            <!-- ══ 5.2 ══ -->
+            <div class="content-section" id="s5-2">
+                <span class="section-label-tag">5.2</span>
+                <h2 class="section-heading">
+                    <span class="lang-cn">Pick 精选标记</span>
+                    <span class="lang-en">Pick Flag</span>
+                </h2>
+
+                <p>
+                    <span class="lang-cn">Pick 精选（🏆）在<strong>三星照片中</strong>进一步筛选出「值得优先后期」的那批，所有照片处理完毕后统一计算，算法为<strong>美学 × 锐度双排名取交集</strong>：</span>
+                    <span class="lang-en">The Pick flag (🏆) identifies the most post-processing-worthy photos among the <strong>3-star pool</strong>. It is calculated after all photos have been processed, using a <strong>dual-ranking intersection</strong> of aesthetics and sharpness:</span>
+                </p>
+
+                <div class="pick-steps">
+                    <div class="pick-step">
+                        <span class="ps-label lang-cn">步骤 1</span>
+                        <span class="ps-label lang-en">Step 1</span>
+                        <span class="lang-cn">全部三星照片按<strong>美学</strong>评分排序 → 取前 N%</span>
+                        <span class="lang-en">Sort all 3★ photos by <strong>aesthetics</strong> → keep top N%</span>
+                    </div>
+                    <div class="pick-arrow">→</div>
+                    <div class="pick-step">
+                        <span class="ps-label lang-cn">步骤 2</span>
+                        <span class="ps-label lang-en">Step 2</span>
+                        <span class="lang-cn">全部三星照片按<strong>锐度</strong>评分排序 → 取前 N%</span>
+                        <span class="lang-en">Sort all 3★ photos by <strong>sharpness</strong> → keep top N%</span>
+                    </div>
+                    <div class="pick-arrow">→</div>
+                    <div class="pick-step result">
+                        <span class="ps-label lang-cn">🏆 Pick</span>
+                        <span class="ps-label lang-en">🏆 Pick</span>
+                        <span class="lang-cn">两个集合取<strong>交集</strong>——同时进入两个榜单前 N% 的照片获得 Pick 标记</span>
+                        <span class="lang-en"><strong>Intersection</strong> of both lists — photos in the top N% for both metrics receive the Pick flag</span>
+                    </div>
+                </div>
+
+                <p>
+                    <span class="lang-cn">N 的默认值是 <strong>25%</strong>（三星照片里美学和锐度都进前四分之一的才算 Pick）。可在高级设置中调整为 10%–50%，详见<a href="10-advanced.html" class="xref">第 10 章</a>。</span>
+                    <span class="lang-en">N defaults to <strong>25%</strong> — only 3-star photos that rank in the top quarter for both aesthetics and sharpness receive the flag. Adjustable from 10%–50% in Advanced Settings — see <a href="10-advanced.html" class="xref">Chapter 10</a>.</span>
+                </p>
+
+                <p>
+                    <span class="lang-cn"><strong>Pick 标记在哪里体现：</strong></span>
+                    <span class="lang-en"><strong>Where the Pick flag appears:</strong></span>
+                </p>
+
+                <ul class="feature-list">
+                    <li>
+                        <span class="f-num">日志</span>
+                        <span>
+                            <span class="lang-cn">完成报告中显示为 <code>└─ 🏆 N (xx% of 3★)</code></span>
+                            <span class="lang-en">Shown in the completion report as <code>└─ 🏆 N (xx% of 3★)</code></span>
+                        </span>
+                    </li>
+                    <li>
+                        <span class="f-num">EXIF</span>
+                        <span>
+                            <span class="lang-cn">写入 <code>XMP:Pick=1</code>，Lightroom 中对应白色小旗 🚩（Pick Flag）</span>
+                            <span class="lang-en">Written as <code>XMP:Pick=1</code> — shows as a white flag 🚩 (Pick Flag) in Lightroom</span>
+                        </span>
+                    </li>
+                    <li>
+                        <span class="f-num">浏览器</span>
+                        <span>
+                            <span class="lang-cn">结果浏览器中带 🏆 标记，详见<a href="07-browser.html" class="xref">第 07 章</a></span>
+                            <span class="lang-en">Displayed with a 🏆 icon in the Result Browser — see <a href="07-browser.html" class="xref">Chapter 07</a></span>
+                        </span>
+                    </li>
+                </ul>
+
+                <div class="tip-box info">
+                    <span class="tip-box-label lang-cn">Pick 是加分项，不是评级</span>
+                    <span class="tip-box-label lang-en">Pick is a bonus, not a rating</span>
+                    <p>
+                        <span class="lang-cn">没有 Pick 标记的三星照片依然是三星。三星是基础质量关，Pick 是额外的美学+锐度双优筛选，帮你在大量三星中快速找到「最值得打开后期软件精修」的那一批。</span>
+                        <span class="lang-en">A 3-star photo without a Pick flag is still a 3-star photo. The star rating is the quality gate; Pick is an additional double-filter to help you quickly identify the most post-processing-worthy shots from a large 3-star pool.</span>
+                    </p>
+                </div>
+            </div>
+
+            <!-- ══ 5.3 ══ -->
+            <div class="content-section" id="s5-3">
+                <span class="section-label-tag">5.3</span>
+                <h2 class="section-heading">
+                    <span class="lang-cn">连拍分组</span>
+                    <span class="lang-en">Burst Groups</span>
+                </h2>
+
+                <p>
+                    <span class="lang-cn">开启连拍检测后（详见<a href="03-parameters.html#s3-5" class="xref">第 03 章 3.5</a>），每组连拍的整理逻辑：</span>
+                    <span class="lang-en">When burst detection is on (see <a href="03-parameters.html#s3-5" class="xref">Chapter 03, Section 3.5</a>), each burst group is organised as follows:</span>
+                </p>
+
+                <ul class="feature-list">
+                    <li>
+                        <span class="f-num">保留</span>
+                        <span>
+                            <span class="lang-cn">每组中<strong>最高星级的那张</strong>留在正常目录（若有 Pick 标记则优先保留 Pick 照片）</span>
+                            <span class="lang-en">The <strong>highest-rated photo</strong> in each group stays in the main directory (a Pick-flagged photo takes priority if present)</span>
+                        </span>
+                    </li>
+                    <li>
+                        <span class="f-num">归组</span>
+                        <span>
+                            <span class="lang-cn">同组其余照片移入目标目录内的 <code>burst_xxx/</code> 子目录，<strong>不会被删除</strong></span>
+                            <span class="lang-en">The rest of the group moves into a <code>burst_xxx/</code> subdirectory inside the same target folder — <strong>never deleted</strong></span>
+                        </span>
+                    </li>
+                    <li>
+                        <span class="f-num">跳过</span>
+                        <span>
+                            <span class="lang-cn">整组连拍全是 0–1 星时，不做合并，各自按正常流程放置</span>
+                            <span class="lang-en">If every photo in the burst is rated 0–1 star, no grouping occurs — each photo is placed normally</span>
+                        </span>
+                    </li>
+                </ul>
+
+                <p>
+                    <span class="lang-cn">burst 子目录以序号命名，格式为 <code>burst_001/</code>、<code>burst_002/</code>……示例目录结构（species-first 布局）：</span>
+                    <span class="lang-en">Burst subdirectories are named sequentially — <code>burst_001/</code>, <code>burst_002/</code>, etc. Example structure (species-first layout):</span>
+                </p>
+
+                <div class="code-block"><span class="cb-dir">白腹海雕/3星_优选/</span>
+<span class="cb-hi">├── DSC01234.ARW</span>       <span class="cb-note">← 本组连拍最高分，保留 / top-rated shot, kept here</span>
+<span class="cb-file">├── DSC01234.xmp</span>       <span class="cb-note">← ARW 侧车文件 / XMP sidecar</span>
+<span class="cb-dir">└── burst_001/</span>
+<span class="cb-file">    ├── DSC01235.ARW</span>   <span class="cb-note">← 同组其余成员 / rest of the burst group</span>
+<span class="cb-file">    └── DSC01236.ARW</span></div>
+
+            </div>
+
+            <!-- ══ 5.4 ══ -->
+            <div class="content-section" id="s5-4">
+                <span class="section-label-tag">5.4</span>
+                <h2 class="section-heading">
+                    <span class="lang-cn">目录结构</span>
+                    <span class="lang-en">Folder Layout</span>
+                </h2>
+
+                <p>
+                    <span class="lang-cn">v4.3.0 的默认布局是 <strong>species-first（先鸟种后星级）</strong>：</span>
+                    <span class="lang-en">v4.3.0 uses <strong>species-first</strong> as the default layout — species folder on the outside, star rating on the inside:</span>
+                </p>
+
+                <div class="code-block"><span class="cb-dir">照片原目录/</span>
+<span class="cb-dir">├── 白腹海雕/</span>
+<span class="cb-dir">│   ├── 3星_优选/</span>
+<span class="cb-dir">│   └── 2星_良好/</span>
+<span class="cb-dir">├── 大白鹭/</span>
+<span class="cb-dir">│   ├── 3星_优选/</span>
+<span class="cb-dir">│   └── 2星_良好/</span>
+<span class="cb-dir">├── 其他鸟类/</span>
+<span class="cb-dir">│   ├── 3星_优选/</span>   <span class="cb-note">← 未识别鸟种的 3 星 / unidentified 3★</span>
+<span class="cb-dir">│   ├── 2星_良好/</span>   <span class="cb-note">← 未识别鸟种的 2 星 / unidentified 2★</span>
+<span class="cb-dir">│   ├── 1星_普通/</span>
+<span class="cb-dir">│   └── 0星_放弃/</span>   <span class="cb-note">← 0 星 + 未检测到鸟 / 0★ + no-bird</span>
+<span class="cb-dir">└── .superpicky/</span>    <span class="cb-note">← 隐藏目录，报告与缓存，不含照片 / hidden, reports &amp; cache</span></div>
+
+                <p>
+                    <span class="lang-cn"><strong>两条固定规则：</strong></span>
+                    <span class="lang-en"><strong>Two fixed rules:</strong></span>
+                </p>
+
+                <ul class="feature-list">
+                    <li>
+                        <span class="f-num">规则 1</span>
+                        <span>
+                            <span class="lang-cn"><strong>1 星及以下始终进「其他鸟类」</strong>——即使识别出了鸟种也如此。低质量照片不值得按鸟种分散管理，统一归入此处方便整体处理。</span>
+                            <span class="lang-en"><strong>1-star and below always go into "其他鸟类 / Other Birds"</strong> — even if a species was identified. Low-quality photos aren't worth splitting by species; keeping them together makes bulk handling easier.</span>
+                        </span>
+                    </li>
+                    <li>
+                        <span class="f-num">规则 2</span>
+                        <span>
+                            <span class="lang-cn"><strong>0 星和无鸟（❌）共享同一目录</strong>：均进 <code>0星_放弃/</code>，需要时可手动翻看，照片不会被删除。</span>
+                            <span class="lang-en"><strong>0-star and no-bird (❌) share the same folder</strong> — both go into <code>0星_放弃/</code>. Photos are never deleted and can be reviewed manually.</span>
+                        </span>
+                    </li>
+                </ul>
+
+                <div class="tip-box info">
+                    <span class="tip-box-label lang-cn">为什么 v4.3 改为 species-first 默认？</span>
+                    <span class="tip-box-label lang-en">Why did v4.3 switch to species-first as default?</span>
+                    <p>
+                        <span class="lang-cn">v4.3 引入了视频片段处理（第 09 章）。视频无星级，采用 species-first 可让视频和照片自然共享同一鸟种目录，无需额外分类逻辑。</span>
+                        <span class="lang-en">v4.3 introduced video clip processing (Chapter 09). Since videos don't have star ratings, species-first allows video clips and photos to naturally share the same species folder without extra sorting logic.</span>
+                    </p>
+                    <p>
+                        <span class="lang-cn">如果偏好旧版 <strong>rating-first 布局</strong>（<code>3星_优选/白腹海雕/</code>），可在高级设置中切换，详见<a href="10-advanced.html" class="xref">第 10 章</a>。</span>
+                        <span class="lang-en">If you prefer the old <strong>rating-first layout</strong> (<code>3星_优选/白腹海雕/</code>), it can be switched in Advanced Settings — see <a href="10-advanced.html" class="xref">Chapter 10</a>.</span>
+                    </p>
+                </div>
+
+            </div>
+
+            <!-- ══ 5.5 ══ -->
+            <div class="content-section" id="s5-5">
+                <span class="section-label-tag">5.5</span>
+                <h2 class="section-heading">
+                    <span class="lang-cn">EXIF 写入字段</span>
+                    <span class="lang-en">EXIF Fields Written</span>
+                </h2>
+
+                <p>
+                    <span class="lang-cn">处理完毕后，SuperPicky 慧眼选鸟 通过 ExifTool 将以下信息写入每张照片的元数据：</span>
+                    <span class="lang-en">After processing, SuperPicky 慧眼选鸟 uses ExifTool to write the following metadata fields into each photo:</span>
+                </p>
+
+                <table class="content-table">
+                    <thead>
+                        <tr>
+                            <th><span class="lang-cn">字段</span><span class="lang-en">Field</span></th>
+                            <th><span class="lang-cn">写入内容</span><span class="lang-en">Content written</span></th>
+                            <th><span class="lang-cn">说明</span><span class="lang-en">Notes</span></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>Rating</code></td>
+                            <td>
+                                <span class="lang-cn">0–3</span>
+                                <span class="lang-en">0–3</span>
+                            </td>
+                            <td>
+                                <span class="lang-cn">Lightroom / 系统星级，与界面星级直接对应</span>
+                                <span class="lang-en">Lightroom / system star rating, directly matching the interface</span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>XMP:Pick</code></td>
+                            <td>
+                                <span class="lang-cn">0 或 1</span>
+                                <span class="lang-en">0 or 1</span>
+                            </td>
+                            <td>
+                                <span class="lang-cn">Lightroom Pick Flag（1 = 白旗精选）</span>
+                                <span class="lang-en">Lightroom Pick Flag (1 = white flag)</span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>XMP:Title</code></td>
+                            <td>
+                                <span class="lang-cn">鸟种名称</span>
+                                <span class="lang-en">Bird species name</span>
+                            </td>
+                            <td>
+                                <span class="lang-cn">开启识鸟后写入（见<a href="08-birdid.html" class="xref">第 08 章</a>）；支持中文 / 英文</span>
+                                <span class="lang-en">Written when Bird ID is on (see <a href="08-birdid.html" class="xref">Chapter 08</a>); Chinese or English</span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>XMP:Description</code></td>
+                            <td>
+                                <span class="lang-cn">详细评分说明</span>
+                                <span class="lang-en">Detailed scoring breakdown</span>
+                            </td>
+                            <td>
+                                <span class="lang-cn">包含置信度、锐度、美学分值和判断理由</span>
+                                <span class="lang-en">Confidence, sharpness, aesthetics scores and decision reason</span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>XMP:Label</code></td>
+                            <td>
+                                <span class="lang-cn">颜色标签</span>
+                                <span class="lang-en">Color label</span>
+                            </td>
+                            <td>
+                                <span class="lang-cn"><span class="color-label green"></span>绿色 = 飞版；<span class="color-label red"></span>红色 = 头部精焦；无标签 = 其他</span>
+                                <span class="lang-en"><span class="color-label green"></span>Green = BIF; <span class="color-label red"></span>Red = head-focused; no label = other</span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>XMP:City</code><span class="lang-cn">（城市）</span><span class="lang-en"> (City)</span></td>
+                            <td>
+                                <span class="lang-cn">锐度分值（如 <code>450.23</code>）</span>
+                                <span class="lang-en">Sharpness score (e.g. <code>450.23</code>)</span>
+                            </td>
+                            <td>
+                                <span class="lang-cn">借用地理字段存储评分数据；在 Lightroom 元数据面板中显示为数字属正常现象，可用于智能相册筛选</span>
+                                <span class="lang-en">A geographic field repurposed to store scoring data; the numeric value in Lightroom's metadata panel is expected behaviour and can be used in Smart Collection filters</span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>XMP:State</code><span class="lang-cn">（区域）</span><span class="lang-en"> (State)</span></td>
+                            <td>
+                                <span class="lang-cn">美学分值（如 <code>5.24</code>）</span>
+                                <span class="lang-en">Aesthetics score (e.g. <code>5.24</code>)</span>
+                            </td>
+                            <td>
+                                <span class="lang-cn">同上；借用地理字段存储美学评分</span>
+                                <span class="lang-en">Same as above; geographic field repurposed for aesthetics score</span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>IntellectualGenre</code></td>
+                            <td>
+                                <span class="lang-cn">IUCN 濒危等级</span>
+                                <span class="lang-en">IUCN Red List category</span>
+                            </td>
+                            <td>
+                                <span class="lang-cn">如 LC / VU / EN（开启识鸟后写入，见<a href="06-rarity.html" class="xref">第 06 章</a>）</span>
+                                <span class="lang-en">e.g. LC / VU / EN (written when Bird ID is on — see <a href="06-rarity.html" class="xref">Chapter 06</a>)</span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>Event</code></td>
+                            <td>
+                                <span class="lang-cn">GBIF 罕见度（0–100）</span>
+                                <span class="lang-en">GBIF rarity score (0–100)</span>
+                            </td>
+                            <td>
+                                <span class="lang-cn">全球出现频率评分（开启识鸟后写入，见<a href="06-rarity.html" class="xref">第 06 章</a>）</span>
+                                <span class="lang-en">Global occurrence frequency score (written when Bird ID is on — see <a href="06-rarity.html" class="xref">Chapter 06</a>)</span>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <p>
+                    <span class="lang-cn"><strong>RAW 文件（ARW / NEF / CR2 等）</strong>：SuperPicky 慧眼选鸟 <strong>不修改 RAW 原文件</strong>，所有元数据写入同名 <code>.xmp</code> 侧车文件。Lightroom / Bridge 会自动读取同目录下的 XMP 侧车，无需手动操作。</span>
+                    <span class="lang-en"><strong>RAW files (ARW / NEF / CR2 etc.)</strong>: SuperPicky 慧眼选鸟 <strong>never modifies the RAW file itself</strong> — all metadata is written to a <code>.xmp</code> sidecar of the same name. Lightroom and Bridge read XMP sidecars automatically.</span>
+                </p>
+
+                <p>
+                    <span class="lang-cn"><strong>JPEG 文件</strong>：EXIF 信息直接写入 JPEG 文件内部，无侧车文件。</span>
+                    <span class="lang-en"><strong>JPEG files</strong>: EXIF data is written directly inside the JPEG — no sidecar needed.</span>
+                </p>
+
+                <div class="tip-box info">
+                    <span class="tip-box-label lang-cn">在 Lightroom 中导入后如何利用这些字段</span>
+                    <span class="tip-box-label lang-en">How to use these fields after Lightroom import</span>
+                    <p>
+                        <span class="lang-cn">导入时选择「读取元数据和嵌入侧车」，Lightroom 自动显示星级和 Pick 旗标；Title 字段在元数据面板中可见；Label 颜色标签可用于筛选飞版（绿色）或精焦照片（红色）；City / State 中的评分数值可用于智能相册条件筛选。完整的 Lightroom 导入流程详见<a href="07-browser.html" class="xref">第 07 章</a>。</span>
+                        <span class="lang-en">When importing, choose "Read Metadata and Embedded Sidecar." Lightroom will automatically display star ratings and Pick flags; the Title field is visible in the metadata panel; the Label color can filter BIF shots (green) or head-focused shots (red); and the City / State score values can be used in Smart Collection criteria. Full Lightroom import walkthrough in <a href="07-browser.html" class="xref">Chapter 07</a>.</span>
+                    </p>
+                </div>
+
+            </div>
+
+        </div><!-- /container -->
+    </section>
+
+    <!-- 章节底部导航 -->
+    <section class="chapter-nav">
+        <div class="container">
+            <div class="chapter-nav-inner">
+                <a href="04-run.html" class="nav-btn prev">
+                    <span class="nav-direction">
+                        <span class="lang-cn">上一章</span>
+                        <span class="lang-en">Previous</span>
+                    </span>
+                    <span class="nav-chapter-title">
+                        <span class="lang-cn">执行选鸟</span>
+                        <span class="lang-en">Running a Cull</span>
+                    </span>
+                </a>
+                <a href="06-rarity.html" class="nav-btn next">
+                    <span class="nav-direction">
+                        <span class="lang-cn">下一章</span>
+                        <span class="lang-en">Next</span>
+                    </span>
+                    <span class="nav-chapter-title">
+                        <span class="lang-cn">罕见鸟指数</span>
+                        <span class="lang-en">Rarity Index</span>
+                    </span>
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <div class="footer-inner">
+                <div class="footer-brand">
+                    <img src="../../img/icon.png" alt="SuperPicky">
+                    <div class="footer-brand-text">
+                        <span>SuperPicky</span>
+                        <span class="footer-author">by James Yu (詹姆斯·于震)</span>
+                    </div>
+                </div>
+                <div class="footer-links">
+                    <a href="index.html">
+                        <span class="lang-cn">教程目录</span>
+                        <span class="lang-en">Tutorial Index</span>
+                    </a>
+                    <a href="../../faq.html">
+                        <span class="lang-cn">常见问题</span>
+                        <span class="lang-en">FAQ</span>
+                    </a>
+                    <a href="https://github.com/jamesphotography/SuperPicky">GitHub</a>
+                    <a href="mailto:james@jamesphotography.com.au">
+                        <span class="lang-cn">联系</span>
+                        <span class="lang-en">Contact</span>
+                    </a>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p class="credits">
+                    <span class="lang-cn">模型致谢：YOLO11 (Ultralytics) · TOPIQ (Chaofeng Chen et al.)</span>
+                    <span class="lang-en">Credits: YOLO11 (Ultralytics) · TOPIQ (Chaofeng Chen et al.)</span>
+                </p>
+                <p class="copyright">© 2024-2026 James Yu · <a href="../../LICENSE" target="_blank"
+                        style="color: inherit; text-decoration: underline;">AGPL-3.0 License</a></p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="../../js/main.js"></script>
+</body>
+
+</html>

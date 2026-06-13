@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-lang="cn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>第 10 章 高级设置 - SuperPicky 慧眼选鸟 4.3.0 教程</title>
+    <meta name="description" content="SuperPicky 慧眼选鸟 4.3.0 高级设置：元数据写入模式、ARW 策略、精选百分比、连拍阈值、目录布局、外部编辑器与提示音">
+    <link rel="stylesheet" href="../../css/style.css?v=20260612">
+    <link rel="icon" href="../../img/icon.png" type="image/png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        .chapter-header-bar { padding: 100px 0 0; }
+
+        .breadcrumb {
+            font-size: 13px;
+            color: var(--text-tertiary);
+            margin-bottom: 40px;
+        }
+        .breadcrumb a { color: var(--text-tertiary); text-decoration: none; transition: color 0.2s; }
+        .breadcrumb a:hover { color: var(--accent); }
+        .breadcrumb span { margin: 0 6px; }
+
+        .chapter-hero {
+            padding: 40px 0 52px;
+            border-bottom: 1px solid var(--border-subtle);
+            margin-bottom: 52px;
+        }
+        .chapter-num-display {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--accent);
+            letter-spacing: 0.1em;
+            margin-bottom: 16px;
+        }
+        .chapter-hero h1 {
+            font-size: clamp(28px, 4vw, 44px);
+            font-weight: 700;
+            letter-spacing: -1px;
+            line-height: 1.2;
+            margin-bottom: 16px;
+            background: linear-gradient(135deg, var(--text-primary) 0%, var(--text-secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .chapter-hero p.subtitle {
+            font-size: 17px;
+            color: var(--text-secondary);
+            line-height: 1.7;
+            max-width: 640px;
+        }
+
+        .chapter-toc {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 52px;
+        }
+        .chapter-toc a {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 14px;
+            border-radius: 999px;
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-elevated);
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 13px;
+            transition: all 0.18s ease;
+        }
+        .chapter-toc a:hover { border-color: var(--accent); color: var(--accent); }
+        .chapter-toc a .sec-num { font-family: var(--font-mono); font-size: 10px; color: var(--accent); }
+
+        .chapter-body { padding: 0 0 80px; }
+
+        .content-section {
+            margin-bottom: 60px;
+            padding-bottom: 52px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .content-section:last-child { border-bottom: none; margin-bottom: 0; }
+
+        .section-label-tag {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--accent);
+            letter-spacing: 0.08em;
+            display: block;
+            margin-bottom: 10px;
+        }
+        .section-heading {
+            font-size: 22px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 20px;
+            line-height: 1.3;
+        }
+
+        .content-section p {
+            font-size: 15px;
+            line-height: 1.9;
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+        }
+        .content-section p:last-child { margin-bottom: 0; }
+        .content-section strong { color: var(--text-primary); }
+
+        /* ── 选项卡式说明 ── */
+        .option-cards {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin: 20px 0;
+        }
+        .option-card {
+            padding: 16px 20px;
+            border-radius: var(--radius-md);
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-elevated);
+        }
+        .option-card.recommended { border-color: rgba(0,212,170,0.35); }
+        .option-card .oc-head {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 6px;
+        }
+        .option-card .oc-key {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--accent);
+            background: var(--accent-dim);
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+        .option-card .oc-label {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .option-card .oc-badge {
+            font-size: 10px;
+            font-family: var(--font-mono);
+            font-weight: 700;
+            color: var(--bg-void);
+            background: var(--accent);
+            padding: 2px 7px;
+            border-radius: 4px;
+            letter-spacing: 0.04em;
+        }
+        .option-card .oc-desc {
+            font-size: 13.5px;
+            line-height: 1.75;
+            color: var(--text-secondary);
+        }
+
+        /* ── 表格 ── */
+        .content-table {
+            width: 100%;
+            border-collapse: collapse;
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            border: 1px solid var(--border-subtle);
+            margin: 20px 0;
+            font-size: 14px;
+        }
+        .content-table thead th {
+            background: var(--bg-card);
+            padding: 11px 16px;
+            text-align: left;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            border-bottom: 1px solid var(--border);
+        }
+        .content-table tbody td {
+            padding: 13px 16px;
+            line-height: 1.65;
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--border-subtle);
+            vertical-align: top;
+        }
+        .content-table tbody tr:last-child td { border-bottom: none; }
+        .content-table tbody tr:hover td { background: rgba(255,255,255,0.015); }
+        .content-table td:first-child { color: var(--text-primary); font-weight: 500; }
+
+        /* ── 提示框 ── */
+        .tip-box {
+            padding: 16px 20px;
+            border-radius: var(--radius-md);
+            border-left: 3px solid;
+            margin: 20px 0;
+            font-size: 14px;
+            line-height: 1.8;
+        }
+        .tip-box.info    { background: rgba(0, 212, 170, 0.05);  border-color: var(--accent); }
+        .tip-box.warning { background: rgba(245, 158, 11, 0.05); border-color: #f59e0b; }
+        .tip-box.caution { background: rgba(239, 68, 68, 0.05);  border-color: #ef4444; }
+        .tip-box-label {
+            font-size: 10px;
+            font-weight: 700;
+            font-family: var(--font-mono);
+            letter-spacing: 0.1em;
+            margin-bottom: 6px;
+            display: block;
+        }
+        .tip-box.info    .tip-box-label { color: var(--accent); }
+        .tip-box.warning .tip-box-label { color: #f59e0b; }
+        .tip-box.caution .tip-box-label { color: #ef4444; }
+        .tip-box p { margin: 0; color: var(--text-secondary); font-size: 14px; }
+        .tip-box p + p { margin-top: 8px; }
+
+        /* ── 图片占位 ── */
+        .img-slot {
+            margin: 28px 0;
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-elevated);
+        }
+        .img-slot img {
+            max-width: 100%;
+            height: auto;
+            display: block;
+            margin: 0 auto;
+        }
+        .img-slot .img-pending {
+            padding: 32px 24px;
+            display: flex;
+            align-items: flex-start;
+            gap: 16px;
+        }
+        .img-slot .img-pending .pi-icon { font-size: 28px; flex-shrink: 0; }
+        .img-slot .img-pending .pi-info { display: flex; flex-direction: column; gap: 6px; }
+        .img-slot .img-pending .pi-filename {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--accent);
+            background: var(--accent-dim);
+            padding: 3px 9px;
+            border-radius: 4px;
+            display: inline-block;
+        }
+        .img-slot .img-pending .pi-desc {
+            font-size: 13px;
+            color: var(--text-tertiary);
+            line-height: 1.6;
+        }
+
+        /* ── 参数行内联 ── */
+        .param-row {
+            display: flex;
+            align-items: baseline;
+            gap: 10px;
+            padding: 13px 16px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            margin-bottom: 8px;
+            flex-wrap: wrap;
+        }
+        .param-key {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--accent);
+            flex-shrink: 0;
+        }
+        .param-default {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--text-tertiary);
+            background: var(--bg-card);
+            padding: 1px 7px;
+            border-radius: 4px;
+            flex-shrink: 0;
+        }
+        .param-desc {
+            font-size: 13.5px;
+            color: var(--text-secondary);
+            line-height: 1.65;
+            flex: 1;
+        }
+
+        /* ── 布局对比图 ── */
+        .layout-compare {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin: 20px 0;
+        }
+        .layout-box {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            overflow: hidden;
+        }
+        .layout-box.active { border-color: rgba(0,212,170,0.4); }
+        .layout-box-head {
+            padding: 10px 16px;
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--border-subtle);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .layout-box-head .lb-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .layout-box-head .lb-badge {
+            font-size: 9px;
+            font-family: var(--font-mono);
+            color: var(--bg-void);
+            background: var(--accent);
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-weight: 700;
+        }
+        .layout-tree {
+            font-family: var(--font-mono);
+            font-size: 11.5px;
+            padding: 14px 16px;
+            line-height: 2.0;
+            color: var(--text-secondary);
+            white-space: pre;
+        }
+        .lt-dir   { color: var(--accent); }
+        .lt-file  { color: var(--text-secondary); }
+        @media (max-width: 600px) {
+            .layout-compare { grid-template-columns: 1fr; }
+        }
+
+        /* ── 外部编辑器添加步骤 ── */
+        .steps-list {
+            list-style: none;
+            padding: 0;
+            margin: 16px 0;
+            counter-reset: step-counter;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .steps-list li {
+            counter-increment: step-counter;
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            font-size: 14px;
+            line-height: 1.7;
+            color: var(--text-secondary);
+            padding: 12px 16px;
+            background: var(--bg-elevated);
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border-subtle);
+        }
+        .steps-list li::before {
+            content: counter(step-counter);
+            font-family: var(--font-mono);
+            font-size: 10px;
+            font-weight: 700;
+            color: var(--accent);
+            background: var(--accent-dim);
+            border-radius: 50%;
+            width: 22px;
+            height: 22px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            margin-top: 2px;
+        }
+
+        /* ── 键盘快捷键 ── */
+        .kbd {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-bottom-width: 2px;
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--text-primary);
+            line-height: 1.6;
+        }
+
+        /* ── 跨引用链接 ── */
+        .xref {
+            color: var(--accent);
+            text-decoration: none;
+            border-bottom: 1px solid rgba(0,212,170,0.3);
+            transition: border-color 0.18s;
+        }
+        .xref:hover { border-color: var(--accent); }
+
+        /* ── 章节导航 ── */
+        .chapter-nav {
+            padding: 32px 0 60px;
+            border-top: 1px solid var(--border-subtle);
+        }
+        .chapter-nav-inner {
+            display: flex;
+            justify-content: space-between;
+            align-items: stretch;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        .nav-btn {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding: 14px 20px;
+            border-radius: var(--radius-md);
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            text-decoration: none;
+            transition: all 0.2s ease;
+            flex: 1;
+            min-width: 180px;
+            max-width: 300px;
+        }
+        .nav-btn:hover { border-color: var(--accent); }
+        .nav-btn.next { align-items: flex-end; margin-left: auto; }
+        .nav-btn.prev { align-items: flex-start; }
+        .nav-direction { font-size: 11px; font-family: var(--font-mono); color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.08em; }
+        .nav-chapter-title { font-size: 14px; font-weight: 500; color: var(--text-secondary); line-height: 1.4; }
+        .nav-btn:hover .nav-chapter-title { color: var(--accent); }
+
+        @media (max-width: 600px) {
+            .chapter-nav-inner { flex-direction: column; }
+            .nav-btn { max-width: 100%; }
+            .nav-btn.next { align-items: flex-start; margin-left: 0; }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="grain"></div>
+
+    <!-- Header -->
+    <header>
+        <div class="header-inner">
+            <a href="../../index.html" class="logo">
+                <img src="../../img/icon.png" alt="SuperPicky">
+                <span>SuperPicky</span>
+            </a>
+        </div>
+    </header>
+
+    <!-- 面包屑 -->
+    <div class="chapter-header-bar">
+        <div class="container">
+            <nav class="breadcrumb">
+                <a href="../../index.html">主页</a>
+                <span>/</span>
+                <a href="index.html">4.3.0 教程</a>
+                <span>/</span>
+                <span>第 10 章</span>
+            </nav>
+        </div>
+    </div>
+
+    <!-- 章节 Hero -->
+    <section class="chapter-hero">
+        <div class="container">
+            <div class="chapter-num-display">CHAPTER 10 / 12</div>
+            <h1>高级设置</h1>
+            <p class="subtitle">
+                元数据写入策略、ARW 处理方案、精选与连拍阈值、目录布局、外部编辑器——
+                这些参数控制 SuperPicky 慧眼选鸟 如何写入结果、如何整理文件，通常只需配置一次，之后无需再改。
+            </p>
+        </div>
+    </section>
+
+    <!-- 正文 -->
+    <section class="chapter-body">
+        <div class="container">
+
+            <!-- 章节内目录 -->
+            <nav class="chapter-toc">
+                <a href="#s10-1"><span class="sec-num">10.1</span>元数据写入模式</a>
+                <a href="#s10-2"><span class="sec-num">10.2</span>ARW 写入策略</a>
+                <a href="#s10-3"><span class="sec-num">10.3</span>精选与连拍阈值</a>
+                <a href="#s10-4"><span class="sec-num">10.4</span>目录布局</a>
+                <a href="#s10-5"><span class="sec-num">10.5</span>外部编辑器</a>
+                <a href="#s10-6"><span class="sec-num">10.6</span>其他偏好</a>
+            </nav>
+
+            <!-- ══ 10.1 ══ -->
+            <div class="content-section" id="s10-1">
+                <span class="section-label-tag">10.1</span>
+                <h2 class="section-heading">元数据写入模式</h2>
+
+                <p>
+                    高级设置中的<strong>元数据写入模式</strong>（<code>metadata_write_mode</code>）
+                    控制评分结果写入文件的方式，对全部文件类型生效。共三种选项：
+                </p>
+
+                <div class="option-cards">
+                    <div class="option-card recommended">
+                        <div class="oc-head">
+                            <span class="oc-key">embedded</span>
+                            <span class="oc-label">嵌入写入</span>
+                            <span class="oc-badge">默认</span>
+                        </div>
+                        <div class="oc-desc">
+                            评分星级、Pick 旗标、鸟种名等元数据直接写入照片文件本体（JPEG、HEIC 等直写；
+                            ARW 格式按 ARW 写入策略处理，见 10.2）。
+                            Adobe Lightroom、Capture One 等软件直接读取，无需额外导入步骤，
+                            是绝大多数用户的推荐选项。
+                        </div>
+                    </div>
+                    <div class="option-card">
+                        <div class="oc-head">
+                            <span class="oc-key">sidecar</span>
+                            <span class="oc-label">侧车文件</span>
+                        </div>
+                        <div class="oc-desc">
+                            所有文件一律生成同名 <strong>.xmp 侧车文件</strong>，原始文件完全不被修改。
+                            适合极度重视原文件完整性、习惯用 XMP sidecar 工作流的用户。
+                            Lightroom 需在设置中开启「自动读取 XMP」才能同步星级。
+                        </div>
+                    </div>
+                    <div class="option-card">
+                        <div class="oc-head">
+                            <span class="oc-key">none</span>
+                            <span class="oc-label">跳过写入</span>
+                        </div>
+                        <div class="oc-desc">
+                            完全跳过元数据写入，仅按评分结果将文件<strong>整理到对应目录</strong>。
+                            文件中不携带任何 SuperPicky 写入的评分字段。
+                            适合只需要目录分类、不依赖 EXIF 星级的工作流。
+                        </div>
+                    </div>
+                </div>
+
+                <div class="tip-box warning">
+                    <span class="tip-box-label">更改后需重新处理</span>
+                    <p>
+                        若已对某目录执行过选鸟，更改元数据写入模式后需<strong>重置并重新处理</strong>才能应用新模式。
+                        详见<a href="11-reset.html" class="xref">第 11 章 重置与重新处理</a>。
+                    </p>
+                </div>
+
+            </div>
+
+            <!-- ══ 10.2 ══ -->
+            <div class="content-section" id="s10-2">
+                <span class="section-label-tag">10.2</span>
+                <h2 class="section-heading">ARW 写入策略</h2>
+
+                <p>
+                    Sony ARW 是专有格式，文件结构对写入操作尤为敏感。
+                    <strong>ARW 写入策略</strong>（<code>arw_write_mode</code>）独立于全局元数据模式，
+                    专门控制 ARW 文件的写入行为。
+                </p>
+
+                <div class="option-cards">
+                    <div class="option-card recommended">
+                        <div class="oc-head">
+                            <span class="oc-key">embedded</span>
+                            <span class="oc-label">直接写入 ARW</span>
+                            <span class="oc-badge">默认</span>
+                        </div>
+                        <div class="oc-desc">
+                            使用 ExifTool 直接将星级、鸟种等元数据写入 ARW 文件本体。
+                            Lightroom、Sony Imaging Edge 等软件读取时无需任何额外步骤。
+                            ExifTool 内部创建备份后再写入，对绝大多数 ARW 文件安全可靠。
+                        </div>
+                    </div>
+                    <div class="option-card">
+                        <div class="oc-head">
+                            <span class="oc-key">sidecar</span>
+                            <span class="oc-label">仅写侧车，不改 ARW</span>
+                        </div>
+                        <div class="oc-desc">
+                            在 ARW 旁生成 <strong>.xmp 侧车文件</strong>，ARW 本体绝对不被触碰。
+                            对原文件完整性要求最高的用户首选；
+                            Lightroom 需开启「自动读取 XMP」来同步评分。
+                        </div>
+                    </div>
+                    <div class="option-card">
+                        <div class="oc-head">
+                            <span class="oc-key">auto</span>
+                            <span class="oc-label">自动回退</span>
+                        </div>
+                        <div class="oc-desc">
+                            优先尝试直接写入 ARW；若 ExifTool 检测到写入后文件结构发生变化，
+                            自动回退为生成 .xmp 侧车。在兼顾方便性的同时保留了安全网。
+                        </div>
+                    </div>
+                    <div class="option-card">
+                        <div class="oc-head">
+                            <span class="oc-key">inplace</span>
+                            <span class="oc-label">原地写入</span>
+                        </div>
+                        <div class="oc-desc">
+                            尝试最小化修改范围的原地写入。部分情况下可能写入失败，
+                            此时会记录错误并跳过该文件。不建议普通用户使用。
+                        </div>
+                    </div>
+                </div>
+
+                <div class="tip-box info">
+                    <span class="tip-box-label">与全局模式的优先级关系</span>
+                    <p>
+                        若全局元数据写入模式设为 <code>sidecar</code> 或 <code>none</code>，
+                        ARW 写入策略的设置<strong>不生效</strong>——全局模式具有更高优先级。
+                        ARW 写入策略仅在全局模式为 <code>embedded</code> 时才有意义。
+                    </p>
+                </div>
+            </div>
+
+            <!-- ══ 10.3 ══ -->
+            <div class="content-section" id="s10-3">
+                <span class="section-label-tag">10.3</span>
+                <h2 class="section-heading">精选与连拍阈值</h2>
+
+                <p>
+                    以下参数控制 <strong>Pick 精选旗标</strong>的触发条件以及<strong>连拍检测</strong>的灵敏度，
+                    适合在默认效果不理想时微调。
+                </p>
+
+                <div class="param-row">
+                    <span class="param-key">精选百分比</span>
+                    <span class="param-default">默认 25%</span>
+                    <span class="param-desc">
+                        在所有 3 星照片中，美学 + 锐度双排名同时进入前 N% 的照片获得 Pick（✓）旗标。
+                        调高百分比 → 更宽松，更多张获 Pick；调低 → 更严格，Pick 更稀缺。
+                        范围 10–50%。
+                    </span>
+                </div>
+                <div class="param-row">
+                    <span class="param-key">连拍速度</span>
+                    <span class="param-default">默认 10 fps</span>
+                    <span class="param-desc">
+                        拍摄间隔短于此速度（即快于 10 张/秒）的连续照片被识别为「连拍组」。
+                        普通相机连拍一般 8–30 fps，机械门 4–6 fps；根据实际相机调整。
+                        范围 4–20 fps。
+                    </span>
+                </div>
+                <div class="param-row">
+                    <span class="param-key">连拍最少张数</span>
+                    <span class="param-default">默认 4 张</span>
+                    <span class="param-desc">
+                        至少多少张连续照片才算一个连拍组。调高可过滤偶发的两三张快速拍摄；
+                        调低可将更小序列识别为连拍。范围 3–10 张。
+                    </span>
+                </div>
+                <div class="param-row">
+                    <span class="param-key">鸟种识别最低置信度（批量）</span>
+                    <span class="param-default">默认 50%</span>
+                    <span class="param-desc">
+                        选鸟流程中，AI 对鸟种识别的置信度低于此阈值时，该识别结果<strong>不写入 EXIF</strong>，
+                        照片被归入「其他鸟类」目录。范围 30–95%。
+                        此阈值高于识鸟面板（手动识别）的 30% 下限，因为批量处理追求减少误标。
+                    </span>
+                </div>
+                <div class="param-row">
+                    <span class="param-key">曝光检测阈值</span>
+                    <span class="param-default">默认 10%</span>
+                    <span class="param-desc">
+                        照片中过曝或欠曝像素占比超过此值时，评分降低一星。
+                        调高阈值 → 对曝光问题更宽容；调低 → 更严格。范围 5–20%。
+                    </span>
+                </div>
+
+                <div class="tip-box info">
+                    <span class="tip-box-label">修改后的生效时机</span>
+                    <p>
+                        精选百分比和连拍阈值在<strong>下一次选鸟</strong>时生效。
+                        若要对已处理目录重新应用，需先重置再处理——见<a href="11-reset.html" class="xref">第 11 章</a>。
+                    </p>
+                </div>
+            </div>
+
+            <!-- ══ 10.4 ══ -->
+            <div class="content-section" id="s10-4">
+                <span class="section-label-tag">10.4</span>
+                <h2 class="section-heading">目录布局</h2>
+
+                <p>
+                    <strong>目录布局</strong>（<code>folder_layout</code>）决定选鸟完成后文件的分目录层级顺序，
+                    v4.3 起默认改为<strong>鸟种优先</strong>，以便视频与照片共享同一鸟种目录。
+                </p>
+
+                <div class="layout-compare">
+                    <div class="layout-box active">
+                        <div class="layout-box-head">
+                            <span class="lb-title">鸟种优先</span>
+                            <span class="lb-badge">v4.3 默认</span>
+                        </div>
+                        <div class="layout-tree"><span class="lt-dir">白胸鸲鹟/</span>
+  <span class="lt-dir">3星_优选/</span>
+    <span class="lt-file">DSC_0010.ARW</span>
+  <span class="lt-dir">3星_普通/</span>
+    <span class="lt-file">DSC_0011.ARW</span>
+  <span class="lt-file">白胸鸲鹟_2026.mp4</span>
+<span class="lt-dir">其他鸟类/</span>
+  <span class="lt-dir">1星/</span>
+  <span class="lt-dir">0星/</span></div>
+                    </div>
+                    <div class="layout-box">
+                        <div class="layout-box-head">
+                            <span class="lb-title">星级优先</span>
+                        </div>
+                        <div class="layout-tree"><span class="lt-dir">3星_优选/</span>
+  <span class="lt-dir">白胸鸲鹟/</span>
+    <span class="lt-file">DSC_0010.ARW</span>
+<span class="lt-dir">3星_普通/</span>
+  <span class="lt-dir">白胸鸲鹟/</span>
+    <span class="lt-file">DSC_0011.ARW</span>
+<span class="lt-dir">其他鸟类/</span>
+  <span class="lt-dir">1星/</span>
+  <span class="lt-dir">0星/</span></div>
+                    </div>
+                </div>
+
+                <p>
+                    两种布局的<strong>1 星、0 星、-1 星（无鸟）</strong>文件永远聚合到「其他鸟类」分支，
+                    不受此设置影响。如何选择：
+                </p>
+
+                <table class="content-table">
+                    <thead>
+                        <tr>
+                            <th>工作流类型</th>
+                            <th>推荐布局</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>照片 + 视频混合，按鸟种导入后期</td>
+                            <td>鸟种优先（默认）</td>
+                        </tr>
+                        <tr>
+                            <td>纯照片，先挑优选再分鸟种</td>
+                            <td>星级优先</td>
+                        </tr>
+                        <tr>
+                            <td>Lightroom 按鸟种建文件夹集合</td>
+                            <td>鸟种优先</td>
+                        </tr>
+                        <tr>
+                            <td>希望打开目录后直接看到最优照片</td>
+                            <td>星级优先</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <div class="tip-box warning">
+                    <span class="tip-box-label">切换布局需重新处理</span>
+                    <p>
+                        目录布局在选鸟时确定，不可对已处理目录原地切换。
+                        若需更换，请重置后重新处理，详见<a href="11-reset.html" class="xref">第 11 章</a>。
+                    </p>
+                </div>
+
+            </div>
+
+            <!-- ══ 10.5 ══ -->
+            <div class="content-section" id="s10-5">
+                <span class="section-label-tag">10.5</span>
+                <h2 class="section-heading">外部编辑器</h2>
+
+                <p>
+                    在结果浏览器中右键照片时，菜单可以出现<strong>「用 X 打开」</strong>选项，
+                    快速将照片送入 Adobe Lightroom、Capture One、Preview、Affinity Photo
+                    等你常用的软件。
+                </p>
+
+                <p>添加外部编辑器的步骤：</p>
+
+                <ol class="steps-list">
+                    <li>打开<strong>高级设置 → 外部编辑器</strong></li>
+                    <li>点击「<strong>添加应用</strong>」按钮</li>
+                    <li>在系统文件选择器中选择 <code>.app</code>（macOS）或 <code>.exe</code>（Windows）文件</li>
+                    <li>可自定义显示名称（例如将「Adobe Lightroom Classic」缩短为「Lightroom」）</li>
+                    <li>点击保存；右键菜单立即更新</li>
+                </ol>
+
+                <p>
+                    列表支持多个应用，拖拽可调整顺序，点击垃圾桶图标可删除。
+                    右键菜单中最多显示全部已添加应用，无数量上限。
+                </p>
+
+                <div class="tip-box info">
+                    <span class="tip-box-label">macOS 上的 Lightroom 路径</span>
+                    <p>
+                        Lightroom Classic 通常位于
+                        <code>/Applications/Adobe Lightroom Classic/Adobe Lightroom Classic.app</code>。
+                        若安装在其他位置，可在 Finder 中右键应用图标→「显示简介」查看完整路径。
+                    </p>
+                </div>
+
+            </div>
+
+            <!-- ══ 10.6 ══ -->
+            <div class="content-section" id="s10-6">
+                <span class="section-label-tag">10.6</span>
+                <h2 class="section-heading">其他偏好</h2>
+
+                <p>高级设置中还有若干细节偏好，通常保持默认即可：</p>
+
+                <div class="param-row">
+                    <span class="param-key">处理完成提示音</span>
+                    <span class="param-default">默认 开启</span>
+                    <span class="param-desc">
+                        选鸟完成时播放系统提示音，方便在后台运行时及时知晓。
+                        在安静环境下工作可关闭。
+                    </span>
+                </div>
+                <div class="param-row">
+                    <span class="param-key">保存 CSV 报告</span>
+                    <span class="param-default">默认 开启</span>
+                    <span class="param-desc">
+                        选鸟完成后在目录下生成 <code>SuperPicky_Report.csv</code>，
+                        记录每张照片的评分、锐度、美学分、鸟种等详细数据，可在 Excel 中进一步统计分析。
+                    </span>
+                </div>
+                <div class="param-row">
+                    <span class="param-key">日志详细程度</span>
+                    <span class="param-default">默认 detailed</span>
+                    <span class="param-desc">
+                        <strong>detailed</strong>（详细）：日志区显示每张照片的处理过程，方便排查异常；
+                        <strong>simple</strong>（简洁）：只显示进度与最终统计，适合大批量处理时减少视觉噪音。
+                    </span>
+                </div>
+                <div class="param-row">
+                    <span class="param-key">保留临时预览图</span>
+                    <span class="param-default">默认 开启</span>
+                    <span class="param-desc">
+                        选鸟过程中生成的临时 JPEG 预览图和调试裁切图保留在 <code>tmp/</code> 目录下，
+                        可用于核查 AI 检测框位置。关闭后处理完成时自动清理这些临时文件。
+                    </span>
+                </div>
+
+                <div class="tip-box info">
+                    <span class="tip-box-label">删除确认弹窗</span>
+                    <p>
+                        结果浏览器中第一次删除照片时会弹出确认对话框，
+                        勾选「不再确认」后关闭弹窗，此后删除操作直接执行。
+                        若需要重新开启确认弹窗，在高级设置中将<strong>删除确认</strong>重置为「开启」即可。
+                    </p>
+                </div>
+
+            </div>
+
+        </div>
+    </section>
+
+    <!-- 章节导航 -->
+    <section class="chapter-nav">
+        <div class="container">
+            <div class="chapter-nav-inner">
+                <a href="09-video.html" class="nav-btn prev">
+                    <span class="nav-direction">上一章</span>
+                    <span class="nav-chapter-title">视频分析</span>
+                </a>
+                <a href="11-reset.html" class="nav-btn next">
+                    <span class="nav-direction">下一章</span>
+                    <span class="nav-chapter-title">重置与重新处理</span>
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <div class="footer-inner">
+                <div class="footer-brand">
+                    <img src="../../img/icon.png" alt="SuperPicky">
+                    <div class="footer-brand-text">
+                        <span>SuperPicky</span>
+                        <span class="footer-author">by James Yu (詹姆斯·于震)</span>
+                    </div>
+                </div>
+                <div class="footer-links">
+                    <a href="index.html">教程目录</a>
+                    <a href="../../faq.html">常见问题</a>
+                    <a href="https://github.com/jamesphotography/SuperPicky">GitHub</a>
+                    <a href="mailto:james@jamesphotography.com.au">联系</a>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p class="credits">模型致谢：YOLO11 (Ultralytics) · TOPIQ (Chaofeng Chen et al.)</p>
+                <p class="copyright">© 2024-2026 James Yu · <a href="../../LICENSE" target="_blank"
+                        style="color: inherit; text-decoration: underline;">AGPL-3.0 License</a></p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="../../js/main.js"></script>
+</body>
+
+</html>

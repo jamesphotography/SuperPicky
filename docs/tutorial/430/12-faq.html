@@ -1,0 +1,980 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-lang="cn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>第 12 章 常见问题与排查 - SuperPicky 慧眼选鸟 4.3.0 教程</title>
+    <meta name="description" content="SuperPicky 慧眼选鸟 4.3.0 常见问题：Windows 安装提示、首启慢、中文路径、ARW 问题、识鸟无结果、罕见度异常、GPU vs CPU">
+    <link rel="stylesheet" href="../../css/style.css?v=20260612">
+    <link rel="icon" href="../../img/icon.png" type="image/png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        .chapter-header-bar { padding: 100px 0 0; }
+
+        .breadcrumb {
+            font-size: 13px;
+            color: var(--text-tertiary);
+            margin-bottom: 40px;
+        }
+        .breadcrumb a { color: var(--text-tertiary); text-decoration: none; transition: color 0.2s; }
+        .breadcrumb a:hover { color: var(--accent); }
+        .breadcrumb span { margin: 0 6px; }
+
+        .chapter-hero {
+            padding: 40px 0 52px;
+            border-bottom: 1px solid var(--border-subtle);
+            margin-bottom: 52px;
+        }
+        .chapter-num-display {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--accent);
+            letter-spacing: 0.1em;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .chapter-hero h1 {
+            font-size: clamp(28px, 4vw, 44px);
+            font-weight: 700;
+            letter-spacing: -1px;
+            line-height: 1.2;
+            margin-bottom: 16px;
+            background: linear-gradient(135deg, var(--text-primary) 0%, var(--text-secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .chapter-hero p.subtitle {
+            font-size: 17px;
+            color: var(--text-secondary);
+            line-height: 1.7;
+            max-width: 640px;
+        }
+
+        .chapter-toc {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 52px;
+        }
+        .chapter-toc a {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 14px;
+            border-radius: 999px;
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-elevated);
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 13px;
+            transition: all 0.18s ease;
+        }
+        .chapter-toc a:hover { border-color: var(--accent); color: var(--accent); }
+        .chapter-toc a .sec-num { font-family: var(--font-mono); font-size: 10px; color: var(--accent); }
+
+        .chapter-body { padding: 0 0 80px; }
+
+        .content-section {
+            margin-bottom: 60px;
+            padding-bottom: 52px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .content-section:last-child { border-bottom: none; margin-bottom: 0; }
+
+        .section-label-tag {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--accent);
+            letter-spacing: 0.08em;
+            display: block;
+            margin-bottom: 10px;
+        }
+        .section-heading {
+            font-size: 22px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 20px;
+            line-height: 1.3;
+        }
+
+        /* ── FAQ 问答条目 ── */
+        .faq-list {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+        .faq-item {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            overflow: hidden;
+        }
+        .faq-q {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 16px 20px;
+        }
+        .faq-q .q-mark {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--accent);
+            background: var(--accent-dim);
+            border-radius: 4px;
+            padding: 2px 7px;
+            flex-shrink: 0;
+            margin-top: 2px;
+        }
+        .faq-q .q-text {
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--text-primary);
+            line-height: 1.5;
+        }
+        .faq-a {
+            padding: 0 20px 18px 52px;
+            font-size: 14px;
+            line-height: 1.85;
+            color: var(--text-secondary);
+        }
+        .faq-a p { margin-bottom: 10px; }
+        .faq-a p:last-child { margin-bottom: 0; }
+        .faq-a strong { color: var(--text-primary); }
+
+        /* ── 步骤列表 ── */
+        .steps-list {
+            list-style: none;
+            padding: 0;
+            margin: 10px 0;
+            counter-reset: step;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .steps-list li {
+            counter-increment: step;
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            font-size: 13.5px;
+            line-height: 1.7;
+            color: var(--text-secondary);
+            padding: 10px 14px;
+            background: var(--bg-card);
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border-subtle);
+        }
+        .steps-list li::before {
+            content: counter(step);
+            font-family: var(--font-mono);
+            font-size: 10px;
+            font-weight: 700;
+            color: var(--accent);
+            background: var(--accent-dim);
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            margin-top: 2px;
+        }
+
+        /* ── 提示框 ── */
+        .tip-box {
+            padding: 14px 18px;
+            border-radius: var(--radius-md);
+            border-left: 3px solid;
+            margin: 12px 0;
+            font-size: 13.5px;
+            line-height: 1.8;
+        }
+        .tip-box.info    { background: rgba(0, 212, 170, 0.05);  border-color: var(--accent); }
+        .tip-box.warning { background: rgba(245, 158, 11, 0.05); border-color: #f59e0b; }
+        .tip-box-label {
+            font-size: 10px;
+            font-weight: 700;
+            font-family: var(--font-mono);
+            letter-spacing: 0.1em;
+            margin-bottom: 5px;
+            display: block;
+        }
+        .tip-box.info    .tip-box-label { color: var(--accent); }
+        .tip-box.warning .tip-box-label { color: #f59e0b; }
+        .tip-box p { margin: 0; color: var(--text-secondary); font-size: 13.5px; }
+        .tip-box p + p { margin-top: 6px; }
+
+        /* ── 平台标签 ── */
+        .platform-tag {
+            display: inline-block;
+            font-family: var(--font-mono);
+            font-size: 10px;
+            font-weight: 700;
+            padding: 2px 7px;
+            border-radius: 4px;
+            vertical-align: middle;
+            margin-right: 4px;
+        }
+        .platform-tag.win { background: rgba(0, 120, 215, 0.15); color: #60a5fa; }
+        .platform-tag.mac { background: rgba(100, 210, 170, 0.12); color: var(--accent); }
+
+        /* ── 表格 ── */
+        .content-table {
+            width: 100%;
+            border-collapse: collapse;
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            border: 1px solid var(--border-subtle);
+            margin: 12px 0;
+            font-size: 13.5px;
+        }
+        .content-table thead th {
+            background: var(--bg-card);
+            padding: 10px 14px;
+            text-align: left;
+            font-size: 10px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            border-bottom: 1px solid var(--border);
+        }
+        .content-table tbody td {
+            padding: 11px 14px;
+            line-height: 1.6;
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--border-subtle);
+            vertical-align: top;
+        }
+        .content-table tbody tr:last-child td { border-bottom: none; }
+        .content-table td:first-child { color: var(--text-primary); font-weight: 500; }
+
+        /* ── 图片占位 ── */
+        .img-slot {
+            margin: 20px 0;
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-elevated);
+        }
+        .img-slot img {
+            max-width: 100%;
+            height: auto;
+            display: block;
+            margin: 0 auto;
+        }
+        .img-slot .img-pending {
+            padding: 24px 20px;
+            display: flex;
+            align-items: flex-start;
+            gap: 14px;
+        }
+        .img-slot .img-pending .pi-icon { font-size: 24px; flex-shrink: 0; }
+        .img-slot .img-pending .pi-info { display: flex; flex-direction: column; gap: 5px; }
+        .img-slot .img-pending .pi-filename {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--accent);
+            background: var(--accent-dim);
+            padding: 2px 8px;
+            border-radius: 4px;
+            display: inline-block;
+        }
+        .img-slot .img-pending .pi-desc {
+            font-size: 12.5px;
+            color: var(--text-tertiary);
+            line-height: 1.6;
+        }
+
+        /* ── 跨引用链接 ── */
+        .xref {
+            color: var(--accent);
+            text-decoration: none;
+            border-bottom: 1px solid rgba(0,212,170,0.3);
+            transition: border-color 0.18s;
+        }
+        .xref:hover { border-color: var(--accent); }
+
+        /* ── 完结横幅 ── */
+        .finale-banner {
+            margin: 48px 0 0;
+            padding: 40px 36px;
+            background: linear-gradient(135deg, rgba(0,212,170,0.08), rgba(0,212,170,0.02));
+            border: 1px solid rgba(0,212,170,0.2);
+            border-radius: var(--radius-lg, 16px);
+            text-align: center;
+        }
+        .finale-banner .fb-icon { font-size: 40px; margin-bottom: 14px; }
+        .finale-banner h3 {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 10px;
+        }
+        .finale-banner p {
+            font-size: 14px;
+            line-height: 1.8;
+            color: var(--text-secondary);
+            max-width: 520px;
+            margin: 0 auto 20px;
+        }
+        .finale-banner .fb-links {
+            display: flex;
+            justify-content: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .fb-link {
+            padding: 9px 20px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 500;
+            text-decoration: none;
+            transition: all 0.18s;
+        }
+        .fb-link.primary {
+            background: var(--accent);
+            color: var(--bg-void);
+        }
+        .fb-link.primary:hover { opacity: 0.88; }
+        .fb-link.secondary {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+        }
+        .fb-link.secondary:hover { border-color: var(--accent); color: var(--accent); }
+
+        /* ── 章节导航 ── */
+        .chapter-nav {
+            padding: 32px 0 60px;
+            border-top: 1px solid var(--border-subtle);
+        }
+        .chapter-nav-inner {
+            display: flex;
+            justify-content: space-between;
+            align-items: stretch;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        .nav-btn {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding: 14px 20px;
+            border-radius: var(--radius-md);
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            text-decoration: none;
+            transition: all 0.2s ease;
+            flex: 1;
+            min-width: 180px;
+            max-width: 300px;
+        }
+        .nav-btn:hover { border-color: var(--accent); }
+        .nav-btn.prev { align-items: flex-start; }
+        .nav-direction { font-size: 11px; font-family: var(--font-mono); color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.08em; }
+        .nav-chapter-title { font-size: 14px; font-weight: 500; color: var(--text-secondary); line-height: 1.4; }
+        .nav-btn:hover .nav-chapter-title { color: var(--accent); }
+
+        @media (max-width: 600px) {
+            .chapter-nav-inner { flex-direction: column; }
+            .nav-btn { max-width: 100%; }
+            .faq-a { padding-left: 20px; }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="grain"></div>
+
+    <!-- Header -->
+    <header>
+        <div class="header-inner">
+            <a href="../../index.html" class="logo">
+                <img src="../../img/icon.png" alt="SuperPicky">
+                <span>SuperPicky</span>
+            </a>
+        </div>
+    </header>
+
+    <!-- 面包屑 -->
+    <div class="chapter-header-bar">
+        <div class="container">
+            <nav class="breadcrumb">
+                <a href="../../index.html">主页</a>
+                <span>/</span>
+                <a href="index.html">4.3.0 教程</a>
+                <span>/</span>
+                <span>第 12 章</span>
+            </nav>
+        </div>
+    </div>
+
+    <!-- 章节 Hero -->
+    <section class="chapter-hero">
+        <div class="container">
+            <div class="chapter-num-display">
+                <span>CHAPTER 12 / 12</span>
+                <span style="background:rgba(0,212,170,0.12);color:var(--accent);font-size:10px;padding:2px 8px;border-radius:4px;letter-spacing:0.06em;">最终章</span>
+            </div>
+            <h1>常见问题与排查</h1>
+            <p class="subtitle">
+                安装拦截、首启缓慢、中文路径、ARW 写入、识鸟无结果、罕见度为零、GPU 版还是 CPU 版——
+                把最常见的卡点汇总在这里，按症状快速找到解法。
+            </p>
+        </div>
+    </section>
+
+    <!-- 正文 -->
+    <section class="chapter-body">
+        <div class="container">
+
+            <!-- 章节内目录 -->
+            <nav class="chapter-toc">
+                <a href="#s12-1"><span class="sec-num">12.1</span>Windows 安装</a>
+                <a href="#s12-2"><span class="sec-num">12.2</span>首启慢 / 初始化</a>
+                <a href="#s12-3"><span class="sec-num">12.3</span>中文路径</a>
+                <a href="#s12-4"><span class="sec-num">12.4</span>Sony ARW</a>
+                <a href="#s12-5"><span class="sec-num">12.5</span>识鸟无结果</a>
+                <a href="#s12-6"><span class="sec-num">12.6</span>罕见度异常</a>
+                <a href="#s12-7"><span class="sec-num">12.7</span>GPU vs CPU</a>
+            </nav>
+
+            <!-- ══ 12.1 ══ -->
+            <div class="content-section" id="s12-1">
+                <span class="section-label-tag">12.1</span>
+                <h2 class="section-heading"><span class="platform-tag win">Windows</span>安装拦截与安全提示</h2>
+
+                <div class="faq-list">
+
+                    <div class="faq-item">
+                        <div class="faq-q">
+                            <span class="q-mark">Q</span>
+                            <span class="q-text">双击安装包后弹出「Windows 已保护你的电脑」，没有安装按钮？</span>
+                        </div>
+                        <div class="faq-a">
+                            <p>
+                                这是 Windows SmartScreen 对未广泛传播的可执行文件发出的拦截提示，属于正常现象，
+                                与软件本身是否安全无关。绕过方式：
+                            </p>
+                            <ol class="steps-list">
+                                <li>在弹窗中点击<strong>「更多信息」</strong>（蓝色小字链接）</li>
+                                <li>页面底部出现<strong>「仍要运行」</strong>按钮，点击即可继续安装</li>
+                            </ol>
+                            <div class="tip-box info">
+                                <span class="tip-box-label">为何会被拦截</span>
+                                <p>SmartScreen 根据下载量评估信任度。SuperPicky 慧眼选鸟 是独立软件，下载次数累积到一定量后拦截会自动减少。</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="faq-item">
+                        <div class="faq-q">
+                            <span class="q-mark">Q</span>
+                            <span class="q-text">杀毒软件将安装包或程序标记为威胁并删除了？</span>
+                        </div>
+                        <div class="faq-a">
+                            <p>
+                                部分杀毒软件对 PyInstaller 打包的 Python 程序误报。SuperPicky 慧眼选鸟 未包含任何恶意代码，代码完全开源（GitHub）。
+                            </p>
+                            <div class="tip-box warning">
+                                <span class="tip-box-label">强烈建议：安装前先关闭国产安全软件</span>
+                                <p><strong>腾讯电脑管家、360 安全卫士、360 杀毒、火绒</strong>等软件对非知名来源程序极易误拦截，且有时删除文件后不留恢复入口。</p>
+                                <p>建议在安装 SuperPicky 之前，先<strong>完全退出</strong>（右键托盘图标→退出）或临时关闭这些安全软件，安装并首次启动完成后再重新开启。</p>
+                            </div>
+                            <p>若文件已被删除或隔离，恢复步骤：</p>
+                            <ol class="steps-list">
+                                <li>在安全软件的「隔离区」或「信任区」中找到被删除的文件，点击「恢复」或「加入白名单」</li>
+                                <li>将 SuperPicky 安装目录（默认 <code>C:\Program Files\SuperPicky</code>）加入安全软件的<strong>排除项 / 信任目录</strong></li>
+                                <li>重新运行安装包</li>
+                            </ol>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+            <!-- ══ 12.2 ══ -->
+            <div class="content-section" id="s12-2">
+                <span class="section-label-tag">12.2</span>
+                <h2 class="section-heading">首次启动慢 / 初始化</h2>
+
+                <div class="faq-list">
+
+                    <div class="faq-item">
+                        <div class="faq-q">
+                            <span class="q-mark">Q</span>
+                            <span class="q-text"><span class="platform-tag win">Windows Lite</span>第一次打开后出现初始化界面，一直在下载，这是正常的吗？</span>
+                        </div>
+                        <div class="faq-a">
+                            <p>
+                                这只发生在 <strong>Windows Lite 版本</strong>。Lite 版采用「轻量底包」发布策略——
+                                安装包体积较小，首次启动时需要从网络下载运行时和 AI 模型，
+                                下载完成后保存在本地，<strong>后续启动不再重复下载</strong>。
+                            </p>
+                            <div class="tip-box info">
+                                <span class="tip-box-label">推荐下载完整版（Full），开合即用</span>
+                                <p>
+                                    <strong>Windows Full 版</strong>已将全部运行时、模型和数据库打包在安装包内，
+                                    安装完成后无需联网初始化，启动即可直接使用。
+                                    如果网络条件一般或不想等待初始化，建议直接下载 Full 版。
+                                </p>
+                            </div>
+                            <p>如果你使用的是 Lite 版，首次初始化内容包括：</p>
+                            <table class="content-table">
+                                <thead><tr><th>组件</th><th>说明</th></tr></thead>
+                                <tbody>
+                                    <tr><td>Python 运行时 + Torch</td><td>AI 推理引擎，体积较大（数百 MB）</td></tr>
+                                    <tr><td>OSEA 鸟种识别模型</td><td>10,964 种鸟类，约 100 MB</td></tr>
+                                    <tr><td>YOLO 检测模型</td><td>目标检测，约 20–50 MB</td></tr>
+                                    <tr><td>Avonet 物种数据库</td><td>离线区域过滤数据库</td></tr>
+                                    <tr><td>GBIF 罕见度索引</td><td>全球观察计数数据</td></tr>
+                                </tbody>
+                            </table>
+                            <div class="tip-box warning">
+                                <span class="tip-box-label">初始化中途不要关闭</span>
+                                <p>如果在初始化未完成时强制退出，下次启动会自动检测残留并尝试从中断处修复，通常无需手动干预。</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="faq-item">
+                        <div class="faq-q">
+                            <span class="q-mark">Q</span>
+                            <span class="q-text">初始化已完成，但每次启动仍然需要等待 30–60 秒才能操作？</span>
+                        </div>
+                        <div class="faq-a">
+                            <p>
+                                这是 AI 模型首次加载到内存的预热时间，在低配 CPU 或机械硬盘上尤其明显。
+                                正常现象，加载完成后操作流畅。
+                            </p>
+                            <p>
+                                若每次启动都很慢，可以考虑使用<strong>系统托盘后台模式</strong>：
+                                关闭主窗口后应用不退出，模型保持常驻内存，下次点击托盘图标秒速恢复界面。
+                            </p>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+            <!-- ══ 12.3 ══ -->
+            <div class="content-section" id="s12-3">
+                <span class="section-label-tag">12.3</span>
+                <h2 class="section-heading">中文路径</h2>
+
+                <div class="faq-list">
+
+                    <div class="faq-item">
+                        <div class="faq-q">
+                            <span class="q-mark">Q</span>
+                            <span class="q-text">照片目录路径含有中文，选鸟会出错吗？</span>
+                        </div>
+                        <div class="faq-a">
+                            <p>
+                                <strong>通常不会</strong>。SuperPicky 慧眼选鸟 内部统一使用 UTF-8 处理文件路径，
+                                包含中文、日文等多字节字符的路径在 macOS 和现代 Windows（NTFS 文件系统）下均可正常运行。
+                            </p>
+                            <p>
+                                <strong>已知边界情况</strong>：
+                                若 ExifTool 对某个路径的 ARW 文件写入失败，
+                                可在高级设置中将 ARW 写入策略改为 <strong>sidecar</strong>，
+                                问题即可消除（见<a href="10-advanced.html#s10-2" class="xref">第 10 章 10.2</a>）。
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="faq-item">
+                        <div class="faq-q">
+                            <span class="q-mark">Q</span>
+                            <span class="q-text"><span class="platform-tag win">Windows</span>日志区显示乱码？</span>
+                        </div>
+                        <div class="faq-a">
+                            <p>
+                                极少数情况下，Windows 系统区域设置为非 Unicode 模式时，
+                                命令行子进程的输出可能出现乱码。
+                                SuperPicky 慧眼选鸟 的 GUI 日志区本身使用 UTF-8，
+                                不受系统代码页影响。若出现乱码，大概率来自第三方工具（如 ExifTool）的输出。
+                                解决办法：
+                            </p>
+                            <ol class="steps-list">
+                                <li>打开「控制面板 → 区域 → 管理 → 更改系统区域设置」</li>
+                                <li>勾选「Beta 版：使用 Unicode UTF-8 提供全球语言支持」</li>
+                                <li>重启电脑</li>
+                            </ol>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+            <!-- ══ 12.4 ══ -->
+            <div class="content-section" id="s12-4">
+                <span class="section-label-tag">12.4</span>
+                <h2 class="section-heading">Sony ARW</h2>
+
+                <div class="faq-list">
+
+                    <div class="faq-item">
+                        <div class="faq-q">
+                            <span class="q-mark">Q</span>
+                            <span class="q-text">处理完成后，Lightroom 显示 ARW 文件没有星级？</span>
+                        </div>
+                        <div class="faq-a">
+                            <p>
+                                检查以下两点：
+                            </p>
+                            <ol class="steps-list">
+                                <li>
+                                    <strong>元数据未同步</strong>：在 Lightroom 中选中照片，按
+                                    <strong>Ctrl+S</strong>（Win）/ <strong>Cmd+S</strong>（Mac）手动读取元数据，
+                                    或菜单「图库 → 元数据 → 从文件读取元数据」
+                                </li>
+                                <li>
+                                    <strong>ARW 写入策略为 sidecar</strong>：若高级设置中 ARW 写入策略设为 <code>sidecar</code>，
+                                    星级写在 <code>.xmp</code> 文件中，需在 Lightroom 设置里开启「自动读取 XMP」或手动导入 XMP 文件
+                                </li>
+                            </ol>
+                        </div>
+                    </div>
+
+                    <div class="faq-item">
+                        <div class="faq-q">
+                            <span class="q-mark">Q</span>
+                            <span class="q-text">日志显示 ARW 文件写入警告或失败？</span>
+                        </div>
+                        <div class="faq-a">
+                            <p>
+                                Sony 每代相机的 ARW 内部结构略有差异，部分型号（尤其是较新的 A7C II、ZV-E1 等）
+                                在直接写入时 ExifTool 可能报告结构变化警告。
+                                建议将 ARW 写入策略改为 <strong>auto</strong>（自动回退 sidecar）或直接改为 <strong>sidecar</strong>，
+                                两者均可保证元数据安全写入。
+                            </p>
+                            <p>
+                                <strong>sidecar 模式下照片原始文件完全不被修改</strong>，
+                                是对数据安全要求最高的用户的首选。
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="faq-item">
+                        <div class="faq-q">
+                            <span class="q-mark">Q</span>
+                            <span class="q-text">ARW 处理比 JPEG 慢很多，正常吗？</span>
+                        </div>
+                        <div class="faq-a">
+                            <p>
+                                正常。ARW 是无损压缩的 RAW 文件，读取时需要解码；
+                                SuperPicky 慧眼选鸟 内部使用半尺寸后处理（约原始像素的 1/4）
+                                来降低 AI 推理的计算量，但解码本身仍比 JPEG 慢。
+                                如果速度是首要关注点，处理后可在 Lightroom 等软件中导出对应 JPEG，
+                                日后再次分析时使用 JPEG 会快很多。
+                            </p>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+            <!-- ══ 12.5 ══ -->
+            <div class="content-section" id="s12-5">
+                <span class="section-label-tag">12.5</span>
+                <h2 class="section-heading">识鸟无结果</h2>
+
+                <div class="faq-list">
+
+                    <div class="faq-item">
+                        <div class="faq-q">
+                            <span class="q-mark">Q</span>
+                            <span class="q-text">选鸟完成后，大量照片被归入「其他鸟类」，但照片中明明有鸟？</span>
+                        </div>
+                        <div class="faq-a">
+                            <p>「其他鸟类」目录包含以下情况，请逐一排查：</p>
+                            <table class="content-table">
+                                <thead><tr><th>可能原因</th><th>排查方式</th></tr></thead>
+                                <tbody>
+                                    <tr>
+                                        <td>识鸟功能未开启</td>
+                                        <td>主界面确认已勾选「鸟种识别」开关（默认关闭）</td>
+                                    </tr>
+                                    <tr>
+                                        <td>星级不够（批量识鸟仅处理 ≥2★）</td>
+                                        <td>1 星和 0 星照片跳过识鸟以节省时间，属于正常设计</td>
+                                    </tr>
+                                    <tr>
+                                        <td>置信度低于批量阈值（默认 50%）</td>
+                                        <td>在高级设置中降低「鸟种识别最低置信度」，或在识鸟面板手动识别（面板阈值 30%）</td>
+                                    </tr>
+                                    <tr>
+                                        <td>区域过滤过严</td>
+                                        <td>在识鸟面板将国家/省份设为「全球」，确认该鸟种在 Avonet 数据库中是否有记录</td>
+                                    </tr>
+                                    <tr>
+                                        <td>照片中鸟类模糊 / 遮挡 / 远距离</td>
+                                        <td>OSEA 模型对清晰度有要求；手动识鸟面板可对单张照片专门识别</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="faq-item">
+                        <div class="faq-q">
+                            <span class="q-mark">Q</span>
+                            <span class="q-text">识鸟面板识别结果与批量选鸟结果不一致？</span>
+                        </div>
+                        <div class="faq-a">
+                            <p>
+                                这是设计行为，两者的置信度阈值不同：
+                            </p>
+                            <table class="content-table">
+                                <thead><tr><th></th><th>批量选鸟</th><th>识鸟面板（手动）</th></tr></thead>
+                                <tbody>
+                                    <tr><td>处理星级范围</td><td>仅 ≥ 2★</td><td>全部照片</td></tr>
+                                    <tr><td>最低置信度</td><td>默认 50%（可调）</td><td>30%（固定下限）</td></tr>
+                                    <tr><td>候选结果数</td><td>写入置信度最高的一个</td><td>最多显示 3 个候选</td></tr>
+                                    <tr><td>设计目标</td><td>快速批量，减少误标</td><td>精细识别，更多可能性</td></tr>
+                                </tbody>
+                            </table>
+                            <p>详细说明见<a href="08-birdid.html#s8-1" class="xref">第 08 章 8.1</a>。</p>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+            <!-- ══ 12.6 ══ -->
+            <div class="content-section" id="s12-6">
+                <span class="section-label-tag">12.6</span>
+                <h2 class="section-heading">罕见度异常</h2>
+
+                <div class="faq-list">
+
+                    <div class="faq-item">
+                        <div class="faq-q">
+                            <span class="q-mark">Q</span>
+                            <span class="q-text">识别出了鸟种，但罕见度显示为 0 分或没有数据？</span>
+                        </div>
+                        <div class="faq-a">
+                            <p>
+                                罕见度指数来自 GBIF 全球观察计数数据库。以下情况可能导致缺失或显示 0：
+                            </p>
+                            <table class="content-table">
+                                <thead><tr><th>原因</th><th>说明</th></tr></thead>
+                                <tbody>
+                                    <tr>
+                                        <td>该物种在 GBIF 中观察记录为零</td>
+                                        <td>部分珍稀物种或冷门地区鸟类在 GBIF 中确实无记录，属于数据库真实缺失，非软件问题</td>
+                                    </tr>
+                                    <tr>
+                                        <td>学名匹配失败</td>
+                                        <td>OSEA 模型使用的分类学名称与 GBIF 数据库版本存在差异（约 4–5% 的物种）；软件采用「精确匹配 + 回退并集」策略，仍有极少数无法匹配</td>
+                                    </tr>
+                                    <tr>
+                                        <td>鸟名格式设为 default（OSEA 原始名）</td>
+                                        <td>换用 avilist 或 scientific 格式后罕见度显示可能恢复正常（换格式不影响内部匹配逻辑，但可以验证识别结果）</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                            <div class="tip-box info">
+                                <span class="tip-box-label">GBIF vs IUCN 的区别</span>
+                                <p>GBIF 罕见度反映「拍到的难度」（观察记录少 = 难拍），IUCN 濒危等级反映「保护级别」（濒危不等于难拍）。两者维度不同，可以互补参考。详见<a href="06-rarity.html#s6-5" class="xref">第 06 章 6.5</a>。</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="faq-item">
+                        <div class="faq-q">
+                            <span class="q-mark">Q</span>
+                            <span class="q-text">常见鸟的罕见度显示偏高，不符合实际情况？</span>
+                        </div>
+                        <div class="faq-a">
+                            <p>
+                                GBIF 罕见度基于<strong>全球观察总量</strong>计算，而非该地区的相对频率。
+                                若某种鸟虽然在当地常见，但全球范围内仅分布于该地区（地方性物种），
+                                GBIF 总记录数依然偏少，分数会偏高。
+                            </p>
+                            <p>
+                                这是数据本身的特性，不是误差。结合<strong>区域地方性</strong>和<strong>IUCN 等级</strong>综合判断，
+                                效果更好。
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="faq-item">
+                        <div class="faq-q">
+                            <span class="q-mark">Q</span>
+                            <span class="q-text">明明是常见鸟，却被标为「传奇」最高级罕见度？</span>
+                        </div>
+                        <div class="faq-a">
+                            <p>
+                                这很可能是<strong>近年分类学拆分导致的数据缺口</strong>。
+                                鸟类分类学每年都会将原本归为同一物种的种群拆分为若干独立新种。
+                                新种确立后，GBIF 才会以新学名单独统计观察记录——
+                                但在此之前几十年积累的观察数据都挂在「旧物种」名下，新种名下的记录几乎为零，
+                                因此罕见度分数会显示极高，甚至达到传奇级别，与实际拍摄难度完全不符。
+                            </p>
+                            <p>
+                                <strong>常见受影响情形</strong>：近年被从某大种拆出的澳大利亚、东南亚地区物种。
+                                例如某种原归于广布种的亚种，拆分为独立种后 GBIF 下暂无独立计数，分数虚高。
+                            </p>
+                            <div class="tip-box info">
+                                <span class="tip-box-label">遇到这种情况请联系我们修正</span>
+                                <p>
+                                    如果你确认某个鸟种的罕见度严重失真（特别是新分类拆分导致），
+                                    欢迎通过邮件
+                                    <a href="mailto:james@jamesphotography.com.au" style="color:var(--accent);">james@jamesphotography.com.au</a>
+                                    或 GitHub Issues 告知物种名称和拆分背景，
+                                    我们会在下一个数据库更新中手动修正该物种的罕见度基准值。
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+            <!-- ══ 12.7 ══ -->
+            <div class="content-section" id="s12-7">
+                <span class="section-label-tag">12.7</span>
+                <h2 class="section-heading">GPU vs CPU 版本选择</h2>
+
+                <div class="faq-list">
+
+                    <div class="faq-item">
+                        <div class="faq-q">
+                            <span class="q-mark">Q</span>
+                            <span class="q-text">我应该下载 GPU 版还是 CPU 版？</span>
+                        </div>
+                        <div class="faq-a">
+                            <table class="content-table">
+                                <thead><tr><th>你的设备</th><th>推荐版本</th></tr></thead>
+                                <tbody>
+                                    <tr>
+                                        <td><span class="platform-tag mac">macOS</span>任何 Mac（Intel 或 Apple Silicon）</td>
+                                        <td>下载 Mac 版；Apple Silicon 自动使用 MPS（GPU）加速，Intel Mac 使用 CPU</td>
+                                    </tr>
+                                    <tr>
+                                        <td><span class="platform-tag win">Windows</span>配有 NVIDIA 独立显卡</td>
+                                        <td>下载 Windows Full（CUDA）版，速度最快</td>
+                                    </tr>
+                                    <tr>
+                                        <td><span class="platform-tag win">Windows</span>无独显、AMD 显卡或不确定</td>
+                                        <td>下载 Windows Lite（CPU）版，兼容性最好</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                            <div class="tip-box info">
+                                <span class="tip-box-label">CUDA 版的额外要求</span>
+                                <p>Windows CUDA 版需要安装 NVIDIA 驱动（≥ 452.39）。首次初始化时会下载约 2 GB 的 CUDA 运行时，请确保网络条件和磁盘空间充足。</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="faq-item">
+                        <div class="faq-q">
+                            <span class="q-mark">Q</span>
+                            <span class="q-text">下载了 CUDA 版但处理时日志显示「使用 CPU 推理」？</span>
+                        </div>
+                        <div class="faq-a">
+                            <p>可能原因：</p>
+                            <ol class="steps-list">
+                                <li><strong>NVIDIA 驱动版本过旧</strong>：更新至最新驱动后重启再试</li>
+                                <li><strong>CUDA 初始化失败</strong>：查看日志中的具体错误信息；有时重启应用即可恢复</li>
+                                <li><strong>GPU 显存不足</strong>：批量处理大量 RAW 时 VRAM 耗尽会自动回退 CPU，属于保护机制</li>
+                            </ol>
+                            <p>
+                                即使回退 CPU，所有功能均正常工作，只是速度较慢。
+                                CPU 版通常每张照片处理 2–5 秒，CUDA 版约 0.5–1 秒（依照片分辨率和显卡型号）。
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="faq-item">
+                        <div class="faq-q">
+                            <span class="q-mark">Q</span>
+                            <span class="q-text">Mac 上日志显示「使用 CPU 推理 (GPU 不可用)」？</span>
+                        </div>
+                        <div class="faq-a">
+                            <p>
+                                macOS 使用 Apple 的 MPS（Metal Performance Shaders）框架加速推理。
+                                MPS 仅在 Apple Silicon（M1/M2/M3/M4 系列）上可用；
+                                Intel Mac 没有 MPS 支持，使用 CPU 推理是预期行为，不需要任何操作。
+                            </p>
+                            <p>
+                                若你的 Mac 是 Apple Silicon 但仍显示 CPU，可能是系统版本过低（建议 macOS 13 Ventura 以上）
+                                或某些 Rosetta 兼容模式下 MPS 不可用。
+                            </p>
+                        </div>
+                    </div>
+
+                </div>
+
+            </div>
+
+            <!-- 完结横幅 -->
+            <div class="finale-banner">
+                                <h3>教程完结，感谢阅读！</h3>
+                <p>
+                    你已经读完了 SuperPicky 慧眼选鸟 4.3.0 的全部 12 章教程。
+                    如果遇到教程未涵盖的问题，欢迎通过 GitHub Issues 或邮件反馈。
+                </p>
+                <div class="fb-links">
+                    <a href="index.html" class="fb-link secondary">返回教程目录</a>
+                    <a href="https://github.com/jamesphotography/SuperPicky/issues" class="fb-link secondary">反馈问题</a>
+                    <a href="mailto:james@jamesphotography.com.au" class="fb-link secondary">联系作者</a>
+                </div>
+            </div>
+
+        </div>
+    </section>
+
+    <!-- 章节导航 -->
+    <section class="chapter-nav">
+        <div class="container">
+            <div class="chapter-nav-inner">
+                <a href="11-reset.html" class="nav-btn prev">
+                    <span class="nav-direction">上一章</span>
+                    <span class="nav-chapter-title">重置与重新处理</span>
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <div class="footer-inner">
+                <div class="footer-brand">
+                    <img src="../../img/icon.png" alt="SuperPicky">
+                    <div class="footer-brand-text">
+                        <span>SuperPicky</span>
+                        <span class="footer-author">by James Yu (詹姆斯·于震)</span>
+                    </div>
+                </div>
+                <div class="footer-links">
+                    <a href="index.html">教程目录</a>
+                    <a href="../../faq.html">常见问题</a>
+                    <a href="https://github.com/jamesphotography/SuperPicky">GitHub</a>
+                    <a href="mailto:james@jamesphotography.com.au">联系</a>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p class="credits">模型致谢：YOLO11 (Ultralytics) · TOPIQ (Chaofeng Chen et al.)</p>
+                <p class="copyright">© 2024-2026 James Yu · <a href="../../LICENSE" target="_blank"
+                        style="color: inherit; text-decoration: underline;">AGPL-3.0 License</a></p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="../../js/main.js"></script>
+</body>
+
+</html>

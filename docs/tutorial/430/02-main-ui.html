@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-lang="cn">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>第 02 章 主界面认识 - SuperPicky 慧眼选鸟 4.3.0 教程</title>
+    <meta name="description" content="SuperPicky 慧眼选鸟 4.3.0 主界面认识：整体布局区域划分、三个核心按钮、最近目录历史与菜单栏功能概览">
+    <link rel="stylesheet" href="../../css/style.css?v=20260612">
+    <link rel="icon" href="../../img/icon.png" type="image/png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        /* ── 章节页通用结构 ── */
+        .chapter-header-bar { padding: 100px 0 0; }
+
+        .breadcrumb {
+            font-size: 13px;
+            color: var(--text-tertiary);
+            margin-bottom: 40px;
+        }
+        .breadcrumb a {
+            color: var(--text-tertiary);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+        .breadcrumb a:hover { color: var(--accent); }
+        .breadcrumb span { margin: 0 6px; }
+
+        .chapter-hero {
+            padding: 40px 0 52px;
+            border-bottom: 1px solid var(--border-subtle);
+            margin-bottom: 52px;
+        }
+        .chapter-num-display {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--accent);
+            letter-spacing: 0.1em;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .chapter-hero h1 {
+            font-size: clamp(28px, 4vw, 44px);
+            font-weight: 700;
+            letter-spacing: -1px;
+            line-height: 1.2;
+            margin-bottom: 16px;
+            background: linear-gradient(135deg, var(--text-primary) 0%, var(--text-secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .chapter-hero p.subtitle {
+            font-size: 17px;
+            color: var(--text-secondary);
+            line-height: 1.7;
+            max-width: 640px;
+        }
+
+        /* ── 章节内目录 ── */
+        .chapter-toc {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 52px;
+        }
+        .chapter-toc a {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 14px;
+            border-radius: 999px;
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-elevated);
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 13px;
+            transition: all 0.18s ease;
+        }
+        .chapter-toc a:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+        .chapter-toc a .sec-num {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: var(--accent);
+        }
+
+        /* ── 正文内容 ── */
+        .chapter-body { padding: 0 0 80px; }
+
+        .content-section {
+            margin-bottom: 60px;
+            padding-bottom: 52px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .content-section:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+        }
+
+        .section-label-tag {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--accent);
+            letter-spacing: 0.08em;
+            display: block;
+            margin-bottom: 10px;
+        }
+
+        .section-heading {
+            font-size: 22px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 20px;
+            line-height: 1.3;
+        }
+
+        .content-section p {
+            font-size: 15px;
+            line-height: 1.9;
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+        }
+        .content-section p:last-child { margin-bottom: 0; }
+
+        .content-section strong { color: var(--text-primary); }
+
+        /* ── 功能列表 ── */
+        .feature-list {
+            list-style: none;
+            padding: 0;
+            margin: 20px 0;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .feature-list li {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            font-size: 15px;
+            line-height: 1.7;
+            color: var(--text-secondary);
+            padding: 12px 16px;
+            background: var(--bg-elevated);
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border-subtle);
+        }
+        .feature-list li .f-num {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: var(--accent);
+            background: var(--accent-dim);
+            border-radius: 4px;
+            padding: 2px 6px;
+            flex-shrink: 0;
+            margin-top: 3px;
+        }
+
+        /* ── 表格 ── */
+        .content-table {
+            width: 100%;
+            border-collapse: collapse;
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            border: 1px solid var(--border-subtle);
+            margin: 20px 0;
+            font-size: 14px;
+        }
+        .content-table thead th {
+            background: var(--bg-card);
+            padding: 11px 16px;
+            text-align: left;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            border-bottom: 1px solid var(--border);
+        }
+        .content-table tbody td {
+            padding: 13px 16px;
+            line-height: 1.65;
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--border-subtle);
+            vertical-align: top;
+        }
+        .content-table tbody tr:last-child td { border-bottom: none; }
+        .content-table tbody tr:hover td { background: rgba(255,255,255,0.015); }
+        .content-table td:first-child { color: var(--text-primary); font-weight: 500; }
+
+        /* ── 按钮卡片（三个核心按钮专用） ── */
+        .btn-cards {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin: 20px 0;
+        }
+        .btn-card {
+            display: flex;
+            align-items: flex-start;
+            gap: 16px;
+            padding: 16px 20px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+        }
+        .btn-card-label {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 4px 12px;
+            border-radius: 6px;
+            font-family: var(--font-mono);
+            font-size: 12px;
+            font-weight: 700;
+            white-space: nowrap;
+            flex-shrink: 0;
+            min-width: 100px;
+            margin-top: 1px;
+        }
+        .btn-card-label.primary {
+            background: var(--accent);
+            color: var(--bg-void);
+        }
+        .btn-card-label.secondary {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+        }
+        .btn-card-label.ghost {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-tertiary);
+        }
+        .btn-card-body {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        .btn-card-name {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+            line-height: 1.4;
+        }
+        .btn-card-desc {
+            font-size: 13px;
+            line-height: 1.65;
+            color: var(--text-secondary);
+        }
+
+        /* ── 提示框 ── */
+        .tip-box {
+            padding: 16px 20px;
+            border-radius: var(--radius-md);
+            border-left: 3px solid;
+            margin: 20px 0;
+            font-size: 14px;
+            line-height: 1.8;
+        }
+        .tip-box.info {
+            background: rgba(0, 212, 170, 0.05);
+            border-color: var(--accent);
+        }
+        .tip-box.warning {
+            background: rgba(245, 158, 11, 0.05);
+            border-color: #f59e0b;
+        }
+        .tip-box-label {
+            font-size: 10px;
+            font-weight: 700;
+            font-family: var(--font-mono);
+            letter-spacing: 0.1em;
+            margin-bottom: 6px;
+            display: block;
+        }
+        .tip-box.info .tip-box-label { color: var(--accent); }
+        .tip-box.warning .tip-box-label { color: #f59e0b; }
+        .tip-box p { margin: 0; color: var(--text-secondary); font-size: 14px; }
+        .tip-box p + p { margin-top: 8px; }
+
+        /* ── 图片占位符 ── */
+        .img-slot {
+            margin: 28px 0;
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-elevated);
+        }
+        .img-slot img {
+            max-width: 100%;
+            height: auto;
+            display: block;
+            margin: 0 auto;
+        }
+        .img-slot .img-pending {
+            padding: 32px 24px;
+            display: flex;
+            align-items: flex-start;
+            gap: 16px;
+        }
+        .img-slot .img-pending .pi-icon { font-size: 28px; flex-shrink: 0; }
+        .img-slot .img-pending .pi-info { display: flex; flex-direction: column; gap: 6px; }
+        .img-slot .img-pending .pi-filename {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--accent);
+            background: var(--accent-dim);
+            padding: 3px 9px;
+            border-radius: 4px;
+            display: inline-block;
+        }
+        .img-slot .img-pending .pi-desc {
+            font-size: 13px;
+            color: var(--text-tertiary);
+            line-height: 1.6;
+        }
+        .img-slot .img-caption {
+            padding: 10px 16px;
+            font-size: 13px;
+            color: var(--text-tertiary);
+            border-top: 1px solid var(--border-subtle);
+        }
+
+        /* ── 底部章节导航 ── */
+        .chapter-nav {
+            padding: 32px 0 60px;
+            border-top: 1px solid var(--border-subtle);
+        }
+        .chapter-nav-inner {
+            display: flex;
+            justify-content: space-between;
+            align-items: stretch;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        .nav-btn {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding: 14px 20px;
+            border-radius: var(--radius-md);
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            text-decoration: none;
+            transition: all 0.2s ease;
+            flex: 1;
+            min-width: 180px;
+            max-width: 300px;
+        }
+        .nav-btn:hover { border-color: var(--accent); }
+        .nav-btn.next { align-items: flex-end; margin-left: auto; }
+        .nav-btn.prev { align-items: flex-start; }
+        .nav-direction {
+            font-size: 11px;
+            font-family: var(--font-mono);
+            color: var(--text-tertiary);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+        .nav-chapter-title {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            line-height: 1.4;
+        }
+        .nav-btn:hover .nav-chapter-title { color: var(--accent); }
+
+        @media (max-width: 600px) {
+            .chapter-nav-inner { flex-direction: column; }
+            .nav-btn { max-width: 100%; }
+            .nav-btn.next { align-items: flex-start; margin-left: 0; }
+            .btn-cards { gap: 10px; }
+            .btn-card { flex-direction: column; gap: 10px; }
+            .btn-card-label { min-width: unset; }
+        }
+
+        /* ── 章节交叉引用链接 ── */
+        .xref {
+            color: var(--accent);
+            text-decoration: none;
+            border-bottom: 1px solid rgba(0, 212, 170, 0.3);
+            transition: border-color 0.18s;
+        }
+        .xref:hover { border-color: var(--accent); }
+    </style>
+</head>
+
+<body>
+    <div class="grain"></div>
+
+    <!-- Header -->
+    <header>
+        <div class="header-inner">
+            <a href="../../index.html" class="logo">
+                <img src="../../img/icon.png" alt="SuperPicky">
+                <span>SuperPicky</span>
+            </a>
+            <div class="lang-switch">
+                <button class="lang-btn active" onclick="setLang('cn')">中</button>
+                <button class="lang-btn" onclick="setLang('en')">EN</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- 面包屑 -->
+    <div class="chapter-header-bar">
+        <div class="container">
+            <nav class="breadcrumb">
+                <a href="../../index.html">
+                    <span class="lang-cn">主页</span>
+                    <span class="lang-en">Home</span>
+                </a>
+                <span>/</span>
+                <a href="index.html">
+                    <span class="lang-cn">4.3.0 教程</span>
+                    <span class="lang-en">4.3.0 Tutorial</span>
+                </a>
+                <span>/</span>
+                <span>
+                    <span class="lang-cn">第 02 章</span>
+                    <span class="lang-en">Chapter 02</span>
+                </span>
+            </nav>
+        </div>
+    </div>
+
+    <!-- 章节 Hero -->
+    <section class="chapter-hero">
+        <div class="container">
+            <div class="chapter-num-display">
+                <span>CHAPTER 02 / 12</span>
+            </div>
+            <h1>
+                <span class="lang-cn">主界面认识</span>
+                <span class="lang-en">Main Interface</span>
+            </h1>
+            <p class="subtitle">
+                <span class="lang-cn">熟悉界面各区域的分工，掌握三个核心按钮和最近目录历史的使用逻辑。</span>
+                <span class="lang-en">Get familiar with each area of the UI, the three core buttons, and the recent folder history.</span>
+            </p>
+        </div>
+    </section>
+
+    <!-- 正文 -->
+    <section class="chapter-body">
+        <div class="container">
+
+            <!-- 章节内目录 -->
+            <nav class="chapter-toc">
+                <a href="#s2-1">
+                    <span class="sec-num">2.1</span>
+                    <span class="lang-cn">整体布局区域划分</span>
+                    <span class="lang-en">Layout Overview</span>
+                </a>
+                <a href="#s2-2">
+                    <span class="sec-num">2.2</span>
+                    <span class="lang-cn">三个核心按钮</span>
+                    <span class="lang-en">Three Core Buttons</span>
+                </a>
+                <a href="#s2-3">
+                    <span class="sec-num">2.3</span>
+                    <span class="lang-cn">最近目录历史</span>
+                    <span class="lang-en">Recent Folder History</span>
+                </a>
+                <a href="#s2-4">
+                    <span class="sec-num">2.4</span>
+                    <span class="lang-cn">菜单栏功能概览</span>
+                    <span class="lang-en">Menu Bar Overview</span>
+                </a>
+            </nav>
+
+            <!-- ══ 2.1 ══ -->
+            <div class="content-section" id="s2-1">
+                <span class="section-label-tag">2.1</span>
+                <h2 class="section-heading">
+                    <span class="lang-cn">整体布局区域划分</span>
+                    <span class="lang-en">Layout Overview</span>
+                </h2>
+
+                <p>
+                    <span class="lang-cn">主窗口从上到下分为六个垂直区域，每个区域承担一项具体职责：</span>
+                    <span class="lang-en">The main window is divided into six vertical areas from top to bottom, each with a specific role:</span>
+                </p>
+
+                <ul class="feature-list">
+                    <li>
+                        <span class="f-num">01</span>
+                        <span>
+                            <span class="lang-cn"><strong>头部区域</strong> — 软件品牌名"SuperPicky 慧眼选鸟"、副标题和版本号。平时不参与操作，只做标识。</span>
+                            <span class="lang-en"><strong>Header</strong> — App brand name "SuperPicky", tagline, and version. Non-interactive, used for identification only.</span>
+                        </span>
+                    </li>
+                    <li>
+                        <span class="f-num">02</span>
+                        <span>
+                            <span class="lang-cn"><strong>目录选择区域</strong> — 路径输入框 + 「浏览」按钮。支持三种输入方式：点击「浏览」、直接键入或粘贴路径、将文件夹从 Finder / 资源管理器拖入输入框。</span>
+                            <span class="lang-en"><strong>Directory Area</strong> — Path input field + Browse button. Accepts input three ways: click Browse, type/paste a path, or drag a folder from Finder/Explorer onto the field.</span>
+                        </span>
+                    </li>
+                    <li>
+                        <span class="f-num">03</span>
+                        <span>
+                            <span class="lang-cn"><strong>参数设置区域</strong> — 摄影水平预设按钮，以及飞版检测、连拍检测、识鸟三个开关，加上锐度和美学两条阈值滑块。这是开始处理前配置的核心区域，详见<a href="03-parameters.html" class="xref">第 03 章</a>。</span>
+                            <span class="lang-en"><strong>Parameters Area</strong> — Skill level preset button, BIF / Burst / Bird ID toggles, and Sharpness / Aesthetics sliders. This is the main configuration area before starting a cull. See <a href="03-parameters.html" class="xref">Chapter 03</a>.</span>
+                        </span>
+                    </li>
+                    <li>
+                        <span class="f-num">04</span>
+                        <span>
+                            <span class="lang-cn"><strong>日志区域（Console）</strong> — 实时显示每张照片的处理结果（鸟是否检测到、星级、耗时等），处理结束后显示完整统计摘要。</span>
+                            <span class="lang-en"><strong>Log Area (Console)</strong> — Shows real-time results for each photo (bird detected, star rating, time taken), and a full summary when done.</span>
+                        </span>
+                    </li>
+                    <li>
+                        <span class="f-num">05</span>
+                        <span>
+                            <span class="lang-cn"><strong>进度区域</strong> — 进度条 + 百分比数字，以及当前正在处理的文件名，随时掌握处理进度。</span>
+                            <span class="lang-en"><strong>Progress Area</strong> — Progress bar with percentage and current filename, so you always know how far along the cull is.</span>
+                        </span>
+                    </li>
+                    <li>
+                        <span class="f-num">06</span>
+                        <span>
+                            <span class="lang-cn"><strong>底部按钮区域</strong> — 三个操作按钮，控制整个工作流的核心动作，详见 <a href="#s2-2" class="xref">2.2</a>。</span>
+                            <span class="lang-en"><strong>Button Area</strong> — Three action buttons controlling the core workflow. See <a href="#s2-2" class="xref">Section 2.2</a>.</span>
+                        </span>
+                    </li>
+                </ul>
+
+                <p>
+                    <span class="lang-cn">窗口右侧默认停靠<strong>识鸟面板（BirdID Dock）</strong>，可通过菜单「识鸟 → 识鸟面板」收起或展开，详见<a href="08-birdid.html" class="xref">第 08 章</a>。</span>
+                    <span class="lang-en">On the right side, the <strong>BirdID Dock</strong> is docked by default. Toggle it via the Bird ID menu. See <a href="08-birdid.html" class="xref">Chapter 08</a>.</span>
+                </p>
+
+                <!-- 图片：主窗口全览，标注各区域 -->
+                <div class="img-slot">
+                    <img src="img/ch02-01-layout-overview.png" alt="ch02-01-layout-overview">
+                </div>
+            </div>
+
+            <!-- ══ 2.2 ══ -->
+            <div class="content-section" id="s2-2">
+                <span class="section-label-tag">2.2</span>
+                <h2 class="section-heading">
+                    <span class="lang-cn">三个核心按钮</span>
+                    <span class="lang-en">Three Core Buttons</span>
+                </h2>
+
+                <p>
+                    <span class="lang-cn">底部按钮区是整个工作流的控制中心。三个按钮分别对应工作流的不同阶段，状态会随处理进度自动切换：</span>
+                    <span class="lang-en">The button area at the bottom is the workflow control center. Each button corresponds to a different phase of the workflow and changes state automatically:</span>
+                </p>
+
+                <div class="btn-cards">
+                    <!-- 重置 -->
+                    <div class="btn-card">
+                        <span class="btn-card-label ghost">
+                            <span class="lang-cn">重置</span>
+                            <span class="lang-en">Reset</span>
+                        </span>
+                        <div class="btn-card-body">
+                            <span class="btn-card-name lang-cn">重置（左侧，幽灵样式）</span>
+                            <span class="btn-card-name lang-en">Reset (left, ghost style)</span>
+                            <span class="btn-card-desc lang-cn">仅在当前目录已有处理历史时可用，其余情况为灰色不可点。点击后可清除本次结果，重新选参后再处理。详见<a href="11-reset.html" class="xref">第 11 章</a>。</span>
+                            <span class="btn-card-desc lang-en">Only active when the current folder has existing processing history. Clears results so you can change parameters and reprocess. See <a href="11-reset.html" class="xref">Chapter 11</a>.</span>
+                        </div>
+                    </div>
+                    <!-- 查看结果 -->
+                    <div class="btn-card">
+                        <span class="btn-card-label secondary">
+                            <span class="lang-cn">查看结果 →</span>
+                            <span class="lang-en">View Results →</span>
+                        </span>
+                        <div class="btn-card-body">
+                            <span class="btn-card-name lang-cn">查看结果 →（右侧，处理完成后出现）</span>
+                            <span class="btn-card-name lang-en">View Results → (right, appears after completion)</span>
+                            <span class="btn-card-desc lang-cn">处理完成后自动显现，点击打开<strong>结果浏览器</strong>，用于浏览、筛选和管理已选出的照片。处理进行中不可见，避免误操作。详见<a href="07-browser.html" class="xref">第 07 章</a>。</span>
+                            <span class="btn-card-desc lang-en">Appears automatically when the cull finishes. Opens the <strong>Result Browser</strong> for browsing, filtering, and managing culled photos. Hidden during processing to prevent accidental taps. See <a href="07-browser.html" class="xref">Chapter 07</a>.</span>
+                        </div>
+                    </div>
+                    <!-- 开始处理 -->
+                    <div class="btn-card">
+                        <span class="btn-card-label primary">
+                            <span class="lang-cn">开始处理</span>
+                            <span class="lang-en">Start</span>
+                        </span>
+                        <div class="btn-card-body">
+                            <span class="btn-card-name lang-cn">开始处理（最右侧，高亮主按钮）</span>
+                            <span class="btn-card-name lang-en">Start Processing (rightmost, highlighted primary button)</span>
+                            <span class="btn-card-desc lang-cn">确认目录和参数后点击，启动 AI 选鸟流程。处理期间文字切换为「<strong>停止</strong>」，点击可随时中断——已处理完的照片结果会保留。</span>
+                            <span class="btn-card-desc lang-en">Click after selecting a folder and setting parameters to start the AI cull. During processing the label changes to <strong>Stop</strong> — clicking it cancels the run and keeps whatever results were already written.</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="tip-box info">
+                    <span class="tip-box-label lang-cn">按钮状态自动切换</span>
+                    <span class="tip-box-label lang-en">Button State Flow</span>
+                    <p>
+                        <span class="lang-cn">选好目录 → 「开始处理」可点；处理中 → 变为「停止」；完成后 → 「查看结果 →」出现，「开始处理」重新可用（可在更改参数后重跑）。</span>
+                        <span class="lang-en">Folder selected → Start is active. Processing → becomes Stop. Done → View Results appears, Start is active again (for re-running with new parameters).</span>
+                    </p>
+                </div>
+
+                <!-- 图片：底部按钮区截图 -->
+                <div class="img-slot">
+                    <img src="img/ch02-02-buttons.png" alt="ch02-02-buttons">
+                </div>
+            </div>
+
+            <!-- ══ 2.3 ══ -->
+            <div class="content-section" id="s2-3">
+                <span class="section-label-tag">2.3</span>
+                <h2 class="section-heading">
+                    <span class="lang-cn">最近目录历史</span>
+                    <span class="lang-en">Recent Folder History</span>
+                </h2>
+
+                <p>
+                    <span class="lang-cn">菜单栏的「<strong>最近目录</strong>」菜单会记录最近使用过的照片文件夹，每次选择新目录后列表自动更新。</span>
+                    <span class="lang-en">The <strong>Recent Folders</strong> menu in the menu bar keeps a list of recently used photo directories, updated automatically each time you select a new folder.</span>
+                </p>
+
+                <ul class="feature-list">
+                    <li>
+                        <span class="f-num">→</span>
+                        <span>
+                            <span class="lang-cn"><strong>可用目录</strong>：直接点击条目即可加载，无需重新浏览，适合日常同一张卡反复处理的场景。</span>
+                            <span class="lang-en"><strong>Available folders</strong>: Click an entry to load it directly — no need to browse again. Handy when you repeatedly work with the same card or drive.</span>
+                        </span>
+                    </li>
+                    <li>
+                        <span class="f-num">→</span>
+                        <span>
+                            <span class="lang-cn"><strong>脱机目录</strong>：外接硬盘未挂载或文件夹已被移动时，条目前显示「<strong>(脱机)</strong>」标记，点击时弹出提示而不会实际加载。</span>
+                            <span class="lang-en"><strong>Offline folders</strong>: When an external drive is unmounted or a folder has moved, the entry is prefixed with <strong>(Offline)</strong> and clicking it shows a warning instead of loading.</span>
+                        </span>
+                    </li>
+                    <li>
+                        <span class="f-num">→</span>
+                        <span>
+                            <span class="lang-cn"><strong>清除历史</strong>：菜单底部的「清除历史记录」可一键清空全部记录。</span>
+                            <span class="lang-en"><strong>Clear history</strong>: The "Clear History" entry at the bottom of the menu removes all saved entries at once.</span>
+                        </span>
+                    </li>
+                </ul>
+
+                <div class="tip-box info">
+                    <span class="tip-box-label lang-cn">持久保存</span>
+                    <span class="tip-box-label lang-en">Persistent Storage</span>
+                    <p>
+                        <span class="lang-cn">最近目录保存在本地配置文件中，软件重启后仍然有效。</span>
+                        <span class="lang-en">Recent folders are saved in the local config file and persist across restarts.</span>
+                    </p>
+                </div>
+
+                <!-- 图片：最近目录菜单展开截图 -->
+                <div class="img-slot">
+                    <img src="img/ch02-03-recent-menu.png" alt="ch02-03-recent-menu">
+                </div>
+            </div>
+
+            <!-- ══ 2.4 ══ -->
+            <div class="content-section" id="s2-4">
+                <span class="section-label-tag">2.4</span>
+                <h2 class="section-heading">
+                    <span class="lang-cn">菜单栏功能概览</span>
+                    <span class="lang-en">Menu Bar Overview</span>
+                </h2>
+
+                <p>
+                    <span class="lang-cn">菜单栏（macOS 屏幕顶部 / Windows 窗口顶部）从左到右依次为：</span>
+                    <span class="lang-en">The menu bar (top of screen on macOS, top of window on Windows) contains the following menus from left to right:</span>
+                </p>
+
+                <table class="content-table">
+                    <thead>
+                        <tr>
+                            <th>
+                                <span class="lang-cn">菜单</span>
+                                <span class="lang-en">Menu</span>
+                            </th>
+                            <th>
+                                <span class="lang-cn">主要内容</span>
+                                <span class="lang-en">Contents</span>
+                            </th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>
+                                <span class="lang-cn">识鸟</span>
+                                <span class="lang-en">Bird ID</span>
+                            </td>
+                            <td>
+                                <span class="lang-cn">显示 / 隐藏右侧识鸟面板（BirdID Dock）</span>
+                                <span class="lang-en">Show / hide the BirdID Dock on the right side</span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>
+                                <span class="lang-cn">视频</span>
+                                <span class="lang-en">Video</span>
+                            </td>
+                            <td>
+                                <span class="lang-cn">打开独立的视频分析窗口（<a href="09-video.html" class="xref">第 09 章</a>）</span>
+                                <span class="lang-en">Open the standalone Video Analysis window (<a href="09-video.html" class="xref">Chapter 09</a>)</span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>
+                                <span class="lang-cn">最近目录</span>
+                                <span class="lang-en">Recent Folders</span>
+                            </td>
+                            <td>
+                                <span class="lang-cn">快速重载历史目录（见 <a href="#s2-3" class="xref">2.3</a>）</span>
+                                <span class="lang-en">Quickly reload a previously used folder (see <a href="#s2-3" class="xref">Section 2.3</a>)</span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>
+                                <span class="lang-cn">设置</span>
+                                <span class="lang-en">Settings</span>
+                            </td>
+                            <td>
+                                <span class="lang-cn">高级参数设置、摄影水平预设、检查更新、环境修复、界面语言切换</span>
+                                <span class="lang-en">Advanced settings, skill level preset, check for updates, environment repair, UI language switch</span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>
+                                <span class="lang-cn">帮助</span>
+                                <span class="lang-en">Help</span>
+                            </td>
+                            <td>
+                                <span class="lang-cn">关于软件</span>
+                                <span class="lang-en">About the app</span>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <div class="tip-box info">
+                    <span class="tip-box-label lang-cn">「设置」菜单 vs 主界面参数区</span>
+                    <span class="tip-box-label lang-en">Settings Menu vs. Main Parameters Area</span>
+                    <p>
+                        <span class="lang-cn">主界面的参数区（锐度、美学滑块等）是<strong>高频调整区</strong>，每次处理前可根据拍摄场景随时调整；「设置 → 高级参数设置」里的选项是<strong>底层配置</strong>，通常一次设好后很少改动。</span>
+                        <span class="lang-en">The main parameters area (sharpness, aesthetics sliders, etc.) is for <strong>frequent adjustments</strong> before each cull. The options under Settings → Advanced Settings are <strong>underlying configurations</strong> you set once and rarely revisit.</span>
+                    </p>
+                    <p>
+                        <span class="lang-cn">高级参数设置的完整说明见<a href="10-advanced.html" class="xref">第 10 章</a>。</span>
+                        <span class="lang-en">Full documentation of Advanced Settings is in <a href="10-advanced.html" class="xref">Chapter 10</a>.</span>
+                    </p>
+                </div>
+
+                <!-- 图片：菜单栏设置菜单展开截图 -->
+                <div class="img-slot">
+                    <img src="img/ch02-04-settings-menu.png" alt="ch02-04-settings-menu">
+                </div>
+            </div>
+
+        </div><!-- /container -->
+    </section>
+
+    <!-- 章节底部导航 -->
+    <section class="chapter-nav">
+        <div class="container">
+            <div class="chapter-nav-inner">
+                <a href="01-quickstart.html" class="nav-btn prev">
+                    <span class="nav-direction">
+                        <span class="lang-cn">上一章</span>
+                        <span class="lang-en">Previous</span>
+                    </span>
+                    <span class="nav-chapter-title">
+                        <span class="lang-cn">快速开始</span>
+                        <span class="lang-en">Quick Start</span>
+                    </span>
+                </a>
+                <a href="03-parameters.html" class="nav-btn next">
+                    <span class="nav-direction">
+                        <span class="lang-cn">下一章</span>
+                        <span class="lang-en">Next</span>
+                    </span>
+                    <span class="nav-chapter-title">
+                        <span class="lang-cn">选鸟参数设置</span>
+                        <span class="lang-en">Culling Parameters</span>
+                    </span>
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <div class="footer-inner">
+                <div class="footer-brand">
+                    <img src="../../img/icon.png" alt="SuperPicky">
+                    <div class="footer-brand-text">
+                        <span>SuperPicky</span>
+                        <span class="footer-author">by James Yu (詹姆斯·于震)</span>
+                    </div>
+                </div>
+                <div class="footer-links">
+                    <a href="index.html">
+                        <span class="lang-cn">教程目录</span>
+                        <span class="lang-en">Tutorial Index</span>
+                    </a>
+                    <a href="../../faq.html">
+                        <span class="lang-cn">常见问题</span>
+                        <span class="lang-en">FAQ</span>
+                    </a>
+                    <a href="https://github.com/jamesphotography/SuperPicky">GitHub</a>
+                    <a href="mailto:james@jamesphotography.com.au">
+                        <span class="lang-cn">联系</span>
+                        <span class="lang-en">Contact</span>
+                    </a>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p class="credits">
+                    <span class="lang-cn">模型致谢：YOLO11 (Ultralytics) · TOPIQ (Chaofeng Chen et al.)</span>
+                    <span class="lang-en">Credits: YOLO11 (Ultralytics) · TOPIQ (Chaofeng Chen et al.)</span>
+                </p>
+                <p class="copyright">© 2024-2026 James Yu · <a href="../../LICENSE" target="_blank"
+                        style="color: inherit; text-decoration: underline;">AGPL-3.0 License</a></p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="../../js/main.js"></script>
+</body>
+
+</html>

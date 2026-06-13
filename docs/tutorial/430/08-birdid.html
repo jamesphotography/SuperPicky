@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-lang="cn">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>第 08 章 鸟种识别 - SuperPicky 慧眼选鸟 4.3.0 教程</title>
+    <meta name="description" content="SuperPicky 慧眼选鸟 4.3.0 鸟种识别：OSEA 模型、识别面板、国家地区过滤、置信度说明、鸟名格式、截图识鸟">
+    <link rel="stylesheet" href="../../css/style.css?v=20260612">
+    <link rel="icon" href="../../img/icon.png" type="image/png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        /* ── 章节页通用结构 ── */
+        .chapter-header-bar { padding: 100px 0 0; }
+
+        .breadcrumb {
+            font-size: 13px;
+            color: var(--text-tertiary);
+            margin-bottom: 40px;
+        }
+        .breadcrumb a {
+            color: var(--text-tertiary);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+        .breadcrumb a:hover { color: var(--accent); }
+        .breadcrumb span { margin: 0 6px; }
+
+        .chapter-hero {
+            padding: 40px 0 52px;
+            border-bottom: 1px solid var(--border-subtle);
+            margin-bottom: 52px;
+        }
+        .chapter-num-display {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--accent);
+            letter-spacing: 0.1em;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .chapter-hero h1 {
+            font-size: clamp(28px, 4vw, 44px);
+            font-weight: 700;
+            letter-spacing: -1px;
+            line-height: 1.2;
+            margin-bottom: 16px;
+            background: linear-gradient(135deg, var(--text-primary) 0%, var(--text-secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .chapter-hero p.subtitle {
+            font-size: 17px;
+            color: var(--text-secondary);
+            line-height: 1.7;
+            max-width: 640px;
+        }
+
+        /* ── 章节内目录 ── */
+        .chapter-toc {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 52px;
+        }
+        .chapter-toc a {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 14px;
+            border-radius: 999px;
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-elevated);
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 13px;
+            transition: all 0.18s ease;
+        }
+        .chapter-toc a:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+        .chapter-toc a .sec-num {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: var(--accent);
+        }
+
+        /* ── 正文内容 ── */
+        .chapter-body { padding: 0 0 80px; }
+
+        .content-section {
+            margin-bottom: 60px;
+            padding-bottom: 52px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .content-section:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+        }
+
+        .section-label-tag {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--accent);
+            letter-spacing: 0.08em;
+            display: block;
+            margin-bottom: 10px;
+        }
+
+        .section-heading {
+            font-size: 22px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 20px;
+            line-height: 1.3;
+        }
+
+        .content-section p {
+            font-size: 15px;
+            line-height: 1.9;
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+        }
+        .content-section p:last-child { margin-bottom: 0; }
+        .content-section strong { color: var(--text-primary); }
+
+        /* ── 表格 ── */
+        .content-table {
+            width: 100%;
+            border-collapse: collapse;
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            border: 1px solid var(--border-subtle);
+            margin: 20px 0;
+            font-size: 14px;
+        }
+        .content-table thead th {
+            background: var(--bg-card);
+            padding: 11px 16px;
+            text-align: left;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            border-bottom: 1px solid var(--border);
+        }
+        .content-table tbody td {
+            padding: 13px 16px;
+            line-height: 1.65;
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--border-subtle);
+            vertical-align: top;
+        }
+        .content-table tbody tr:last-child td { border-bottom: none; }
+        .content-table tbody tr:hover td { background: rgba(255,255,255,0.015); }
+        .content-table td:first-child { color: var(--text-primary); font-weight: 500; }
+
+        /* ── 功能列表 ── */
+        .feature-list {
+            list-style: none;
+            padding: 0;
+            margin: 16px 0;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .feature-list li {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            font-size: 15px;
+            line-height: 1.7;
+            color: var(--text-secondary);
+            padding: 12px 16px;
+            background: var(--bg-elevated);
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border-subtle);
+        }
+        .feature-list li .f-num {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: var(--accent);
+            background: var(--accent-dim);
+            border-radius: 4px;
+            padding: 2px 6px;
+            flex-shrink: 0;
+            margin-top: 3px;
+        }
+
+        /* ── 提示框 ── */
+        .tip-box {
+            padding: 16px 20px;
+            border-radius: var(--radius-md);
+            border-left: 3px solid;
+            margin: 20px 0;
+            font-size: 14px;
+            line-height: 1.8;
+        }
+        .tip-box.info    { background: rgba(0, 212, 170, 0.05);  border-color: var(--accent); }
+        .tip-box.warning { background: rgba(245, 158, 11, 0.05); border-color: #f59e0b; }
+        .tip-box.caution { background: rgba(239, 68, 68, 0.05);  border-color: #ef4444; }
+        .tip-box-label {
+            font-size: 10px;
+            font-weight: 700;
+            font-family: var(--font-mono);
+            letter-spacing: 0.1em;
+            margin-bottom: 6px;
+            display: block;
+        }
+        .tip-box.info    .tip-box-label { color: var(--accent); }
+        .tip-box.warning .tip-box-label { color: #f59e0b; }
+        .tip-box.caution .tip-box-label { color: #ef4444; }
+        .tip-box p { margin: 0; color: var(--text-secondary); font-size: 14px; }
+        .tip-box p + p { margin-top: 8px; }
+
+        /* ── 图片占位符 ── */
+        .img-slot {
+            margin: 28px 0;
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-elevated);
+        }
+        .img-slot img {
+            max-width: 100%;
+            height: auto;
+            display: block;
+            margin: 0 auto;
+        }
+        .img-slot .img-pending {
+            padding: 32px 24px;
+            display: flex;
+            align-items: flex-start;
+            gap: 16px;
+        }
+        .img-slot .img-pending .pi-icon { font-size: 28px; flex-shrink: 0; }
+        .img-slot .img-pending .pi-info { display: flex; flex-direction: column; gap: 6px; }
+        .img-slot .img-pending .pi-filename {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--accent);
+            background: var(--accent-dim);
+            padding: 3px 9px;
+            border-radius: 4px;
+            display: inline-block;
+        }
+        .img-slot .img-pending .pi-desc {
+            font-size: 13px;
+            color: var(--text-tertiary);
+            line-height: 1.6;
+        }
+
+        /* ── 章节交叉引用链接 ── */
+        .xref {
+            color: var(--accent);
+            text-decoration: none;
+            border-bottom: 1px solid rgba(0, 212, 170, 0.3);
+            transition: border-color 0.18s;
+        }
+        .xref:hover { border-color: var(--accent); }
+
+        /* ── 置信度色条 ── */
+        .conf-bar {
+            display: flex;
+            border-radius: var(--radius-sm);
+            overflow: hidden;
+            height: 40px;
+            margin: 20px 0;
+            border: 1px solid var(--border-subtle);
+            font-size: 12px;
+            font-family: var(--font-mono);
+        }
+        .conf-bar-seg {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 7px;
+            flex: 1;
+            font-weight: 600;
+        }
+        .conf-bar-seg.low  { background: rgba(239,68,68,0.12);  color: #f87171; }
+        .conf-bar-seg.mid  { background: rgba(245,158,11,0.12); color: #fbbf24; }
+        .conf-bar-seg.high { background: rgba(74,222,128,0.12); color: #4ade80; }
+        .conf-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .conf-dot.low  { background: #f87171; }
+        .conf-dot.mid  { background: #fbbf24; }
+        .conf-dot.high { background: #4ade80; }
+
+        /* ── 步骤编号列表 ── */
+        .steps-list {
+            list-style: none;
+            padding: 0;
+            margin: 16px 0;
+            counter-reset: step-counter;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .steps-list li {
+            display: flex;
+            align-items: flex-start;
+            gap: 14px;
+            font-size: 15px;
+            line-height: 1.75;
+            color: var(--text-secondary);
+            padding: 14px 16px;
+            background: var(--bg-elevated);
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border-subtle);
+            counter-increment: step-counter;
+        }
+        .steps-list li::before {
+            content: counter(step-counter);
+            font-family: var(--font-mono);
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--accent);
+            background: var(--accent-dim);
+            border-radius: 50%;
+            width: 22px;
+            height: 22px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            margin-top: 2px;
+        }
+
+        /* ── 键盘快捷键样式 ── */
+        .kbd {
+            display: inline-block;
+            padding: 2px 8px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-bottom: 2px solid var(--border);
+            border-radius: 4px;
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--text-primary);
+            line-height: 1.6;
+            white-space: nowrap;
+        }
+
+        /* ── 平台标签 ── */
+        .platform-tag {
+            display: inline-block;
+            padding: 2px 9px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-family: var(--font-mono);
+            font-weight: 600;
+            letter-spacing: 0.04em;
+        }
+        .platform-tag.mac { background: rgba(0,212,170,0.1);  color: var(--accent); }
+        .platform-tag.win { background: rgba(96,165,250,0.1); color: #60a5fa; }
+
+        /* ── 底部章节导航 ── */
+        .chapter-nav {
+            padding: 32px 0 60px;
+            border-top: 1px solid var(--border-subtle);
+        }
+        .chapter-nav-inner {
+            display: flex;
+            justify-content: space-between;
+            align-items: stretch;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        .nav-btn {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding: 14px 20px;
+            border-radius: var(--radius-md);
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            text-decoration: none;
+            transition: all 0.2s ease;
+            flex: 1;
+            min-width: 180px;
+            max-width: 300px;
+        }
+        .nav-btn:hover { border-color: var(--accent); }
+        .nav-btn.next { align-items: flex-end; margin-left: auto; }
+        .nav-btn.prev { align-items: flex-start; }
+        .nav-direction {
+            font-size: 11px;
+            font-family: var(--font-mono);
+            color: var(--text-tertiary);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+        .nav-chapter-title {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            line-height: 1.4;
+        }
+        .nav-btn:hover .nav-chapter-title { color: var(--accent); }
+
+        @media (max-width: 600px) {
+            .chapter-nav-inner { flex-direction: column; }
+            .nav-btn { max-width: 100%; }
+            .nav-btn.next { align-items: flex-start; margin-left: 0; }
+            .conf-bar { flex-direction: column; height: auto; }
+            .conf-bar-seg { padding: 10px 14px; justify-content: flex-start; }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="grain"></div>
+
+    <!-- Header -->
+    <header>
+        <div class="header-inner">
+            <a href="../../index.html" class="logo">
+                <img src="../../img/icon.png" alt="SuperPicky">
+                <span>SuperPicky</span>
+            </a>
+        </div>
+    </header>
+
+    <!-- 面包屑 -->
+    <div class="chapter-header-bar">
+        <div class="container">
+            <nav class="breadcrumb">
+                <a href="../../index.html">主页</a>
+                <span>/</span>
+                <a href="index.html">4.3.0 教程</a>
+                <span>/</span>
+                <span>第 08 章</span>
+            </nav>
+        </div>
+    </div>
+
+    <!-- 章节 Hero -->
+    <section class="chapter-hero">
+        <div class="container">
+            <div class="chapter-num-display">
+                <span>CHAPTER 08 / 12</span>
+            </div>
+            <h1>鸟种识别</h1>
+            <p class="subtitle">
+                基于 OSEA ResNet34 模型，覆盖近 11,000 种鸟类；离线国家/地区过滤、多套英文命名标准、截图即识——让每张照片都能知道拍的是谁。
+            </p>
+        </div>
+    </section>
+
+    <!-- 正文 -->
+    <section class="chapter-body">
+        <div class="container">
+
+            <!-- 章节内目录 -->
+            <nav class="chapter-toc">
+                <a href="#s8-1">
+                    <span class="sec-num">8.1</span>
+                    识别面板
+                </a>
+                <a href="#s8-2">
+                    <span class="sec-num">8.2</span>
+                    国家/地区过滤
+                </a>
+                <a href="#s8-3">
+                    <span class="sec-num">8.3</span>
+                    置信度
+                </a>
+                <a href="#s8-4">
+                    <span class="sec-num">8.4</span>
+                    鸟名格式
+                </a>
+                <a href="#s8-5">
+                    <span class="sec-num">8.5</span>
+                    截图识鸟
+                </a>
+            </nav>
+
+            <!-- ══ 8.1 ══ -->
+            <div class="content-section" id="s8-1">
+                <span class="section-label-tag">8.1</span>
+                <h2 class="section-heading">识别面板</h2>
+
+                <p>
+                    SuperPicky 慧眼选鸟 的鸟种识别功能集中在右侧的<strong>识别停靠面板（Bird ID Dock）</strong>中，
+                    可停靠在主窗口边缘，也可拖出为独立浮动窗口。面板顶部有两个标签页：
+                </p>
+
+                <ul class="feature-list">
+                    <li>
+                        <span class="f-num">01</span>
+                        <span>
+                            <strong>识鸟（Identify）</strong> — 核心识别入口。将照片拖入放置区，或点击「选择文件」按钮加载图片，
+                            也可直接从 Finder / 资源管理器拖放到面板任意位置。识别完成后自动展示候选鸟种卡片，
+                            点击任意卡片即可选中该鸟种作为识别结果。
+                        </span>
+                    </li>
+                    <li>
+                        <span class="f-num">02</span>
+                        <span>
+                            <strong>查询鸟名</strong> — IOC 名录检索入口。按中文名、英文名或拉丁学名搜索鸟种，
+                            可查看详细信息（罕见度、IUCN 等级、简介），也可将搜索到的鸟种直接应用到当前照片。
+                        </span>
+                    </li>
+                </ul>
+
+                <p>
+                    识别引擎采用 <strong>OSEA ResNet34</strong> 模型，覆盖 <strong>10,964 种</strong>鸟类，
+                    模型文件在首次运行前通过安装包预置，无需联网下载。
+                </p>
+
+                <div class="tip-box warning">
+                    <span class="tip-box-label">为什么选鸟结果与识鸟面板有时不一样？</span>
+                    <p>
+                        两者使用的是同一个 OSEA 模型，但工作方式不同，因此结果可能存在差异：
+                    </p>
+                    <p>
+                        <strong>选鸟流程（批量处理）</strong> — 自动识鸟功能默认<strong>关闭</strong>，需在高级设置中手动开启。
+                        开启后，也<strong>只对 2★ 及以上</strong>的照片运行识鸟——1★ 和 0★ 照片为节省时间直接跳过，统一归入「其他鸟类」文件夹，不写鸟种名。
+                        此外，批量模式的置信度阈值下限为 <strong>50%</strong>（可在高级设置中调高至 95%），低于阈值的结果同样按「其他鸟类」处理。
+                    </p>
+                    <p>
+                        <strong>识鸟面板（单张识别）</strong> — 不受星级限制，任何照片都可送入识别；
+                        置信度阈值下限低至 <strong>30%</strong>，且会展示最多 3 条候选，方便人工判断相似鸟种。
+                    </p>
+                    <p>
+                        简言之：选鸟流程追求批量处理速度，识鸟面板追求单张识别的完整可能性。对低星照片或批量结果显示「其他鸟类」的照片，可用识鸟面板单独鉴定。
+                    </p>
+                </div>
+
+                <!-- 图片占位 -->
+                <div class="img-slot">
+                    <img src="img/ch08-01-birdid-panel.png" alt="ch08-01-birdid-panel">
+                </div>
+            </div>
+
+            <!-- ══ 8.2 ══ -->
+            <div class="content-section" id="s8-2">
+                <span class="section-label-tag">8.2</span>
+                <h2 class="section-heading">国家/地区过滤</h2>
+
+                <p>
+                    OSEA 模型本身能识别全球近 11,000 种鸟类，但大多数拍摄场景只会出现当地常见的几百种。
+                    启用<strong>国家/地区过滤</strong>后，模型会优先从该地区有记录的鸟种中挑选候选结果，
+                    显著减少不相关候选项，提高识别准确率。
+                </p>
+
+                <p>
+                    过滤数据来自内置的 <strong>Avonet 离线数据库</strong>（avonet.db），完全无需联网。
+                    面板顶部的国家/地区下拉菜单支持直接搜索，支持国家级（如 <code>AU</code>、<code>CN</code>、<code>JP</code>）
+                    与省/州级（如 <code>AU-NSW</code>、<code>CN-GD</code>）区域代码。
+                    选择后设置自动保存，下次启动沿用同一地区。
+                </p>
+
+                <table class="content-table">
+                    <thead>
+                        <tr>
+                            <th>设置</th>
+                            <th>效果</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>不选（全球模式）</td>
+                            <td>在全部 10,964 种中排序，结果可能出现本地极罕见种</td>
+                        </tr>
+                        <tr>
+                            <td>选择国家（如 AU）</td>
+                            <td>候选结果限定在澳大利亚有记录的鸟种范围内</td>
+                        </tr>
+                        <tr>
+                            <td>选择省/州（如 AU-NSW）</td>
+                            <td>候选范围进一步缩小到新南威尔士州有记录的鸟种</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <div class="tip-box warning">
+                    <span class="tip-box-label">注意：迷鸟与逸出鸟</span>
+                    <p>
+                        地区过滤基于鸟种历史分布记录，若拍到本地记录极少的迷鸟或逸出鸟，
+                        该鸟种可能不出现在过滤后的候选列表中。遇到疑似罕见鸟时，可临时切换为「全球模式」再次识别。
+                    </p>
+                </div>
+
+            </div>
+
+            <!-- ══ 8.3 ══ -->
+            <div class="content-section" id="s8-3">
+                <span class="section-label-tag">8.3</span>
+                <h2 class="section-heading">置信度</h2>
+
+                <p>
+                    每条候选结果右侧会显示一个<strong>置信度百分比</strong>，代表模型对该鸟种判断的把握程度。
+                    置信度按三档颜色区分：
+                </p>
+
+                <!-- 置信度色条 -->
+                <div class="conf-bar">
+                    <div class="conf-bar-seg low">
+                        <span class="conf-dot low"></span>
+                        &lt; 40%　低置信度
+                    </div>
+                    <div class="conf-bar-seg mid">
+                        <span class="conf-dot mid"></span>
+                        40–69%　中置信度
+                    </div>
+                    <div class="conf-bar-seg high">
+                        <span class="conf-dot high"></span>
+                        ≥ 70%　高置信度
+                    </div>
+                </div>
+
+                <p>
+                    当第一候选的置信度比第二候选<strong>高出 80 个百分点以上</strong>时，
+                    面板只显示第一候选（结果极为确定）；否则最多展示前 3 名候选，
+                    方便在相似鸟种之间人工判断。
+                </p>
+
+                <p><strong>置信度偏低的常见原因：</strong></p>
+
+                <ul class="feature-list">
+                    <li>
+                        <span class="f-num">01</span>
+                        <span>
+                            <strong>裁剪不佳</strong> — 鸟体在画面中占比过小，或被枝叶、围栏等遮挡；
+                            建议将鸟体裁剪为主体后重新识别
+                        </span>
+                    </li>
+                    <li>
+                        <span class="f-num">02</span>
+                        <span>
+                            <strong>非常规角度</strong> — 正面、俯视或严重逆光时，模型特征提取困难
+                        </span>
+                    </li>
+                    <li>
+                        <span class="f-num">03</span>
+                        <span>
+                            <strong>幼鸟 / 换羽期</strong> — 羽色与成鸟差异大，模型可能混淆成鸟与幼鸟候选
+                        </span>
+                    </li>
+                    <li>
+                        <span class="f-num">04</span>
+                        <span>
+                            <strong>真实罕见种</strong> — 训练数据中该鸟种样本极少，模型不确定性本身就高；
+                            建议结合「查询鸟名」标签与罕见度信息交叉核对
+                        </span>
+                    </li>
+                </ul>
+            </div>
+
+            <!-- ══ 8.4 ══ -->
+            <div class="content-section" id="s8-4">
+                <span class="section-label-tag">8.4</span>
+                <h2 class="section-heading">鸟名格式</h2>
+
+                <p>
+                    SuperPicky 慧眼选鸟 支持多套英文命名标准，可在<strong>高级设置</strong>中切换。
+                    无论选择哪套，中文简体名称始终同步显示。
+                </p>
+
+                <table class="content-table">
+                    <thead>
+                        <tr>
+                            <th>格式标识</th>
+                            <th>来源</th>
+                            <th>适用场景</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>default</td>
+                            <td>OSEA 模型原始英文名</td>
+                            <td>覆盖最全，默认推荐</td>
+                        </tr>
+                        <tr>
+                            <td>avilist</td>
+                            <td>AviList v2025</td>
+                            <td>国际最新分类参考</td>
+                        </tr>
+                        <tr>
+                            <td>clements</td>
+                            <td>Clements / eBird v2024</td>
+                            <td>eBird 用户常用</td>
+                        </tr>
+                        <tr>
+                            <td>birdlife</td>
+                            <td>BirdLife International v9</td>
+                            <td>IUCN 评估采用</td>
+                        </tr>
+                        <tr>
+                            <td>scientific</td>
+                            <td>拉丁学名</td>
+                            <td>科学记录、论文引用</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <p>
+                    鸟名格式影响界面显示与 EXIF 写入的英文名部分（写入 XMP:Title 的英文分量）。
+                    不同命名体系对同一鸟种的英文名偶有差异；如遇显示异常，可切回 <code>default</code> 格式排查。
+                </p>
+
+                <div class="tip-box info">
+                    <span class="tip-box-label">如何切换</span>
+                    <p>
+                        主界面右上角菜单 → 高级设置 → 「鸟种英文名格式」下拉菜单，选择目标格式后点击保存，下次识别即生效。
+                    </p>
+                </div>
+
+            </div>
+
+            <!-- ══ 8.5 ══ -->
+            <div class="content-section" id="s8-5">
+                <span class="section-label-tag">8.5</span>
+                <h2 class="section-heading">截图识鸟</h2>
+
+                <p>
+                    识别面板内置<strong>截图识鸟</strong>功能：对屏幕上任意区域截图（如浏览器中的鸟照、社交媒体图片），
+                    截图完成后自动载入面板进行识别，无需先将图片下载到本地。
+                </p>
+
+                <p><strong>macOS <span class="platform-tag mac">macOS</span></strong></p>
+
+                <ol class="steps-list">
+                    <li>点击识别面板中的「截图识鸟」按钮，主窗口自动最小化</li>
+                    <li>系统调用 <code>screencapture</code> 进入交互截图模式，拖动选框圈出目标鸟只区域后松开</li>
+                    <li>主窗口恢复前台，截图自动载入识别面板并开始识别</li>
+                </ol>
+
+                <div class="tip-box warning">
+                    <span class="tip-box-label">首次使用需授权</span>
+                    <p>
+                        macOS 截图识鸟需要「屏幕录制」权限。首次点击时若弹出授权提示，点击「打开系统设置」，
+                        在<strong>隐私与安全 → 屏幕录制</strong>中为 SuperPicky 慧眼选鸟 开启权限，返回软件重试即可。
+                    </p>
+                </div>
+
+                <p><strong>Windows <span class="platform-tag win">Windows</span></strong></p>
+
+                <ol class="steps-list">
+                    <li>点击识别面板中的「截图识鸟」按钮，主窗口自动最小化</li>
+                    <li>
+                        软件自动发送 <span class="kbd">Win</span> + <span class="kbd">Shift</span> + <span class="kbd">S</span>
+                        快捷键，唤起系统截图工具（Snipping Tool）
+                    </li>
+                    <li>在截图工具中选框截取目标区域，截图自动进入剪贴板</li>
+                    <li>软件检测到剪贴板中的图像后，主窗口恢复，截图载入面板开始识别</li>
+                </ol>
+
+                <div class="tip-box info">
+                    <span class="tip-box-label">其他送图方式</span>
+                    <p>
+                        除截图外，识别面板同样支持直接<strong>拖放图片文件</strong>（JPEG、PNG、RAW 等常见格式）到放置区，
+                        或点击「选择文件」按钮从文件选择框加载——三种方式的识别流程完全相同。
+                    </p>
+                </div>
+
+            </div>
+
+        </div>
+    </section>
+
+    <!-- 章节导航 -->
+    <section class="chapter-nav">
+        <div class="container">
+            <div class="chapter-nav-inner">
+                <a href="07-browser.html" class="nav-btn prev">
+                    <span class="nav-direction">上一章</span>
+                    <span class="nav-chapter-title">结果浏览器</span>
+                </a>
+                <a href="09-video.html" class="nav-btn next">
+                    <span class="nav-direction">下一章</span>
+                    <span class="nav-chapter-title">视频分析</span>
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <div class="footer-inner">
+                <div class="footer-brand">
+                    <img src="../../img/icon.png" alt="SuperPicky">
+                    <div class="footer-brand-text">
+                        <span>SuperPicky</span>
+                        <span class="footer-author">by James Yu (詹姆斯·于震)</span>
+                    </div>
+                </div>
+                <div class="footer-links">
+                    <a href="index.html">教程目录</a>
+                    <a href="../../faq.html">常见问题</a>
+                    <a href="https://github.com/jamesphotography/SuperPicky">GitHub</a>
+                    <a href="mailto:james@jamesphotography.com.au">联系</a>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p class="credits">模型致谢：YOLO11 (Ultralytics) · TOPIQ (Chaofeng Chen et al.)</p>
+                <p class="copyright">© 2024-2026 James Yu · <a href="../../LICENSE" target="_blank"
+                        style="color: inherit; text-decoration: underline;">AGPL-3.0 License</a></p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="../../js/main.js"></script>
+</body>
+
+</html>

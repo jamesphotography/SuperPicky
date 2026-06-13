@@ -1,0 +1,1038 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-lang="cn">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>第 03 章 选鸟参数设置 - SuperPicky 慧眼选鸟 4.3.0 教程</title>
+    <meta name="description" content="SuperPicky 慧眼选鸟 4.3.0 参数设置详解：摄影水平预设、锐度阈值、美学阈值、飞版检测、连拍检测与识鸟开关">
+    <link rel="stylesheet" href="../../css/style.css?v=20260612">
+    <link rel="icon" href="../../img/icon.png" type="image/png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        /* ── 章节页通用结构 ── */
+        .chapter-header-bar { padding: 100px 0 0; }
+
+        .breadcrumb {
+            font-size: 13px;
+            color: var(--text-tertiary);
+            margin-bottom: 40px;
+        }
+        .breadcrumb a {
+            color: var(--text-tertiary);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+        .breadcrumb a:hover { color: var(--accent); }
+        .breadcrumb span { margin: 0 6px; }
+
+        .chapter-hero {
+            padding: 40px 0 52px;
+            border-bottom: 1px solid var(--border-subtle);
+            margin-bottom: 52px;
+        }
+        .chapter-num-display {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--accent);
+            letter-spacing: 0.1em;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .chapter-hero h1 {
+            font-size: clamp(28px, 4vw, 44px);
+            font-weight: 700;
+            letter-spacing: -1px;
+            line-height: 1.2;
+            margin-bottom: 16px;
+            background: linear-gradient(135deg, var(--text-primary) 0%, var(--text-secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .chapter-hero p.subtitle {
+            font-size: 17px;
+            color: var(--text-secondary);
+            line-height: 1.7;
+            max-width: 640px;
+        }
+
+        /* ── 章节内目录 ── */
+        .chapter-toc {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 52px;
+        }
+        .chapter-toc a {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 14px;
+            border-radius: 999px;
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-elevated);
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 13px;
+            transition: all 0.18s ease;
+        }
+        .chapter-toc a:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+        .chapter-toc a .sec-num {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: var(--accent);
+        }
+
+        /* ── 正文内容 ── */
+        .chapter-body { padding: 0 0 80px; }
+
+        .content-section {
+            margin-bottom: 60px;
+            padding-bottom: 52px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .content-section:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+        }
+
+        .section-label-tag {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--accent);
+            letter-spacing: 0.08em;
+            display: block;
+            margin-bottom: 10px;
+        }
+
+        .section-heading {
+            font-size: 22px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 20px;
+            line-height: 1.3;
+        }
+
+        .content-section p {
+            font-size: 15px;
+            line-height: 1.9;
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+        }
+        .content-section p:last-child { margin-bottom: 0; }
+        .content-section strong { color: var(--text-primary); }
+
+        /* ── 表格 ── */
+        .content-table {
+            width: 100%;
+            border-collapse: collapse;
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            border: 1px solid var(--border-subtle);
+            margin: 20px 0;
+            font-size: 14px;
+        }
+        .content-table thead th {
+            background: var(--bg-card);
+            padding: 11px 16px;
+            text-align: left;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            border-bottom: 1px solid var(--border);
+        }
+        .content-table tbody td {
+            padding: 13px 16px;
+            line-height: 1.65;
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--border-subtle);
+            vertical-align: top;
+        }
+        .content-table tbody tr:last-child td { border-bottom: none; }
+        .content-table tbody tr:hover td { background: rgba(255,255,255,0.015); }
+        .content-table td:first-child { color: var(--text-primary); font-weight: 500; }
+
+        .badge-rec {
+            display: inline-block;
+            padding: 2px 7px;
+            border-radius: 4px;
+            background: var(--accent);
+            color: var(--bg-void);
+            font-size: 10px;
+            font-weight: 700;
+            margin-left: 6px;
+            vertical-align: middle;
+        }
+
+        /* ── 范围说明列表（锐度/美学） ── */
+        .range-list {
+            list-style: none;
+            padding: 0;
+            margin: 16px 0;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .range-list li {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            font-size: 14px;
+            line-height: 1.7;
+            color: var(--text-secondary);
+            padding: 10px 14px;
+            background: var(--bg-elevated);
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border-subtle);
+        }
+        .range-tag {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            font-weight: 700;
+            padding: 2px 8px;
+            border-radius: 4px;
+            flex-shrink: 0;
+            margin-top: 2px;
+            white-space: nowrap;
+        }
+        .range-tag.low  { background: rgba(94,234,212,0.1);  color: #5eead4; }
+        .range-tag.mid  { background: rgba(0,212,170,0.12);  color: var(--accent); border: 1px solid rgba(0,212,170,0.25); }
+        .range-tag.high { background: rgba(251,191,36,0.1);  color: #fbbf24; }
+
+        /* ── 效果表（飞鸟/连拍） ── */
+        .effect-table {
+            width: 100%;
+            border-collapse: collapse;
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            border: 1px solid var(--border-subtle);
+            margin: 16px 0;
+            font-size: 14px;
+        }
+        .effect-table td {
+            padding: 12px 16px;
+            line-height: 1.65;
+            border-bottom: 1px solid var(--border-subtle);
+            vertical-align: top;
+        }
+        .effect-table tr:last-child td { border-bottom: none; }
+        .effect-table td:first-child {
+            color: var(--text-primary);
+            font-weight: 500;
+            white-space: nowrap;
+            width: 42%;
+            background: var(--bg-card);
+        }
+        .effect-table td:last-child { color: var(--text-secondary); }
+
+        /* ── 功能列表 ── */
+        .feature-list {
+            list-style: none;
+            padding: 0;
+            margin: 16px 0;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .feature-list li {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            font-size: 15px;
+            line-height: 1.7;
+            color: var(--text-secondary);
+            padding: 12px 16px;
+            background: var(--bg-elevated);
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border-subtle);
+        }
+        .feature-list li .f-num {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: var(--accent);
+            background: var(--accent-dim);
+            border-radius: 4px;
+            padding: 2px 6px;
+            flex-shrink: 0;
+            margin-top: 3px;
+        }
+
+        /* ── 提示框 ── */
+        .tip-box {
+            padding: 16px 20px;
+            border-radius: var(--radius-md);
+            border-left: 3px solid;
+            margin: 20px 0;
+            font-size: 14px;
+            line-height: 1.8;
+        }
+        .tip-box.info    { background: rgba(0, 212, 170, 0.05);  border-color: var(--accent); }
+        .tip-box.warning { background: rgba(245, 158, 11, 0.05); border-color: #f59e0b; }
+        .tip-box.caution { background: rgba(239, 68, 68, 0.05);  border-color: #ef4444; }
+        .tip-box-label {
+            font-size: 10px;
+            font-weight: 700;
+            font-family: var(--font-mono);
+            letter-spacing: 0.1em;
+            margin-bottom: 6px;
+            display: block;
+        }
+        .tip-box.info    .tip-box-label { color: var(--accent); }
+        .tip-box.warning .tip-box-label { color: #f59e0b; }
+        .tip-box.caution .tip-box-label { color: #ef4444; }
+        .tip-box p { margin: 0; color: var(--text-secondary); font-size: 14px; }
+        .tip-box p + p { margin-top: 8px; }
+
+        /* ── 图片占位符 ── */
+        .img-slot {
+            margin: 28px 0;
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-elevated);
+        }
+        .img-slot img {
+            max-width: 100%;
+            height: auto;
+            display: block;
+            margin: 0 auto;
+        }
+        .img-slot .img-pending {
+            padding: 32px 24px;
+            display: flex;
+            align-items: flex-start;
+            gap: 16px;
+        }
+        .img-slot .img-pending .pi-icon { font-size: 28px; flex-shrink: 0; }
+        .img-slot .img-pending .pi-info { display: flex; flex-direction: column; gap: 6px; }
+        .img-slot .img-pending .pi-filename {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--accent);
+            background: var(--accent-dim);
+            padding: 3px 9px;
+            border-radius: 4px;
+            display: inline-block;
+        }
+        .img-slot .img-pending .pi-desc {
+            font-size: 13px;
+            color: var(--text-tertiary);
+            line-height: 1.6;
+        }
+
+        .img-slot .img-caption {
+            padding: 10px 16px;
+            font-size: 12px;
+            color: var(--text-tertiary);
+            border-top: 1px solid var(--border-subtle);
+            text-align: center;
+            background: var(--bg-elevated);
+        }
+
+        /* ── 开关状态徽章 ── */
+        .toggle-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 3px 10px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-family: var(--font-mono);
+            font-weight: 700;
+            vertical-align: middle;
+            margin-right: 4px;
+        }
+        .toggle-badge.on  { background: rgba(0,212,170,0.12); color: var(--accent); border: 1px solid rgba(0,212,170,0.25); }
+        .toggle-badge.off { background: var(--bg-card); color: var(--text-tertiary); border: 1px solid var(--border); }
+        .toggle-badge.rec { background: var(--accent); color: var(--bg-void); }
+
+        /* ── 章节交叉引用链接 ── */
+        .xref {
+            color: var(--accent);
+            text-decoration: none;
+            border-bottom: 1px solid rgba(0, 212, 170, 0.3);
+            transition: border-color 0.18s;
+        }
+        .xref:hover { border-color: var(--accent); }
+
+        /* ── 底部章节导航 ── */
+        .chapter-nav {
+            padding: 32px 0 60px;
+            border-top: 1px solid var(--border-subtle);
+        }
+        .chapter-nav-inner {
+            display: flex;
+            justify-content: space-between;
+            align-items: stretch;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        .nav-btn {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding: 14px 20px;
+            border-radius: var(--radius-md);
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            text-decoration: none;
+            transition: all 0.2s ease;
+            flex: 1;
+            min-width: 180px;
+            max-width: 300px;
+        }
+        .nav-btn:hover { border-color: var(--accent); }
+        .nav-btn.next { align-items: flex-end; margin-left: auto; }
+        .nav-btn.prev { align-items: flex-start; }
+        .nav-direction {
+            font-size: 11px;
+            font-family: var(--font-mono);
+            color: var(--text-tertiary);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+        .nav-chapter-title {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            line-height: 1.4;
+        }
+        .nav-btn:hover .nav-chapter-title { color: var(--accent); }
+
+        @media (max-width: 600px) {
+            .chapter-nav-inner { flex-direction: column; }
+            .nav-btn { max-width: 100%; }
+            .nav-btn.next { align-items: flex-start; margin-left: 0; }
+            .effect-table td:first-child { width: auto; white-space: normal; }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="grain"></div>
+
+    <!-- Header -->
+    <header>
+        <div class="header-inner">
+            <a href="../../index.html" class="logo">
+                <img src="../../img/icon.png" alt="SuperPicky">
+                <span>SuperPicky</span>
+            </a>
+            <div class="lang-switch">
+                <button class="lang-btn active" onclick="setLang('cn')">中</button>
+                <button class="lang-btn" onclick="setLang('en')">EN</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- 面包屑 -->
+    <div class="chapter-header-bar">
+        <div class="container">
+            <nav class="breadcrumb">
+                <a href="../../index.html">
+                    <span class="lang-cn">主页</span>
+                    <span class="lang-en">Home</span>
+                </a>
+                <span>/</span>
+                <a href="index.html">
+                    <span class="lang-cn">4.3.0 教程</span>
+                    <span class="lang-en">4.3.0 Tutorial</span>
+                </a>
+                <span>/</span>
+                <span>
+                    <span class="lang-cn">第 03 章</span>
+                    <span class="lang-en">Chapter 03</span>
+                </span>
+            </nav>
+        </div>
+    </div>
+
+    <!-- 章节 Hero -->
+    <section class="chapter-hero">
+        <div class="container">
+            <div class="chapter-num-display">
+                <span>CHAPTER 03 / 12</span>
+            </div>
+            <h1>
+                <span class="lang-cn">选鸟参数设置</span>
+                <span class="lang-en">Culling Parameters</span>
+            </h1>
+            <p class="subtitle">
+                <span class="lang-cn">开始处理前，理解每个参数的含义——合理配置能让选片结果更贴近你的实际需求。</span>
+                <span class="lang-en">Understand what each parameter does before you start — the right configuration makes results match your expectations.</span>
+            </p>
+        </div>
+    </section>
+
+    <!-- 正文 -->
+    <section class="chapter-body">
+        <div class="container">
+
+            <!-- 章节内目录 -->
+            <nav class="chapter-toc">
+                <a href="#s3-1">
+                    <span class="sec-num">3.1</span>
+                    <span class="lang-cn">摄影水平预设</span>
+                    <span class="lang-en">Skill Level Presets</span>
+                </a>
+                <a href="#s3-2">
+                    <span class="sec-num">3.2</span>
+                    <span class="lang-cn">锐度阈值</span>
+                    <span class="lang-en">Sharpness Threshold</span>
+                </a>
+                <a href="#s3-3">
+                    <span class="sec-num">3.3</span>
+                    <span class="lang-cn">美学阈值</span>
+                    <span class="lang-en">Aesthetics Threshold</span>
+                </a>
+                <a href="#s3-4">
+                    <span class="sec-num">3.4</span>
+                    <span class="lang-cn">飞版检测</span>
+                    <span class="lang-en">BIF Detection</span>
+                </a>
+                <a href="#s3-5">
+                    <span class="sec-num">3.5</span>
+                    <span class="lang-cn">连拍检测</span>
+                    <span class="lang-en">Burst Detection</span>
+                </a>
+                <a href="#s3-6">
+                    <span class="sec-num">3.6</span>
+                    <span class="lang-cn">识鸟开关</span>
+                    <span class="lang-en">Bird ID Toggle</span>
+                </a>
+            </nav>
+
+            <!-- 参数面板总览图（3.2-3.6 均参考此图） -->
+            <div class="img-slot">
+                <img src="img/ch02-04-settings-menu.png" alt="ch03-params-panel-overview">
+                <p class="img-caption">优选参数面板 — 飞鸟 / 连拍 / 识鸟开关（右上角）与锐度 / 美学滑块（中部）</p>
+            </div>
+
+            <!-- ══ 3.1 ══ -->
+            <div class="content-section" id="s3-1">
+                <span class="section-label-tag">3.1</span>
+                <h2 class="section-heading">
+                    <span class="lang-cn">摄影水平预设</span>
+                    <span class="lang-en">Skill Level Presets</span>
+                </h2>
+
+                <p>
+                    <span class="lang-cn">参数区顶部的「摄影水平」标签显示当前档位，点击后弹出水平选择框，提供三档预设加一档自选：</span>
+                    <span class="lang-en">The "Photography Level" label at the top of the parameters area shows the active preset. Click it to open the selection dialog — three presets plus a custom mode:</span>
+                </p>
+
+                <table class="content-table">
+                    <thead>
+                        <tr>
+                            <th><span class="lang-cn">档位</span><span class="lang-en">Level</span></th>
+                            <th><span class="lang-cn">锐度阈值</span><span class="lang-en">Sharpness</span></th>
+                            <th><span class="lang-cn">美学阈值</span><span class="lang-en">Aesthetics</span></th>
+                            <th><span class="lang-cn">适合人群</span><span class="lang-en">Best for</span></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>
+                                <span class="lang-cn">新手</span>
+                                <span class="lang-en">Beginner</span>
+                            </td>
+                            <td>300</td>
+                            <td>4.5</td>
+                            <td>
+                                <span class="lang-cn">宽松标准，保留更多照片</span>
+                                <span class="lang-en">Relaxed — keeps more photos</span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>
+                                <span class="lang-cn">初级<span class="badge-rec">推荐</span></span>
+                                <span class="lang-en">Intermediate<span class="badge-rec">Rec.</span></span>
+                            </td>
+                            <td>380</td>
+                            <td>4.8</td>
+                            <td>
+                                <span class="lang-cn">平衡标准，推荐大多数用户从这里开始</span>
+                                <span class="lang-en">Balanced — a good starting point for most</span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>
+                                <span class="lang-cn">大师</span>
+                                <span class="lang-en">Master</span>
+                            </td>
+                            <td>520</td>
+                            <td>5.5</td>
+                            <td>
+                                <span class="lang-cn">严格标准，只留清晰度和构图都出色的精品</span>
+                                <span class="lang-en">Strict — only truly sharp, well-composed shots pass</span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>
+                                <span class="lang-cn">自选</span>
+                                <span class="lang-en">Custom</span>
+                            </td>
+                            <td><span class="lang-cn">自定义</span><span class="lang-en">Custom</span></td>
+                            <td><span class="lang-cn">自定义</span><span class="lang-en">Custom</span></td>
+                            <td>
+                                <span class="lang-cn">手动拖动滑块后自动切换为此模式</span>
+                                <span class="lang-en">Activated automatically when you drag either slider</span>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <p>
+                    <span class="lang-cn">选择预设后，锐度和美学两条滑块会自动跳到对应数值。<strong>反过来，手动拖动任意滑块，当前档位会自动切换为「自选」</strong>，两者始终联动。</span>
+                    <span class="lang-en">Selecting a preset snaps both sliders to the corresponding values. Conversely, <strong>dragging either slider manually switches the level to Custom</strong> — the two are always in sync.</span>
+                </p>
+
+                <div class="tip-box info">
+                    <span class="tip-box-label lang-cn">从哪里开始？</span>
+                    <span class="tip-box-label lang-en">Where to start?</span>
+                    <p>
+                        <span class="lang-cn">不确定选哪个时，先选「初级」跑一遍，根据实际结果再决定是调松还是调紧。</span>
+                        <span class="lang-en">When in doubt, start with Intermediate, run a cull, then decide whether to loosen or tighten based on what comes out.</span>
+                    </p>
+                </div>
+
+                <!-- 图片：摄影水平弹窗 -->
+                <div class="img-slot">
+                    <img src="img/ch03-01-skill-level-dialog.png" alt="ch03-01-skill-level-dialog">
+                </div>
+            </div>
+
+            <!-- ══ 3.2 ══ -->
+            <div class="content-section" id="s3-2">
+                <span class="section-label-tag">3.2</span>
+                <h2 class="section-heading">
+                    <span class="lang-cn">锐度阈值</span>
+                    <span class="lang-en">Sharpness Threshold</span>
+                </h2>
+
+                <p>
+                    <span class="lang-cn"><strong>锐度阈值</strong>衡量的是<strong>鸟头 / 鸟眼区域的清晰度</strong>，而非整张照片的全局锐度。处理时先定位鸟体，裁出头部区域，再对该区域单独计算清晰度评分——数字越大越清晰。</span>
+                    <span class="lang-en">The <strong>Sharpness threshold</strong> measures <strong>sharpness in the bird's head and eye area</strong>, not global image sharpness. The bird is located first, the head crop is extracted, and a sharpness score is calculated for that region — higher is sharper.</span>
+                </p>
+
+                <ul class="feature-list">
+                    <li>
+                        <span class="f-num">范围</span>
+                        <span>
+                            <span class="lang-cn">200 – 600，步进 10；默认值 400（「初级」预设为 380）</span>
+                            <span class="lang-en">200 – 600, step 10; default 400 (Intermediate preset: 380)</span>
+                        </span>
+                    </li>
+                    <li>
+                        <span class="f-num">低于</span>
+                        <span>
+                            <span class="lang-cn">低于阈值 → <strong>0 星（废片）</strong>，不进入后续美学评估</span>
+                            <span class="lang-en">Below threshold → <strong>0 stars (rejected)</strong>, skips aesthetics evaluation entirely</span>
+                        </span>
+                    </li>
+                    <li>
+                        <span class="f-num">达到</span>
+                        <span>
+                            <span class="lang-cn">达到或超过阈值 → 进入美学评估阶段（<a href="#s3-3" class="xref">3.3</a>）</span>
+                            <span class="lang-en">At or above threshold → proceeds to aesthetics evaluation (<a href="#s3-3" class="xref">Section 3.3</a>)</span>
+                        </span>
+                    </li>
+                </ul>
+
+                <p>
+                    <span class="lang-cn"><strong>怎么选数值：</strong></span>
+                    <span class="lang-en"><strong>How to choose a value:</strong></span>
+                </p>
+
+                <ul class="range-list">
+                    <li>
+                        <span class="range-tag low">
+                            <span class="lang-cn">偏低 200–320</span>
+                            <span class="lang-en">Low 200–320</span>
+                        </span>
+                        <span>
+                            <span class="lang-cn">保留更多照片，包括部分对焦稍软的；适合慢速拍摄或初学阶段</span>
+                            <span class="lang-en">Keeps more photos, including slightly soft ones; good for slow-action or beginner shooting</span>
+                        </span>
+                    </li>
+                    <li>
+                        <span class="range-tag mid">
+                            <span class="lang-cn">中间 360–440</span>
+                            <span class="lang-en">Mid 360–440</span>
+                        </span>
+                        <span>
+                            <span class="lang-cn">日常出行拍摄的推荐区间，平衡留片率与质量</span>
+                            <span class="lang-en">Recommended for everyday bird photography — balances quantity and quality</span>
+                        </span>
+                    </li>
+                    <li>
+                        <span class="range-tag high">
+                            <span class="lang-cn">偏高 480–600</span>
+                            <span class="lang-en">High 480–600</span>
+                        </span>
+                        <span>
+                            <span class="lang-cn">只留对焦极锐的；适合长焦追焦能力强、对清晰度要求极高的摄影师</span>
+                            <span class="lang-en">Keeps only the sharpest frames; for photographers with strong tracking and high sharpness standards</span>
+                        </span>
+                    </li>
+                </ul>
+
+                <div class="tip-box info">
+                    <span class="tip-box-label lang-cn">调参口诀</span>
+                    <span class="tip-box-label lang-en">Quick Rule of Thumb</span>
+                    <p>
+                        <span class="lang-cn">好片被漏掉？<strong>降低</strong>锐度阈值。废片太多？<strong>提高</strong>锐度阈值。锐度对留片率影响最大，优先调这个。</span>
+                        <span class="lang-en">Good shots missing? <strong>Lower</strong> the threshold. Too many rejects getting through? <strong>Raise</strong> it. Sharpness has the biggest impact on pass rate — adjust this first.</span>
+                    </p>
+                </div>
+
+
+            </div>
+
+            <!-- ══ 3.3 ══ -->
+            <div class="content-section" id="s3-3">
+                <span class="section-label-tag">3.3</span>
+                <h2 class="section-heading">
+                    <span class="lang-cn">美学阈值</span>
+                    <span class="lang-en">Aesthetics Threshold</span>
+                </h2>
+
+                <p>
+                    <span class="lang-cn"><strong>美学阈值</strong>对<strong>通过锐度检测的照片</strong>进行构图、曝光、色彩综合评分，只有分数高于阈值的照片才有资格进入 2 星或 3 星。</span>
+                    <span class="lang-en">The <strong>Aesthetics threshold</strong> scores photos that passed the sharpness check on composition, exposure, and color. Only photos scoring above the threshold can reach 2 or 3 stars.</span>
+                </p>
+
+                <ul class="feature-list">
+                    <li>
+                        <span class="f-num">范围</span>
+                        <span>
+                            <span class="lang-cn">4.0 – 7.0；默认值 5.0（「初级」预设为 4.8）</span>
+                            <span class="lang-en">4.0 – 7.0; default 5.0 (Intermediate preset: 4.8)</span>
+                        </span>
+                    </li>
+                    <li>
+                        <span class="f-num">低于</span>
+                        <span>
+                            <span class="lang-cn">低于阈值但锐度达标 → <strong>1 星</strong></span>
+                            <span class="lang-en">Below threshold but sharp → <strong>1 star</strong></span>
+                        </span>
+                    </li>
+                    <li>
+                        <span class="f-num">高于</span>
+                        <span>
+                            <span class="lang-cn">高于阈值且锐度达标 → <strong>2–3 星</strong>（具体星级由综合评分决定）</span>
+                            <span class="lang-en">Above threshold and sharp → <strong>2–3 stars</strong> (exact rating determined by the combined score)</span>
+                        </span>
+                    </li>
+                </ul>
+
+                <p>
+                    <span class="lang-cn"><strong>怎么选数值：</strong></span>
+                    <span class="lang-en"><strong>How to choose a value:</strong></span>
+                </p>
+
+                <ul class="range-list">
+                    <li>
+                        <span class="range-tag low">
+                            <span class="lang-cn">偏低 4.5 以下</span>
+                            <span class="lang-en">Low &lt;4.5</span>
+                        </span>
+                        <span>
+                            <span class="lang-cn">宽松，更多照片进 2–3 星区；适合想要更多备选的场景</span>
+                            <span class="lang-en">Relaxed — more photos reach 2–3 stars; good when you want more options</span>
+                        </span>
+                    </li>
+                    <li>
+                        <span class="range-tag mid">
+                            <span class="lang-cn">中间 4.8–5.2</span>
+                            <span class="lang-en">Mid 4.8–5.2</span>
+                        </span>
+                        <span>
+                            <span class="lang-cn">多数情况的推荐区间</span>
+                            <span class="lang-en">Recommended range for most situations</span>
+                        </span>
+                    </li>
+                    <li>
+                        <span class="range-tag high">
+                            <span class="lang-cn">偏高 5.5 以上</span>
+                            <span class="lang-en">High &gt;5.5</span>
+                        </span>
+                        <span>
+                            <span class="lang-cn">严格，只有构图、曝光和色彩都优秀的才进精品区</span>
+                            <span class="lang-en">Strict — only excellent composition, exposure, and color reach the top tier</span>
+                        </span>
+                    </li>
+                </ul>
+
+                <div class="tip-box info">
+                    <span class="tip-box-label lang-cn">提示</span>
+                    <span class="tip-box-label lang-en">Tip</span>
+                    <p>
+                        <span class="lang-cn">美学阈值主要影响照片在 1 星和 2–3 星之间的比例，对总留片数影响比锐度阈值小。如果 2–3 星偏少，先试着适当降低这个值。</span>
+                        <span class="lang-en">The aesthetics threshold mainly affects the split between 1-star and 2–3-star photos, not the total pass rate. If you're getting too few 2–3-star photos, try lowering this value first.</span>
+                    </p>
+                </div>
+
+
+            </div>
+
+            <!-- ══ 3.4 ══ -->
+            <div class="content-section" id="s3-4">
+                <span class="section-label-tag">3.4</span>
+                <h2 class="section-heading">
+                    <span class="lang-cn">飞版检测（飞鸟开关）</span>
+                    <span class="lang-en">BIF Detection (Flight Toggle)</span>
+                </h2>
+
+                <p>
+                    <span class="lang-cn">「<strong>飞鸟</strong>」开关启用飞版专用检测，使用慧眼飞鸟模型判断照片中的鸟是否处于飞行状态。</span>
+                    <span class="lang-en">The <strong>BIF</strong> toggle enables flight detection, using a dedicated model to determine whether the bird in each photo is in flight.</span>
+                </p>
+
+                <p>
+                    <span class="lang-cn"><span class="toggle-badge off">默认关闭</span><span class="toggle-badge rec">建议开启</span> — 模型体积小、推理快，对整体处理速度几乎没有影响。</span>
+                    <span class="lang-en"><span class="toggle-badge off">Off by default</span><span class="toggle-badge rec">Recommended ON</span> — the model is lightweight and fast; overall processing speed is barely affected.</span>
+                </p>
+
+                <table class="effect-table">
+                    <tbody>
+                        <tr>
+                            <td>
+                                <span class="lang-cn">检测到飞行中的鸟</span>
+                                <span class="lang-en">Bird detected as in flight</span>
+                            </td>
+                            <td>
+                                <span class="lang-cn">照片打上飞版标记，整理后归入 <code>_bif</code>（Bird in Flight）子目录</span>
+                                <span class="lang-en">Photo is flagged and moved to the <code>_bif</code> (Bird in Flight) subdirectory during organization</span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>
+                                <span class="lang-cn">未检测到飞行状态</span>
+                                <span class="lang-en">Bird not in flight</span>
+                            </td>
+                            <td>
+                                <span class="lang-cn">按常规流程处理，进入普通星级目录</span>
+                                <span class="lang-en">Processed normally and placed in the standard star-rating directories</span>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <p>
+                    <span class="lang-cn"><strong>建议开启的场景：</strong></span>
+                    <span class="lang-en"><strong>When to enable:</strong></span>
+                </p>
+                <ul class="feature-list">
+                    <li>
+                        <span class="f-num">→</span>
+                        <span>
+                            <span class="lang-cn">拍摄内容包含飞鸟（猛禽、海鸟、燕鸥、涉禽等）</span>
+                            <span class="lang-en">Your shoot includes birds in flight (raptors, seabirds, terns, waders, etc.)</span>
+                        </span>
+                    </li>
+                    <li>
+                        <span class="f-num">→</span>
+                        <span>
+                            <span class="lang-cn">希望飞版和栖息鸟照片自动分开整理，方便分别导入后期软件</span>
+                            <span class="lang-en">You want flight and perched shots separated automatically for different post-processing treatments</span>
+                        </span>
+                    </li>
+                </ul>
+
+
+            </div>
+
+            <!-- ══ 3.5 ══ -->
+            <div class="content-section" id="s3-5">
+                <span class="section-label-tag">3.5</span>
+                <h2 class="section-heading">
+                    <span class="lang-cn">连拍检测</span>
+                    <span class="lang-en">Burst Detection</span>
+                </h2>
+
+                <p>
+                    <span class="lang-cn">「<strong>连拍</strong>」开关通过读取照片 EXIF 中的原始拍摄时间，识别连续拍摄的同组照片，并在整理阶段自动合并，每组只保留最高星级的那张作代表。</span>
+                    <span class="lang-en">The <strong>Burst</strong> toggle reads the original capture timestamp from each photo's EXIF data to detect groups of shots taken in rapid succession. During organization, each burst group keeps only its top-rated photo in the main directory.</span>
+                </p>
+
+                <p>
+                    <span class="lang-cn"><span class="toggle-badge off">默认关闭</span> — 连拍判定条件（可在<a href="10-advanced.html" class="xref">高级设置</a>中调整）：</span>
+                    <span class="lang-en"><span class="toggle-badge off">Off by default</span> — burst detection criteria (adjustable in <a href="10-advanced.html" class="xref">Advanced Settings</a>):</span>
+                </p>
+
+                <ul class="feature-list">
+                    <li>
+                        <span class="f-num">条件 1</span>
+                        <span>
+                            <span class="lang-cn">相邻两张时间间隔 ≤ 0.1 秒（即拍摄速率 ≥ 10 fps）</span>
+                            <span class="lang-en">Gap between consecutive shots ≤ 0.1 s (capture rate ≥ 10 fps)</span>
+                        </span>
+                    </li>
+                    <li>
+                        <span class="f-num">条件 2</span>
+                        <span>
+                            <span class="lang-cn">连续满足条件的照片数量 ≥ 4 张</span>
+                            <span class="lang-en">At least 4 consecutive shots meet the above condition</span>
+                        </span>
+                    </li>
+                </ul>
+
+                <table class="effect-table">
+                    <tbody>
+                        <tr>
+                            <td>
+                                <span class="lang-cn">符合连拍条件</span>
+                                <span class="lang-en">Burst group detected</span>
+                            </td>
+                            <td>
+                                <span class="lang-cn">每组只保留最高星级的那张，其余移入同名 <code>burst_xxx</code> 子目录</span>
+                                <span class="lang-en">Only the top-rated shot stays in the main folder; the rest move to a <code>burst_xxx</code> subdirectory</span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>
+                                <span class="lang-cn">整组全是 0–1 星</span>
+                                <span class="lang-en">Entire group rated 0–1 star</span>
+                            </td>
+                            <td>
+                                <span class="lang-cn">不合并，原样保留在各自目录</span>
+                                <span class="lang-en">No merging — each photo stays where it was placed</span>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <div class="tip-box caution">
+                    <span class="tip-box-label lang-cn">开启前请想清楚</span>
+                    <span class="tip-box-label lang-en">Think Before Enabling</span>
+                    <p>
+                        <span class="lang-cn">开启连拍检测后，低星级的连拍照片会被归并到高星级目录下的 <code>burst_xxx</code> 子目录，可能造成精选区混入低质量照片的困扰。<strong>如果你不需要完整的连拍序列做后续制作（如视频输出、GIF），不建议开启。</strong></span>
+                        <span class="lang-en">When burst detection is on, lower-rated shots from a burst group are moved into a <code>burst_xxx</code> subfolder inside the highest-star directory. This can introduce low-quality photos into your curated area. <strong>Unless you need the full burst sequence for a downstream purpose (video, GIF, etc.), it is best to leave this off.</strong></span>
+                    </p>
+                    <p>
+                        <span class="lang-cn">不开连拍，锐度和美学评分已经会从同一组连拍里自动给最好的那张最高星级——你不会漏掉精品。</span>
+                        <span class="lang-en">Without burst detection, the sharpness and aesthetics scores will naturally rank the best shot in any burst highest — you won't miss the keeper.</span>
+                    </p>
+                </div>
+
+            </div>
+
+            <!-- ══ 3.6 ══ -->
+            <div class="content-section" id="s3-6">
+                <span class="section-label-tag">3.6</span>
+                <h2 class="section-heading">
+                    <span class="lang-cn">识鸟开关</span>
+                    <span class="lang-en">Bird ID Toggle</span>
+                </h2>
+
+                <p>
+                    <span class="lang-cn">「<strong>识鸟</strong>」开关（参数区最右侧）在处理时同步识别每张照片的鸟种，识别结果写入 EXIF 元数据，并在结果浏览器的识鸟面板中展示。</span>
+                    <span class="lang-en">The <strong>Bird ID</strong> toggle (rightmost in the parameters area) identifies the bird species in each photo during culling. Results are written to EXIF metadata and displayed in the BirdID panel in the Result Browser.</span>
+                </p>
+
+                <p>
+                    <span class="lang-cn"><span class="toggle-badge off">默认关闭</span><span class="toggle-badge rec">建议开启</span></span>
+                    <span class="lang-en"><span class="toggle-badge off">Off by default</span><span class="toggle-badge rec">Recommended ON</span></span>
+                </p>
+
+                <div class="tip-box info">
+                    <span class="tip-box-label lang-cn">只对 2 星及以上的照片推理</span>
+                    <span class="tip-box-label lang-en">Only runs on 2-star and above photos</span>
+                    <p>
+                        <span class="lang-cn">识鸟推理<strong>只对 2 星及以上的照片执行</strong>，0 星和 1 星照片不参与识别。这不是因为识别不了，而是出于效率考虑——低质量照片本就不在你的精选范围内，不值得花时间去识别。因此，开启识鸟对总处理时间的影响远小于你的预期。</span>
+                        <span class="lang-en">Bird ID inference <strong>only runs on photos rated 2 stars or above</strong>. Zero- and 1-star photos are deliberately skipped — not because they can't be identified, but because they fall outside your selection and aren't worth the processing time. As a result, enabling Bird ID has far less impact on total processing time than you might expect.</span>
+                    </p>
+                </div>
+
+                <p>
+                    <span class="lang-cn">识鸟功能的完整使用说明（识别面板、国家地区设置、置信度、鸟名格式等）见<a href="08-birdid.html" class="xref">第 08 章</a>。</span>
+                    <span class="lang-en">For full Bird ID documentation — the ID panel, region settings, confidence, naming formats, and more — see <a href="08-birdid.html" class="xref">Chapter 08</a>.</span>
+                </p>
+
+
+            </div>
+
+        </div><!-- /container -->
+    </section>
+
+    <!-- 章节底部导航 -->
+    <section class="chapter-nav">
+        <div class="container">
+            <div class="chapter-nav-inner">
+                <a href="02-main-ui.html" class="nav-btn prev">
+                    <span class="nav-direction">
+                        <span class="lang-cn">上一章</span>
+                        <span class="lang-en">Previous</span>
+                    </span>
+                    <span class="nav-chapter-title">
+                        <span class="lang-cn">主界面认识</span>
+                        <span class="lang-en">Main Interface</span>
+                    </span>
+                </a>
+                <a href="04-run.html" class="nav-btn next">
+                    <span class="nav-direction">
+                        <span class="lang-cn">下一章</span>
+                        <span class="lang-en">Next</span>
+                    </span>
+                    <span class="nav-chapter-title">
+                        <span class="lang-cn">执行选鸟</span>
+                        <span class="lang-en">Running a Cull</span>
+                    </span>
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <div class="footer-inner">
+                <div class="footer-brand">
+                    <img src="../../img/icon.png" alt="SuperPicky">
+                    <div class="footer-brand-text">
+                        <span>SuperPicky</span>
+                        <span class="footer-author">by James Yu (詹姆斯·于震)</span>
+                    </div>
+                </div>
+                <div class="footer-links">
+                    <a href="index.html">
+                        <span class="lang-cn">教程目录</span>
+                        <span class="lang-en">Tutorial Index</span>
+                    </a>
+                    <a href="../../faq.html">
+                        <span class="lang-cn">常见问题</span>
+                        <span class="lang-en">FAQ</span>
+                    </a>
+                    <a href="https://github.com/jamesphotography/SuperPicky">GitHub</a>
+                    <a href="mailto:james@jamesphotography.com.au">
+                        <span class="lang-cn">联系</span>
+                        <span class="lang-en">Contact</span>
+                    </a>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p class="credits">
+                    <span class="lang-cn">模型致谢：YOLO11 (Ultralytics) · TOPIQ (Chaofeng Chen et al.)</span>
+                    <span class="lang-en">Credits: YOLO11 (Ultralytics) · TOPIQ (Chaofeng Chen et al.)</span>
+                </p>
+                <p class="copyright">© 2024-2026 James Yu · <a href="../../LICENSE" target="_blank"
+                        style="color: inherit; text-decoration: underline;">AGPL-3.0 License</a></p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="../../js/main.js"></script>
+</body>
+
+</html>

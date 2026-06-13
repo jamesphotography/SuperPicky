@@ -1,0 +1,913 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-lang="cn">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>第 07 章 结果浏览器 - SuperPicky 慧眼选鸟 4.3.0 教程</title>
+    <meta name="description" content="SuperPicky 慧眼选鸟 4.3.0 结果浏览器：三栏布局、筛选排序、全屏查看、对比查看、右键菜单与删除照片说明">
+    <link rel="stylesheet" href="../../css/style.css?v=20260612">
+    <link rel="icon" href="../../img/icon.png" type="image/png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        /* ── 章节页通用结构 ── */
+        .chapter-header-bar { padding: 100px 0 0; }
+
+        .breadcrumb {
+            font-size: 13px;
+            color: var(--text-tertiary);
+            margin-bottom: 40px;
+        }
+        .breadcrumb a {
+            color: var(--text-tertiary);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+        .breadcrumb a:hover { color: var(--accent); }
+        .breadcrumb span { margin: 0 6px; }
+
+        .chapter-hero {
+            padding: 40px 0 52px;
+            border-bottom: 1px solid var(--border-subtle);
+            margin-bottom: 52px;
+        }
+        .chapter-num-display {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--accent);
+            letter-spacing: 0.1em;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .chapter-hero h1 {
+            font-size: clamp(28px, 4vw, 44px);
+            font-weight: 700;
+            letter-spacing: -1px;
+            line-height: 1.2;
+            margin-bottom: 16px;
+            background: linear-gradient(135deg, var(--text-primary) 0%, var(--text-secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .chapter-hero p.subtitle {
+            font-size: 17px;
+            color: var(--text-secondary);
+            line-height: 1.7;
+            max-width: 640px;
+        }
+
+        /* ── 章节内目录 ── */
+        .chapter-toc {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 52px;
+        }
+        .chapter-toc a {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 14px;
+            border-radius: 999px;
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-elevated);
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 13px;
+            transition: all 0.18s ease;
+        }
+        .chapter-toc a:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+        .chapter-toc a .sec-num {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: var(--accent);
+        }
+
+        /* ── 正文内容 ── */
+        .chapter-body { padding: 0 0 80px; }
+
+        .content-section {
+            margin-bottom: 60px;
+            padding-bottom: 52px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .content-section:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+        }
+
+        .section-label-tag {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--accent);
+            letter-spacing: 0.08em;
+            display: block;
+            margin-bottom: 10px;
+        }
+
+        .section-heading {
+            font-size: 22px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 20px;
+            line-height: 1.3;
+        }
+
+        .content-section p {
+            font-size: 15px;
+            line-height: 1.9;
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+        }
+        .content-section p:last-child { margin-bottom: 0; }
+        .content-section strong { color: var(--text-primary); }
+
+        /* ── 表格 ── */
+        .content-table {
+            width: 100%;
+            border-collapse: collapse;
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            border: 1px solid var(--border-subtle);
+            margin: 20px 0;
+            font-size: 14px;
+        }
+        .content-table thead th {
+            background: var(--bg-card);
+            padding: 11px 16px;
+            text-align: left;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            border-bottom: 1px solid var(--border);
+        }
+        .content-table tbody td {
+            padding: 13px 16px;
+            line-height: 1.65;
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--border-subtle);
+            vertical-align: top;
+        }
+        .content-table tbody tr:last-child td { border-bottom: none; }
+        .content-table tbody tr:hover td { background: rgba(255,255,255,0.015); }
+        .content-table td:first-child { color: var(--text-primary); font-weight: 500; }
+
+        /* ── 功能列表 ── */
+        .feature-list {
+            list-style: none;
+            padding: 0;
+            margin: 16px 0;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .feature-list li {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            font-size: 15px;
+            line-height: 1.7;
+            color: var(--text-secondary);
+            padding: 12px 16px;
+            background: var(--bg-elevated);
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border-subtle);
+        }
+        .feature-list li .f-num {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: var(--accent);
+            background: var(--accent-dim);
+            border-radius: 4px;
+            padding: 2px 6px;
+            flex-shrink: 0;
+            margin-top: 3px;
+        }
+
+        /* ── 提示框 ── */
+        .tip-box {
+            padding: 16px 20px;
+            border-radius: var(--radius-md);
+            border-left: 3px solid;
+            margin: 20px 0;
+            font-size: 14px;
+            line-height: 1.8;
+        }
+        .tip-box.info    { background: rgba(0, 212, 170, 0.05);  border-color: var(--accent); }
+        .tip-box.warning { background: rgba(245, 158, 11, 0.05); border-color: #f59e0b; }
+        .tip-box.caution { background: rgba(239, 68, 68, 0.05);  border-color: #ef4444; }
+        .tip-box-label {
+            font-size: 10px;
+            font-weight: 700;
+            font-family: var(--font-mono);
+            letter-spacing: 0.1em;
+            margin-bottom: 6px;
+            display: block;
+        }
+        .tip-box.info    .tip-box-label { color: var(--accent); }
+        .tip-box.warning .tip-box-label { color: #f59e0b; }
+        .tip-box.caution .tip-box-label { color: #ef4444; }
+        .tip-box p { margin: 0; color: var(--text-secondary); font-size: 14px; }
+        .tip-box p + p { margin-top: 8px; }
+
+        /* ── 图片占位符 ── */
+        .img-slot {
+            margin: 28px 0;
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-elevated);
+        }
+        .img-slot img {
+            max-width: 100%;
+            height: auto;
+            display: block;
+            margin: 0 auto;
+        }
+        .img-slot .img-pending {
+            padding: 32px 24px;
+            display: flex;
+            align-items: flex-start;
+            gap: 16px;
+        }
+        .img-slot .img-pending .pi-icon { font-size: 28px; flex-shrink: 0; }
+        .img-slot .img-pending .pi-info { display: flex; flex-direction: column; gap: 6px; }
+        .img-slot .img-pending .pi-filename {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--accent);
+            background: var(--accent-dim);
+            padding: 3px 9px;
+            border-radius: 4px;
+            display: inline-block;
+        }
+        .img-slot .img-pending .pi-desc {
+            font-size: 13px;
+            color: var(--text-tertiary);
+            line-height: 1.6;
+        }
+
+        /* ── 章节交叉引用链接 ── */
+        .xref {
+            color: var(--accent);
+            text-decoration: none;
+            border-bottom: 1px solid rgba(0, 212, 170, 0.3);
+            transition: border-color 0.18s;
+        }
+        .xref:hover { border-color: var(--accent); }
+
+        /* ── 三栏布局示意图 ── */
+        .layout-diagram {
+            display: flex;
+            gap: 6px;
+            margin: 24px 0;
+            background: #09090f;
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            padding: 16px;
+            min-height: 200px;
+        }
+        .layout-col {
+            border-radius: 6px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            padding: 14px 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .layout-col.col-left  { width: 22%; flex-shrink: 0; }
+        .layout-col.col-center { flex: 1; }
+        .layout-col.col-right { width: 27%; flex-shrink: 0; }
+        .layout-col-label {
+            font-size: 10px;
+            font-family: var(--font-mono);
+            color: var(--accent);
+            letter-spacing: 0.08em;
+            font-weight: 700;
+        }
+        .layout-col-name {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .layout-col-items {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .layout-col-items li {
+            font-size: 11px;
+            color: var(--text-tertiary);
+            line-height: 1.5;
+            padding-left: 10px;
+            border-left: 2px solid var(--border-subtle);
+        }
+
+        /* ── 键盘快捷键样式 ── */
+        .kbd {
+            display: inline-block;
+            padding: 2px 8px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-bottom: 2px solid var(--border);
+            border-radius: 4px;
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--text-primary);
+            line-height: 1.6;
+            white-space: nowrap;
+        }
+
+        /* ── 步骤编号列表 ── */
+        .steps-list {
+            list-style: none;
+            padding: 0;
+            margin: 16px 0;
+            counter-reset: step-counter;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .steps-list li {
+            display: flex;
+            align-items: flex-start;
+            gap: 14px;
+            font-size: 15px;
+            line-height: 1.75;
+            color: var(--text-secondary);
+            padding: 14px 16px;
+            background: var(--bg-elevated);
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border-subtle);
+            counter-increment: step-counter;
+        }
+        .steps-list li::before {
+            content: counter(step-counter);
+            font-family: var(--font-mono);
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--accent);
+            background: var(--accent-dim);
+            border-radius: 50%;
+            width: 22px;
+            height: 22px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            margin-top: 2px;
+        }
+
+        /* ── 底部章节导航 ── */
+        .chapter-nav {
+            padding: 32px 0 60px;
+            border-top: 1px solid var(--border-subtle);
+        }
+        .chapter-nav-inner {
+            display: flex;
+            justify-content: space-between;
+            align-items: stretch;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        .nav-btn {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding: 14px 20px;
+            border-radius: var(--radius-md);
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            text-decoration: none;
+            transition: all 0.2s ease;
+            flex: 1;
+            min-width: 180px;
+            max-width: 300px;
+        }
+        .nav-btn:hover { border-color: var(--accent); }
+        .nav-btn.next { align-items: flex-end; margin-left: auto; }
+        .nav-btn.prev { align-items: flex-start; }
+        .nav-direction {
+            font-size: 11px;
+            font-family: var(--font-mono);
+            color: var(--text-tertiary);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+        .nav-chapter-title {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            line-height: 1.4;
+        }
+        .nav-btn:hover .nav-chapter-title { color: var(--accent); }
+
+        @media (max-width: 600px) {
+            .chapter-nav-inner { flex-direction: column; }
+            .nav-btn { max-width: 100%; }
+            .nav-btn.next { align-items: flex-start; margin-left: 0; }
+            .layout-diagram { flex-direction: column; }
+            .layout-col.col-left,
+            .layout-col.col-right { width: auto; }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="grain"></div>
+
+    <!-- Header -->
+    <header>
+        <div class="header-inner">
+            <a href="../../index.html" class="logo">
+                <img src="../../img/icon.png" alt="SuperPicky">
+                <span>SuperPicky</span>
+            </a>
+        </div>
+    </header>
+
+    <!-- 面包屑 -->
+    <div class="chapter-header-bar">
+        <div class="container">
+            <nav class="breadcrumb">
+                <a href="../../index.html">主页</a>
+                <span>/</span>
+                <a href="index.html">4.3.0 教程</a>
+                <span>/</span>
+                <span>第 07 章</span>
+            </nav>
+        </div>
+    </div>
+
+    <!-- 章节 Hero -->
+    <section class="chapter-hero">
+        <div class="container">
+            <div class="chapter-num-display">
+                <span>CHAPTER 07 / 12</span>
+            </div>
+            <h1>结果浏览器</h1>
+            <p class="subtitle">
+                三栏布局让筛选、浏览与详情一目了然；全屏、对比、右键菜单覆盖从审阅到删除的完整工作流。
+            </p>
+        </div>
+    </section>
+
+    <!-- 正文 -->
+    <section class="chapter-body">
+        <div class="container">
+
+            <!-- 章节内目录 -->
+            <nav class="chapter-toc">
+                <a href="#s7-1">
+                    <span class="sec-num">7.1</span>
+                    三栏布局
+                </a>
+                <a href="#s7-2">
+                    <span class="sec-num">7.2</span>
+                    筛选与排序
+                </a>
+                <a href="#s7-3">
+                    <span class="sec-num">7.3</span>
+                    全屏查看
+                </a>
+                <a href="#s7-4">
+                    <span class="sec-num">7.4</span>
+                    对比查看
+                </a>
+                <a href="#s7-5">
+                    <span class="sec-num">7.5</span>
+                    右键菜单与删除
+                </a>
+            </nav>
+
+            <!-- ══ 7.1 ══ -->
+            <div class="content-section" id="s7-1">
+                <span class="section-label-tag">7.1</span>
+                <h2 class="section-heading">三栏布局</h2>
+
+                <p>
+                    选鸟完成后，点击完成摘要页的「前往结果浏览器」按钮，即可进入结果浏览器。
+                    界面采用<strong>三栏布局</strong>：左侧筛选、中央浏览、右侧详情，无需切换页面，一屏完成全部审阅工作。
+                </p>
+
+                <!-- 三栏示意图 -->
+                <div class="layout-diagram">
+                    <div class="layout-col col-left">
+                        <span class="layout-col-label">LEFT</span>
+                        <span class="layout-col-name">筛选面板</span>
+                        <ul class="layout-col-items">
+                            <li>评分筛选按钮</li>
+                            <li>排序方式</li>
+                            <li>鸟种下拉</li>
+                            <li>对焦 / 飞行状态</li>
+                            <li>照片计数</li>
+                        </ul>
+                    </div>
+                    <div class="layout-col col-center">
+                        <span class="layout-col-label">CENTER</span>
+                        <span class="layout-col-name">缩略图网格</span>
+                        <ul class="layout-col-items">
+                            <li>返回 / 目录切换</li>
+                            <li>多选计数 + 对比按钮</li>
+                            <li>缩略图大小滑块</li>
+                            <li>所有匹配照片</li>
+                        </ul>
+                    </div>
+                    <div class="layout-col col-right">
+                        <span class="layout-col-label">RIGHT</span>
+                        <span class="layout-col-name">详情面板</span>
+                        <ul class="layout-col-items">
+                            <li>星级与 Pick 标记</li>
+                            <li>鸟种名 / 罕见度</li>
+                            <li>IUCN 保护等级</li>
+                            <li>锐度 / 美学分值</li>
+                            <li>对焦状态</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <p>
+                    右侧详情面板不只是只读展示——可以在面板中<strong>直接修改当前照片的星级</strong>，
+                    修改结果会实时通过 ExifTool 写回 EXIF 元数据并同步更新数据库，无需单独保存。
+                    详情面板各字段含义请参见<a href="05-results.html#s5-5" class="xref">第 05 章 5.5</a>。
+                </p>
+
+                <!-- 图片占位 -->
+                <div class="img-slot">
+                    <img src="img/ch07-01-browser-overview.png" alt="ch07-01-browser-overview">
+                </div>
+            </div>
+
+            <!-- ══ 7.2 ══ -->
+            <div class="content-section" id="s7-2">
+                <span class="section-label-tag">7.2</span>
+                <h2 class="section-heading">筛选与排序</h2>
+
+                <p>
+                    左侧筛选面板提供多维度组合筛选，帮助你快速定位目标照片。
+                </p>
+
+                <p><strong>评分筛选（可多选）</strong></p>
+
+                <table class="content-table">
+                    <thead>
+                        <tr>
+                            <th>按钮</th>
+                            <th>筛选范围</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Pick</td>
+                            <td>仅显示带 <strong>Pick 精选标记</strong>的照片（3★ 中的顶尖精选）</td>
+                        </tr>
+                        <tr>
+                            <td>★★★</td>
+                            <td>3 星优选</td>
+                        </tr>
+                        <tr>
+                            <td>★★</td>
+                            <td>2 星良好</td>
+                        </tr>
+                        <tr>
+                            <td>★</td>
+                            <td>1 星普通</td>
+                        </tr>
+                        <tr>
+                            <td>0</td>
+                            <td>0 星放弃</td>
+                        </tr>
+                        <tr>
+                            <td>×</td>
+                            <td>无鸟 / 识别失败</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <p>
+                    默认勾选 <strong>★★★ + ★★</strong>，打开浏览器即直接看到值得保留的照片，无需手动调整。
+                    各评分等级的含义详见<a href="05-results.html#s5-1" class="xref">第 05 章 5.1</a>，
+                    Pick 精选标记的计算规则详见<a href="05-results.html#s5-2" class="xref">第 05 章 5.2</a>。
+                </p>
+
+                <p><strong>排序方式</strong></p>
+
+                <table class="content-table">
+                    <thead>
+                        <tr>
+                            <th>选项</th>
+                            <th>说明</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>罕见度↓（默认）</td>
+                            <td>罕见度指数越高的照片排越前，最稀有的鸟第一眼就能看到</td>
+                        </tr>
+                        <tr>
+                            <td>文件名</td>
+                            <td>按原始文件名字母 / 数字顺序排列，适合按拍摄时序浏览</td>
+                        </tr>
+                        <tr>
+                            <td>锐度↓</td>
+                            <td>最清晰的照片排最前，适合快速找到技术最佳的那张</td>
+                        </tr>
+                        <tr>
+                            <td>美学↓</td>
+                            <td>美学构图分最高的排最前，适合优先挑选发布用图</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <p>
+                    罕见度指数的计算方式与五级分级含义请参见<a href="06-rarity.html" class="xref">第 06 章</a>。
+                </p>
+
+                <p><strong>附加筛选</strong></p>
+
+                <ul class="feature-list">
+                    <li>
+                        <span class="f-num">01</span>
+                        <span><strong>鸟种下拉菜单</strong> — 将当前结果限定为单一鸟种，快速审阅同一种鸟的所有照片</span>
+                    </li>
+                    <li>
+                        <span class="f-num">02</span>
+                        <span><strong>对焦状态复选框</strong> — 可单独筛选「眼睛清晰」「整体清晰」或「模糊」的照片</span>
+                    </li>
+                    <li>
+                        <span class="f-num">03</span>
+                        <span><strong>飞行状态复选框</strong> — 可单独筛选「飞行中」或「静止」的照片</span>
+                    </li>
+                </ul>
+
+            </div>
+
+            <!-- ══ 7.3 ══ -->
+            <div class="content-section" id="s7-3">
+                <span class="section-label-tag">7.3</span>
+                <h2 class="section-heading">全屏查看</h2>
+
+                <p>
+                    <strong>双击缩略图</strong>进入全屏查看模式。图片默认以<strong>适应窗口（Fit）</strong>模式显示，完整呈现全图。
+                </p>
+
+                <p><strong>鼠标与触控操作</strong></p>
+
+                <table class="content-table">
+                    <thead>
+                        <tr>
+                            <th>操作</th>
+                            <th>效果</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>单击（Fit 模式）</td>
+                            <td>以鼠标位置为中心，放大至 100% 实际像素</td>
+                        </tr>
+                        <tr>
+                            <td>单击（缩放模式）</td>
+                            <td>恢复 Fit 全图显示</td>
+                        </tr>
+                        <tr>
+                            <td>拖拽（缩放模式）</td>
+                            <td>平移图像，查看局部细节</td>
+                        </tr>
+                        <tr>
+                            <td>滚轮</td>
+                            <td>以鼠标为中心连续缩放，范围 10%–500%</td>
+                        </tr>
+                        <tr>
+                            <td>双指捏合（macOS 触控板）</td>
+                            <td>捏合缩放，与滚轮等效</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <p>
+                    缩放时屏幕右下角会短暂显示当前缩放比例（如 <strong>128%</strong>），1.5 秒后自动隐藏。
+                </p>
+
+                <p><strong>键盘快捷键</strong></p>
+
+                <table class="content-table">
+                    <thead>
+                        <tr>
+                            <th>按键</th>
+                            <th>功能</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><span class="kbd">←</span> / <span class="kbd">↑</span></td>
+                            <td>切换到上一张照片</td>
+                        </tr>
+                        <tr>
+                            <td><span class="kbd">→</span> / <span class="kbd">↓</span></td>
+                            <td>切换到下一张照片</td>
+                        </tr>
+                        <tr>
+                            <td><span class="kbd">Z</span></td>
+                            <td>切换 Fit 全图 ↔ 100% 实际像素</td>
+                        </tr>
+                        <tr>
+                            <td><span class="kbd">F</span></td>
+                            <td>切换焦点叠加层显示 / 隐藏</td>
+                        </tr>
+                        <tr>
+                            <td><span class="kbd">Delete</span> / <span class="kbd">X</span></td>
+                            <td>删除当前照片（移至系统回收站，需确认）</td>
+                        </tr>
+                        <tr>
+                            <td><span class="kbd">Escape</span></td>
+                            <td>返回缩略图网格</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <div class="tip-box info">
+                    <span class="tip-box-label">焦点叠加层</span>
+                    <p>
+                        按 <span class="kbd">F</span> 可在全屏模式下显示 / 隐藏焦点叠加层——叠加层用颜色标出对焦区域，
+                        帮助快速判断哪张连拍的眼睛最实。
+                    </p>
+                </div>
+
+            </div>
+
+            <!-- ══ 7.4 ══ -->
+            <div class="content-section" id="s7-4">
+                <span class="section-label-tag">7.4</span>
+                <h2 class="section-heading">对比查看</h2>
+
+                <p>
+                    当需要在两张照片之间做最终取舍时，可使用<strong>对比模式</strong>将它们并排显示，
+                    适合从连拍中挑出构图与对焦均最佳的那一张。
+                </p>
+
+                <ol class="steps-list">
+                    <li>
+                        在缩略图网格中，按住 <span class="kbd">Ctrl</span>（Windows）或 <span class="kbd">⌘ Command</span>（macOS），
+                        依次点击选中<strong>恰好 2 张</strong>照片
+                    </li>
+                    <li>
+                        工具栏出现「对比」按钮，点击进入对比视图
+                    </li>
+                    <li>
+                        两张照片左右并排显示，可在视图内直接修改各自的星级，修改同样实时写回 EXIF
+                    </li>
+                    <li>
+                        按 <span class="kbd">Escape</span> 或点击关闭按钮，返回缩略图网格
+                    </li>
+                </ol>
+
+                <div class="tip-box info">
+                    <span class="tip-box-label">小提示</span>
+                    <p>
+                        「对比」按钮只在<strong>恰好选中 2 张</strong>时出现；选中 1 张或 3 张以上时按钮自动隐藏。
+                        如果选错了，再次点击已选中的缩略图可取消选中。
+                    </p>
+                </div>
+
+            </div>
+
+            <!-- ══ 7.5 ══ -->
+            <div class="content-section" id="s7-5">
+                <span class="section-label-tag">7.5</span>
+                <h2 class="section-heading">右键菜单与删除</h2>
+
+                <p>
+                    在缩略图网格或全屏模式下，<strong>右键单击照片</strong>弹出快捷菜单：
+                </p>
+
+                <table class="content-table">
+                    <thead>
+                        <tr>
+                            <th>菜单项</th>
+                            <th>功能</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>在 Finder 中显示（macOS）<br>在资源管理器中显示（Windows）</td>
+                            <td>打开文件所在文件夹并高亮选中该文件，方便直接操作原文件</td>
+                        </tr>
+                        <tr>
+                            <td>用 [应用程序] 打开</td>
+                            <td>调用外部程序（如 Lightroom、Photoshop）打开当前照片</td>
+                        </tr>
+                        <tr>
+                            <td>复制路径</td>
+                            <td>将文件完整路径复制到剪贴板</td>
+                        </tr>
+                        <tr>
+                            <td>删除</td>
+                            <td>将照片移至系统回收站（<strong>不是永久删除</strong>）</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <p><strong>关于删除操作</strong></p>
+
+                <ul class="feature-list">
+                    <li>
+                        <span class="f-num">01</span>
+                        <span>
+                            删除将文件移入系统回收站（macOS：废纸篓；Windows：回收站），<strong>不会直接抹除数据</strong>。
+                            如需彻底删除，请手动清空系统回收站。
+                        </span>
+                    </li>
+                    <li>
+                        <span class="f-num">02</span>
+                        <span>
+                            首次删除时会弹出确认对话框。勾选「不再询问」可关闭提示，后续删除直接执行，请谨慎使用。
+                        </span>
+                    </li>
+                    <li>
+                        <span class="f-num">03</span>
+                        <span>
+                            删除成功后，缩略图立即从网格移除，数据库同步清除该照片的记录。
+                        </span>
+                    </li>
+                    <li>
+                        <span class="f-num">04</span>
+                        <span>
+                            全屏模式下也可通过键盘 <span class="kbd">Delete</span> / <span class="kbd">X</span> 触发删除，
+                            删除后自动跳转到下一张照片。
+                        </span>
+                    </li>
+                </ul>
+
+                <div class="tip-box warning">
+                    <span class="tip-box-label">注意</span>
+                    <p>
+                        删除操作作用于<strong>整理后目录</strong>中的文件。
+                        如果你的工作流是先整理、再浏览，请在删除前确认原始文件已备份，
+                        以免误删无法从回收站恢复的 RAW 文件。
+                    </p>
+                </div>
+            </div>
+
+        </div>
+    </section>
+
+    <!-- 章节导航 -->
+    <section class="chapter-nav">
+        <div class="container">
+            <div class="chapter-nav-inner">
+                <a href="06-rarity.html" class="nav-btn prev">
+                    <span class="nav-direction">上一章</span>
+                    <span class="nav-chapter-title">罕见鸟指数</span>
+                </a>
+                <a href="08-birdid.html" class="nav-btn next">
+                    <span class="nav-direction">下一章</span>
+                    <span class="nav-chapter-title">鸟种识别</span>
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <div class="footer-inner">
+                <div class="footer-brand">
+                    <img src="../../img/icon.png" alt="SuperPicky">
+                    <div class="footer-brand-text">
+                        <span>SuperPicky</span>
+                        <span class="footer-author">by James Yu (詹姆斯·于震)</span>
+                    </div>
+                </div>
+                <div class="footer-links">
+                    <a href="index.html">教程目录</a>
+                    <a href="../../faq.html">常见问题</a>
+                    <a href="https://github.com/jamesphotography/SuperPicky">GitHub</a>
+                    <a href="mailto:james@jamesphotography.com.au">联系</a>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p class="credits">模型致谢：YOLO11 (Ultralytics) · TOPIQ (Chaofeng Chen et al.)</p>
+                <p class="copyright">© 2024-2026 James Yu · <a href="../../LICENSE" target="_blank"
+                        style="color: inherit; text-decoration: underline;">AGPL-3.0 License</a></p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="../../js/main.js"></script>
+</body>
+
+</html>

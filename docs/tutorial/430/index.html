@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-lang="cn">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SuperPicky 4.3.0 使用教程 | Tutorial</title>
+    <meta name="description" content="SuperPicky 4.3.0 完整使用教程目录，涵盖安装、选鸟、罕见鸟指数、视频分析等全部功能。Full tutorial for SuperPicky 4.3.0.">
+    <link rel="stylesheet" href="../../css/style.css?v=20260612">
+    <link rel="icon" href="../../img/icon.png" type="image/png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        /* ── 目录页专属样式 / TOC page styles ── */
+
+        .toc-hero {
+            padding: 120px 0 60px;
+            text-align: center;
+        }
+
+        .toc-hero .container {
+            max-width: 860px;
+        }
+
+        .toc-hero h1 {
+            font-size: clamp(32px, 5vw, 52px);
+            font-weight: 700;
+            letter-spacing: -1.5px;
+            line-height: 1.1;
+            margin-bottom: 16px;
+            background: linear-gradient(135deg, var(--text-primary) 0%, var(--text-secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .toc-hero p.intro {
+            font-size: 17px;
+            line-height: 1.85;
+            color: var(--text-secondary);
+            max-width: 640px;
+            margin: 0 auto 24px;
+        }
+
+        .version-pill {
+            display: inline-block;
+            padding: 6px 14px;
+            border-radius: 999px;
+            background: rgba(0, 212, 170, 0.1);
+            border: 1px solid rgba(0, 212, 170, 0.22);
+            color: var(--accent);
+            font-size: 12px;
+            font-family: var(--font-mono);
+            letter-spacing: 0.04em;
+        }
+
+        /* ── 章节卡片列表 / Chapter card list ── */
+
+        .toc-section {
+            padding: 20px 0 80px;
+        }
+
+        .toc-section .container {
+            max-width: 860px;
+        }
+
+        .chapter-list {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+
+        .chapter-card {
+            display: block;
+            text-decoration: none;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            padding: 22px 26px;
+            transition: all 0.22s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .chapter-card::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(ellipse at top left, var(--accent-glow), transparent 60%);
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .chapter-card:hover {
+            border-color: var(--accent);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 32px rgba(0, 212, 170, 0.08);
+        }
+
+        .chapter-card:hover::before {
+            opacity: 1;
+        }
+
+        .card-top {
+            display: flex;
+            align-items: baseline;
+            gap: 14px;
+            margin-bottom: 8px;
+            flex-wrap: wrap;
+        }
+
+        .card-num {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--accent);
+            flex-shrink: 0;
+        }
+
+        .card-title {
+            font-size: 20px;
+            font-weight: 600;
+            color: var(--text-primary);
+            line-height: 1.3;
+        }
+
+        .card-new-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            background: var(--accent);
+            color: var(--bg-void);
+            font-size: 10px;
+            font-family: var(--font-mono);
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            vertical-align: middle;
+            margin-left: 6px;
+            flex-shrink: 0;
+        }
+
+        .card-desc {
+            font-size: 14px;
+            line-height: 1.7;
+            color: var(--text-secondary);
+            margin-bottom: 14px;
+        }
+
+        .card-sections {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px 10px;
+        }
+
+        .card-section-tag {
+            display: inline-flex;
+            align-items: center;
+            padding: 5px 10px;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            background: var(--bg-card);
+            color: var(--text-secondary);
+            font-size: 12px;
+            line-height: 1.4;
+            transition: all 0.18s ease;
+        }
+
+        .chapter-card:hover .card-section-tag {
+            border-color: rgba(0, 212, 170, 0.25);
+            color: var(--text-primary);
+        }
+
+        /* ── 响应式 ── */
+        @media (max-width: 640px) {
+            .chapter-card {
+                padding: 18px 18px;
+            }
+            .card-title {
+                font-size: 17px;
+            }
+            .card-desc {
+                font-size: 13px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="grain"></div>
+
+    <!-- Header -->
+    <header>
+        <div class="header-inner">
+            <a href="../../index.html" class="logo">
+                <img src="../../img/icon.png" alt="SuperPicky">
+                <span>SuperPicky</span>
+            </a>
+            <div class="lang-switch">
+                <button class="lang-btn active" onclick="setLang('cn')">中</button>
+                <button class="lang-btn" onclick="setLang('en')">EN</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Hero -->
+    <section class="toc-hero">
+        <div class="container">
+            <div class="section-header">
+                <span class="section-label">
+                    <span class="lang-cn">使用教程</span>
+                    <span class="lang-en">Tutorial</span>
+                </span>
+            </div>
+            <h1>
+                <span class="lang-cn">SuperPicky 4.3.0 使用教程</span>
+                <span class="lang-en">SuperPicky 4.3.0 Tutorial</span>
+            </h1>
+            <p class="intro">
+                <span class="lang-cn">面向鸟类摄影师的完整使用指南。按章节编排，从安装到高级功能，每章独立、可直接跳转。</span>
+                <span class="lang-en">A complete guide for bird photographers. Each chapter is self-contained — jump to any section directly.</span>
+            </p>
+            <div class="version-pill">v4.3.0-RC7 · LTS</div>
+        </div>
+    </section>
+
+    <!-- Chapter list -->
+    <section class="toc-section">
+        <div class="container">
+            <div class="chapter-list">
+
+                <!-- Chapter 01 -->
+                <a href="01-quickstart.html" class="chapter-card">
+                    <div class="card-top">
+                        <span class="card-num">01</span>
+                        <span class="card-title">
+                            <span class="lang-cn">快速开始</span>
+                            <span class="lang-en">Quick Start</span>
+                        </span>
+                    </div>
+                    <p class="card-desc">
+                        <span class="lang-cn">软件定位、系统要求、下载安装、首次启动与初始化说明。</span>
+                        <span class="lang-en">What the app does, system requirements, download, installation, and first launch.</span>
+                    </p>
+                    <div class="card-sections">
+                        <span class="card-section-tag"><span class="lang-cn">软件定位</span><span class="lang-en">Overview</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">系统要求</span><span class="lang-en">Requirements</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">下载安装</span><span class="lang-en">Installation</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">首次启动</span><span class="lang-en">First Launch</span></span>
+                    </div>
+                </a>
+
+                <!-- Chapter 02 -->
+                <a href="02-main-ui.html" class="chapter-card">
+                    <div class="card-top">
+                        <span class="card-num">02</span>
+                        <span class="card-title">
+                            <span class="lang-cn">主界面认识</span>
+                            <span class="lang-en">Main Interface</span>
+                        </span>
+                    </div>
+                    <p class="card-desc">
+                        <span class="lang-cn">整体布局区域划分、三个核心按钮、最近目录历史、菜单栏功能概览。</span>
+                        <span class="lang-en">Layout overview, three core buttons, recent folder history, and menu bar functions.</span>
+                    </p>
+                    <div class="card-sections">
+                        <span class="card-section-tag"><span class="lang-cn">整体布局</span><span class="lang-en">Layout</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">核心按钮</span><span class="lang-en">Core Buttons</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">最近目录</span><span class="lang-en">Recent Folders</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">菜单栏</span><span class="lang-en">Menu Bar</span></span>
+                    </div>
+                </a>
+
+                <!-- Chapter 03 -->
+                <a href="03-parameters.html" class="chapter-card">
+                    <div class="card-top">
+                        <span class="card-num">03</span>
+                        <span class="card-title">
+                            <span class="lang-cn">选鸟参数设置</span>
+                            <span class="lang-en">Culling Parameters</span>
+                        </span>
+                    </div>
+                    <p class="card-desc">
+                        <span class="lang-cn">摄影水平预设、锐度与美学阈值、飞版 / 连拍 / 曝光 / 识鸟开关详解。</span>
+                        <span class="lang-en">Skill level presets, sharpness and aesthetics thresholds, BIF / Burst / Exposure / Bird ID toggles.</span>
+                    </p>
+                    <div class="card-sections">
+                        <span class="card-section-tag"><span class="lang-cn">摄影水平预设</span><span class="lang-en">Skill Presets</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">锐度 / 美学阈值</span><span class="lang-en">Thresholds</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">飞版检测</span><span class="lang-en">BIF</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">连拍检测</span><span class="lang-en">Burst</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">曝光检测</span><span class="lang-en">Exposure</span></span>
+                    </div>
+                </a>
+
+                <!-- Chapter 04 -->
+                <a href="04-run.html" class="chapter-card">
+                    <div class="card-top">
+                        <span class="card-num">04</span>
+                        <span class="card-title">
+                            <span class="lang-cn">执行选鸟</span>
+                            <span class="lang-en">Running a Cull</span>
+                        </span>
+                    </div>
+                    <p class="card-desc">
+                        <span class="lang-cn">选择目录的三种方式、子目录递归批处理、读懂日志输出、处理完成统计摘要。</span>
+                        <span class="lang-en">Three ways to select a folder, recursive batch mode, reading the log, and the completion summary.</span>
+                    </p>
+                    <div class="card-sections">
+                        <span class="card-section-tag"><span class="lang-cn">选择目录</span><span class="lang-en">Select Folder</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">递归批处理</span><span class="lang-en">Batch Mode</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">读懂日志</span><span class="lang-en">Reading the Log</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">完成摘要</span><span class="lang-en">Summary</span></span>
+                    </div>
+                </a>
+
+                <!-- Chapter 05 -->
+                <a href="05-results.html" class="chapter-card">
+                    <div class="card-top">
+                        <span class="card-num">05</span>
+                        <span class="card-title">
+                            <span class="lang-cn">读懂选鸟结果</span>
+                            <span class="lang-en">Reading Results</span>
+                        </span>
+                    </div>
+                    <p class="card-desc">
+                        <span class="lang-cn">0–3 星的定义、Pick 精选标记、飞版和连拍分组、输出目录结构（v4.3 新默认）、EXIF 写入字段。</span>
+                        <span class="lang-en">Star ratings, Pick flag, BIF and burst groups, output folder structure (v4.3 new default), and EXIF fields written.</span>
+                    </p>
+                    <div class="card-sections">
+                        <span class="card-section-tag"><span class="lang-cn">0–3 星含义</span><span class="lang-en">Star Ratings</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">Pick 精选</span><span class="lang-en">Pick Flag</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">连拍分组</span><span class="lang-en">Burst Groups</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">目录结构</span><span class="lang-en">Folder Layout</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">EXIF 写入</span><span class="lang-en">EXIF Write</span></span>
+                    </div>
+                </a>
+
+                <!-- Chapter 06 — v4.3 新增 -->
+                <a href="06-rarity.html" class="chapter-card">
+                    <div class="card-top">
+                        <span class="card-num">06</span>
+                        <span class="card-title">
+                            <span class="lang-cn">罕见鸟指数</span>
+                            <span class="lang-en">Rarity Index</span>
+                            <span class="card-new-badge">v4.3 新增</span>
+                        </span>
+                    </div>
+                    <p class="card-desc">
+                        <span class="lang-cn">基于 GBIF 全球观察数据的罕见度评分系统：0–100 分、五级分级图标、详情面板展示、排序与统计。</span>
+                        <span class="lang-en">GBIF-based rarity scoring: 0–100 score, 5-tier glyphs, detail panel display, sorting, and batch summary.</span>
+                    </p>
+                    <div class="card-sections">
+                        <span class="card-section-tag"><span class="lang-cn">GBIF 指数说明</span><span class="lang-en">What is GBIF Rarity</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">五级分级</span><span class="lang-en">5-Tier System</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">详情面板</span><span class="lang-en">Detail Panel</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">按罕见度排序</span><span class="lang-en">Sort by Rarity</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">GBIF vs IUCN</span><span class="lang-en">GBIF vs IUCN</span></span>
+                    </div>
+                </a>
+
+                <!-- Chapter 07 -->
+                <a href="07-browser.html" class="chapter-card">
+                    <div class="card-top">
+                        <span class="card-num">07</span>
+                        <span class="card-title">
+                            <span class="lang-cn">结果浏览器</span>
+                            <span class="lang-en">Result Browser</span>
+                        </span>
+                    </div>
+                    <p class="card-desc">
+                        <span class="lang-cn">三栏布局、筛选与排序、全屏与对比查看、改星写回 EXIF、右键菜单、删除照片。</span>
+                        <span class="lang-en">3-column layout, filters and sorting, fullscreen and compare views, rating sync, context menu, and delete.</span>
+                    </p>
+                    <div class="card-sections">
+                        <span class="card-section-tag"><span class="lang-cn">三栏布局</span><span class="lang-en">3-Column Layout</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">筛选排序</span><span class="lang-en">Filters & Sort</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">全屏查看</span><span class="lang-en">Fullscreen</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">对比查看</span><span class="lang-en">Compare</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">右键菜单</span><span class="lang-en">Context Menu</span></span>
+                    </div>
+                </a>
+
+                <!-- Chapter 08 -->
+                <a href="08-birdid.html" class="chapter-card">
+                    <div class="card-top">
+                        <span class="card-num">08</span>
+                        <span class="card-title">
+                            <span class="lang-cn">鸟种识别</span>
+                            <span class="lang-en">Bird ID</span>
+                        </span>
+                    </div>
+                    <p class="card-desc">
+                        <span class="lang-cn">OSEA 模型、识别面板使用、Avonet 离线过滤、置信度、鸟名格式、IOC 检索、截图识鸟。</span>
+                        <span class="lang-en">OSEA model, using the ID panel, Avonet offline filter, confidence, naming formats, IOC lookup, screenshot ID.</span>
+                    </p>
+                    <div class="card-sections">
+                        <span class="card-section-tag"><span class="lang-cn">识别面板</span><span class="lang-en">ID Panel</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">国家地区设置</span><span class="lang-en">Region Settings</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">置信度</span><span class="lang-en">Confidence</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">鸟名格式</span><span class="lang-en">Naming Format</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">截图识鸟</span><span class="lang-en">Screenshot ID</span></span>
+                    </div>
+                </a>
+
+                <!-- Chapter 09 — v4.3 新增 -->
+                <a href="09-video.html" class="chapter-card">
+                    <div class="card-top">
+                        <span class="card-num">09</span>
+                        <span class="card-title">
+                            <span class="lang-cn">视频分析</span>
+                            <span class="lang-en">Video Analysis</span>
+                            <span class="card-new-badge">v4.3 新增</span>
+                        </span>
+                    </div>
+                    <p class="card-desc">
+                        <span class="lang-cn">支持格式、主流程自动分析、抽帧与 YOLO 检测逻辑、结果查看、SRT 字幕、高级设置。</span>
+                        <span class="lang-en">Supported formats, automatic analysis in main flow, frame extraction, results, SRT subtitles, and settings.</span>
+                    </p>
+                    <div class="card-sections">
+                        <span class="card-section-tag"><span class="lang-cn">支持格式</span><span class="lang-en">Formats</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">自动分析</span><span class="lang-en">Auto Analysis</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">结果查看</span><span class="lang-en">Viewing Results</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">SRT 字幕</span><span class="lang-en">SRT Subtitles</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">高级设置</span><span class="lang-en">Settings</span></span>
+                    </div>
+                </a>
+
+                <!-- Chapter 10 -->
+                <a href="10-advanced.html" class="chapter-card">
+                    <div class="card-top">
+                        <span class="card-num">10</span>
+                        <span class="card-title">
+                            <span class="lang-cn">高级设置</span>
+                            <span class="lang-en">Advanced Settings</span>
+                        </span>
+                    </div>
+                    <p class="card-desc">
+                        <span class="lang-cn">元数据写入模式、ARW 策略、精选百分比、连拍阈值、目录布局、外部编辑器、提示音。</span>
+                        <span class="lang-en">Metadata write mode, ARW strategy, Pick percentage, burst thresholds, folder layout, external apps, sound.</span>
+                    </p>
+                    <div class="card-sections">
+                        <span class="card-section-tag"><span class="lang-cn">元数据写入模式</span><span class="lang-en">Metadata Mode</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">ARW 策略</span><span class="lang-en">ARW Strategy</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">目录布局</span><span class="lang-en">Folder Layout</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">外部编辑器</span><span class="lang-en">External Apps</span></span>
+                    </div>
+                </a>
+
+                <!-- Chapter 11 -->
+                <a href="11-reset.html" class="chapter-card">
+                    <div class="card-top">
+                        <span class="card-num">11</span>
+                        <span class="card-title">
+                            <span class="lang-cn">重置与重新处理</span>
+                            <span class="lang-en">Reset &amp; Reprocess</span>
+                        </span>
+                    </div>
+                    <p class="card-desc">
+                        <span class="lang-cn">什么时候需要重置、重置流程、调参后重新处理、历史目录提示的含义。</span>
+                        <span class="lang-en">When to reset, the reset process, reprocessing after parameter changes, and history prompts.</span>
+                    </p>
+                    <div class="card-sections">
+                        <span class="card-section-tag"><span class="lang-cn">何时重置</span><span class="lang-en">When to Reset</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">重置流程</span><span class="lang-en">Reset Steps</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">重新处理</span><span class="lang-en">Reprocess</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">历史提示</span><span class="lang-en">History Prompt</span></span>
+                    </div>
+                </a>
+
+                <!-- Chapter 12 -->
+                <a href="12-faq.html" class="chapter-card">
+                    <div class="card-top">
+                        <span class="card-num">12</span>
+                        <span class="card-title">
+                            <span class="lang-cn">常见问题与排查</span>
+                            <span class="lang-en">FAQ &amp; Troubleshooting</span>
+                        </span>
+                    </div>
+                    <p class="card-desc">
+                        <span class="lang-cn">Windows 安装提示、首启慢、中文路径、ARW 问题、识鸟无结果、罕见度异常、GPU 版选择。</span>
+                        <span class="lang-en">Windows install notes, slow first launch, Chinese paths, ARW issues, no Bird ID results, rarity anomalies, GPU vs CPU.</span>
+                    </p>
+                    <div class="card-sections">
+                        <span class="card-section-tag"><span class="lang-cn">Windows 安装</span><span class="lang-en">Windows Install</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">首启慢</span><span class="lang-en">Slow First Launch</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">中文路径</span><span class="lang-en">Chinese Paths</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">Sony ARW</span><span class="lang-en">Sony ARW</span></span>
+                        <span class="card-section-tag"><span class="lang-cn">GPU vs CPU</span><span class="lang-en">GPU vs CPU</span></span>
+                    </div>
+                </a>
+
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <div class="footer-inner">
+                <div class="footer-brand">
+                    <img src="../../img/icon.png" alt="SuperPicky">
+                    <div class="footer-brand-text">
+                        <span>SuperPicky</span>
+                        <span class="footer-author">by James Yu (詹姆斯·于震)</span>
+                    </div>
+                </div>
+                <div class="footer-links">
+                    <a href="../../index.html">
+                        <span class="lang-cn">主页</span>
+                        <span class="lang-en">Home</span>
+                    </a>
+                    <a href="../../faq.html">
+                        <span class="lang-cn">常见问题</span>
+                        <span class="lang-en">FAQ</span>
+                    </a>
+                    <a href="https://github.com/jamesphotography/SuperPicky">GitHub</a>
+                    <a href="mailto:james@jamesphotography.com.au">
+                        <span class="lang-cn">联系</span>
+                        <span class="lang-en">Contact</span>
+                    </a>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p class="credits">
+                    <span class="lang-cn">模型致谢：YOLO11 (Ultralytics) · TOPIQ (Chaofeng Chen et al.)</span>
+                    <span class="lang-en">Credits: YOLO11 (Ultralytics) · TOPIQ (Chaofeng Chen et al.)</span>
+                </p>
+                <p class="copyright">© 2024-2026 James Yu · <a href="../../LICENSE" target="_blank"
+                        style="color: inherit; text-decoration: underline;">AGPL-3.0 License</a></p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="../../js/main.js"></script>
+</body>
+
+</html>

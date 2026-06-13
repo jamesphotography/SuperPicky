@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-lang="cn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>第 11 章 重置与重新处理 - SuperPicky 慧眼选鸟 4.3.0 教程</title>
+    <meta name="description" content="SuperPicky 慧眼选鸟 4.3.0 重置与重新处理：何时重置、重置流程、快速重新处理、历史目录提示说明">
+    <link rel="stylesheet" href="../../css/style.css?v=20260612">
+    <link rel="icon" href="../../img/icon.png" type="image/png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        .chapter-header-bar { padding: 100px 0 0; }
+
+        .breadcrumb {
+            font-size: 13px;
+            color: var(--text-tertiary);
+            margin-bottom: 40px;
+        }
+        .breadcrumb a { color: var(--text-tertiary); text-decoration: none; transition: color 0.2s; }
+        .breadcrumb a:hover { color: var(--accent); }
+        .breadcrumb span { margin: 0 6px; }
+
+        .chapter-hero {
+            padding: 40px 0 52px;
+            border-bottom: 1px solid var(--border-subtle);
+            margin-bottom: 52px;
+        }
+        .chapter-num-display {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--accent);
+            letter-spacing: 0.1em;
+            margin-bottom: 16px;
+        }
+        .chapter-hero h1 {
+            font-size: clamp(28px, 4vw, 44px);
+            font-weight: 700;
+            letter-spacing: -1px;
+            line-height: 1.2;
+            margin-bottom: 16px;
+            background: linear-gradient(135deg, var(--text-primary) 0%, var(--text-secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .chapter-hero p.subtitle {
+            font-size: 17px;
+            color: var(--text-secondary);
+            line-height: 1.7;
+            max-width: 640px;
+        }
+
+        .chapter-toc {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 52px;
+        }
+        .chapter-toc a {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 14px;
+            border-radius: 999px;
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-elevated);
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 13px;
+            transition: all 0.18s ease;
+        }
+        .chapter-toc a:hover { border-color: var(--accent); color: var(--accent); }
+        .chapter-toc a .sec-num { font-family: var(--font-mono); font-size: 10px; color: var(--accent); }
+
+        .chapter-body { padding: 0 0 80px; }
+
+        .content-section {
+            margin-bottom: 60px;
+            padding-bottom: 52px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .content-section:last-child { border-bottom: none; margin-bottom: 0; }
+
+        .section-label-tag {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--accent);
+            letter-spacing: 0.08em;
+            display: block;
+            margin-bottom: 10px;
+        }
+        .section-heading {
+            font-size: 22px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 20px;
+            line-height: 1.3;
+        }
+
+        .content-section p {
+            font-size: 15px;
+            line-height: 1.9;
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+        }
+        .content-section p:last-child { margin-bottom: 0; }
+        .content-section strong { color: var(--text-primary); }
+
+        /* ── 表格 ── */
+        .content-table {
+            width: 100%;
+            border-collapse: collapse;
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            border: 1px solid var(--border-subtle);
+            margin: 20px 0;
+            font-size: 14px;
+        }
+        .content-table thead th {
+            background: var(--bg-card);
+            padding: 11px 16px;
+            text-align: left;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            border-bottom: 1px solid var(--border);
+        }
+        .content-table tbody td {
+            padding: 13px 16px;
+            line-height: 1.65;
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--border-subtle);
+            vertical-align: top;
+        }
+        .content-table tbody tr:last-child td { border-bottom: none; }
+        .content-table tbody tr:hover td { background: rgba(255,255,255,0.015); }
+        .content-table td:first-child { color: var(--text-primary); font-weight: 500; }
+
+        /* ── 决策矩阵 ── */
+        .decision-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin: 20px 0;
+        }
+        .dg-card {
+            padding: 18px 20px;
+            border-radius: var(--radius-md);
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-elevated);
+        }
+        .dg-card.danger { border-color: rgba(239,68,68,0.3); }
+        .dg-card.safe   { border-color: rgba(0,212,170,0.3); }
+        .dg-head {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        .dg-icon { font-size: 20px; }
+        .dg-title { font-size: 15px; font-weight: 600; color: var(--text-primary); }
+        .dg-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            font-size: 13px;
+            line-height: 1.65;
+            color: var(--text-secondary);
+        }
+        .dg-list li::before {
+            content: "→ ";
+            color: var(--text-tertiary);
+        }
+        @media (max-width: 560px) {
+            .decision-grid { grid-template-columns: 1fr; }
+        }
+
+        /* ── 提示框 ── */
+        .tip-box {
+            padding: 16px 20px;
+            border-radius: var(--radius-md);
+            border-left: 3px solid;
+            margin: 20px 0;
+            font-size: 14px;
+            line-height: 1.8;
+        }
+        .tip-box.info    { background: rgba(0, 212, 170, 0.05);  border-color: var(--accent); }
+        .tip-box.warning { background: rgba(245, 158, 11, 0.05); border-color: #f59e0b; }
+        .tip-box.caution { background: rgba(239, 68, 68, 0.05);  border-color: #ef4444; }
+        .tip-box-label {
+            font-size: 10px;
+            font-weight: 700;
+            font-family: var(--font-mono);
+            letter-spacing: 0.1em;
+            margin-bottom: 6px;
+            display: block;
+        }
+        .tip-box.info    .tip-box-label { color: var(--accent); }
+        .tip-box.warning .tip-box-label { color: #f59e0b; }
+        .tip-box.caution .tip-box-label { color: #ef4444; }
+        .tip-box p { margin: 0; color: var(--text-secondary); font-size: 14px; }
+        .tip-box p + p { margin-top: 8px; }
+
+        /* ── 流程步骤 ── */
+        .flow-steps {
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+            margin: 20px 0;
+        }
+        .flow-step {
+            display: flex;
+            align-items: flex-start;
+            gap: 16px;
+            padding: 14px 16px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+        }
+        .flow-step:first-child { border-radius: var(--radius-sm) var(--radius-sm) 0 0; }
+        .flow-step:last-child  { border-radius: 0 0 var(--radius-sm) var(--radius-sm); }
+        .flow-step + .flow-step { border-top: none; }
+        .flow-num {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            font-weight: 700;
+            color: var(--accent);
+            background: var(--accent-dim);
+            border-radius: 50%;
+            width: 22px;
+            height: 22px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            margin-top: 2px;
+        }
+        .flow-body { font-size: 14px; line-height: 1.75; color: var(--text-secondary); }
+        .flow-body strong { color: var(--text-primary); }
+
+        /* ── 对话弹窗示意 ── */
+        .dialog-mock {
+            background: #141420;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            padding: 24px;
+            margin: 20px 0;
+            max-width: 440px;
+        }
+        .dialog-mock .dm-title {
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 10px;
+        }
+        .dialog-mock .dm-body {
+            font-size: 13.5px;
+            line-height: 1.75;
+            color: var(--text-secondary);
+            margin-bottom: 18px;
+        }
+        .dialog-mock .dm-btns {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .dm-btn {
+            padding: 7px 16px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: default;
+        }
+        .dm-btn.primary {
+            background: var(--accent);
+            color: var(--bg-void);
+        }
+        .dm-btn.secondary {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+        }
+
+        /* ── 图片占位 ── */
+        .img-slot {
+            margin: 28px 0;
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-elevated);
+        }
+        .img-slot img {
+            max-width: 100%;
+            height: auto;
+            display: block;
+            margin: 0 auto;
+        }
+        .img-slot .img-pending {
+            padding: 32px 24px;
+            display: flex;
+            align-items: flex-start;
+            gap: 16px;
+        }
+        .img-slot .img-pending .pi-icon { font-size: 28px; flex-shrink: 0; }
+        .img-slot .img-pending .pi-info { display: flex; flex-direction: column; gap: 6px; }
+        .img-slot .img-pending .pi-filename {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--accent);
+            background: var(--accent-dim);
+            padding: 3px 9px;
+            border-radius: 4px;
+            display: inline-block;
+        }
+        .img-slot .img-pending .pi-desc {
+            font-size: 13px;
+            color: var(--text-tertiary);
+            line-height: 1.6;
+        }
+
+        /* ── 跨引用链接 ── */
+        .xref {
+            color: var(--accent);
+            text-decoration: none;
+            border-bottom: 1px solid rgba(0,212,170,0.3);
+            transition: border-color 0.18s;
+        }
+        .xref:hover { border-color: var(--accent); }
+
+        /* ── 章节导航 ── */
+        .chapter-nav {
+            padding: 32px 0 60px;
+            border-top: 1px solid var(--border-subtle);
+        }
+        .chapter-nav-inner {
+            display: flex;
+            justify-content: space-between;
+            align-items: stretch;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        .nav-btn {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding: 14px 20px;
+            border-radius: var(--radius-md);
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            text-decoration: none;
+            transition: all 0.2s ease;
+            flex: 1;
+            min-width: 180px;
+            max-width: 300px;
+        }
+        .nav-btn:hover { border-color: var(--accent); }
+        .nav-btn.next { align-items: flex-end; margin-left: auto; }
+        .nav-btn.prev { align-items: flex-start; }
+        .nav-direction { font-size: 11px; font-family: var(--font-mono); color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.08em; }
+        .nav-chapter-title { font-size: 14px; font-weight: 500; color: var(--text-secondary); line-height: 1.4; }
+        .nav-btn:hover .nav-chapter-title { color: var(--accent); }
+
+        @media (max-width: 600px) {
+            .chapter-nav-inner { flex-direction: column; }
+            .nav-btn { max-width: 100%; }
+            .nav-btn.next { align-items: flex-start; margin-left: 0; }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="grain"></div>
+
+    <!-- Header -->
+    <header>
+        <div class="header-inner">
+            <a href="../../index.html" class="logo">
+                <img src="../../img/icon.png" alt="SuperPicky">
+                <span>SuperPicky</span>
+            </a>
+        </div>
+    </header>
+
+    <!-- 面包屑 -->
+    <div class="chapter-header-bar">
+        <div class="container">
+            <nav class="breadcrumb">
+                <a href="../../index.html">主页</a>
+                <span>/</span>
+                <a href="index.html">4.3.0 教程</a>
+                <span>/</span>
+                <span>第 11 章</span>
+            </nav>
+        </div>
+    </div>
+
+    <!-- 章节 Hero -->
+    <section class="chapter-hero">
+        <div class="container">
+            <div class="chapter-num-display">CHAPTER 11 / 12</div>
+            <h1>重置与重新处理</h1>
+            <p class="subtitle">
+                改变参数后想重跑？处理到一半中断了？选错目录了？
+                本章解释 SuperPicky 慧眼选鸟 的两种恢复操作——重置和重新处理——
+                以及出现历史提示弹窗时该如何选择。
+            </p>
+        </div>
+    </section>
+
+    <!-- 正文 -->
+    <section class="chapter-body">
+        <div class="container">
+
+            <!-- 章节内目录 -->
+            <nav class="chapter-toc">
+                <a href="#s11-1"><span class="sec-num">11.1</span>何时需要重置或重新处理</a>
+                <a href="#s11-2"><span class="sec-num">11.2</span>重新处理（调参后快速重跑）</a>
+                <a href="#s11-3"><span class="sec-num">11.3</span>完整重置（清除所有记录）</a>
+                <a href="#s11-4"><span class="sec-num">11.4</span>历史目录提示弹窗</a>
+            </nav>
+
+            <!-- ══ 11.1 ══ -->
+            <div class="content-section" id="s11-1">
+                <span class="section-label-tag">11.1</span>
+                <h2 class="section-heading">何时需要重置或重新处理</h2>
+
+                <p>
+                    选鸟完成后，SuperPicky 慧眼选鸟 将照片分散到各个子目录，并在隐藏目录
+                    <code>.superpicky/</code> 中记录处理结果。
+                    如需再次处理同一目录，必须先把文件归位，否则程序看到的目录已不是原始状态。
+                </p>
+
+                <p>以下场景需要重新处理或重置：</p>
+
+                <div class="decision-grid">
+                    <div class="dg-card safe">
+                        <div class="dg-head">
+                                                        <span class="dg-title">重新处理（推荐）</span>
+                        </div>
+                        <ul class="dg-list">
+                            <li>修改了锐度 / 美学阈值，想用新参数重跑</li>
+                            <li>开启或关闭飞版 / 连拍 / 曝光检测</li>
+                            <li>更换摄影水平预设</li>
+                            <li>修改了精选百分比或连拍阈值</li>
+                            <li>修改了目录布局（鸟种优先 ↔ 星级优先）</li>
+                            <li>修改了元数据写入模式或 ARW 策略</li>
+                        </ul>
+                    </div>
+                    <div class="dg-card danger">
+                        <div class="dg-head">
+                                                        <span class="dg-title">完整重置</span>
+                        </div>
+                        <ul class="dg-list">
+                            <li>想彻底清除所有评分，还原到未处理状态</li>
+                            <li>EXIF 数据写错，希望完全清空后重来</li>
+                            <li>目录将被其他软件使用，需要干净的原始文件</li>
+                            <li>确认不再需要任何历史处理记录</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="tip-box info">
+                    <span class="tip-box-label">两者的核心区别</span>
+                    <p>
+                        <strong>重新处理</strong>跳过 EXIF 清除步骤（旧评分会被新结果直接覆盖）、保留 <code>.superpicky/</code> 缓存目录（预览图可复用，速度更快），适合参数调整后的迭代。
+                    </p>
+                    <p>
+                        <strong>完整重置</strong>额外清除文件中的 EXIF 评分字段，并删除 <code>.superpicky/</code> 目录，让目录恢复到完全未处理的状态。
+                    </p>
+                </div>
+            </div>
+
+            <!-- ══ 11.2 ══ -->
+            <div class="content-section" id="s11-2">
+                <span class="section-label-tag">11.2</span>
+                <h2 class="section-heading">重新处理（调参后快速重跑）</h2>
+
+                <p>
+                    已处理目录在主界面会显示<strong>「重新处理」</strong>按钮（位于开始按钮左侧）。
+                    点击后，SuperPicky 慧眼选鸟 自动执行快速复原再重新处理，全程无需手动干预：
+                </p>
+
+                <div class="flow-steps">
+                    <div class="flow-step">
+                        <div class="flow-num">0</div>
+                        <div class="flow-body">
+                            <strong>清理连拍子目录</strong> — 将连拍组的「最佳帧」子目录中的文件归还到各自的连拍组目录
+                        </div>
+                    </div>
+                    <div class="flow-step">
+                        <div class="flow-num">1</div>
+                        <div class="flow-body">
+                            <strong>文件归位</strong> — 将散布在各星级 / 鸟种子目录中的所有照片和视频移动回根目录，恢复原始平铺结构
+                        </div>
+                    </div>
+                    <div class="flow-step">
+                        <div class="flow-num">—</div>
+                        <div class="flow-body">
+                            <strong>跳过 EXIF 清除</strong>（快速模式）— 旧评分仍留在文件中，重新处理后会被新结果直接覆盖，无需提前清空
+                        </div>
+                    </div>
+                    <div class="flow-step">
+                        <div class="flow-num">3</div>
+                        <div class="flow-body">
+                            <strong>清理空目录</strong> — 删除归位后遗留的空子目录，保持根目录整洁
+                        </div>
+                    </div>
+                    <div class="flow-step">
+                        <div class="flow-num">▶</div>
+                        <div class="flow-body">
+                            <strong>立即开始新一轮选鸟</strong> — 复原完成后自动以当前参数重新处理，<code>.superpicky/</code> 缓存保留以复用预览图
+                        </div>
+                    </div>
+                </div>
+
+                <div class="tip-box info">
+                    <span class="tip-box-label">在点击前先调好参数</span>
+                    <p>
+                        点击「重新处理」会立即触发快速复原 + 重新处理，中间没有二次确认。
+                        请确保在点击前已在主界面或高级设置中调整好所有参数。
+                    </p>
+                </div>
+
+            </div>
+
+            <!-- ══ 11.3 ══ -->
+            <div class="content-section" id="s11-3">
+                <span class="section-label-tag">11.3</span>
+                <h2 class="section-heading">完整重置（清除所有记录）</h2>
+
+                <p>
+                    若需彻底清除评分并还原原始文件，在已处理目录的状态下点击主界面的<strong>「重置」</strong>按钮，
+                    确认弹窗后执行以下完整流程：
+                </p>
+
+                <div class="flow-steps">
+                    <div class="flow-step">
+                        <div class="flow-num">0</div>
+                        <div class="flow-body">
+                            <strong>清理连拍子目录</strong> — 同重新处理，先归还连拍组内的最佳帧文件
+                        </div>
+                    </div>
+                    <div class="flow-step">
+                        <div class="flow-num">1</div>
+                        <div class="flow-body">
+                            <strong>文件归位</strong> — 将所有文件移回根目录，删除空子目录
+                        </div>
+                    </div>
+                    <div class="flow-step">
+                        <div class="flow-num">2</div>
+                        <div class="flow-body">
+                            <strong>清除 EXIF 评分字段</strong> — 使用 ExifTool 将文件中的星级（XMP:Rating）、
+                            鸟种名、Pick 旗标等 SuperPicky 写入的元数据字段全部清空
+                        </div>
+                    </div>
+                    <div class="flow-step">
+                        <div class="flow-num">3</div>
+                        <div class="flow-body">
+                            <strong>清理空目录</strong> — 删除遗留的空文件夹
+                        </div>
+                    </div>
+                    <div class="flow-step">
+                        <div class="flow-num">完</div>
+                        <div class="flow-body">
+                            <strong>删除 .superpicky/ 目录</strong> — 清除预览图、数据库（report.db）及 manifest，
+                            目录恢复为完全未处理的初始状态
+                        </div>
+                    </div>
+                </div>
+
+                <div class="tip-box caution">
+                    <span class="tip-box-label">此操作不可撤销</span>
+                    <p>
+                        完整重置会修改文件的 EXIF 元数据并删除处理记录，无法通过软件内的操作撤销。
+                        若只是要调参重跑，建议优先使用<strong>重新处理</strong>（11.2），保留现有评分数据更安全。
+                    </p>
+                </div>
+
+                <p>
+                    重置完成后，主界面恢复为「未处理」状态，「开始选鸟」按钮可用，
+                    可以选择新参数重新开始处理。
+                </p>
+
+            </div>
+
+            <!-- ══ 11.4 ══ -->
+            <div class="content-section" id="s11-4">
+                <span class="section-label-tag">11.4</span>
+                <h2 class="section-heading">历史目录提示弹窗</h2>
+
+                <p>
+                    当你选择的目录存在<strong>未完成的处理记录</strong>时（例如上次处理途中强制退出、
+                    电脑崩溃或手动停止），SuperPicky 慧眼选鸟 会在你点击「开始选鸟」时弹出提示：
+                </p>
+
+                <div class="dialog-mock">
+                    <div class="dm-title">发现未完成的处理记录</div>
+                    <div class="dm-body">
+                        这个目录存在未完成的处理记录。选择「继续处理」会从上次中断的位置继续；选择「重新开始」会先恢复目录，再重新处理。
+                    </div>
+                    <div class="dm-btns">
+                        <span class="dm-btn primary">继续处理</span>
+                        <span class="dm-btn secondary">重新开始</span>
+                    </div>
+                </div>
+
+                <table class="content-table">
+                    <thead>
+                        <tr>
+                            <th>选项</th>
+                            <th>行为</th>
+                            <th>适用场景</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>继续处理</td>
+                            <td>从上次中断的位置恢复，跳过已完成的文件，沿用上次的参数</td>
+                            <td>意外中断后想尽快完成；参数没有变化</td>
+                        </tr>
+                        <tr>
+                            <td>重新开始</td>
+                            <td>先执行快速复原（等同于「重新处理」），再以当前参数重新处理全部文件</td>
+                            <td>中断前参数有误；想用新参数完整重跑</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <div class="tip-box info">
+                    <span class="tip-box-label">「已处理完成」的目录不会弹窗</span>
+                    <p>
+                        只有检测到<strong>中途中断</strong>的目录才会触发此弹窗。
+                        正常完成处理的目录选中后，按钮直接变为「重新处理」，点击即可快速重跑，不会再弹窗询问。
+                    </p>
+                </div>
+
+                <div class="tip-box warning">
+                    <span class="tip-box-label">存储卡上处理的风险</span>
+                    <p>
+                        若目录位于 SD 卡或其他可移动磁盘上，选择目录时会额外弹出警告。
+                        选鸟过程需要移动大量文件，存储卡读写慢且文件系统脆弱——
+                        中途断电、拔卡或卡满都可能导致照片分散在子目录中无法自动归位。
+                        <strong>强烈建议先将照片复制到电脑硬盘，再进行选鸟。</strong>
+                    </p>
+                </div>
+
+            </div>
+
+        </div>
+    </section>
+
+    <!-- 章节导航 -->
+    <section class="chapter-nav">
+        <div class="container">
+            <div class="chapter-nav-inner">
+                <a href="10-advanced.html" class="nav-btn prev">
+                    <span class="nav-direction">上一章</span>
+                    <span class="nav-chapter-title">高级设置</span>
+                </a>
+                <a href="12-faq.html" class="nav-btn next">
+                    <span class="nav-direction">下一章</span>
+                    <span class="nav-chapter-title">常见问题与排查</span>
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <div class="footer-inner">
+                <div class="footer-brand">
+                    <img src="../../img/icon.png" alt="SuperPicky">
+                    <div class="footer-brand-text">
+                        <span>SuperPicky</span>
+                        <span class="footer-author">by James Yu (詹姆斯·于震)</span>
+                    </div>
+                </div>
+                <div class="footer-links">
+                    <a href="index.html">教程目录</a>
+                    <a href="../../faq.html">常见问题</a>
+                    <a href="https://github.com/jamesphotography/SuperPicky">GitHub</a>
+                    <a href="mailto:james@jamesphotography.com.au">联系</a>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p class="credits">模型致谢：YOLO11 (Ultralytics) · TOPIQ (Chaofeng Chen et al.)</p>
+                <p class="copyright">© 2024-2026 James Yu · <a href="../../LICENSE" target="_blank"
+                        style="color: inherit; text-decoration: underline;">AGPL-3.0 License</a></p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="../../js/main.js"></script>
+</body>
+
+</html>

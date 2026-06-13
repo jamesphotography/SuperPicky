@@ -1,0 +1,984 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-lang="cn">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>第 06 章 罕见鸟指数 - SuperPicky 慧眼选鸟 4.3.0 教程</title>
+    <meta name="description" content="SuperPicky 慧眼选鸟 4.3.0 罕见鸟指数（v4.3 新增）：GBIF 全球观察数据、0–100 分、五级分级图标、详情面板、GBIF vs IUCN 保护等级对比">
+    <link rel="stylesheet" href="../../css/style.css?v=20260612">
+    <link rel="icon" href="../../img/icon.png" type="image/png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        /* ── 章节页通用结构 ── */
+        .chapter-header-bar { padding: 100px 0 0; }
+
+        .breadcrumb {
+            font-size: 13px;
+            color: var(--text-tertiary);
+            margin-bottom: 40px;
+        }
+        .breadcrumb a {
+            color: var(--text-tertiary);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+        .breadcrumb a:hover { color: var(--accent); }
+        .breadcrumb span { margin: 0 6px; }
+
+        .chapter-hero {
+            padding: 40px 0 52px;
+            border-bottom: 1px solid var(--border-subtle);
+            margin-bottom: 52px;
+        }
+        .chapter-num-display {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--accent);
+            letter-spacing: 0.1em;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .chapter-hero h1 {
+            font-size: clamp(28px, 4vw, 44px);
+            font-weight: 700;
+            letter-spacing: -1px;
+            line-height: 1.2;
+            margin-bottom: 16px;
+            background: linear-gradient(135deg, var(--text-primary) 0%, var(--text-secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .chapter-hero p.subtitle {
+            font-size: 17px;
+            color: var(--text-secondary);
+            line-height: 1.7;
+            max-width: 640px;
+        }
+
+        /* ── 章节内目录 ── */
+        .chapter-toc {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 52px;
+        }
+        .chapter-toc a {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 14px;
+            border-radius: 999px;
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-elevated);
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 13px;
+            transition: all 0.18s ease;
+        }
+        .chapter-toc a:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+        .chapter-toc a .sec-num {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: var(--accent);
+        }
+
+        /* ── 正文内容 ── */
+        .chapter-body { padding: 0 0 80px; }
+
+        .content-section {
+            margin-bottom: 60px;
+            padding-bottom: 52px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .content-section:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+        }
+
+        .section-label-tag {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--accent);
+            letter-spacing: 0.08em;
+            display: block;
+            margin-bottom: 10px;
+        }
+
+        .section-heading {
+            font-size: 22px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 20px;
+            line-height: 1.3;
+        }
+
+        .content-section p {
+            font-size: 15px;
+            line-height: 1.9;
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+        }
+        .content-section p:last-child { margin-bottom: 0; }
+        .content-section strong { color: var(--text-primary); }
+
+        /* ── 表格 ── */
+        .content-table {
+            width: 100%;
+            border-collapse: collapse;
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            border: 1px solid var(--border-subtle);
+            margin: 20px 0;
+            font-size: 14px;
+        }
+        .content-table thead th {
+            background: var(--bg-card);
+            padding: 11px 16px;
+            text-align: left;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            border-bottom: 1px solid var(--border);
+        }
+        .content-table tbody td {
+            padding: 13px 16px;
+            line-height: 1.65;
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--border-subtle);
+            vertical-align: top;
+        }
+        .content-table tbody tr:last-child td { border-bottom: none; }
+        .content-table tbody tr:hover td { background: rgba(255,255,255,0.015); }
+        .content-table td:first-child { color: var(--text-primary); font-weight: 500; }
+
+        /* ── 功能列表 ── */
+        .feature-list {
+            list-style: none;
+            padding: 0;
+            margin: 16px 0;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .feature-list li {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            font-size: 15px;
+            line-height: 1.7;
+            color: var(--text-secondary);
+            padding: 12px 16px;
+            background: var(--bg-elevated);
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border-subtle);
+        }
+        .feature-list li .f-num {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: var(--accent);
+            background: var(--accent-dim);
+            border-radius: 4px;
+            padding: 2px 6px;
+            flex-shrink: 0;
+            margin-top: 3px;
+        }
+
+        /* ── 提示框 ── */
+        .tip-box {
+            padding: 16px 20px;
+            border-radius: var(--radius-md);
+            border-left: 3px solid;
+            margin: 20px 0;
+            font-size: 14px;
+            line-height: 1.8;
+        }
+        .tip-box.info    { background: rgba(0, 212, 170, 0.05);  border-color: var(--accent); }
+        .tip-box.warning { background: rgba(245, 158, 11, 0.05); border-color: #f59e0b; }
+        .tip-box-label {
+            font-size: 10px;
+            font-weight: 700;
+            font-family: var(--font-mono);
+            letter-spacing: 0.1em;
+            margin-bottom: 6px;
+            display: block;
+        }
+        .tip-box.info    .tip-box-label { color: var(--accent); }
+        .tip-box.warning .tip-box-label { color: #f59e0b; }
+        .tip-box p { margin: 0; color: var(--text-secondary); font-size: 14px; }
+        .tip-box p + p { margin-top: 8px; }
+
+        /* ── 罕见度五级展示条 ── */
+        .rarity-tiers {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin: 20px 0;
+        }
+        .rarity-tier-row {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            padding: 13px 16px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            font-size: 14px;
+        }
+.tier-badge {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            font-weight: 700;
+            padding: 2px 8px;
+            border-radius: 4px;
+            flex-shrink: 0;
+            white-space: nowrap;
+        }
+        .tier-range {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--text-tertiary);
+            flex-shrink: 0;
+            width: 50px;
+        }
+        .tier-desc { color: var(--text-secondary); line-height: 1.5; }
+        .tier-desc strong { color: var(--text-primary); }
+
+        /* 五档颜色 */
+        .tier-badge.t0 { background: rgba(156,163,175,0.12); color: #9CA3AF; border: 1px solid rgba(156,163,175,0.25); }
+        .tier-badge.t1 { background: rgba(96,198,89,0.12);   color: #60C659; border: 1px solid rgba(96,198,89,0.25); }
+        .tier-badge.t2 { background: rgba(249,232,20,0.10);  color: #d4bc00; border: 1px solid rgba(249,232,20,0.25); }
+        .tier-badge.t3 { background: rgba(252,127,63,0.12);  color: #FC7F3F; border: 1px solid rgba(252,127,63,0.25); }
+        .tier-badge.t4 { background: rgba(216,30,5,0.12);    color: #D81E05; border: 1px solid rgba(216,30,5,0.25); }
+
+        /* CSS 绘制等尺寸圆圈，避免 Unicode 字符在不同字体下光学大小不一致 */
+        /* CSS-drawn circles — same pixel size across all tiers, no font dependency */
+        .tier-circ {
+            display: inline-block;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            box-sizing: border-box;
+            flex-shrink: 0;
+        }
+        .tier-circ.t0 {
+            border: 2px solid #9CA3AF;
+            background: transparent;
+        }
+        .tier-circ.t1 {
+            border: 2px solid #60C659;
+            background: conic-gradient(#60C659 0deg 90deg, transparent 90deg 360deg);
+        }
+        .tier-circ.t2 {
+            border: 2px solid #F9E814;
+            background: conic-gradient(#F9E814 0deg 180deg, transparent 180deg 360deg);
+        }
+        .tier-circ.t3 {
+            border: 2px solid #FC7F3F;
+            background: conic-gradient(#FC7F3F 0deg 270deg, transparent 270deg 360deg);
+        }
+        .tier-circ.t4 {
+            border: 2px solid #D81E05;
+            background: #D81E05;
+        }
+
+        /* ── IUCN 表格颜色点 ── */
+        .iucn-dot {
+            display: inline-block;
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            vertical-align: middle;
+            margin-right: 6px;
+            flex-shrink: 0;
+        }
+
+        /* ── 对比表格（GBIF vs IUCN） ── */
+        .compare-table {
+            width: 100%;
+            border-collapse: collapse;
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            border: 1px solid var(--border-subtle);
+            margin: 20px 0;
+            font-size: 14px;
+        }
+        .compare-table thead th {
+            background: var(--bg-card);
+            padding: 11px 16px;
+            text-align: left;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            border-bottom: 1px solid var(--border);
+        }
+        .compare-table thead th:first-child {
+            width: 30%;
+            color: var(--text-tertiary);
+        }
+        .compare-table tbody td {
+            padding: 13px 16px;
+            line-height: 1.65;
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--border-subtle);
+            vertical-align: top;
+        }
+        .compare-table tbody tr:last-child td { border-bottom: none; }
+        .compare-table td:first-child {
+            color: var(--text-tertiary);
+            font-size: 13px;
+        }
+
+        /* ── 代码块（详情面板示例） ── */
+        .panel-preview {
+            font-family: var(--font-mono);
+            font-size: 13px;
+            background: #09090f;
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            padding: 20px 24px;
+            margin: 20px 0;
+            line-height: 2.2;
+            color: var(--text-secondary);
+        }
+        .pp-label {
+            color: var(--text-tertiary);
+            display: inline-block;
+            width: 120px;
+        }
+        .pp-val-t3 { color: #FC7F3F; font-weight: 700; }
+        .pp-val-t4 { color: #D81E05; font-weight: 700; }
+        .pp-val-lc { color: #60C659; }
+        .pp-val-en { color: #FC7F3F; }
+        .pp-val-cr { color: #D81E05; }
+
+        /* ── 图片占位符 ── */
+        .img-slot {
+            margin: 28px 0;
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-elevated);
+        }
+        .img-slot img {
+            max-width: 100%;
+            height: auto;
+            display: block;
+            margin: 0 auto;
+        }
+        .img-slot .img-pending {
+            padding: 32px 24px;
+            display: flex;
+            align-items: flex-start;
+            gap: 16px;
+        }
+        .img-slot .img-pending .pi-icon { font-size: 28px; flex-shrink: 0; }
+        .img-slot .img-pending .pi-info { display: flex; flex-direction: column; gap: 6px; }
+        .img-slot .img-pending .pi-filename {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--accent);
+            background: var(--accent-dim);
+            padding: 3px 9px;
+            border-radius: 4px;
+            display: inline-block;
+        }
+        .img-slot .img-pending .pi-desc {
+            font-size: 13px;
+            color: var(--text-tertiary);
+            line-height: 1.6;
+        }
+
+        /* ── 章节交叉引用链接 ── */
+        .xref {
+            color: var(--accent);
+            text-decoration: none;
+            border-bottom: 1px solid rgba(0, 212, 170, 0.3);
+            transition: border-color 0.18s;
+        }
+        .xref:hover { border-color: var(--accent); }
+
+        /* ── 底部章节导航 ── */
+        .chapter-nav {
+            padding: 32px 0 60px;
+            border-top: 1px solid var(--border-subtle);
+        }
+        .chapter-nav-inner {
+            display: flex;
+            justify-content: space-between;
+            align-items: stretch;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        .nav-btn {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding: 14px 20px;
+            border-radius: var(--radius-md);
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            text-decoration: none;
+            transition: all 0.2s ease;
+            flex: 1;
+            min-width: 180px;
+            max-width: 300px;
+        }
+        .nav-btn:hover { border-color: var(--accent); }
+        .nav-btn.next { align-items: flex-end; margin-left: auto; }
+        .nav-btn.prev { align-items: flex-start; }
+        .nav-direction {
+            font-size: 11px;
+            font-family: var(--font-mono);
+            color: var(--text-tertiary);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+        .nav-chapter-title {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            line-height: 1.4;
+        }
+        .nav-btn:hover .nav-chapter-title { color: var(--accent); }
+
+        @media (max-width: 600px) {
+            .chapter-nav-inner { flex-direction: column; }
+            .nav-btn { max-width: 100%; }
+            .nav-btn.next { align-items: flex-start; margin-left: 0; }
+            .rarity-tier-row { flex-wrap: wrap; gap: 8px; }
+            .tier-range { width: auto; }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="grain"></div>
+
+    <!-- Header -->
+    <header>
+        <div class="header-inner">
+            <a href="../../index.html" class="logo">
+                <img src="../../img/icon.png" alt="SuperPicky">
+                <span>SuperPicky</span>
+            </a>
+            <div class="lang-switch">
+                <button class="lang-btn active" onclick="setLang('cn')">中</button>
+                <button class="lang-btn" onclick="setLang('en')">EN</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- 面包屑 -->
+    <div class="chapter-header-bar">
+        <div class="container">
+            <nav class="breadcrumb">
+                <a href="../../index.html">
+                    <span class="lang-cn">主页</span>
+                    <span class="lang-en">Home</span>
+                </a>
+                <span>/</span>
+                <a href="index.html">
+                    <span class="lang-cn">4.3.0 教程</span>
+                    <span class="lang-en">4.3.0 Tutorial</span>
+                </a>
+                <span>/</span>
+                <span>
+                    <span class="lang-cn">第 06 章</span>
+                    <span class="lang-en">Chapter 06</span>
+                </span>
+            </nav>
+        </div>
+    </div>
+
+    <!-- 章节 Hero -->
+    <section class="chapter-hero">
+        <div class="container">
+            <div class="chapter-num-display">
+                <span>CHAPTER 06 / 12</span>
+                <span style="background:var(--accent);color:var(--bg-void);font-size:9px;font-weight:700;padding:2px 7px;border-radius:3px;letter-spacing:0.06em;">v4.3 新增</span>
+            </div>
+            <h1>
+                <span class="lang-cn">罕见鸟指数</span>
+                <span class="lang-en">Rarity Index</span>
+            </h1>
+            <p class="subtitle">
+                <span class="lang-cn">基于 GBIF 全球观察数据的 0–100 分罕见度系统——五级分级图标、详情面板展示，以及 GBIF 指数与 IUCN 保护等级的本质区别。</span>
+                <span class="lang-en">A 0–100 rarity score derived from GBIF global observation data — five-tier glyphs, detail panel display, and the key difference between GBIF rarity and IUCN conservation status.</span>
+            </p>
+        </div>
+    </section>
+
+    <!-- 正文 -->
+    <section class="chapter-body">
+        <div class="container">
+
+            <!-- 章节内目录 -->
+            <nav class="chapter-toc">
+                <a href="#s6-1">
+                    <span class="sec-num">6.1</span>
+                    <span class="lang-cn">GBIF 指数说明</span>
+                    <span class="lang-en">What is GBIF Rarity</span>
+                </a>
+                <a href="#s6-2">
+                    <span class="sec-num">6.2</span>
+                    <span class="lang-cn">五级分级</span>
+                    <span class="lang-en">5-Tier System</span>
+                </a>
+                <a href="#s6-3">
+                    <span class="sec-num">6.3</span>
+                    <span class="lang-cn">详情面板</span>
+                    <span class="lang-en">Detail Panel</span>
+                </a>
+                <a href="#s6-4">
+                    <span class="sec-num">6.4</span>
+                    <span class="lang-cn">按罕见度排序</span>
+                    <span class="lang-en">Sort by Rarity</span>
+                </a>
+                <a href="#s6-5">
+                    <span class="sec-num">6.5</span>
+                    <span class="lang-cn">GBIF vs IUCN</span>
+                    <span class="lang-en">GBIF vs IUCN</span>
+                </a>
+            </nav>
+
+            <!-- ══ 6.1 ══ -->
+            <div class="content-section" id="s6-1">
+                <span class="section-label-tag">6.1</span>
+                <h2 class="section-heading">
+                    <span class="lang-cn">GBIF 指数说明</span>
+                    <span class="lang-en">What is GBIF Rarity</span>
+                </h2>
+
+                <p>
+                    <span class="lang-cn"><strong>GBIF</strong>（Global Biodiversity Information Facility，全球生物多样性信息设施）是全球最大的开放生物多样性数据库，汇集了来自世界各地观察者上传的数十亿条物种记录。SuperPicky 慧眼选鸟 v4.3 基于 GBIF 开放数据集，为每个可识别鸟种预先计算了一个 <strong>0–100 的全球罕见度分数</strong>：</span>
+                    <span class="lang-en"><strong>GBIF</strong> (Global Biodiversity Information Facility) is the world's largest open biodiversity database, aggregating billions of species observations from contributors worldwide. SuperPicky 慧眼选鸟 v4.3 uses GBIF open data to pre-compute a <strong>0–100 global rarity score</strong> for every identifiable bird species:</span>
+                </p>
+
+                <ul class="feature-list">
+                    <li>
+                        <span class="f-num">原理</span>
+                        <span>
+                            <span class="lang-cn">分数来自该鸟种在全球范围内的 GBIF 观察记录频率——<strong>分数越高，说明记录越少，越难被遇到和拍到</strong></span>
+                            <span class="lang-en">The score reflects how frequently the species appears in GBIF records globally — <strong>higher score means fewer records, harder to encounter and photograph</strong></span>
+                        </span>
+                    </li>
+                    <li>
+                        <span class="f-num">查询方式</span>
+                        <span>
+                            <span class="lang-cn">处理时<strong>本地查询内置数据库</strong>，无需联网，不影响处理速度</span>
+                            <span class="lang-en">Looked up from the <strong>bundled local database</strong> during processing — no network access required, no impact on processing speed</span>
+                        </span>
+                    </li>
+                    <li>
+                        <span class="f-num">触发条件</span>
+                        <span>
+                            <span class="lang-cn">仅在<strong>识鸟开关开启</strong>（见<a href="03-parameters.html#s3-6" class="xref">第 03 章 3.6</a>）且成功识别鸟种后才会显示和写入 EXIF</span>
+                            <span class="lang-en">Only computed and written to EXIF when the <strong>Bird ID toggle is on</strong> (see <a href="03-parameters.html#s3-6" class="xref">Chapter 03, Section 3.6</a>) and a species is successfully identified</span>
+                        </span>
+                    </li>
+                    <li>
+                        <span class="f-num">人工校正</span>
+                        <span>
+                            <span class="lang-cn">极少数因分类学拆分或学名变更导致 GBIF 数据失真的鸟种，SuperPicky 慧眼选鸟 内置了人工校正表进行修正，确保分数合理</span>
+                            <span class="lang-en">A small number of species with distorted GBIF data (due to taxonomic splits or name changes) are corrected via a built-in override table, ensuring scores remain reasonable</span>
+                        </span>
+                    </li>
+                </ul>
+
+                <div class="tip-box info">
+                    <span class="tip-box-label lang-cn">这是全球指数</span>
+                    <span class="tip-box-label lang-en">This is a global index</span>
+                    <p>
+                        <span class="lang-cn">罕见度分数反映的是<strong>全球观察频率</strong>，而非某一地区的本地难度。同一鸟种在不同地区对摄影师的实际难易程度可能有差异，但当前版本统一使用全球指数。</span>
+                        <span class="lang-en">The rarity score reflects <strong>global observation frequency</strong>, not difficulty in any particular region. The same species may be easier or harder to encounter depending on where you are, but the current version uses a single global index for all users.</span>
+                    </p>
+                </div>
+            </div>
+
+            <!-- ══ 6.2 ══ -->
+            <div class="content-section" id="s6-2">
+                <span class="section-label-tag">6.2</span>
+                <h2 class="section-heading">
+                    <span class="lang-cn">五级分级</span>
+                    <span class="lang-en">5-Tier System</span>
+                </h2>
+
+                <p>
+                    <span class="lang-cn">罕见度分数映射为 5 个等级，用 Unicode 圆形充填图标表达，颜色由灰到红逐级加深：</span>
+                    <span class="lang-en">The rarity score maps to 5 tiers, each represented by a Unicode circle fill glyph and a color that darkens from gray to red:</span>
+                </p>
+
+                <div class="rarity-tiers">
+                    <!-- Tier 0: 常见 -->
+                    <div class="rarity-tier-row">
+                        <span class="tier-circ t0"></span>
+                        <span class="tier-badge t0">
+                            <span class="lang-cn">常见 / Common</span>
+                            <span class="lang-en">Common</span>
+                        </span>
+                        <span class="tier-range">0 – 7</span>
+                        <span class="tier-desc">
+                            <span class="lang-cn">真正的街边鸟——随时随地能见到，如家麻雀、白头鹎、戴胜</span>
+                            <span class="lang-en">True everyday birds — seen anywhere, anytime (house sparrows, bulbuls, etc.)</span>
+                        </span>
+                    </div>
+                    <!-- Tier 1: 能见 -->
+                    <div class="rarity-tier-row">
+                        <span class="tier-circ t1"></span>
+                        <span class="tier-badge t1">
+                            <span class="lang-cn">能见 / Occasional</span>
+                            <span class="lang-en">Occasional</span>
+                        </span>
+                        <span class="tier-range">8 – 24</span>
+                        <span class="tier-desc">
+                            <span class="lang-cn">专程去合适的栖息地能见到，如澳洲花园鸟、中国湿地常见种</span>
+                            <span class="lang-en">Findable with effort at the right habitat — Australian garden birds, common wetland species</span>
+                        </span>
+                    </div>
+                    <!-- Tier 2: 少见 -->
+                    <div class="rarity-tier-row">
+                        <span class="tier-circ t2"></span>
+                        <span class="tier-badge t2">
+                            <span class="lang-cn">少见 / Uncommon</span>
+                            <span class="lang-en">Uncommon</span>
+                        </span>
+                        <span class="tier-range">25 – 49</span>
+                        <span class="tier-desc">
+                            <span class="lang-cn">需要专程寻找，不是随便出门就能遇到的</span>
+                            <span class="lang-en">Requires a dedicated search — won't turn up on a casual outing</span>
+                        </span>
+                    </div>
+                    <!-- Tier 3: 罕见 -->
+                    <div class="rarity-tier-row">
+                        <span class="tier-circ t3"></span>
+                        <span class="tier-badge t3">
+                            <span class="lang-cn">罕见 / Rare</span>
+                            <span class="lang-en">Rare</span>
+                        </span>
+                        <span class="tier-range">50 – 74</span>
+                        <span class="tier-desc">
+                            <span class="lang-cn">需要远途加耐心等待，能拍到是值得记录的成就</span>
+                            <span class="lang-en">Requires travel and patience — getting a shot is a notable achievement</span>
+                        </span>
+                    </div>
+                    <!-- Tier 4: 传奇 -->
+                    <div class="rarity-tier-row">
+                        <span class="tier-circ t4"></span>
+                        <span class="tier-badge t4">
+                            <span class="lang-cn">传奇 / Legendary</span>
+                            <span class="lang-en">Legendary</span>
+                        </span>
+                        <span class="tier-range">75 – 100</span>
+                        <span class="tier-desc">
+                            <span class="lang-cn"><strong>一生一遇</strong>——极度局地分布或极难观察，全球记录极稀少</span>
+                            <span class="lang-en"><strong>Once-in-a-lifetime</strong> — highly localised or extremely elusive; very few global records</span>
+                        </span>
+                    </div>
+                </div>
+
+                <div class="tip-box info">
+                    <span class="tip-box-label lang-cn">为什么「常见」段只到 7 分？</span>
+                    <span class="tip-box-label lang-en">Why does "Common" end at 7?</span>
+                    <p>
+                        <span class="lang-cn">阈值是非均匀设计的，刻意把「常见」档收紧到真正的街边鸟，避免和「努力能找到」的鸟混在同一档。这样各档位对摄影师来说更有意义，不会让大量城郊常见鸟把「常见」档撑得过宽。</span>
+                        <span class="lang-en">The thresholds are deliberately non-uniform, keeping "Common" tight to genuine everyday birds and preventing the tier from becoming too broad. This makes each level more meaningful to a photographer rather than having most species cluster at the common end.</span>
+                    </p>
+                    <p>
+                        <span class="lang-cn">第 2 档用「<strong>能见</strong>」而不是「偶见」，是因为中文里「偶见」和「少见」语义接近，容易和第 3 档产生歧义。「能见」更准确地表达「专程去找能见到」的含义。</span>
+                        <span class="lang-en">Tier 2 is called "<strong>Occasional</strong>" (能见, "findable") rather than "Uncommon-lite" to avoid semantic overlap with Tier 3 "Uncommon" (少见) in Chinese.</span>
+                    </p>
+                </div>
+
+            </div>
+
+            <!-- ══ 6.3 ══ -->
+            <div class="content-section" id="s6-3">
+                <span class="section-label-tag">6.3</span>
+                <h2 class="section-heading">
+                    <span class="lang-cn">详情面板</span>
+                    <span class="lang-en">Detail Panel</span>
+                </h2>
+
+                <p>
+                    <span class="lang-cn">在结果浏览器（<a href="07-browser.html" class="xref">第 07 章</a>）中点击一张照片，右侧详情面板会显示该张照片的完整识别与评分信息。罕见度和 IUCN 等级紧贴鸟种名称下方展示：</span>
+                    <span class="lang-en">Clicking a photo in the Result Browser (<a href="07-browser.html" class="xref">Chapter 07</a>) opens the detail panel on the right. Rarity and IUCN status appear directly below the species name:</span>
+                </p>
+
+                <div class="panel-preview">
+                    <div>
+                        <span class="pp-label lang-cn">鸟种</span>
+                        <span class="pp-label lang-en">Species</span>
+                        <span style="color:var(--text-primary);">白腹海雕 / White-bellied Sea Eagle</span>
+                    </div>
+                    <div>
+                        <span class="pp-label lang-cn">全球罕见度</span>
+                        <span class="pp-label lang-en">Global Rarity</span>
+                        <span class="pp-val-t3"><span class="tier-circ t3" style="width:13px;height:13px;vertical-align:middle;margin-right:5px;"></span>罕见 / Rare &nbsp; (62.4)</span>
+                    </div>
+                    <div>
+                        <span class="pp-label lang-cn">IUCN 等级</span>
+                        <span class="pp-label lang-en">IUCN</span>
+                        <span class="pp-val-lc">LC &nbsp; 无危 · Least Concern</span>
+                    </div>
+                </div>
+
+                <p>
+                    <span class="lang-cn">括号内的数值是 0–100 的原始分数，圆形图标和颜色对应 5 级分级（见 <a href="#s6-2" class="xref">6.2</a>）。IUCN 等级的含义详见 <a href="#s6-5" class="xref">6.5</a>。</span>
+                    <span class="lang-en">The number in brackets is the raw 0–100 score; the glyph and color correspond to the 5-tier system (see <a href="#s6-2" class="xref">Section 6.2</a>). IUCN category meanings are explained in <a href="#s6-5" class="xref">Section 6.5</a>.</span>
+                </p>
+
+                <p>
+                    <span class="lang-cn">罕见度分数同时写入每张照片的 EXIF 元数据（<code>XMP-iptcExt:Event</code> 字段），导入 Lightroom 后可作为智能相册筛选条件，例如筛选所有罕见度 ≥ 50 的照片（详见<a href="05-results.html#s5-5" class="xref">第 05 章 5.5</a>）。</span>
+                    <span class="lang-en">The rarity score is also written to each photo's EXIF metadata (<code>XMP-iptcExt:Event</code> field), making it available as a Smart Collection filter in Lightroom — for example, to find all photos with rarity ≥ 50 (see <a href="05-results.html#s5-5" class="xref">Chapter 05, Section 5.5</a>).</span>
+                </p>
+
+            </div>
+
+            <!-- ══ 6.4 ══ -->
+            <div class="content-section" id="s6-4">
+                <span class="section-label-tag">6.4</span>
+                <h2 class="section-heading">
+                    <span class="lang-cn">按罕见度排序</span>
+                    <span class="lang-en">Sort by Rarity</span>
+                </h2>
+
+                <p>
+                    <span class="lang-cn">在识鸟面板的鸟种搜索列表中，每个鸟种名称右侧都显示对应的罕见度图标（○◔◑◕●），让你一眼看出本次处理批次里识别出的各鸟种的相对难度排序。</span>
+                    <span class="lang-en">In the Bird ID panel's species search list, every species entry shows its rarity glyph (○◔◑◕●) on the right side, letting you see at a glance how the species in your current batch rank by rarity.</span>
+                </p>
+
+                <p>
+                    <span class="lang-cn">识鸟面板的完整操作说明见<a href="08-birdid.html" class="xref">第 08 章</a>。</span>
+                    <span class="lang-en">Full Bird ID panel documentation is in <a href="08-birdid.html" class="xref">Chapter 08</a>.</span>
+                </p>
+
+            </div>
+
+            <!-- ══ 6.5 ══ -->
+            <div class="content-section" id="s6-5">
+                <span class="section-label-tag">6.5</span>
+                <h2 class="section-heading">
+                    <span class="lang-cn">GBIF 指数 vs IUCN 保护等级</span>
+                    <span class="lang-en">GBIF Rarity vs IUCN Conservation Status</span>
+                </h2>
+
+                <p>
+                    <span class="lang-cn">这两个指标衡量的是<strong>完全不同的维度</strong>，不可混淆，也经常不一致：</span>
+                    <span class="lang-en">These two indicators measure <strong>entirely different things</strong> and frequently diverge:</span>
+                </p>
+
+                <table class="compare-table">
+                    <thead>
+                        <tr>
+                            <th></th>
+                            <th><span class="lang-cn">GBIF 罕见度</span><span class="lang-en">GBIF Rarity</span></th>
+                            <th><span class="lang-cn">IUCN 保护等级</span><span class="lang-en">IUCN Status</span></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>
+                                <span class="lang-cn">衡量的是</span>
+                                <span class="lang-en">Measures</span>
+                            </td>
+                            <td>
+                                <span class="lang-cn">摄影师遇到该鸟的<strong>全球频率</strong></span>
+                                <span class="lang-en">How often photographers encounter the species <strong>globally</strong></span>
+                            </td>
+                            <td>
+                                <span class="lang-cn">该鸟种的<strong>种群健康与灭绝风险</strong></span>
+                                <span class="lang-en">The species' <strong>population health and extinction risk</strong></span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>
+                                <span class="lang-cn">数据来源</span>
+                                <span class="lang-en">Data source</span>
+                            </td>
+                            <td>
+                                <span class="lang-cn">GBIF 全球观察记录频率</span>
+                                <span class="lang-en">GBIF global observation frequency</span>
+                            </td>
+                            <td>
+                                <span class="lang-cn">国际自然保护联盟物种评估</span>
+                                <span class="lang-en">IUCN Red List species assessments</span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>
+                                <span class="lang-cn">高分 / 高等级含义</span>
+                                <span class="lang-en">High value means</span>
+                            </td>
+                            <td>
+                                <span class="lang-cn">记录极少，很难拍到</span>
+                                <span class="lang-en">Very few records, hard to photograph</span>
+                            </td>
+                            <td>
+                                <span class="lang-cn">濒临灭绝的风险高</span>
+                                <span class="lang-en">High risk of extinction</span>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <p>
+                    <span class="lang-cn"><strong>IUCN 等级对照表：</strong></span>
+                    <span class="lang-en"><strong>IUCN category reference:</strong></span>
+                </p>
+
+                <table class="content-table">
+                    <thead>
+                        <tr>
+                            <th><span class="lang-cn">缩写</span><span class="lang-en">Code</span></th>
+                            <th><span class="lang-cn">中文</span><span class="lang-en">Chinese</span></th>
+                            <th><span class="lang-cn">English</span><span class="lang-en">English</span></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><span style="color:#60C659;font-weight:700;">LC</span></td>
+                            <td><span class="lang-cn">无危</span><span class="lang-en">无危 (No Danger)</span></td>
+                            <td>Least Concern</td>
+                        </tr>
+                        <tr>
+                            <td><span style="color:#CCE226;font-weight:700;">NT</span></td>
+                            <td><span class="lang-cn">近危</span><span class="lang-en">近危 (Near Danger)</span></td>
+                            <td>Near Threatened</td>
+                        </tr>
+                        <tr>
+                            <td><span style="color:#F9E814;font-weight:700;">VU</span></td>
+                            <td><span class="lang-cn">易危</span><span class="lang-en">易危 (Vulnerable)</span></td>
+                            <td>Vulnerable</td>
+                        </tr>
+                        <tr>
+                            <td><span style="color:#FC7F3F;font-weight:700;">EN</span></td>
+                            <td><span class="lang-cn">濒危</span><span class="lang-en">濒危 (Endangered)</span></td>
+                            <td>Endangered</td>
+                        </tr>
+                        <tr>
+                            <td><span style="color:#D81E05;font-weight:700;">CR</span></td>
+                            <td><span class="lang-cn">极危</span><span class="lang-en">极危 (Critical)</span></td>
+                            <td>Critically Endangered</td>
+                        </tr>
+                        <tr>
+                            <td><span style="color:#542344;font-weight:700;">EW</span></td>
+                            <td><span class="lang-cn">野外灭绝</span><span class="lang-en">野外灭绝</span></td>
+                            <td>Extinct in the Wild</td>
+                        </tr>
+                        <tr>
+                            <td><span style="color:#888;font-weight:700;">EX</span></td>
+                            <td><span class="lang-cn">灭绝</span><span class="lang-en">灭绝 (Extinct)</span></td>
+                            <td>Extinct</td>
+                        </tr>
+                        <tr>
+                            <td><span style="color:#B2B2B2;font-weight:700;">DD</span></td>
+                            <td><span class="lang-cn">数据不足</span><span class="lang-en">数据不足</span></td>
+                            <td>Data Deficient</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <div class="tip-box warning">
+                    <span class="tip-box-label lang-cn">两个指标经常「分道扬镳」</span>
+                    <span class="tip-box-label lang-en">The two metrics often diverge</span>
+                    <p>
+                        <span class="lang-cn"><strong>GBIF 传奇 + IUCN LC（无危）</strong>：种群健康，但生性极隐蔽或分布极局地——典型如深山热带特有鸟，野外极难发现，但种群并未受威胁。</span>
+                        <span class="lang-en"><strong>GBIF Legendary + IUCN LC</strong>: Healthy population but extremely secretive or tightly localised — e.g. deep-forest endemics that are nearly impossible to find yet face no population threat.</span>
+                    </p>
+                    <p>
+                        <span class="lang-cn"><strong>GBIF 常见 + IUCN EN（濒危）</strong>：历史上数量多、观察记录积累庞大，但近年种群正在急剧下降——部分水鸟和涉禽是典型例子，仍然常见但已岌岌可危。</span>
+                        <span class="lang-en"><strong>GBIF Common + IUCN EN</strong>: Large historical record count but population declining sharply in recent years — many waders and waterbirds fall here, still common in the data but increasingly at risk.</span>
+                    </p>
+                    <p>
+                        <span class="lang-cn">拍到一张 <strong>GBIF 传奇 + IUCN 极危</strong> 的照片，双重稀有往往意味着极为珍贵的记录。</span>
+                        <span class="lang-en">A photo showing a <strong>GBIF Legendary + IUCN CR</strong> species is doubly rare — a genuinely precious photographic record.</span>
+                    </p>
+                </div>
+            </div>
+
+        </div><!-- /container -->
+    </section>
+
+    <!-- 章节底部导航 -->
+    <section class="chapter-nav">
+        <div class="container">
+            <div class="chapter-nav-inner">
+                <a href="05-results.html" class="nav-btn prev">
+                    <span class="nav-direction">
+                        <span class="lang-cn">上一章</span>
+                        <span class="lang-en">Previous</span>
+                    </span>
+                    <span class="nav-chapter-title">
+                        <span class="lang-cn">读懂选鸟结果</span>
+                        <span class="lang-en">Reading the Results</span>
+                    </span>
+                </a>
+                <a href="07-browser.html" class="nav-btn next">
+                    <span class="nav-direction">
+                        <span class="lang-cn">下一章</span>
+                        <span class="lang-en">Next</span>
+                    </span>
+                    <span class="nav-chapter-title">
+                        <span class="lang-cn">结果浏览器</span>
+                        <span class="lang-en">Result Browser</span>
+                    </span>
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <div class="footer-inner">
+                <div class="footer-brand">
+                    <img src="../../img/icon.png" alt="SuperPicky">
+                    <div class="footer-brand-text">
+                        <span>SuperPicky</span>
+                        <span class="footer-author">by James Yu (詹姆斯·于震)</span>
+                    </div>
+                </div>
+                <div class="footer-links">
+                    <a href="index.html">
+                        <span class="lang-cn">教程目录</span>
+                        <span class="lang-en">Tutorial Index</span>
+                    </a>
+                    <a href="../../faq.html">
+                        <span class="lang-cn">常见问题</span>
+                        <span class="lang-en">FAQ</span>
+                    </a>
+                    <a href="https://github.com/jamesphotography/SuperPicky">GitHub</a>
+                    <a href="mailto:james@jamesphotography.com.au">
+                        <span class="lang-cn">联系</span>
+                        <span class="lang-en">Contact</span>
+                    </a>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p class="credits">
+                    <span class="lang-cn">模型致谢：YOLO11 (Ultralytics) · TOPIQ (Chaofeng Chen et al.)</span>
+                    <span class="lang-en">Credits: YOLO11 (Ultralytics) · TOPIQ (Chaofeng Chen et al.)</span>
+                </p>
+                <p class="copyright">© 2024-2026 James Yu · <a href="../../LICENSE" target="_blank"
+                        style="color: inherit; text-decoration: underline;">AGPL-3.0 License</a></p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="../../js/main.js"></script>
+</body>
+
+</html>

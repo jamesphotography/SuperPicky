@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-lang="cn">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>第 09 章 视频分析 - SuperPicky 慧眼选鸟 4.3.0 教程</title>
+    <meta name="description" content="SuperPicky 慧眼选鸟 4.3.0 视频分析：支持格式、自动抽帧与 YOLO 检测、结果整理、SRT 字幕、高级参数说明">
+    <link rel="stylesheet" href="../../css/style.css?v=20260612">
+    <link rel="icon" href="../../img/icon.png" type="image/png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        /* ── 章节页通用结构 ── */
+        .chapter-header-bar { padding: 100px 0 0; }
+
+        .breadcrumb {
+            font-size: 13px;
+            color: var(--text-tertiary);
+            margin-bottom: 40px;
+        }
+        .breadcrumb a {
+            color: var(--text-tertiary);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+        .breadcrumb a:hover { color: var(--accent); }
+        .breadcrumb span { margin: 0 6px; }
+
+        .chapter-hero {
+            padding: 40px 0 52px;
+            border-bottom: 1px solid var(--border-subtle);
+            margin-bottom: 52px;
+        }
+        .chapter-num-display {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--accent);
+            letter-spacing: 0.1em;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .chapter-hero h1 {
+            font-size: clamp(28px, 4vw, 44px);
+            font-weight: 700;
+            letter-spacing: -1px;
+            line-height: 1.2;
+            margin-bottom: 16px;
+            background: linear-gradient(135deg, var(--text-primary) 0%, var(--text-secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .chapter-hero p.subtitle {
+            font-size: 17px;
+            color: var(--text-secondary);
+            line-height: 1.7;
+            max-width: 640px;
+        }
+
+        /* ── 章节内目录 ── */
+        .chapter-toc {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 52px;
+        }
+        .chapter-toc a {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 14px;
+            border-radius: 999px;
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-elevated);
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 13px;
+            transition: all 0.18s ease;
+        }
+        .chapter-toc a:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+        .chapter-toc a .sec-num {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: var(--accent);
+        }
+
+        /* ── 正文内容 ── */
+        .chapter-body { padding: 0 0 80px; }
+
+        .content-section {
+            margin-bottom: 60px;
+            padding-bottom: 52px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .content-section:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+        }
+
+        .section-label-tag {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--accent);
+            letter-spacing: 0.08em;
+            display: block;
+            margin-bottom: 10px;
+        }
+
+        .section-heading {
+            font-size: 22px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 20px;
+            line-height: 1.3;
+        }
+
+        .content-section p {
+            font-size: 15px;
+            line-height: 1.9;
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+        }
+        .content-section p:last-child { margin-bottom: 0; }
+        .content-section strong { color: var(--text-primary); }
+
+        /* ── 表格 ── */
+        .content-table {
+            width: 100%;
+            border-collapse: collapse;
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            border: 1px solid var(--border-subtle);
+            margin: 20px 0;
+            font-size: 14px;
+        }
+        .content-table thead th {
+            background: var(--bg-card);
+            padding: 11px 16px;
+            text-align: left;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            border-bottom: 1px solid var(--border);
+        }
+        .content-table tbody td {
+            padding: 13px 16px;
+            line-height: 1.65;
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--border-subtle);
+            vertical-align: top;
+        }
+        .content-table tbody tr:last-child td { border-bottom: none; }
+        .content-table tbody tr:hover td { background: rgba(255,255,255,0.015); }
+        .content-table td:first-child { color: var(--text-primary); font-weight: 500; }
+
+        /* ── 功能列表 ── */
+        .feature-list {
+            list-style: none;
+            padding: 0;
+            margin: 16px 0;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .feature-list li {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            font-size: 15px;
+            line-height: 1.7;
+            color: var(--text-secondary);
+            padding: 12px 16px;
+            background: var(--bg-elevated);
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border-subtle);
+        }
+        .feature-list li .f-num {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: var(--accent);
+            background: var(--accent-dim);
+            border-radius: 4px;
+            padding: 2px 6px;
+            flex-shrink: 0;
+            margin-top: 3px;
+        }
+
+        /* ── 提示框 ── */
+        .tip-box {
+            padding: 16px 20px;
+            border-radius: var(--radius-md);
+            border-left: 3px solid;
+            margin: 20px 0;
+            font-size: 14px;
+            line-height: 1.8;
+        }
+        .tip-box.info    { background: rgba(0, 212, 170, 0.05);  border-color: var(--accent); }
+        .tip-box.warning { background: rgba(245, 158, 11, 0.05); border-color: #f59e0b; }
+        .tip-box.caution { background: rgba(239, 68, 68, 0.05);  border-color: #ef4444; }
+        .tip-box-label {
+            font-size: 10px;
+            font-weight: 700;
+            font-family: var(--font-mono);
+            letter-spacing: 0.1em;
+            margin-bottom: 6px;
+            display: block;
+        }
+        .tip-box.info    .tip-box-label { color: var(--accent); }
+        .tip-box.warning .tip-box-label { color: #f59e0b; }
+        .tip-box.caution .tip-box-label { color: #ef4444; }
+        .tip-box p { margin: 0; color: var(--text-secondary); font-size: 14px; }
+        .tip-box p + p { margin-top: 8px; }
+
+        /* ── 图片占位符 ── */
+        .img-slot {
+            margin: 28px 0;
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-elevated);
+        }
+        .img-slot img {
+            max-width: 100%;
+            height: auto;
+            display: block;
+            margin: 0 auto;
+        }
+        .img-slot .img-pending {
+            padding: 32px 24px;
+            display: flex;
+            align-items: flex-start;
+            gap: 16px;
+        }
+        .img-slot .img-pending .pi-icon { font-size: 28px; flex-shrink: 0; }
+        .img-slot .img-pending .pi-info { display: flex; flex-direction: column; gap: 6px; }
+        .img-slot .img-pending .pi-filename {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--accent);
+            background: var(--accent-dim);
+            padding: 3px 9px;
+            border-radius: 4px;
+            display: inline-block;
+        }
+        .img-slot .img-pending .pi-desc {
+            font-size: 13px;
+            color: var(--text-tertiary);
+            line-height: 1.6;
+        }
+
+        /* ── 章节交叉引用链接 ── */
+        .xref {
+            color: var(--accent);
+            text-decoration: none;
+            border-bottom: 1px solid rgba(0, 212, 170, 0.3);
+            transition: border-color 0.18s;
+        }
+        .xref:hover { border-color: var(--accent); }
+
+        /* ── 代码块（目录树 / SRT 示例）── */
+        .code-block {
+            font-family: var(--font-mono);
+            font-size: 12.5px;
+            background: #09090f;
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            padding: 20px 24px;
+            margin: 20px 0;
+            overflow-x: auto;
+            line-height: 2.0;
+        }
+        .cb-dir   { color: var(--accent); }
+        .cb-file  { color: var(--text-secondary); }
+        .cb-note  { color: var(--text-tertiary); font-style: italic; }
+        .cb-hi    { color: #fbbf24; font-weight: 700; }
+        .cb-line  { display: block; white-space: pre; }
+
+        /* ── 流程步骤 ── */
+        .flow-steps {
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+            margin: 20px 0;
+            position: relative;
+        }
+        .flow-step {
+            display: flex;
+            align-items: flex-start;
+            gap: 16px;
+            padding: 14px 16px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            border-radius: 0;
+            position: relative;
+        }
+        .flow-step:first-child { border-radius: var(--radius-sm) var(--radius-sm) 0 0; }
+        .flow-step:last-child  { border-radius: 0 0 var(--radius-sm) var(--radius-sm); }
+        .flow-step + .flow-step { border-top: none; }
+        .flow-num {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            font-weight: 700;
+            color: var(--accent);
+            background: var(--accent-dim);
+            border-radius: 50%;
+            width: 22px;
+            height: 22px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            margin-top: 2px;
+        }
+        .flow-body {
+            font-size: 14px;
+            line-height: 1.75;
+            color: var(--text-secondary);
+        }
+        .flow-body strong { color: var(--text-primary); }
+
+        /* ── 底部章节导航 ── */
+        .chapter-nav {
+            padding: 32px 0 60px;
+            border-top: 1px solid var(--border-subtle);
+        }
+        .chapter-nav-inner {
+            display: flex;
+            justify-content: space-between;
+            align-items: stretch;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        .nav-btn {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding: 14px 20px;
+            border-radius: var(--radius-md);
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            text-decoration: none;
+            transition: all 0.2s ease;
+            flex: 1;
+            min-width: 180px;
+            max-width: 300px;
+        }
+        .nav-btn:hover { border-color: var(--accent); }
+        .nav-btn.next { align-items: flex-end; margin-left: auto; }
+        .nav-btn.prev { align-items: flex-start; }
+        .nav-direction {
+            font-size: 11px;
+            font-family: var(--font-mono);
+            color: var(--text-tertiary);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+        .nav-chapter-title {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            line-height: 1.4;
+        }
+        .nav-btn:hover .nav-chapter-title { color: var(--accent); }
+
+        @media (max-width: 600px) {
+            .chapter-nav-inner { flex-direction: column; }
+            .nav-btn { max-width: 100%; }
+            .nav-btn.next { align-items: flex-start; margin-left: 0; }
+            .code-block { font-size: 11px; padding: 14px 16px; }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="grain"></div>
+
+    <!-- Header -->
+    <header>
+        <div class="header-inner">
+            <a href="../../index.html" class="logo">
+                <img src="../../img/icon.png" alt="SuperPicky">
+                <span>SuperPicky</span>
+            </a>
+        </div>
+    </header>
+
+    <!-- 面包屑 -->
+    <div class="chapter-header-bar">
+        <div class="container">
+            <nav class="breadcrumb">
+                <a href="../../index.html">主页</a>
+                <span>/</span>
+                <a href="index.html">4.3.0 教程</a>
+                <span>/</span>
+                <span>第 09 章</span>
+            </nav>
+        </div>
+    </div>
+
+    <!-- 章节 Hero -->
+    <section class="chapter-hero">
+        <div class="container">
+            <div class="chapter-num-display">
+                <span>CHAPTER 09 / 12</span>
+                <span style="background:rgba(0,212,170,0.12);color:var(--accent);font-size:10px;padding:2px 8px;border-radius:4px;letter-spacing:0.06em;">v4.3 新增</span>
+            </div>
+            <h1>视频分析</h1>
+            <p class="subtitle">
+                与照片流程无缝融合——同一个目录，SuperPicky 慧眼选鸟 自动识别视频文件，YOLO 抽帧检测鸟类，识别鸟种后按物种归类，并生成带时间轴的 SRT 字幕。
+            </p>
+        </div>
+    </section>
+
+    <!-- 正文 -->
+    <section class="chapter-body">
+        <div class="container">
+
+            <!-- 章节内目录 -->
+            <nav class="chapter-toc">
+                <a href="#s9-1">
+                    <span class="sec-num">9.1</span>
+                    支持格式
+                </a>
+                <a href="#s9-2">
+                    <span class="sec-num">9.2</span>
+                    自动分析流程
+                </a>
+                <a href="#s9-3">
+                    <span class="sec-num">9.3</span>
+                    结果与目录结构
+                </a>
+                <a href="#s9-4">
+                    <span class="sec-num">9.4</span>
+                    SRT 字幕
+                </a>
+                <a href="#s9-5">
+                    <span class="sec-num">9.5</span>
+                    高级设置
+                </a>
+            </nav>
+
+            <!-- ══ 9.1 ══ -->
+            <div class="content-section" id="s9-1">
+                <span class="section-label-tag">9.1</span>
+                <h2 class="section-heading">支持格式</h2>
+
+                <p>
+                    v4.3 引入视频分析功能，当前支持以下格式：
+                </p>
+
+                <table class="content-table">
+                    <thead>
+                        <tr>
+                            <th>扩展名</th>
+                            <th>容器</th>
+                            <th>常见来源</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>.mp4</td>
+                            <td>MPEG-4</td>
+                            <td>相机视频、手机录像、无人机（DJI 等）</td>
+                        </tr>
+                        <tr>
+                            <td>.mov</td>
+                            <td>QuickTime</td>
+                            <td>相机视频、iPhone、macOS 屏幕录制</td>
+                        </tr>
+                        <tr>
+                            <td>.m4v</td>
+                            <td>iTunes 视频</td>
+                            <td>Apple 设备导出</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <p>
+                    视频文件与照片文件可以<strong>混放在同一目录</strong>中，扫描时自动识别并分别处理，无需提前分拣。
+                    这也是 v4.3 将默认目录布局改为<strong>鸟种优先</strong>的原因——照片和视频可以共享同一个鸟种子目录。
+                </p>
+
+                <div class="tip-box info">
+                    <span class="tip-box-label">关于 RAW 视频格式</span>
+                    <p>
+                        BRAW（Blackmagic RAW）、R3D（RED）等相机 RAW 视频格式目前不在支持列表中。
+                        如有需要，建议先将视频转码为 MP4 再送入处理。
+                    </p>
+                </div>
+            </div>
+
+            <!-- ══ 9.2 ══ -->
+            <div class="content-section" id="s9-2">
+                <span class="section-label-tag">9.2</span>
+                <h2 class="section-heading">自动分析流程</h2>
+
+                <p>
+                    选鸟流程启动后，SuperPicky 慧眼选鸟 对目录中的视频文件依次执行以下步骤：
+                </p>
+
+                <div class="flow-steps">
+                    <div class="flow-step">
+                        <div class="flow-num">1</div>
+                        <div class="flow-body">
+                            <strong>自适应抽帧</strong> — 根据视频时长计算采样间隔，默认上限 <strong>60 帧/视频</strong>。
+                            短视频（时长 ≤ 60 秒）每秒取一帧；长视频则按比例拉大间隔，保证总帧数不超过上限，
+                            处理时间与视频时长解耦。
+                        </div>
+                    </div>
+                    <div class="flow-step">
+                        <div class="flow-num">2</div>
+                        <div class="flow-body">
+                            <strong>YOLO 鸟类检测</strong> — 对每一帧运行 YOLO11 目标检测，识别画面中是否存在鸟类（COCO 数据集 class 14）。
+                            检测置信度高于阈值（默认 <strong>0.5</strong>）的帧标记为「有鸟帧」。
+                        </div>
+                    </div>
+                    <div class="flow-step">
+                        <div class="flow-num">3</div>
+                        <div class="flow-body">
+                            <strong>鸟种识别（可选）</strong> — 在「有鸟帧」上进一步调用 OSEA 模型识别鸟种，
+                            默认使用 <strong>instant 模式</strong>（首帧置信度达标即停止，速度最快）。
+                            识别结果同样支持国家/地区过滤。
+                        </div>
+                    </div>
+                    <div class="flow-step">
+                        <div class="flow-num">4</div>
+                        <div class="flow-body">
+                            <strong>时间段合并</strong> — 将连续的「有鸟帧」合并为鸟类出现时间段（BirdSegment），
+                            同一鸟种的多段时间自动归并，用于生成 SRT 字幕和决定文件命名。
+                        </div>
+                    </div>
+                    <div class="flow-step">
+                        <div class="flow-num">5</div>
+                        <div class="flow-body">
+                            <strong>整理归类</strong> — 按识别结果将视频文件移动到对应子目录，同步生成 SRT 字幕文件。
+                        </div>
+                    </div>
+                </div>
+
+                <div class="tip-box info">
+                    <span class="tip-box-label">视频处理与照片处理并行</span>
+                    <p>
+                        同一次扫描中，照片走评分 + 锐度 + 美学流程，视频走 YOLO + 鸟种识别流程，
+                        两套流程独立运行，最终结果统一汇入同一目录布局，互不干扰。
+                    </p>
+                </div>
+
+            </div>
+
+            <!-- ══ 9.3 ══ -->
+            <div class="content-section" id="s9-3">
+                <span class="section-label-tag">9.3</span>
+                <h2 class="section-heading">结果与目录结构</h2>
+
+                <p>
+                    视频分析完成后，文件按鸟种归类并重命名。命名格式为：
+                </p>
+
+                <p style="text-align:center;">
+                    <code style="background:var(--bg-card);padding:6px 14px;border-radius:6px;font-family:var(--font-mono);font-size:13px;color:var(--accent);">
+                        {鸟种}_{拍摄日期8位}_{原始文件名}.{扩展名}
+                    </code>
+                </p>
+
+                <p>归类规则：</p>
+
+                <table class="content-table">
+                    <thead>
+                        <tr>
+                            <th>检测结果</th>
+                            <th>目标目录</th>
+                            <th>文件名示例</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>识别到鸟种</td>
+                            <td><code>原目录/{主鸟种}/</code></td>
+                            <td><code>澳洲蛇鹈_20260101_DJI_0001.mp4</code></td>
+                        </tr>
+                        <tr>
+                            <td>有鸟但识别失败</td>
+                            <td><code>原目录/其他鸟/</code></td>
+                            <td><code>其他鸟_20260101_DJI_0002.mp4</code></td>
+                        </tr>
+                        <tr>
+                            <td>全程无鸟</td>
+                            <td><code>原目录/无鸟/</code></td>
+                            <td><code>无鸟_20260101_DJI_0003.mp4</code></td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <p>
+                    视频目录直接建在<strong>源目录之下</strong>（不含星级层），与照片的鸟种目录共享同一父级，
+                    两者可自然共存。以下是照片 + 视频混合处理后的典型目录结构：
+                </p>
+
+                <div class="code-block">
+                    <span class="cb-line"><span class="cb-dir">📁 2026-01-01_澳洲_拍鸟/</span></span>
+                    <span class="cb-line">  <span class="cb-dir">📁 澳洲蛇鹈/</span>               <span class="cb-note">← 照片和视频共享同一鸟种目录</span></span>
+                    <span class="cb-line">    <span class="cb-dir">📁 3星_优选/</span></span>
+                    <span class="cb-line">      <span class="cb-file">🖼 DSC_0010.ARW</span></span>
+                    <span class="cb-line">    <span class="cb-file cb-hi">🎬 澳洲蛇鹈_20260101_DJI_0001.mp4</span>  <span class="cb-note">← 视频直接在鸟种目录</span></span>
+                    <span class="cb-line">    <span class="cb-file cb-hi">📄 澳洲蛇鹈_20260101_DJI_0001.srt</span>  <span class="cb-note">← SRT 字幕同级放置</span></span>
+                    <span class="cb-line">  <span class="cb-dir">📁 其他鸟/</span></span>
+                    <span class="cb-line">    <span class="cb-file">🎬 其他鸟_20260101_DJI_0002.mp4</span></span>
+                    <span class="cb-line">  <span class="cb-dir">📁 无鸟/</span></span>
+                    <span class="cb-line">    <span class="cb-file">🎬 无鸟_20260101_DJI_0003.mp4</span></span>
+                </div>
+
+                <div class="tip-box info">
+                    <span class="tip-box-label">为什么默认用鸟种优先布局</span>
+                    <p>
+                        v4.3 将默认目录布局改为<strong>鸟种优先</strong>，正是为了让视频和照片能落在同一个鸟种文件夹下，
+                        方便用相同工具统一管理。详见<a href="05-results.html#s5-4" class="xref">第 05 章 5.4</a>。
+                    </p>
+                </div>
+
+            </div>
+
+            <!-- ══ 9.4 ══ -->
+            <div class="content-section" id="s9-4">
+                <span class="section-label-tag">9.4</span>
+                <h2 class="section-heading">SRT 字幕</h2>
+
+                <p>
+                    每个处理完成的视频旁会自动生成一个同名 <strong>.srt 字幕文件</strong>，
+                    记录视频中鸟类出现的时间段。SRT 文件可直接用于主流播放器（VLC、IINA、PotPlayer 等）或视频剪辑软件。
+                </p>
+
+                <p><strong>字幕内容随可用信息自动调整：</strong></p>
+
+                <table class="content-table">
+                    <thead>
+                        <tr>
+                            <th>可用信息</th>
+                            <th>字幕示例</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>仅 YOLO 检测（无鸟种识别）</td>
+                            <td><code>🐦 检测到鸟类 | 89%</code></td>
+                        </tr>
+                        <tr>
+                            <td>有鸟种识别</td>
+                            <td><code>🐦 澳洲蛇鹈 (Australasian Darter) | 83%</code></td>
+                        </tr>
+                        <tr>
+                            <td>有鸟种 + 飞行状态</td>
+                            <td><code>🦅 澳洲蛇鹈 (Australasian Darter) | 飞行中 | 83%</code></td>
+                        </tr>
+                        <tr>
+                            <td>无鸟时间段</td>
+                            <td><code>[无鸟]</code></td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <p><strong>SRT 文件格式示例：</strong></p>
+
+                <div class="code-block">
+                    <span class="cb-line"><span class="cb-hi">1</span></span>
+                    <span class="cb-line"><span class="cb-file">00:00:04,000 --> 00:00:17,000</span></span>
+                    <span class="cb-line"><span class="cb-file">🦅 澳洲蛇鹈 (Australasian Darter) | 飞行中 | 91%</span></span>
+                    <span class="cb-line"></span>
+                    <span class="cb-line"><span class="cb-hi">2</span></span>
+                    <span class="cb-line"><span class="cb-file">00:00:17,000 --> 00:00:31,000</span></span>
+                    <span class="cb-line"><span class="cb-note">[无鸟]</span></span>
+                    <span class="cb-line"></span>
+                    <span class="cb-line"><span class="cb-hi">3</span></span>
+                    <span class="cb-line"><span class="cb-file">00:00:31,000 --> 00:00:58,000</span></span>
+                    <span class="cb-line"><span class="cb-file">🐦 澳洲蛇鹈 (Australasian Darter) | 83%</span></span>
+                </div>
+
+                <p>
+                    SRT 文件采用 <strong>UTF-8 编码</strong>，中文鸟种名可正常显示。
+                    时间格式为标准 <code>HH:MM:SS,mmm</code>（毫秒精度）。
+                </p>
+
+                <div class="tip-box info">
+                    <span class="tip-box-label">在剪辑软件中使用</span>
+                    <p>
+                        将视频导入 Final Cut Pro、Premiere Pro 等剪辑软件后，可同时导入对应的 .srt 字幕轨道，
+                        快速定位鸟类出现的时间段，大幅缩短 B-roll 素材筛选时间。
+                    </p>
+                </div>
+
+            </div>
+
+            <!-- ══ 9.5 ══ -->
+            <div class="content-section" id="s9-5">
+                <span class="section-label-tag">9.5</span>
+                <h2 class="section-heading">高级设置</h2>
+
+                <p>
+                    视频分析的关键参数可在<strong>高级设置 → 视频分析</strong>中调整：
+                </p>
+
+                <table class="content-table">
+                    <thead>
+                        <tr>
+                            <th>参数</th>
+                            <th>默认值</th>
+                            <th>说明</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>最大抽帧数</td>
+                            <td>60 帧</td>
+                            <td>
+                                单视频抽帧总数上限，控制处理时间。
+                                调低可加快分析速度，但可能漏检短暂出镜的鸟类；
+                                调高可提升召回率，适合精细分析重要素材
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>YOLO 检测阈值</td>
+                            <td>0.5（可调 0.3–0.9）</td>
+                            <td>
+                                鸟类目标检测置信度门槛。调低可检测模糊或遮挡的鸟，但误报增加；
+                                调高可减少干扰，但可能漏掉置信度偏低的真实鸟类
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>鸟种识别模式</td>
+                            <td>instant（极速）</td>
+                            <td>
+                                <strong>instant</strong>：首帧达标即停，速度最快，适合素材量大的场景<br>
+                                <strong>fast</strong>：扫描更多帧取置信度最高结果，准确率更高<br>
+                                <strong>full</strong>：分析全部抽帧，最准确，耗时最长
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>启用鸟种识别</td>
+                            <td>开启</td>
+                            <td>
+                                关闭后仅做 YOLO 检测（有鸟 / 无鸟），不运行 OSEA 鸟种识别，
+                                SRT 字幕将只显示「检测到鸟类」而无鸟种名，适合只需区分有鸟/无鸟的快速分拣场景
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <div class="tip-box warning">
+                    <span class="tip-box-label">视频分析对硬件的要求</span>
+                    <p>
+                        YOLO 检测和 OSEA 鸟种识别均在 CPU 上运行（GPU 加速版本后续规划中）。
+                        处理大量长视频时建议适当降低「最大抽帧数」，或在夜间批量运行，避免影响日常使用。
+                    </p>
+                </div>
+
+            </div>
+
+        </div>
+    </section>
+
+    <!-- 章节导航 -->
+    <section class="chapter-nav">
+        <div class="container">
+            <div class="chapter-nav-inner">
+                <a href="08-birdid.html" class="nav-btn prev">
+                    <span class="nav-direction">上一章</span>
+                    <span class="nav-chapter-title">鸟种识别</span>
+                </a>
+                <a href="10-advanced.html" class="nav-btn next">
+                    <span class="nav-direction">下一章</span>
+                    <span class="nav-chapter-title">高级设置</span>
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <div class="footer-inner">
+                <div class="footer-brand">
+                    <img src="../../img/icon.png" alt="SuperPicky">
+                    <div class="footer-brand-text">
+                        <span>SuperPicky</span>
+                        <span class="footer-author">by James Yu (詹姆斯·于震)</span>
+                    </div>
+                </div>
+                <div class="footer-links">
+                    <a href="index.html">教程目录</a>
+                    <a href="../../faq.html">常见问题</a>
+                    <a href="https://github.com/jamesphotography/SuperPicky">GitHub</a>
+                    <a href="mailto:james@jamesphotography.com.au">联系</a>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p class="credits">模型致谢：YOLO11 (Ultralytics) · TOPIQ (Chaofeng Chen et al.)</p>
+                <p class="copyright">© 2024-2026 James Yu · <a href="../../LICENSE" target="_blank"
+                        style="color: inherit; text-decoration: underline;">AGPL-3.0 License</a></p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="../../js/main.js"></script>
+</body>
+
+</html>
