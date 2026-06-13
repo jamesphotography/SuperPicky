@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <style>
+        /* Support dark and light mode with transparent background */
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+            padding: 20px;
+            line-height: 1.6;
+            background: transparent;
+            color: #1a1a1a;
+        }
+        @media (prefers-color-scheme: dark) {
+            body { background: transparent; color: #e0e0e0; }
+            h1 { color: #4ade80; }
+            h2 { color: #94a3b8; }
+            .success { background: transparent; border-color: #22c55e; color: #4ade80; }
+            .success strong { color: #4ade80; }
+            .info-box { background: transparent; border-color: #3b82f6; color: #bfdbfe; }
+            .info-box strong { color: #60a5fa; }
+            .info-box p { color: #d1d5db; }
+            .warning { background: transparent; border-color: #f59e0b; color: #fbbf24; }
+            .warning strong { color: #fbbf24; }
+            .warning p { color: #d1d5db; }
+            a { color: #60a5fa; }
+            li { color: #d1d5db; }
+            p { color: #d1d5db; }
+        }
+        h1 { color: #27ae60; }
+        h2 { color: #34495e; }
+        .success { background: transparent; border: 2px solid #27ae60; padding: 15px; border-radius: 5px; margin: 20px 0; color: #27ae60; }
+        .info-box { background: transparent; border-left: 4px solid #3498db; padding: 15px; margin: 15px 0; color: #1a1a1a; }
+        .warning { background: transparent; border-left: 4px solid #f59e0b; padding: 15px; margin: 15px 0; color: #856404; }
+        a { color: #3498db; text-decoration: none; }
+        li { color: #374151; }
+        @media (prefers-color-scheme: dark) {
+            li { color: #d1d5db; }
+        }
+    </style>
+</head>
+<body>
+    <h1>✓ Installation Complete</h1>
+
+    <div class="success">
+        <strong>SuperPicky V__VERSION__</strong> has been successfully installed!
+    </div>
+
+    <h2>Installed Components</h2>
+    <div class="info-box">
+        <p><strong>📍 Main Application:</strong> /Applications/SuperPicky.app</p>
+        <p><strong>📍 Lightroom Plugin:</strong> ~/Library/Application Support/Adobe/Lightroom/Modules/</p>
+    </div>
+
+    <h2>Getting Started</h2>
+    <div class="info-box">
+        <p><strong>Main Application:</strong></p>
+        <ul>
+            <li>Find and launch "SuperPicky" from Launchpad</li>
+            <li>Or navigate to the Applications folder</li>
+        </ul>
+        <p><strong>Lightroom Plugin:</strong></p>
+        <ul>
+            <li>Open Lightroom and select a photo</li>
+            <li>Menu: Library → Plug-in Extras → SuperPicky - Identify Current Photo</li>
+        </ul>
+    </div>
+
+    <div class="warning">
+        <p><strong>⚠️ First-Time Usage Notes:</strong></p>
+        <ul>
+            <li>First launch may take 10-30 seconds to load AI models</li>
+            <li>The main app must be running before using the Lightroom plugin</li>
+            <li><strong>Enable Lightroom Plugin:</strong> File → Plug-in Manager → Find "SuperPicky" → Click "Enable"</li>
+        </ul>
+    </div>
+
+    <p style="margin-top: 30px; font-size: 0.9em;">
+        Thank you for using SuperPicky! For support, visit <a href="https://github.com/jamesphotography/SuperPicky">GitHub</a>
+    </p>
+</body>
+</html>

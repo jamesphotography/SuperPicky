@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <style>
+        /* Support dark and light mode with transparent background */
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+            padding: 20px;
+            line-height: 1.6;
+            background: transparent;
+            color: #1a1a1a;
+        }
+        @media (prefers-color-scheme: dark) {
+            body { background: transparent; color: #e0e0e0; }
+            h1 { color: #f1f5f9; }
+            .version { color: #94a3b8; }
+            h2, h3 { color: #94a3b8; }
+            .highlight { color: #60a5fa; }
+            li { color: #d1d5db; }
+            p { color: #d1d5db; }
+            strong { color: #f1f5f9; }
+        }
+        h1 { color: #2c3e50; margin-bottom: 5px; }
+        .version { color: #7f8c8d; font-size: 0.9em; margin-bottom: 20px; }
+        h2, h3 { color: #34495e; }
+        .highlight { color: #3498db; font-weight: bold; }
+        ul { padding-left: 20px; }
+        li { margin: 8px 0; color: #374151; }
+    </style>
+</head>
+<body>
+    <h1>Welcome to SuperPicky</h1>
+    <p class="version">Version __VERSION__</p>
+
+    <p>This installer will install <strong>SuperPicky</strong> and its <strong>Lightroom Plugin</strong> on your computer.</p>
+
+    <h3>System Requirements</h3>
+    <ul>
+        <li>macOS 12.0 (Monterey) or later</li>
+        <li>Apple Silicon (M1/M2/M3/M4) or Intel processor</li>
+        <li>Approximately 2GB of available disk space</li>
+    </ul>
+
+    <p>Click "Continue" to proceed with the installation.</p>
+</body>
+</html>

@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -38,6 +39,14 @@ FULL_SPEC_FILE = ROOT_DIR / "SuperPicky_full.spec"
 REQUIREMENTS_MAC_FILE = ROOT_DIR / "requirements_mac.txt"
 ENTITLEMENTS_FILE = ROOT_DIR / "entitlements.plist"
 DMG_README_FILE = ROOT_DIR / "resources" / "DMG_README.txt"
+LICENSE_FILE = ROOT_DIR / "LICENSE"
+
+# PKG 安装器相关常量与模板目录 / PKG installer constants and template dir.
+# pkg 路径在提供 Developer ID Installer 证书（--installer-p12）时启用，产出
+# 「pkg 装进 DMG」的安装器（自动安装 Lightroom 插件 / 预设 / 权限），否则
+# 回退到旧的「.app 拖拽进 Applications」DMG。
+BUNDLE_ID = "com.jamesphotography.superpicky"
+PACKAGING_MAC_DIR = ROOT_DIR / "packaging" / "mac"
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +79,11 @@ class BuildConfig:
     sign_p12: Path | None
     sign_p12_password_env: str
     sign_identity: str | None
+    # Developer ID Installer 证书（productsign 签 .pkg 用，和签 .app 的
+    # Developer ID Application 是两张不同证书）。提供时启用 pkg 安装器路径。
+    installer_p12: Path | None
+    installer_p12_password_env: str
+    installer_identity: str | None
     release_channel: str
     notarize: bool
     apple_id: str | None
@@ -88,6 +102,9 @@ class SigningContext:
     keychain_password: str
     imported_p12_path: Path
     identity: str
+    # Developer ID Installer identity（仅在导入了 installer .p12 时存在）。
+    # 供 productsign 给 .pkg 签名；为 None 时跳过 pkg 签名。
+    installer_identity: str | None = None
 
 
 def configure_logging(debug: bool) -> None:
@@ -173,6 +190,19 @@ def parse_args() -> argparse.Namespace:
         help="读取 .p12 密码的环境变量名（默认: MACOS_CERTIFICATE_PWD）",
     )
     parser.add_argument("--sign-identity", help="可选，显式指定 Developer ID Application identity")
+    parser.add_argument(
+        "--installer-p12",
+        help="Developer ID Installer 证书 .p12 路径；提供后启用 pkg 安装器路径",
+    )
+    parser.add_argument(
+        "--installer-p12-password-env",
+        default="MACOS_INSTALLER_CERTIFICATE_PWD",
+        help="读取 Installer .p12 密码的环境变量名（默认: MACOS_INSTALLER_CERTIFICATE_PWD）",
+    )
+    parser.add_argument(
+        "--installer-identity",
+        help="可选，显式指定 Developer ID Installer identity（productsign 用）",
+    )
     parser.add_argument("--notarize", action="store_true", help="提交 Apple 公证并自动 staple DMG")
     parser.add_argument("--apple-id", help="Apple notarization 使用的 Apple ID")
     parser.add_argument("--team-id", help="Apple notarization 使用的 Team ID")
@@ -652,6 +682,202 @@ def create_dmg(config: BuildConfig, paths: BuildPaths) -> None:
     log_verbose("[成功] 已生成 DMG: %s", paths.dmg_path)
 
 
+def _render_template(template_path: Path, replacements: dict[str, str]) -> str:
+    """
+    读取模板文件并做 __X__ 占位符替换 / Read a template and apply __X__ substitutions.
+    """
+
+    text = template_path.read_text(encoding="utf-8")
+    for key, value in replacements.items():
+        text = text.replace(key, value)
+    return text
+
+
+def build_pkg(config: BuildConfig, paths: BuildPaths, signing_context: SigningContext | None) -> Path:
+    """
+    构建并签名 .pkg 安装器 / Build and sign the .pkg installer.
+
+    流程：ditto 已签名 .app → pkgbuild 组件包（带 postinstall + 禁 relocation）→
+    productbuild Distribution 包 → productsign（Developer ID Installer）→ 校验签名。
+    postinstall 会在安装时自动装 Lightroom 插件 / 导出预设、设权限、清隔离标记。
+
+    返回签名后的 .pkg 路径；未提供 Installer 证书时返回未签名 pkg（仅本地调试用）。
+
+    Build the Distribution .pkg from the already-signed .app, then sign it with
+    the Developer ID Installer identity. Returns the resulting .pkg path.
+    """
+
+    log_step("步骤 7a: 构建 PKG 安装器")
+    version = config.app_version
+    dist_dir = paths.dist_dir
+
+    # 1) pkg_root/Applications/SuperPicky.app（ditto 保留签名与符号链接）
+    pkg_root = dist_dir / "pkg_root"
+    remove_path(pkg_root)
+    (pkg_root / "Applications").mkdir(parents=True, exist_ok=True)
+    staged_app = pkg_root / "Applications" / paths.app_dir.name
+    run_command(["ditto", str(paths.app_dir), str(staged_app)], label="ditto .app 到 pkg_root")
+
+    # 2) postinstall 脚本（渲染版本号 + 可执行）
+    scripts_dir = dist_dir / "pkg_scripts"
+    remove_path(scripts_dir)
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    postinstall_path = scripts_dir / "postinstall"
+    postinstall_path.write_text(
+        _render_template(PACKAGING_MAC_DIR / "postinstall", {"__VERSION__": version}),
+        encoding="utf-8",
+    )
+    postinstall_path.chmod(0o755)
+
+    # 3) 组件 plist（静态，禁 relocation 防止装错位置）
+    component_plist = dist_dir / "pkg_component.plist"
+    copy_file(PACKAGING_MAC_DIR / "component.plist", component_plist)
+
+    # 4) pkgbuild 组件包
+    component_pkg = dist_dir / f"{APP_NAME}-component.pkg"
+    remove_path(component_pkg)
+    run_command(
+        [
+            "pkgbuild",
+            "--root", str(pkg_root),
+            "--scripts", str(scripts_dir),
+            "--component-plist", str(component_plist),
+            "--identifier", BUNDLE_ID,
+            "--version", version,
+            "--install-location", "/",
+            str(component_pkg),
+        ],
+        label="pkgbuild 组件包",
+    )
+
+    # 5) Distribution 资源（welcome/conclusion/LICENSE）+ distribution.xml
+    resources_dir = dist_dir / "pkg_resources"
+    remove_path(resources_dir)
+    resources_dir.mkdir(parents=True, exist_ok=True)
+    (resources_dir / "welcome.html").write_text(
+        _render_template(PACKAGING_MAC_DIR / "welcome.html.tmpl", {"__VERSION__": version}),
+        encoding="utf-8",
+    )
+    (resources_dir / "conclusion.html").write_text(
+        _render_template(PACKAGING_MAC_DIR / "conclusion.html.tmpl", {"__VERSION__": version}),
+        encoding="utf-8",
+    )
+    if LICENSE_FILE.exists():
+        copy_file(LICENSE_FILE, resources_dir / "LICENSE")
+
+    distribution_xml = dist_dir / "distribution.xml"
+    distribution_xml.write_text(
+        _render_template(
+            PACKAGING_MAC_DIR / "distribution.xml.tmpl",
+            {
+                "__BUNDLE_ID__": BUNDLE_ID,
+                "__VERSION__": version,
+                "__COMPONENT_PKG__": component_pkg.name,
+            },
+        ),
+        encoding="utf-8",
+    )
+
+    # 6) productbuild 最终 pkg（与 dmg 同名前缀，便于识别架构/commit）
+    pkg_path = dist_dir / f"{paths.dmg_path.stem}_Installer.pkg"
+    remove_path(pkg_path)
+    run_command(
+        [
+            "productbuild",
+            "--distribution", str(distribution_xml),
+            "--resources", str(resources_dir),
+            "--package-path", str(dist_dir),
+            str(pkg_path),
+        ],
+        label="productbuild Distribution 包",
+    )
+
+    # 7) productsign（Developer ID Installer）+ 校验
+    installer_identity = signing_context.installer_identity if signing_context else None
+    if installer_identity:
+        signed_pkg = dist_dir / f"{pkg_path.stem}-signed.pkg"
+        remove_path(signed_pkg)
+        sign_command = ["productsign", "--sign", installer_identity]
+        if signing_context is not None and signing_context.keychain_path is not None:
+            sign_command.extend(["--keychain", str(signing_context.keychain_path)])
+        sign_command.extend([str(pkg_path), str(signed_pkg)])
+        run_command(sign_command, label="productsign 签名 PKG")
+        shutil.move(str(signed_pkg), str(pkg_path))
+        run_command(["pkgutil", "--check-signature", str(pkg_path)], label="校验 PKG 签名")
+        log_verbose("[成功] PKG 已签名: %s", pkg_path)
+    else:
+        log_verbose("[信息] 未提供 Installer 证书，PKG 未签名: %s", pkg_path)
+
+    # 清理中间产物（保留最终 pkg）
+    remove_path(pkg_root)
+    remove_path(scripts_dir)
+    remove_path(resources_dir)
+    remove_path(component_pkg)
+    remove_path(component_plist)
+    remove_path(distribution_xml)
+    return pkg_path
+
+
+def create_pkg_dmg(config: BuildConfig, paths: BuildPaths, pkg_path: Path) -> None:
+    """
+    把 .pkg 装进 DMG（仿本地脚本）/ Wrap the signed .pkg into a DMG.
+
+    DMG 内含：pkg 安装器 + Lightroom 插件副本（供手动安装）+ 中英文说明（总说明 /
+    插件手动安装 / 在线教程快捷方式）。不含 .app 与 Applications 软链——应用由 pkg 安装。
+
+    Mirror the local packaging: the DMG carries the installer pkg plus a plugin
+    copy and bilingual instructions for manual install.
+    """
+
+    log_step("步骤 7b: 生成 PKG-in-DMG")
+    version = config.app_version
+    staging_dir = paths.dist_dir / "dmg_staging"
+    remove_path(staging_dir)
+    staging_dir.mkdir(parents=True, exist_ok=True)
+
+    copy_file(pkg_path, staging_dir / pkg_path.name)
+
+    plugin_dir = paths.app_dir / "Contents" / "Resources" / "SuperBirdIDPlugin.lrplugin"
+    if plugin_dir.exists():
+        copy_tree(plugin_dir, staging_dir / plugin_dir.name)
+
+    (staging_dir / "README 安装说明.txt").write_text(
+        _render_template(
+            PACKAGING_MAC_DIR / "dmg_readme.txt.tmpl",
+            {"__VERSION__": version, "__PKG_NAME__": pkg_path.name},
+        ),
+        encoding="utf-8",
+    )
+    (staging_dir / "Lightroom Plugin Manual Installation 插件手动安装.txt").write_text(
+        _render_template(PACKAGING_MAC_DIR / "dmg_plugin_manual.txt.tmpl", {"__VERSION__": version}),
+        encoding="utf-8",
+    )
+    copy_file(
+        PACKAGING_MAC_DIR / "dmg_tutorial.webloc",
+        staging_dir / "Online Tutorial 在线教程.webloc",
+    )
+
+    paths.dmg_path.parent.mkdir(parents=True, exist_ok=True)
+    remove_path(paths.dmg_path)
+    run_command(
+        [
+            "hdiutil",
+            "create",
+            "-volname",
+            f"{display_name_for(config.build_type)} {version}",
+            "-srcfolder",
+            str(staging_dir),
+            "-ov",
+            "-format",
+            "UDZO",
+            str(paths.dmg_path),
+        ],
+        label="生成 PKG-in-DMG",
+    )
+    remove_path(staging_dir)
+    log_verbose("[成功] 已生成 PKG-in-DMG: %s", paths.dmg_path)
+
+
 def prepare_signing(config: BuildConfig) -> SigningContext | None:
     """
     如果提供 .p12，则导入临时 keychain；若仅提供 sign_identity，则直接使用系统 keychain。
@@ -672,6 +898,7 @@ def prepare_signing(config: BuildConfig) -> SigningContext | None:
             keychain_password="",
             imported_p12_path=system_keychain,
             identity=config.sign_identity,
+            installer_identity=config.installer_identity,
         )
 
     log_step("步骤 8: 导入签名证书")
@@ -728,6 +955,39 @@ def prepare_signing(config: BuildConfig) -> SigningContext | None:
         ],
         label="导入 .p12",
     )
+
+    # 可选：导入 Developer ID Installer 证书（productsign 签 .pkg 用）。
+    # 必须在 set-key-partition-list 之前导入，否则 installer 私钥不会被授予
+    # 非交互访问权限，productsign 在 CI 上会卡在密码弹窗 / 失败。
+    # Import the Developer ID Installer cert (for productsign) BEFORE
+    # set-key-partition-list so its private key also gets non-interactive
+    # access; otherwise productsign hangs on a password prompt in CI.
+    installer_identity: str | None = None
+    if config.installer_p12 is not None:
+        if not config.installer_p12.exists():
+            raise FileNotFoundError(f"未找到 Installer 证书文件: {config.installer_p12}")
+        installer_password = os.environ.get(config.installer_p12_password_env, "")
+        if not installer_password:
+            raise RuntimeError(
+                f"环境变量 {config.installer_p12_password_env} 未设置，无法导入 Installer .p12"
+            )
+        imported_installer_p12 = temp_dir / f"installer_{config.installer_p12.name}"
+        shutil.copy2(config.installer_p12, imported_installer_p12)
+        run_command(
+            [
+                "security",
+                "import",
+                str(imported_installer_p12),
+                "-k",
+                str(keychain_path),
+                "-P",
+                installer_password,
+                "-T",
+                "/usr/bin/productsign",
+            ],
+            label="导入 Installer .p12",
+        )
+
     run_command(
         [
             "security",
@@ -744,11 +1004,15 @@ def prepare_signing(config: BuildConfig) -> SigningContext | None:
 
     identity = config.sign_identity or discover_signing_identity(keychain_path)
     log_verbose("[成功] 已加载签名 identity: %s", identity)
+    if config.installer_p12 is not None:
+        installer_identity = config.installer_identity or discover_installer_identity(keychain_path)
+        log_verbose("[成功] 已加载 Installer identity: %s", installer_identity)
     return SigningContext(
         keychain_path=keychain_path,
         keychain_password=keychain_password,
         imported_p12_path=imported_p12_path,
         identity=identity,
+        installer_identity=installer_identity,
     )
 
 
@@ -768,6 +1032,29 @@ def discover_signing_identity(keychain_path: Path) -> str:
         if match:
             return match.group(1)
     raise RuntimeError("未在 .p12 对应 keychain 中找到 Developer ID Application identity")
+
+
+def discover_installer_identity(keychain_path: Path) -> str:
+    """
+    从 keychain 中解析 Developer ID Installer identity / Resolve the installer identity.
+
+    注意：Installer 证书不属于 codesigning 策略，必须用不带 `-p codesigning`
+    的 `find-identity -v` 才能枚举到。
+    Installer certs are not codesigning identities, so we enumerate all valid
+    identities (no `-p codesigning`) and match the Installer prefix.
+    """
+
+    result = run_command(
+        ["security", "find-identity", "-v", str(keychain_path)],
+        capture_output=True,
+        label="解析 Installer identity",
+    )
+    pattern = re.compile(r'"(Developer ID Installer:[^"]+)"')
+    for line in result.stdout.splitlines():
+        match = pattern.search(line)
+        if match:
+            return match.group(1)
+    raise RuntimeError("未在 .p12 对应 keychain 中找到 Developer ID Installer identity")
 
 
 def iter_signable_files(contents_dir: Path) -> list[Path]:
@@ -794,7 +1081,8 @@ def codesign_path(
     use_runtime: bool = False,
 ) -> None:
     """
-    对指定路径执行 codesign / Sign a path with codesign.
+    对指定路径执行 codesign，遇到 Apple timestamp 服务暂时不可用时自动重试（最多 3 次）。
+    Sign a path with codesign, retrying up to 3 times on Apple timestamp service failures.
     """
 
     command = ["codesign", "--force", "--sign", identity]
@@ -807,7 +1095,29 @@ def codesign_path(
     if keychain_path is not None:
         command.extend(["--keychain", str(keychain_path)])
     command.append(str(path))
-    run_command(command, label=f"签名 {path.name}")
+
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        result = subprocess.run(list(command), cwd=str(ROOT_DIR), text=True, capture_output=True)
+        if result.returncode == 0:
+            return
+        stderr_lower = (result.stderr or "").lower()
+        # Apple timestamp 服务瞬时不可用（常见于本地构建高并发签名时）可重试。
+        # Apple's timestamp service occasionally returns transient errors during local builds.
+        is_timestamp_error = "timestamp service is not available" in stderr_lower
+        if is_timestamp_error and attempt < max_attempts:
+            wait_secs = 15 * attempt
+            logger.warning(
+                "[签名重试 %d/%d] Apple timestamp 服务暂时不可用，%ds 后重试: %s",
+                attempt, max_attempts - 1, wait_secs, path.name,
+            )
+            time.sleep(wait_secs)
+            continue
+        if result.stdout:
+            logger.error(result.stdout.strip())
+        if result.stderr:
+            logger.error(result.stderr.strip())
+        raise RuntimeError(f"签名 {path.name}失败，返回码: {result.returncode}")
 
 
 def sign_app_bundle(app_dir: Path, signing_context: SigningContext | None) -> None:
@@ -981,6 +1291,9 @@ def create_config(args: argparse.Namespace) -> BuildConfig:
         sign_p12=Path(args.sign_p12).resolve() if args.sign_p12 else None,
         sign_p12_password_env=args.sign_p12_password_env,
         sign_identity=optional_text(args.sign_identity),
+        installer_p12=Path(args.installer_p12).resolve() if args.installer_p12 else None,
+        installer_p12_password_env=args.installer_p12_password_env,
+        installer_identity=optional_text(args.installer_identity),
         release_channel=parse_release_channel(),
         notarize=args.notarize,
         apple_id=optional_text(args.apple_id) or optional_text(os.environ.get("APPLE_ID")),
@@ -1020,7 +1333,18 @@ def run_build(config: BuildConfig) -> None:
         if config.notarize and signing_context is None and not config.sign_identity:
             raise RuntimeError("启用 --notarize 时必须提供 --sign-p12 或 --sign-identity 以完成正式签名")
         sign_app_bundle(paths.app_dir, signing_context)
-        create_dmg(config, paths)
+
+        # 提供 Installer 证书时走「pkg 装进 DMG」安装器路径（自动装插件/预设/权限）；
+        # 否则回退到旧的「.app 拖拽进 Applications」DMG。
+        # With an Installer cert, produce the pkg-in-DMG installer; otherwise fall
+        # back to the legacy drag-to-Applications DMG.
+        use_pkg = config.installer_p12 is not None or config.installer_identity is not None
+        if use_pkg:
+            pkg_path = build_pkg(config, paths, signing_context)
+            create_pkg_dmg(config, paths, pkg_path)
+        else:
+            create_dmg(config, paths)
+
         sign_dmg(paths.dmg_path, signing_context)
         notarize_dmg(paths.dmg_path, config)
         final_app, final_dmg = publish_artifacts(paths, config)

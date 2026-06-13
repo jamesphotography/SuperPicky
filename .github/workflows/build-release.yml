@@ -210,20 +210,28 @@ jobs:
           MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
         run: python scripts/ci_release.py materialize-secret-file --env-name MACOS_CERTIFICATE --output $RUNNER_TEMP/certificate.p12 --decode-base64
 
+      # Developer ID Installer 证书（productsign 签 .pkg 用，与上面签 .app 的
+      # Developer ID Application 是两张不同证书）。用于产出「pkg 装进 DMG」安装器。
+      - name: Materialize installer certificate
+        env:
+          MACOS_INSTALLER_CERTIFICATE: ${{ secrets.MACOS_INSTALLER_CERTIFICATE }}
+        run: python scripts/ci_release.py materialize-secret-file --env-name MACOS_INSTALLER_CERTIFICATE --output $RUNNER_TEMP/installer_certificate.p12 --decode-base64
+
       - name: Build notarized macOS release
         env:
           RELEASE_TAG: ${{ steps.release_meta.outputs.tag }}
           MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          MACOS_INSTALLER_CERTIFICATE_PWD: ${{ secrets.MACOS_INSTALLER_CERTIFICATE_PWD }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
         run: |
-          python build_release_mac.py --build-type full --arch arm64 --copy-dir output/mac --sign-p12 $RUNNER_TEMP/certificate.p12 --sign-p12-password-env MACOS_CERTIFICATE_PWD --notarize --apple-id ${{ secrets.APPLE_ID }} --team-id ${{ secrets.MACOS_TEAM_ID }}
+          python build_release_mac.py --build-type full --arch arm64 --copy-dir output/mac --sign-p12 $RUNNER_TEMP/certificate.p12 --sign-p12-password-env MACOS_CERTIFICATE_PWD --installer-p12 $RUNNER_TEMP/installer_certificate.p12 --installer-p12-password-env MACOS_INSTALLER_CERTIFICATE_PWD --notarize --apple-id ${{ secrets.APPLE_ID }} --team-id ${{ secrets.MACOS_TEAM_ID }}
 
       - name: Build code patch zip
         run: python scripts/ci_release.py build-patch --output-dir output/mac --patch-version ${{ steps.release_meta.outputs.tag }}
 
       - name: Clean up
         if: always()
-        run: python scripts/ci_release.py cleanup-paths --path _telemetry_build.py --path $RUNNER_TEMP/certificate.p12
+        run: python scripts/ci_release.py cleanup-paths --path _telemetry_build.py --path $RUNNER_TEMP/certificate.p12 --path $RUNNER_TEMP/installer_certificate.p12
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v3
