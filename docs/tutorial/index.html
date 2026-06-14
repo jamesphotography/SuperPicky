@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<!--
+  SuperPicky 在线教程「稳定入口」/ Stable tutorial entry point.
+
+  打包文件（DMG 里的 webloc）永久指向 https://superpicky.app/tutorial/ ，
+  由本页自动跳转到当前最新版教程。以后出新版教程时——
+  ★ 只需把下面这一行的版本目录改掉（例如 430 → 440），无需重新打包发版。★
+
+  The packaged .webloc points here permanently; this page redirects to the
+  latest tutorial. To publish a newer tutorial, change ONLY the line below.
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <!-- ★★★ 唯一需要修改的地方：最新教程目录 / The ONLY line to update ★★★ -->
+  <meta http-equiv="refresh" content="0; url=/tutorial/430/index.html">
+  <link rel="canonical" href="https://superpicky.app/tutorial/430/index.html">
+  <meta name="robots" content="noindex">
+  <title>SuperPicky 教程 / Tutorial</title>
+  <script>
+    // JS 兜底跳转（meta refresh 之外再保险一层）/ JS fallback redirect.
+    window.location.replace("/tutorial/430/index.html");
+  </script>
+  <style>
+    body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+           background:#f6f7f9; color:#333; text-align:center; padding:18% 16px; }
+    a { color:#2d7ff9; text-decoration:none; }
+  </style>
+</head>
+<body>
+  <p>正在跳转到最新教程… / Redirecting to the latest tutorial…</p>
+  <p>若未自动跳转，请点击：<a href="/tutorial/430/index.html">SuperPicky 教程</a></p>
+</body>
+</html>
