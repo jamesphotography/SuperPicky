@@ -846,7 +846,14 @@ def build_pkg(config: BuildConfig, paths: BuildPaths, signing_context: SigningCo
         # productsign contacts Apple's timestamp service by default; that call can stall
         # with no built-in timeout/retry (observed hanging CI for 2h+). Bound each attempt
         # to 180s and retry, mirroring the codesign timestamp-retry resilience.
-        max_attempts = 3
+        # PKG 签名「非致命」：productsign 在 CI 无头环境偶发卡在取 Installer 私钥的
+        # 钥匙串授权（本机同配方可签，CI 复现不出）。为不阻断整条打包链路验证，
+        # 这里签名失败/超时仅降级为「未签名 pkg」并继续（DMG/公证照常）。
+        # Non-fatal PKG signing: productsign can hang on keychain key access in headless
+        # CI. To keep the rest of the packaging pipeline testable, a failure here only
+        # logs a warning and leaves the pkg unsigned instead of aborting the build.
+        max_attempts = 2
+        signed_ok = False
         for attempt in range(1, max_attempts + 1):
             remove_path(signed_pkg)  # 清理上次可能的半成品 / clear any partial output
             try:
@@ -855,20 +862,27 @@ def build_pkg(config: BuildConfig, paths: BuildPaths, signing_context: SigningCo
                     label=f"productsign 签名 PKG（第 {attempt}/{max_attempts} 次）",
                     timeout=180,
                 )
+                signed_ok = True
                 break
             except subprocess.TimeoutExpired:
-                logger.info(
-                    "[警告] productsign 第 %d/%d 次超时(180s)，杀掉重试", attempt, max_attempts,
-                )
-                if attempt >= max_attempts:
-                    raise RuntimeError(
-                        "productsign 多次超时，PKG 签名失败"
-                        "（疑似 Apple 时间戳服务网络挂起）"
-                    )
-                time.sleep(10)
-        shutil.move(str(signed_pkg), str(pkg_path))
-        run_command(["pkgutil", "--check-signature", str(pkg_path)], label="校验 PKG 签名")
-        log_verbose("[成功] PKG 已签名: %s", pkg_path)
+                logger.info("[警告] productsign 第 %d/%d 次超时(180s)，杀掉重试",
+                            attempt, max_attempts)
+                if attempt < max_attempts:
+                    time.sleep(10)
+            except Exception as exc:  # noqa: BLE001 — 签名失败统一降级
+                logger.warning("⚠️ productsign 失败：%s", exc)
+                break
+
+        if signed_ok:
+            shutil.move(str(signed_pkg), str(pkg_path))
+            run_command(["pkgutil", "--check-signature", str(pkg_path)], label="校验 PKG 签名")
+            logger.info("[成功] PKG 已签名: %s", pkg_path)
+        else:
+            remove_path(signed_pkg)
+            logger.warning(
+                "⚠️ PKG 签名失败/超时，降级为未签名 pkg 继续构建（非致命，本次仅验证链路）: %s",
+                pkg_path,
+            )
     else:
         log_verbose("[信息] 未提供 Installer 证书，PKG 未签名: %s", pkg_path)
 
