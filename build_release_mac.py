@@ -803,6 +803,38 @@ def build_pkg(config: BuildConfig, paths: BuildPaths, signing_context: SigningCo
     # 7) productsign（Developer ID Installer）+ 校验
     installer_identity = signing_context.installer_identity if signing_context else None
     if installer_identity:
+        # —— 签 PKG 前的非交互加固 + 诊断 ——
+        # productsign 卡死的两种已知成因：①钥匙串弹密码框（无头 CI 无人应答）
+        # ②默认联网打时间戳的网络挂起。下面先重新解锁 + 禁用自动锁定（防 ①），
+        # 再打印实际身份与时间戳服务可达性（一次失败即可从日志判定真因）。
+        # Non-interactive hardening + diagnostics before productsign, to defeat/diagnose
+        # the keychain-prompt hang and probe the timestamp service.
+        if signing_context is not None and signing_context.keychain_path is not None:
+            kc = str(signing_context.keychain_path)
+            run_command(["security", "set-keychain-settings", kc],
+                        check=False, label="禁用 keychain 自动锁定")
+            if signing_context.keychain_password:
+                run_command(
+                    ["security", "unlock-keychain", "-p",
+                     signing_context.keychain_password, kc],
+                    check=False, label="签 PKG 前重新解锁 keychain",
+                )
+            diag = run_command(["security", "find-identity", "-v", kc],
+                               capture_output=True, check=False,
+                               label="签 PKG 前列出 keychain 身份")
+            logger.info("[诊断] 签 PKG 前 keychain 身份:\n%s", (diag.stdout or "").strip())
+            try:
+                probe = run_command(
+                    ["curl", "-sS", "-m", "8", "-o", "/dev/null",
+                     "-w", "%{http_code}", "http://timestamp.apple.com/ts01"],
+                    capture_output=True, check=False, timeout=15,
+                    label="探测 Apple 时间戳服务可达性",
+                )
+                logger.info("[诊断] timestamp.apple.com 探测 HTTP=%s stderr=%s",
+                            (probe.stdout or "").strip(), (probe.stderr or "").strip())
+            except subprocess.TimeoutExpired:
+                logger.info("[诊断] timestamp.apple.com 探测超时（>15s 无响应）→ 疑似时间戳网络受阻")
+
         signed_pkg = dist_dir / f"{pkg_path.stem}-signed.pkg"
         sign_command = ["productsign", "--sign", installer_identity]
         if signing_context is not None and signing_context.keychain_path is not None:
@@ -825,9 +857,8 @@ def build_pkg(config: BuildConfig, paths: BuildPaths, signing_context: SigningCo
                 )
                 break
             except subprocess.TimeoutExpired:
-                log_verbose(
-                    "[警告] productsign 第 %d/%d 次超时(180s)，疑似 Apple 时间戳网络挂起，重试",
-                    attempt, max_attempts,
+                logger.info(
+                    "[警告] productsign 第 %d/%d 次超时(180s)，杀掉重试", attempt, max_attempts,
                 )
                 if attempt >= max_attempts:
                     raise RuntimeError(
