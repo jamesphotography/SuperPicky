@@ -232,6 +232,21 @@ jobs:
           MACOS_INSTALLER_CERTIFICATE: ${{ secrets.MACOS_INSTALLER_CERTIFICATE }}
         run: python scripts/ci_release.py materialize-secret-file --env-name MACOS_INSTALLER_CERTIFICATE --output $RUNNER_TEMP/installer_certificate.p12 --decode-base64
 
+      # rcodesign：直接用 .p12 签 .pkg，不碰 macOS 钥匙串，绕开 CI 上 productsign
+      # 取 Installer 私钥被钥匙串授权阻塞的问题（productsign 在 runner 上会无限挂起）。
+      # rcodesign signs the .pkg straight from the .p12 (no keychain), avoiding the
+      # headless-CI productsign keychain-prompt hang.
+      - name: Install rcodesign
+        run: |
+          set -euo pipefail
+          ver="0.29.0"
+          url="https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign/${ver}/apple-codesign-${ver}-macos-universal.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/rcodesign.tar.gz" "$url"
+          tar -xzf "$RUNNER_TEMP/rcodesign.tar.gz" -C "$RUNNER_TEMP"
+          bin="$(find "$RUNNER_TEMP" -name rcodesign -type f -perm -u+x | head -1)"
+          sudo install -m 0755 "$bin" /usr/local/bin/rcodesign
+          rcodesign --version
+
       - name: Build notarized macOS release
         env:
           RELEASE_TAG: ${{ steps.release_meta.outputs.tag }}

@@ -800,107 +800,47 @@ def build_pkg(config: BuildConfig, paths: BuildPaths, signing_context: SigningCo
         label="productbuild Distribution 包",
     )
 
-    # 7) productsign（Developer ID Installer）+ 校验
+    # 7) 签名 PKG（Developer ID Installer）+ 校验
+    # 优先用 rcodesign：直接用 .p12 原地签 .pkg，完全不碰 macOS 钥匙串，根治 CI 无头
+    # 环境下 productsign 取 Installer 私钥被钥匙串授权阻塞的问题（曾导致 CI 干等数小时；
+    # 同配方本机可签、CI 复现不出，属 runner 环境特有）。未装 rcodesign 时回退 productsign。
+    # Prefer rcodesign (signs the .pkg directly from the .p12, no keychain) to avoid the
+    # headless-CI productsign keychain-prompt hang; fall back to productsign locally.
     installer_identity = signing_context.installer_identity if signing_context else None
-    prev_default_keychain: str | None = None  # 供签名后恢复默认 keychain
     if installer_identity:
-        # —— 签 PKG 前的非交互加固 + 诊断 ——
-        # productsign 卡死的两种已知成因：①钥匙串弹密码框（无头 CI 无人应答）
-        # ②默认联网打时间戳的网络挂起。下面先重新解锁 + 禁用自动锁定（防 ①），
-        # 再打印实际身份与时间戳服务可达性（一次失败即可从日志判定真因）。
-        # Non-interactive hardening + diagnostics before productsign, to defeat/diagnose
-        # the keychain-prompt hang and probe the timestamp service.
-        if signing_context is not None and signing_context.keychain_path is not None:
-            kc = str(signing_context.keychain_path)
-            run_command(["security", "set-keychain-settings", kc],
-                        check=False, label="禁用 keychain 自动锁定")
-            if signing_context.keychain_password:
-                run_command(
-                    ["security", "unlock-keychain", "-p",
-                     signing_context.keychain_password, kc],
-                    check=False, label="签 PKG 前重新解锁 keychain",
-                )
-            # 无头 CI 上 productsign 可能经「默认 keychain」解析 Installer 身份/私钥，
-            # 故临时把目标 keychain 设为默认（签完恢复），排除该差异导致的取 key 阻塞。
-            # productsign may resolve the identity via the *default* keychain on headless CI;
-            # temporarily make our keychain the default (restored after signing).
-            _cur = run_command(["security", "default-keychain", "-d", "user"],
-                               capture_output=True, check=False)
-            _m = re.search(r'"([^"]+)"', _cur.stdout or "")
-            prev_default_keychain = _m.group(1) if _m else None
-            run_command(["security", "default-keychain", "-d", "user", "-s", kc],
-                        check=False, label="临时设为默认 keychain")
-            diag = run_command(["security", "find-identity", "-v", kc],
-                               capture_output=True, check=False,
-                               label="签 PKG 前列出 keychain 身份")
-            logger.info("[诊断] 签 PKG 前 keychain 身份:\n%s", (diag.stdout or "").strip())
+        rcodesign_bin = shutil.which("rcodesign")
+        installer_p12 = config.installer_p12
+        installer_pw = (os.environ.get(config.installer_p12_password_env, "")
+                        if config.installer_p12_password_env else "")
+        if rcodesign_bin and installer_p12 and installer_p12.exists() and installer_pw:
+            log_step("步骤 7a-sign: rcodesign 用 .p12 直签 PKG（绕开钥匙串）")
+            pw_file = dist_dir / ".installer_p12_pw"
             try:
-                probe = run_command(
-                    ["curl", "-sS", "-m", "8", "-o", "/dev/null",
-                     "-w", "%{http_code}", "http://timestamp.apple.com/ts01"],
-                    capture_output=True, check=False, timeout=15,
-                    label="探测 Apple 时间戳服务可达性",
-                )
-                logger.info("[诊断] timestamp.apple.com 探测 HTTP=%s stderr=%s",
-                            (probe.stdout or "").strip(), (probe.stderr or "").strip())
-            except subprocess.TimeoutExpired:
-                logger.info("[诊断] timestamp.apple.com 探测超时（>15s 无响应）→ 疑似时间戳网络受阻")
-
-        signed_pkg = dist_dir / f"{pkg_path.stem}-signed.pkg"
-        sign_command = ["productsign", "--sign", installer_identity]
-        if signing_context is not None and signing_context.keychain_path is not None:
-            sign_command.extend(["--keychain", str(signing_context.keychain_path)])
-        sign_command.extend([str(pkg_path), str(signed_pkg)])
-        # productsign 默认会联网向 Apple 时间戳服务请求可信时间戳；该调用偶发网络挂起，
-        # 而 productsign 自身既无超时也无重试，曾导致 CI 干等 2 小时直至 job 超时。
-        # 加硬超时 + 重试：单次最多 180s，卡住即杀掉重试（仿 codesign 的时间戳重试韧性）。
-        # productsign contacts Apple's timestamp service by default; that call can stall
-        # with no built-in timeout/retry (observed hanging CI for 2h+). Bound each attempt
-        # to 180s and retry, mirroring the codesign timestamp-retry resilience.
-        # PKG 签名「非致命」：productsign 在 CI 无头环境偶发卡在取 Installer 私钥的
-        # 钥匙串授权（本机同配方可签，CI 复现不出）。为不阻断整条打包链路验证，
-        # 这里签名失败/超时仅降级为「未签名 pkg」并继续（DMG/公证照常）。
-        # Non-fatal PKG signing: productsign can hang on keychain key access in headless
-        # CI. To keep the rest of the packaging pipeline testable, a failure here only
-        # logs a warning and leaves the pkg unsigned instead of aborting the build.
-        max_attempts = 2
-        signed_ok = False
-        for attempt in range(1, max_attempts + 1):
-            remove_path(signed_pkg)  # 清理上次可能的半成品 / clear any partial output
-            try:
+                pw_file.write_text(installer_pw, encoding="utf-8")
                 run_command(
-                    sign_command,
-                    label=f"productsign 签名 PKG（第 {attempt}/{max_attempts} 次）",
-                    timeout=180,
+                    [rcodesign_bin, "sign", "--p12-file", str(installer_p12),
+                     "--p12-password-file", str(pw_file), str(pkg_path)],
+                    label="rcodesign 签名 PKG", timeout=300,
                 )
-                signed_ok = True
-                break
-            except subprocess.TimeoutExpired:
-                logger.info("[警告] productsign 第 %d/%d 次超时(180s)，杀掉重试",
-                            attempt, max_attempts)
-                if attempt < max_attempts:
-                    time.sleep(10)
-            except Exception as exc:  # noqa: BLE001 — 签名失败统一降级
-                logger.warning("⚠️ productsign 失败：%s", exc)
-                break
-
-        if signed_ok:
+            finally:
+                remove_path(pw_file)
+            run_command(["pkgutil", "--check-signature", str(pkg_path)], label="校验 PKG 签名")
+            logger.info("[成功] PKG 已用 rcodesign 签名: %s", pkg_path)
+        else:
+            # 回退：productsign 走 keychain（本地构建、未装 rcodesign 时）
+            # Fallback: productsign via keychain (local builds without rcodesign).
+            signed_pkg = dist_dir / f"{pkg_path.stem}-signed.pkg"
+            remove_path(signed_pkg)
+            sign_command = ["productsign", "--sign", installer_identity]
+            if signing_context is not None and signing_context.keychain_path is not None:
+                sign_command.extend(["--keychain", str(signing_context.keychain_path)])
+            sign_command.extend([str(pkg_path), str(signed_pkg)])
+            run_command(sign_command, label="productsign 签名 PKG", timeout=300)
             shutil.move(str(signed_pkg), str(pkg_path))
             run_command(["pkgutil", "--check-signature", str(pkg_path)], label="校验 PKG 签名")
-            logger.info("[成功] PKG 已签名: %s", pkg_path)
-        else:
-            remove_path(signed_pkg)
-            logger.warning(
-                "⚠️ PKG 签名失败/超时，降级为未签名 pkg 继续构建（非致命，本次仅验证链路）: %s",
-                pkg_path,
-            )
+            logger.info("[成功] PKG 已用 productsign 签名: %s", pkg_path)
     else:
         log_verbose("[信息] 未提供 Installer 证书，PKG 未签名: %s", pkg_path)
-
-    # 恢复原默认 keychain（若曾临时改动）/ restore the previous default keychain
-    if prev_default_keychain:
-        run_command(["security", "default-keychain", "-d", "user", "-s", prev_default_keychain],
-                    check=False, label="恢复默认 keychain")
 
     # 清理中间产物（保留最终 pkg）
     remove_path(pkg_root)
