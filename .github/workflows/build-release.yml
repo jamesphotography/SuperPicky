@@ -9,9 +9,21 @@ on:
       version:
         description: 'Version number for the release'
         required: true
+      platform:
+        description: 'Which platform(s) to build (manual runs only; tag pushes always build all)'
+        type: choice
+        default: all
+        required: false
+        options:
+          - all
+          - mac
+          - windows
 
 jobs:
   build-windows:
+    # Tag 推送始终构建全平台；手动触发时按 platform 选择。
+    # Tag pushes always build all; manual runs honor the platform input.
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'windows' }}
     runs-on: windows-latest
     permissions:
       contents: write
@@ -171,6 +183,9 @@ jobs:
       #     git push origin HEAD:nightly
 
   build-mac:
+    # Tag 推送始终构建全平台；手动触发时按 platform 选择。
+    # Tag pushes always build all; manual runs honor the platform input.
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'mac' }}
     runs-on: macos-14
     permissions:
       contents: write
