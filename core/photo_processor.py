@@ -721,7 +721,19 @@ class PhotoProcessor:
         
         detector = BurstDetector(use_phash=True)  # 后期验证用 pHash
         exiftool_mgr = get_exiftool_manager()
-        
+
+        # V4.3.0: 文件已按 layout 落地（rating-first 或 species-first），位置因 layout 而异。
+        # 旧逻辑只按 rating-first 猜路径，species-first 下找不到文件 → 连拍组凑不齐 →
+        # 不建连拍目录。改为先建一次「文件名 → 当前路径」索引，对任意 layout/嵌套都成立。
+        # 排除 .superpicky（避免命中 temp_preview 预览图）与隐藏目录。
+        # Build a filename→path index once so burst consolidation finds files under ANY
+        # layout (rating-first / species-first / nested), fixing missing burst dirs.
+        file_index: Dict[str, str] = {}
+        for _root, _dirs, _files in os.walk(self.dir_path):
+            _dirs[:] = [d for d in _dirs if d != '.superpicky' and not d.startswith('.')]
+            for _fn in _files:
+                file_index.setdefault(_fn, os.path.join(_root, _fn))
+
         for group_id, original_filepaths in groups.items():
             # 找到每个文件当前的实际位置和星级
             current_files = []
@@ -730,27 +742,12 @@ class PhotoProcessor:
                 ext = raw_dict.get(prefix, os.path.splitext(orig_path)[1])
                 rating = self.file_ratings.get(prefix, 0)
                 
-                # 确定当前位置（可能在评分目录或鸟种子目录）
-                rating_folder = get_rating_folder_name(rating)
-                possible_paths = [
-                    os.path.join(self.dir_path, rating_folder, prefix + ext),  # 评分目录根
-                    orig_path,  # 原始位置
-                ]
-                
-                # 检查鸟种子目录
-                rating_dir = os.path.join(self.dir_path, rating_folder)
-                if os.path.isdir(rating_dir):
-                    for subdir in os.listdir(rating_dir):
-                        subdir_path = os.path.join(rating_dir, subdir)
-                        if os.path.isdir(subdir_path) and not subdir.startswith('burst_'):
-                            possible_paths.append(os.path.join(subdir_path, prefix + ext))
-                
-                current_path = None
-                for p in possible_paths:
-                    if os.path.exists(p):
-                        current_path = p
-                        break
-                
+                # V4.3.0: 用索引按文件名定位当前路径（layout 无关），找不到再回退原位
+                # Locate via the layout-agnostic index, falling back to the original path.
+                current_path = file_index.get(prefix + ext)
+                if not current_path or not os.path.exists(current_path):
+                    current_path = orig_path if os.path.exists(orig_path) else None
+
                 if current_path:
                     current_files.append({
                         'path': current_path,
@@ -769,10 +766,7 @@ class PhotoProcessor:
             # V4.0.4: 优化逻辑 - 如果连拍组中所有照片都在 0-1 星，则不合并（不创建 burst 目录）
             if highest_rating < 2:
                 continue
-            
-            highest_rating_folder = get_rating_folder_name(highest_rating)
-            highest_rating_dir = os.path.join(self.dir_path, highest_rating_folder)
-            
+
             # V4.0.5: 查找连拍组中是否有鸟种识别，优先查找最高星级照片的鸟种
             bird_species_name = None
             # 先查找最高星级的照片
@@ -811,23 +805,20 @@ class PhotoProcessor:
             # 按综合分数选最佳
             best_file = max(current_files, key=lambda x: x['sharpness'] * 0.5 + x['topiq'] * 0.5)
             
-            # V4.2.7: 创建 burst 目录 — 通过 compute_target_folder 统一 layout 策略
-            # V4.2.7: Build burst directory via the shared layout helper.
+            # V4.3.0: burst 目录始终走 compute_target_folder，与移动逻辑(_move)完全一致：
+            # 关识鸟时 bird_species_name=None → 落「其他鸟类/{评分}」；highest_rating>=2 已由
+            # 上方 `if highest_rating < 2: continue` 保证。修复 species-first 下连拍目录消失。
+            # Always build the burst dir via the shared layout helper so it matches the move
+            # logic in every case (identify-off → "Other Birds/{rating}").
             from core.folder_layout import compute_target_folder
             other_birds = self.i18n.t("logs.folder_other_birds")
-            if highest_rating >= 2 and self.settings.auto_identify:
-                target = compute_target_folder(
-                    highest_rating,
-                    bird_species_name,
-                    self.config.folder_layout,
-                    other_birds,
-                )
-                burst_dir = os.path.join(self.dir_path, target, f"burst_{group_id:03d}")
-            else:
-                # 未启用识鸟或低星 — 直接放在评分目录
-                # Identification disabled or low star — burst goes straight under
-                # the rating folder regardless of layout.
-                burst_dir = os.path.join(highest_rating_dir, f"burst_{group_id:03d}")
+            target = compute_target_folder(
+                highest_rating,
+                bird_species_name,
+                self.config.folder_layout,
+                other_birds,
+            )
+            burst_dir = os.path.join(self.dir_path, target, f"burst_{group_id:03d}")
             os.makedirs(burst_dir, exist_ok=True)
 
             

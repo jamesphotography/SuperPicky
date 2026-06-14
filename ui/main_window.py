@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QSystemTrayIcon, QApplication  # V4.0: 系统托盘图标
 )
-from PySide6.QtCore import Qt, Signal, QObject, Slot, QTimer, QPropertyAnimation, QEasingCurve, QMimeData, QThread
+from PySide6.QtCore import Qt, Signal, QObject, Slot, QTimer, QPropertyAnimation, QEasingCurve, QMimeData, QThread, QStandardPaths
 from PySide6.QtGui import QFont, QPixmap, QIcon, QAction, QTextCursor, QColor, QDragEnterEvent, QDropEvent
 
 from tools.i18n import get_i18n, set_primary_language
@@ -1616,11 +1616,21 @@ class SuperPickyMainWindow(QMainWindow):
 
     @Slot()
     def _browse_directory(self):
-        """浏览目录"""
+        """浏览目录
+
+        起始目录：优先当前输入框/已选目录（若仍存在），否则回退到系统「图片」目录。
+        Start the dialog at the currently selected/entered directory if it still
+        exists, otherwise fall back to the system Pictures location.
+        """
+        start_dir = (self.dir_input.text().strip() or self.directory_path or "")
+        if not (start_dir and os.path.isdir(start_dir)):
+            start_dir = QStandardPaths.writableLocation(
+                QStandardPaths.StandardLocation.PicturesLocation
+            ) or ""
         directory = QFileDialog.getExistingDirectory(
             self,
             self.i18n.t("labels.select_photo_dir"),
-            "",
+            start_dir,
             QFileDialog.Option.ShowDirsOnly
         )
         if directory:
