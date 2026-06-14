@@ -223,9 +223,16 @@ def run_command(
     capture_output: bool = False,
     env: dict[str, str] | None = None,
     label: str | None = None,
+    timeout: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """
     运行外部命令 / Run an external command.
+
+    timeout: 可选，单位秒。超时时 subprocess 会杀掉子进程并抛 TimeoutExpired，
+             供调用方实现「卡死即超时重试」（如 productsign 偶发挂在时间戳网络调用）。
+    timeout: optional seconds; on expiry the child is killed and TimeoutExpired is
+             raised so callers can retry on hangs (e.g. productsign stalling on the
+             Apple timestamp service).
     """
 
     if logger.isEnabledFor(logging.DEBUG):
@@ -237,6 +244,7 @@ def run_command(
         text=True,
         capture_output=capture_output,
         env=env,
+        timeout=timeout,
     )
 
     if check and result.returncode != 0:
@@ -796,12 +804,37 @@ def build_pkg(config: BuildConfig, paths: BuildPaths, signing_context: SigningCo
     installer_identity = signing_context.installer_identity if signing_context else None
     if installer_identity:
         signed_pkg = dist_dir / f"{pkg_path.stem}-signed.pkg"
-        remove_path(signed_pkg)
         sign_command = ["productsign", "--sign", installer_identity]
         if signing_context is not None and signing_context.keychain_path is not None:
             sign_command.extend(["--keychain", str(signing_context.keychain_path)])
         sign_command.extend([str(pkg_path), str(signed_pkg)])
-        run_command(sign_command, label="productsign 签名 PKG")
+        # productsign 默认会联网向 Apple 时间戳服务请求可信时间戳；该调用偶发网络挂起，
+        # 而 productsign 自身既无超时也无重试，曾导致 CI 干等 2 小时直至 job 超时。
+        # 加硬超时 + 重试：单次最多 180s，卡住即杀掉重试（仿 codesign 的时间戳重试韧性）。
+        # productsign contacts Apple's timestamp service by default; that call can stall
+        # with no built-in timeout/retry (observed hanging CI for 2h+). Bound each attempt
+        # to 180s and retry, mirroring the codesign timestamp-retry resilience.
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            remove_path(signed_pkg)  # 清理上次可能的半成品 / clear any partial output
+            try:
+                run_command(
+                    sign_command,
+                    label=f"productsign 签名 PKG（第 {attempt}/{max_attempts} 次）",
+                    timeout=180,
+                )
+                break
+            except subprocess.TimeoutExpired:
+                log_verbose(
+                    "[警告] productsign 第 %d/%d 次超时(180s)，疑似 Apple 时间戳网络挂起，重试",
+                    attempt, max_attempts,
+                )
+                if attempt >= max_attempts:
+                    raise RuntimeError(
+                        "productsign 多次超时，PKG 签名失败"
+                        "（疑似 Apple 时间戳服务网络挂起）"
+                    )
+                time.sleep(10)
         shutil.move(str(signed_pkg), str(pkg_path))
         run_command(["pkgutil", "--check-signature", str(pkg_path)], label="校验 PKG 签名")
         log_verbose("[成功] PKG 已签名: %s", pkg_path)
