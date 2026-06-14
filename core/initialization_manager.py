@@ -177,6 +177,11 @@ class InitializationManager(QObject):
         """
         super().__init__(parent)
         self.config = get_advanced_config()
+        # V4.3.0: 显式按配置语言取 i18n，避免修复流程早于主窗口 set_primary_language 的时序问题
+        # V4.3.0: Resolve i18n by config language explicitly — repair runs before the main
+        # window calls set_primary_language, so passing the language avoids the timing gap.
+        from tools.i18n import get_i18n
+        self.i18n = get_i18n(getattr(self.config, "language", None))
         self._thread: Optional[threading.Thread] = None
         self._last_options: Optional[dict] = None
         self._last_mode: str = "init"
@@ -640,7 +645,7 @@ class InitializationManager(QObject):
             bool: 是否执行了修复
         """
         if self.check_runtime_health():
-            self._emit_item_status("runtime", "done", "Runtime already healthy")
+            self._emit_item_status("runtime", "done", self.i18n.t("repair.runtime_healthy"))
             self._emit_phase_completion(
                 PROGRESS_KIND_RUNTIME,
                 f"{runtime_variant} runtime already available",
@@ -655,7 +660,8 @@ class InitializationManager(QObject):
 
         logging.info("运行时环境需要修复，开始准备 %s 运行时...", runtime_variant)
         self._emit_stage(
-            STAGE_PREPARING_RUNTIME, f"Preparing {runtime_variant} runtime..."
+            STAGE_PREPARING_RUNTIME,
+            self.i18n.t("repair.preparing_runtime", variant=runtime_variant),
         )
         self._cleanup_partial_runtime()
         self._purge_pip_cache_if_needed()
@@ -694,7 +700,7 @@ class InitializationManager(QObject):
         total_items = max(1, len(pending))
 
         if not pending:
-            self._emit_item_status("resources", "done", "Resources already healthy")
+            self._emit_item_status("resources", "done", self.i18n.t("repair.resources_healthy"))
             logging.info("所有资源已就绪，无需修复")
             return False
 
@@ -703,7 +709,7 @@ class InitializationManager(QObject):
         }
         self._resource_progress_item_count = total_items
         logging.info("需要修复 %d 个资源文件", len(pending))
-        self._emit_stage(STAGE_DOWNLOADING, "Downloading required resources...")
+        self._emit_stage(STAGE_DOWNLOADING, self.i18n.t("repair.downloading_resources"))
 
         start_time = time.perf_counter()
         success_count = 0
@@ -714,7 +720,7 @@ class InitializationManager(QObject):
 
             logging.info("开始下载资源 [%d/%d]: %s", index, total_items, label)
 
-            self._emit_item_status(resource_id, "running", f"Preparing {label}")
+            self._emit_item_status(resource_id, "running", self.i18n.t("repair.preparing_item", label=label))
 
             try:
                 download_resource(
@@ -726,11 +732,11 @@ class InitializationManager(QObject):
                 )
                 self._raise_if_cancelled()
                 success_count += 1
-                self._emit_item_status(resource_id, "done", f"{label} ready")
+                self._emit_item_status(resource_id, "done", self.i18n.t("repair.item_ready", label=label))
                 logging.info("资源 [%s] 下载成功", resource_id)
             except Exception as exc:
                 logging.error("资源 [%s] 下载失败: %s", resource_id, exc)
-                self._emit_item_status(resource_id, "error", f"{label} failed: {exc}")
+                self._emit_item_status(resource_id, "error", self.i18n.t("repair.item_failed", label=label, error=exc))
                 raise
 
         elapsed = time.perf_counter() - start_time
@@ -800,7 +806,7 @@ class InitializationManager(QObject):
                 )
 
             self._raise_if_cancelled()
-            self._emit_stage(STAGE_PROBING, "Probing download sources...")
+            self._emit_stage(STAGE_PROBING, self.i18n.t("repair.probing_sources"))
             self._source_map = self._resolve_best_sources(runtime_choice.variant)
             self._emit_item_status(
                 "source_probe", "done", f"PyPI -> {self._source_map['pypi_primary']}"
@@ -816,21 +822,23 @@ class InitializationManager(QObject):
             self._save_config(resolved_source_map=self._source_map)
 
             if options.get("auto_update_enabled", True):
-                self._emit_stage(STAGE_CHECKING_UPDATES, "Checking updates...")
+                self._emit_stage(STAGE_CHECKING_UPDATES, self.i18n.t("repair.checking_updates"))
                 self._check_updates_if_enabled()
             else:
                 try:
                     from tools.patch_manager import safe_clear_patch
 
                     cleared, clear_message = safe_clear_patch()
-                    clear_status = "done" if cleared else "warning"
-                    self._emit_item_status("updates", clear_status, clear_message)
+                    if cleared:
+                        self._emit_item_status("updates", "done", self.i18n.t("repair.patch_cleared"))
+                    else:
+                        self._emit_item_status("updates", "warning", clear_message)
                 except Exception as exc:
                     self._emit_item_status(
-                        "updates", "warning", f"Patch cleanup skipped: {exc}"
+                        "updates", "warning", self.i18n.t("repair.patch_cleanup_skipped", error=exc)
                     )
                 self._emit_item_status(
-                    "updates", "skipped", "Automatic updates disabled by user"
+                    "updates", "skipped", self.i18n.t("repair.updates_disabled")
                 )
 
             self._raise_if_cancelled()
@@ -838,7 +846,7 @@ class InitializationManager(QObject):
             self._raise_if_cancelled()
             self.repair_resources_if_needed(selected_features)
 
-            self._emit_stage(STAGE_VERIFYING, "Verifying resources...")
+            self._emit_stage(STAGE_VERIFYING, self.i18n.t("repair.verifying_resources"))
             if not self.is_ready_for_main_ui(selected_features):
                 raise RuntimeError(
                     "Initialization completed with missing runtime or resources"
@@ -862,9 +870,9 @@ class InitializationManager(QObject):
                 )
             self._save_config(**success_updates)
             final_message = (
-                "Initialization completed"
+                self.i18n.t("repair.init_completed")
                 if mode == "init"
-                else "Environment repair completed"
+                else self.i18n.t("repair.repair_completed")
             )
             self._emit_stage(STAGE_READY, final_message)
             self.finished.emit(
@@ -1045,9 +1053,9 @@ class InitializationManager(QObject):
             self._raise_if_cancelled()
             checker = UpdateChecker()
             checker.check_for_updates()
-            self._emit_item_status("updates", "done", "Update probe finished")
+            self._emit_item_status("updates", "done", self.i18n.t("repair.update_probe_finished"))
         except Exception as exc:
-            self._emit_item_status("updates", "warning", f"Update probe skipped: {exc}")
+            self._emit_item_status("updates", "warning", self.i18n.t("repair.update_probe_skipped", error=exc))
 
     def _resolve_best_sources(self, runtime_variant: str) -> Dict[str, Any]:
         """

@@ -390,17 +390,17 @@ class FilterPanel(QWidget):
             self._count_label.setStyleSheet(
                 f"color: {warning_color}; font-size: 11px; background: transparent;"
             )
-            self._count_label.setText("⚠ 无结果")
+            self._count_label.setText(self.i18n.t("browser.no_result"))
         elif count < 10:
             self._count_label.setStyleSheet(
                 f"color: {warning_color}; font-size: 11px; background: transparent;"
             )
-            self._count_label.setText(f"{count} 张匹配")
+            self._count_label.setText(self.i18n.t("browser.matched_count", count=count))
         else:
             self._count_label.setStyleSheet(
                 f"color: {COLORS['text_muted']}; font-size: 11px; background: transparent;"
             )
-            self._count_label.setText(f"{count} 张匹配")
+            self._count_label.setText(self.i18n.t("browser.matched_count", count=count))
 
     def update_species_list(self, species: list):
         """更新鸟种下拉列表。"""

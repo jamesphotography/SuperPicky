@@ -448,7 +448,7 @@ class BirdIDDockWidget(QDockWidget):
         tabs_layout.addWidget(self.tab_identify)
 
         # 查询鸟名标签（仅在简体中文系统显示）
-        self.tab_search = QPushButton("查询鸟名")
+        self.tab_search = QPushButton(self.i18n.t("birdid.query_birdname_btn"))
         self.tab_search.setCheckable(True)
         self.tab_search.setChecked(False)
         self.tab_search.setStyleSheet(f"""
@@ -2032,7 +2032,7 @@ class BirdIDDockWidget(QDockWidget):
         windll = getattr(ctypes, "windll", None)
         if windll is None:
             self._restore_win_window()
-            self.status_label.setText("当前环境不支持 Windows 截图快捷键")
+            self.status_label.setText(self.i18n.t("birdid.win_shortcut_unsupported"))
             self.status_label.setStyleSheet(f"font-size: 11px; color: {COLORS['error']};")
             return
         keybd = windll.user32.keybd_event

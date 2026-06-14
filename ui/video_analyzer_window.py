@@ -90,13 +90,13 @@ class _VideoDropArea(QFrame):
         icon.setStyleSheet(f"font-size: 24px; color: {COLORS['text_tertiary']}; background: transparent;")
         layout.addWidget(icon)
 
-        hint = QLabel("拖入视频文件 / 文件夹到此处")
+        hint = QLabel(get_i18n().t("video.drop_hint"))
         hint.setStyleSheet(f"color: {COLORS['text_secondary']}; background: transparent;")
         layout.addWidget(hint)
 
         layout.addStretch()
 
-        ext_hint = QLabel("支持 .mp4 / .mov / .m4v")
+        ext_hint = QLabel(get_i18n().t("video.supported_formats"))
         ext_hint.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 11px; background: transparent;")
         layout.addWidget(ext_hint)
 
@@ -140,25 +140,30 @@ def _format_segments_detail(segments) -> str:
     """
     if not segments:
         return "—"
+    # 鸟种名跟随界面语言：英文模式优先 species_en，中文模式优先 species_zh
+    # Species name follows UI language: prefer en in English mode, zh otherwise.
+    i18n = get_i18n()
+    is_en = i18n.current_lang.startswith('en')
     lines = []
     for s in segments:
         time_str = f"{_fmt_mmss(s.start_sec)}-{_fmt_mmss(s.end_sec)}"
         if not s.has_bird:
-            lines.append(f"{time_str}  [无鸟]")
+            lines.append(f"{time_str}  {i18n.t('video.seg_no_bird')}")
             continue
         # 有鸟段：组装鸟种 + 飞行 + 置信度
         parts = [time_str]
-        if s.species_zh:
+        species_name = (s.species_en or s.species_zh) if is_en else (s.species_zh or s.species_en)
+        if species_name:
             emoji = "🦅" if s.is_flying else "🐦"
-            parts.append(f"{emoji} {s.species_zh}")
+            parts.append(f"{emoji} {species_name}")
             if s.species_conf > 0:
                 parts.append(f"{int(round(s.species_conf*100))}%")
         else:
-            parts.append("🐦 有鸟")
+            parts.append(i18n.t('video.seg_has_bird'))
             if s.avg_conf > 0:
                 parts.append(f"{int(round(s.avg_conf*100))}%")
         if s.is_flying is not None:
-            parts.append("飞行" if s.is_flying else "停栖")
+            parts.append(i18n.t('video.seg_flying') if s.is_flying else i18n.t('video.seg_perched'))
         lines.append("  ".join(parts))
     return "\n".join(lines)
 
@@ -180,7 +185,7 @@ def _fmt_duration_short(sec: float) -> str:
     Compact duration label for filename suffix.
     """
     if sec < 60:
-        return f"{int(round(sec))} 秒"
+        return get_i18n().t("video.duration_sec", sec=int(round(sec)))
     m = int(sec) // 60
     s = int(round(sec - m * 60))
     return f"{m}:{s:02d}"
@@ -311,7 +316,7 @@ class VideoAnalyzerWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.i18n = get_i18n()
-        self.setWindowTitle("视频分析（Phase 1 · 仅 YOLO 有鸟/无鸟）")
+        self.setWindowTitle(self.i18n.t("video.title_phase1"))
         self.resize(900, 680)
         self.setStyleSheet(GLOBAL_STYLE)
 
@@ -339,7 +344,7 @@ class VideoAnalyzerWindow(QMainWindow):
         outer.setSpacing(12)
 
         # 标题
-        title = QLabel("🎬 视频鸟类分析")
+        title = QLabel(self.i18n.t("video.heading"))
         title_font = QFont()
         title_font.setPointSize(16)
         title_font.setBold(True)
@@ -347,7 +352,7 @@ class VideoAnalyzerWindow(QMainWindow):
         title.setStyleSheet(f"color: {COLORS['text_primary']};")
         outer.addWidget(title)
 
-        subtitle = QLabel("Phase 1 — 自适应抽帧 + YOLO 有鸟/无鸟检测 + SRT 字幕生成 (macOS)")
+        subtitle = QLabel(self.i18n.t("video.subheading"))
         subtitle.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
         outer.addWidget(subtitle)
 
@@ -358,9 +363,9 @@ class VideoAnalyzerWindow(QMainWindow):
 
         # 按钮行：选择文件 / 选择目录
         btn_row = QHBoxLayout()
-        self.btn_pick_files = QPushButton("选择视频文件…")
+        self.btn_pick_files = QPushButton(self.i18n.t("video.btn_pick_files"))
         self.btn_pick_files.clicked.connect(self._on_pick_files)
-        self.btn_pick_dir = QPushButton("选择文件夹…")
+        self.btn_pick_dir = QPushButton(self.i18n.t("video.btn_pick_folder"))
         self.btn_pick_dir.clicked.connect(self._on_pick_dir)
         btn_row.addWidget(self.btn_pick_files)
         btn_row.addWidget(self.btn_pick_dir)
@@ -377,7 +382,7 @@ class VideoAnalyzerWindow(QMainWindow):
         outer.addWidget(p2_box)
 
         # 进度区
-        self.progress_label = QLabel("就绪")
+        self.progress_label = QLabel(self.i18n.t("video.status_ready"))
         self.progress_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
         outer.addWidget(self.progress_label)
 
@@ -389,18 +394,16 @@ class VideoAnalyzerWindow(QMainWindow):
         # 控制按钮：开始 / 停止 / 应用归类（Phase 3）
         # Control buttons: start / stop / organize (Phase 3)
         ctrl_row = QHBoxLayout()
-        self.btn_start = QPushButton("开始分析")
+        self.btn_start = QPushButton(self.i18n.t("video.btn_start"))
         self.btn_start.clicked.connect(self._on_start)
         self.btn_start.setEnabled(False)
-        self.btn_stop = QPushButton("停止")
+        self.btn_stop = QPushButton(self.i18n.t("video.btn_stop"))
         self.btn_stop.clicked.connect(self._on_stop)
         self.btn_stop.setEnabled(False)
-        self.btn_organize = QPushButton("应用归类（移动 + 重命名 + SRT）")
+        self.btn_organize = QPushButton(self.i18n.t("video.btn_apply_organize"))
         self.btn_organize.clicked.connect(self._on_organize)
         self.btn_organize.setEnabled(False)
-        self.btn_organize.setToolTip(
-            "把分析完成的视频按 主鸟种 + 拍摄日期 重命名，移动到\n"
-            "「原视频目录/{鸟种}/」子目录，同时生成同名 SRT 字幕")
+        self.btn_organize.setToolTip(self.i18n.t("video.organize_tooltip"))
         ctrl_row.addWidget(self.btn_start)
         ctrl_row.addWidget(self.btn_stop)
         ctrl_row.addStretch()
@@ -412,9 +415,14 @@ class VideoAnalyzerWindow(QMainWindow):
         from PySide6.QtWidgets import QHeaderView
         self.result_table = QTableWidget()
         self.result_table.setColumnCount(6)
-        self.result_table.setHorizontalHeaderLabels(
-            ["状态", "文件名", "时间段 (鸟种 / 飞行)", "段数", "抽帧", "耗时"]
-        )
+        self.result_table.setHorizontalHeaderLabels([
+            self.i18n.t("video.col_status"),
+            self.i18n.t("video.col_filename"),
+            self.i18n.t("video.col_segments"),
+            self.i18n.t("video.col_seg_count"),
+            self.i18n.t("video.col_frames"),
+            self.i18n.t("video.col_time"),
+        ])
         self.result_table.setColumnWidth(0, 100)   # 状态列加宽避免 ✅ 完成 换行
         self.result_table.setColumnWidth(1, 260)   # 文件名带时长后稍宽
         self.result_table.setColumnWidth(3, 50)
@@ -431,7 +439,7 @@ class VideoAnalyzerWindow(QMainWindow):
 
         # 状态栏
         self.setStatusBar(QStatusBar())
-        self.statusBar().showMessage("拖入视频或选择文件后点「开始分析」")
+        self.statusBar().showMessage(self.i18n.t("video.statusbar_hint"))
 
         # 队列：待分析文件路径
         self._queue: List[str] = []
@@ -442,7 +450,7 @@ class VideoAnalyzerWindow(QMainWindow):
 
         Phase 2 controls: species ID + flight detection toggles + mode selector.
         """
-        box = QGroupBox("识别选项 (Phase 2)")
+        box = QGroupBox(self.i18n.t("video.options_group"))
         box.setStyleSheet(f"""
             QGroupBox {{
                 color: {COLORS['text_secondary']};
@@ -462,30 +470,27 @@ class VideoAnalyzerWindow(QMainWindow):
         layout.setSpacing(16)
 
         # 鸟种识别开关
-        self.species_check = QCheckBox("启用鸟种识别")
+        self.species_check = QCheckBox(self.i18n.t("video.enable_birdid"))
         self.species_check.setChecked(True)
         self.species_check.toggled.connect(self._on_species_toggled)
         layout.addWidget(self.species_check)
 
         # 识别模式下拉（默认极速 — 大多数视频是单一鸟种，跑一帧足够）
         # Mode combo (default 'instant' — most clips have one species, one frame suffices)
-        layout.addWidget(QLabel("识别模式:"))
+        layout.addWidget(QLabel(self.i18n.t("video.mode_label")))
         self.species_mode_combo = QComboBox()
-        self.species_mode_combo.addItem("极速（识别到即停）", "instant")
-        self.species_mode_combo.addItem("标准（每段一帧，含时间轴）", "fast")
-        self.species_mode_combo.addItem("完整（多帧加权投票）", "full")
+        self.species_mode_combo.addItem(self.i18n.t("video.mode_fast"), "instant")
+        self.species_mode_combo.addItem(self.i18n.t("video.mode_standard"), "fast")
+        self.species_mode_combo.addItem(self.i18n.t("video.mode_full"), "full")
         self.species_mode_combo.setCurrentIndex(0)
         self.species_mode_combo.setFixedWidth(220)
-        self.species_mode_combo.setToolTip(
-            "极速：找到第一只鸟即停，无时间轴信息（最快）\n"
-            "标准：扫完抽帧得到时间轴，每段最佳帧识别\n"
-            "完整：每段所有帧加权投票（最准，最慢）")
+        self.species_mode_combo.setToolTip(self.i18n.t("video.mode_tooltip"))
         layout.addWidget(self.species_mode_combo)
 
         layout.addSpacing(16)
 
         # 飞行检测开关
-        self.flight_check = QCheckBox("启用飞行检测")
+        self.flight_check = QCheckBox(self.i18n.t("video.enable_flight"))
         self.flight_check.setChecked(True)
         layout.addWidget(self.flight_check)
 
@@ -493,11 +498,9 @@ class VideoAnalyzerWindow(QMainWindow):
 
         # Phase 3: 分析完成后自动整理（默认勾选）
         # Phase 3: auto-organize after analysis (default ON)
-        self.auto_organize_check = QCheckBox("分析完成后自动整理")
+        self.auto_organize_check = QCheckBox(self.i18n.t("video.auto_organize_check"))
         self.auto_organize_check.setChecked(True)
-        self.auto_organize_check.setToolTip(
-            "勾选后：分析完成会自动按鸟种重命名 + 移动 + 写 SRT\n"
-            "取消勾选：需要手动点「应用归类」按钮")
+        self.auto_organize_check.setToolTip(self.i18n.t("video.auto_organize_tooltip"))
         layout.addWidget(self.auto_organize_check)
 
         layout.addStretch()
@@ -512,19 +515,19 @@ class VideoAnalyzerWindow(QMainWindow):
         row = QHBoxLayout()
 
         # 抽帧上限
-        row.addWidget(QLabel("抽帧上限:"))
+        row.addWidget(QLabel(self.i18n.t("video.max_frames_label")))
         self.max_frames_spin = QSpinBox()
         self.max_frames_spin.setRange(30, 240)
         self.max_frames_spin.setSingleStep(10)
         self.max_frames_spin.setValue(60)
-        self.max_frames_spin.setSuffix(" 帧")
+        self.max_frames_spin.setSuffix(self.i18n.t("video.frames_suffix"))
         self.max_frames_spin.setFixedWidth(110)
         row.addWidget(self.max_frames_spin)
 
         row.addSpacing(20)
 
         # YOLO 置信度阈值
-        row.addWidget(QLabel("置信度阈值:"))
+        row.addWidget(QLabel(self.i18n.t("video.conf_threshold_label")))
         self.conf_slider = QSlider(Qt.Orientation.Horizontal)
         self.conf_slider.setRange(30, 90)
         self.conf_slider.setValue(50)
@@ -547,15 +550,15 @@ class VideoAnalyzerWindow(QMainWindow):
 
     def _on_pick_files(self):
         files, _ = QFileDialog.getOpenFileNames(
-            self, "选择视频文件", "",
-            f"视频文件 ({' '.join('*' + e for e in VIDEO_EXTENSIONS_ALL)})"
+            self, self.i18n.t("video.dlg_pick_files"), "",
+            self.i18n.t("video.dlg_filter", exts=' '.join('*' + e for e in VIDEO_EXTENSIONS_ALL))
         )
         if files:
             self._queue = list(files)
             self._refresh_queue_status()
 
     def _on_pick_dir(self):
-        directory = QFileDialog.getExistingDirectory(self, "选择视频文件夹")
+        directory = QFileDialog.getExistingDirectory(self, self.i18n.t("video.dlg_pick_dir"))
         if not directory:
             return
         videos = sorted(
@@ -563,7 +566,7 @@ class VideoAnalyzerWindow(QMainWindow):
             if os.path.isfile(os.path.join(directory, f)) and _is_video(f)
         )
         if not videos:
-            QMessageBox.information(self, "提示", f"目录中未找到支持的视频文件\n{directory}")
+            QMessageBox.information(self, self.i18n.t("video.tip_title"), self.i18n.t("video.no_video_found", directory=directory))
             return
         self._queue = videos
         self._refresh_queue_status()
@@ -587,7 +590,7 @@ class VideoAnalyzerWindow(QMainWindow):
             row = self.result_table.rowCount()
             self.result_table.insertRow(row)
             self._row_by_path[path] = row
-            self.result_table.setItem(row, 0, QTableWidgetItem("⏳ 等待"))
+            self.result_table.setItem(row, 0, QTableWidgetItem(self.i18n.t("video.status_waiting")))
             # 文件名列附加视频时长（轻量 header 探测，每个视频 ~10-20ms）
             # Filename column shows duration probed from the header (~10-20ms per video).
             base = os.path.basename(path)
@@ -601,8 +604,8 @@ class VideoAnalyzerWindow(QMainWindow):
             self.result_table.setItem(row, 3, QTableWidgetItem(""))
             self.result_table.setItem(row, 4, QTableWidgetItem(""))
             self.result_table.setItem(row, 5, QTableWidgetItem(""))
-        self.statusBar().showMessage(f"已添加 {n} 个视频，点「开始分析」开始")
-        self.progress_label.setText(f"待处理：{n} 个视频")
+        self.statusBar().showMessage(self.i18n.t("video.added_videos", count=n))
+        self.progress_label.setText(self.i18n.t("video.pending_videos", count=n))
 
     # ── 分析控制 / Analysis control ───────────────────────────────────
 
@@ -633,9 +636,9 @@ class VideoAnalyzerWindow(QMainWindow):
             enable_flight=self.flight_check.isChecked(),
         )
         self._worker.model_loading.connect(
-            lambda: self.progress_label.setText("正在加载 YOLO 模型…"))
+            lambda: self.progress_label.setText(self.i18n.t("video.loading_yolo")))
         self._worker.model_loaded.connect(
-            lambda: self.progress_label.setText("模型已加载，开始分析"))
+            lambda: self.progress_label.setText(self.i18n.t("video.model_loaded")))
         self._worker.file_started.connect(self._on_file_started)
         self._worker.file_progress.connect(self._on_file_progress)
         self._worker.file_done.connect(self._on_file_done)
@@ -646,18 +649,18 @@ class VideoAnalyzerWindow(QMainWindow):
     def _on_stop(self):
         if self._worker:
             self._worker.request_stop()
-            self.progress_label.setText("正在停止…")
+            self.progress_label.setText(self.i18n.t("video.stopping"))
             self.btn_stop.setEnabled(False)
 
     def _on_file_started(self, name: str, idx: int, total: int):
-        self.progress_label.setText(f"[{idx}/{total}] 分析中：{name}")
+        self.progress_label.setText(self.i18n.t("video.analyzing", idx=idx, total=total, name=name))
         self.progress_bar.setRange(0, 0)  # 不定进度（每文件首次重置为忙）
         # 找到对应行并把状态改为 🔄 处理中
         # Find the row for this file and update status to 🔄
         # 用 idx-1 即可（idx 是 1-based，按队列顺序）
         row = idx - 1
         if 0 <= row < self.result_table.rowCount():
-            self.result_table.setItem(row, 0, QTableWidgetItem("🔄 处理中"))
+            self.result_table.setItem(row, 0, QTableWidgetItem(self.i18n.t("video.status_processing")))
 
     def _on_file_progress(self, done: int, total: int):
         if total > 0:
@@ -674,7 +677,7 @@ class VideoAnalyzerWindow(QMainWindow):
         row = self._row_by_path.get(result.video_path)
         if row is None or row >= self.result_table.rowCount():
             return
-        self.result_table.setItem(row, 0, QTableWidgetItem("✅ 完成"))
+        self.result_table.setItem(row, 0, QTableWidgetItem(self.i18n.t("video.status_done")))
         # 列 1 文件名已存在，不动 / Column 1 (filename) already set
         self.result_table.setItem(row, 2, QTableWidgetItem(
             _format_segments_detail(result.segments)))
@@ -698,21 +701,20 @@ class VideoAnalyzerWindow(QMainWindow):
         n = len(self._results)
         total_ms = sum(r.total_wall_ms for r in self._results)
         self.progress_label.setText(
-            f"完成：处理 {n} 个视频，总耗时 {total_ms/1000:.1f}s")
+            self.i18n.t("video.done_summary", count=n, seconds=f"{total_ms/1000:.1f}"))
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(100)
 
         # Phase 3: 自动整理（如勾选）—— 跳过确认弹窗
         # Phase 3: auto-organize if checkbox is on, bypassing confirmation
         if has_results and self.auto_organize_check.isChecked():
-            self.statusBar().showMessage("分析完成，自动整理中…")
+            self.statusBar().showMessage(self.i18n.t("video.auto_organizing"))
             self._do_organize(skip_confirm=True)
         else:
-            self.statusBar().showMessage(
-                "分析完成。点「应用归类」可把视频按鸟种重命名移动 + 生成 SRT")
+            self.statusBar().showMessage(self.i18n.t("video.done_hint"))
 
     def _on_error(self, msg: str):
-        self.statusBar().showMessage(f"⚠️ 错误: {msg}")
+        self.statusBar().showMessage(self.i18n.t("video.error_status", error=msg))
 
     # ── Phase 3: 应用归类（移动 + 重命名 + SRT）/ Organize ─────────────────
 
@@ -740,31 +742,38 @@ class VideoAnalyzerWindow(QMainWindow):
         n = len(self._results)
         if not skip_confirm:
             confirm = QMessageBox.question(
-                self, "确认应用归类",
-                f"将整理 {n} 个视频到原视频目录下的子目录：\n"
-                f"  • 有鸟种 → 「{{鸟种}}/」\n"
-                f"  • 有鸟无种类 → 「其他鸟/」\n"
-                f"  • 完全无鸟 → 「无鸟/」\n"
-                f"  • 重命名为「{{鸟种}}_{{拍摄日期}}_{{原文件名}}」\n"
-                f"  • 同时生成 SRT 字幕（同目录同名）\n\n"
-                f"原视频会被移动（不是复制），此操作不可撤销。\n确认继续吗？",
+                self, self.i18n.t("video.confirm_organize_title"),
+                self.i18n.t("video.organize_confirm_body", count=n),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
             )
             if confirm != QMessageBox.StandardButton.Yes:
                 return
 
-        from tools.video_organizer import VideoOrganizer, OrganizeOptions
-        organizer = VideoOrganizer(options=OrganizeOptions(operation='move'))
+        from tools.video_organizer import (
+            VideoOrganizer, OrganizeOptions, record_organized_results,
+        )
+        # 落地命名 + SRT 文案跟随界面语言 / Folder & SRT labels follow UI language
+        use_en = self.i18n.current_lang.startswith('en')
+        organizer = VideoOrganizer(options=OrganizeOptions(
+            operation='move',
+            use_english=use_en,
+            no_bird_folder=self.i18n.t("video.folder_no_bird"),
+            other_species_folder=self.i18n.t("video.folder_other_species"),
+            flying_label=self.i18n.t("video.seg_flying"),
+            perched_label=self.i18n.t("video.seg_perched"),
+        ))
 
         succeeded = 0
         failed_msgs = []
+        org_results = []  # 收集用于写「归类清单」（供复原）/ collect for the manifest
         for r in self._results:
             org_result = organizer.organize(r.video_path, r.segments)
+            org_results.append(org_result)
             row = self._row_by_path.get(r.video_path)
             if org_result.success:
                 succeeded += 1
                 if row is not None:
-                    self.result_table.setItem(row, 0, QTableWidgetItem("📁 已归类"))
+                    self.result_table.setItem(row, 0, QTableWidgetItem(self.i18n.t("video.status_organized")))
                     new_name = os.path.basename(org_result.target_video_path or '')
                     if new_name:
                         self.result_table.setItem(row, 1, QTableWidgetItem(new_name))
@@ -772,31 +781,38 @@ class VideoAnalyzerWindow(QMainWindow):
                     failed_msgs.append(f"{os.path.basename(r.video_path)}: {org_result.error}")
             else:
                 if row is not None:
-                    self.result_table.setItem(row, 0, QTableWidgetItem("⚠️ 失败"))
+                    self.result_table.setItem(row, 0, QTableWidgetItem(self.i18n.t("video.status_failed")))
                 failed_msgs.append(f"{os.path.basename(r.video_path)}: {org_result.error}")
+
+        # 写「归类清单」，供主界面「重置」精确复原（仅 move 模式）
+        # Persist the organize manifest so the main-window reset can undo it (move only).
+        try:
+            record_organized_results(org_results)
+        except Exception:
+            pass
 
         # 结果总结：自动模式只更新状态栏，避免打扰；手动模式弹对话框
         # Summary: auto-mode quiet status update; manual mode shows dialog.
         if skip_confirm:
-            self.statusBar().showMessage(
-                f"✅ 自动归类完成：{succeeded}/{n} 成功"
-                + (f"（{len(failed_msgs)} 个警告）" if failed_msgs else ""))
+            msg = self.i18n.t("video.auto_organize_done", succeeded=succeeded, total=n)
+            if failed_msgs:
+                msg += self.i18n.t("video.warnings_suffix", count=len(failed_msgs))
+            self.statusBar().showMessage(msg)
         elif failed_msgs:
+            details = "\n".join(failed_msgs[:10]) + ("\n…" if len(failed_msgs) > 10 else "")
             QMessageBox.warning(
-                self, "归类完成（有警告）",
-                f"成功 {succeeded} / {n}，失败/警告 {len(failed_msgs)} 个：\n\n"
-                + "\n".join(failed_msgs[:10])
-                + ("\n…" if len(failed_msgs) > 10 else "")
+                self, self.i18n.t("video.organize_done_warning_title"),
+                self.i18n.t("video.organize_warn_body",
+                            succeeded=succeeded, total=n, count=len(failed_msgs), details=details)
             )
         else:
             QMessageBox.information(
-                self, "归类完成",
-                f"已整理 {succeeded} 个视频，全部成功。\n"
-                f"输出位置：「原视频目录/{{鸟种}}/」（含 SRT 字幕）"
+                self, self.i18n.t("video.organize_done_title"),
+                self.i18n.t("video.organize_success_body", count=succeeded)
             )
         self.btn_organize.setEnabled(False)
         if not skip_confirm:
-            self.statusBar().showMessage(f"归类完成：{succeeded}/{n} 成功")
+            self.statusBar().showMessage(self.i18n.t("video.organize_final_status", succeeded=succeeded, total=n))
 
     # ── 关闭处理 / Close handler ──────────────────────────────────────
 
@@ -822,8 +838,8 @@ class VideoAnalyzerWindow(QMainWindow):
     def closeEvent(self, event):
         if self._worker and self._worker.isRunning():
             reply = QMessageBox.question(
-                self, "确认关闭",
-                "分析正在进行，确定关闭？已处理的视频结果将丢失。",
+                self, self.i18n.t("video.close_confirm_title"),
+                self.i18n.t("video.close_confirm_text"),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
             )
             if reply != QMessageBox.StandardButton.Yes:

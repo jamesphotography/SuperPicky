@@ -242,25 +242,40 @@ def reset(directory, log_callback=None, i18n=None):
         if os.path.exists(path) and os.path.isfile(path):
             try:
                 os.remove(path)
-                log(f"  ✅ 已删除: {name}")
+                if i18n:
+                    log(i18n.t("logs.file_deleted", name=name))
+                else:
+                    log(f"  ✅ 已删除: {name}")
             except Exception as e:
-                log(f"  ❌ 删除失败 {name}: {e}")
+                if i18n:
+                    log(i18n.t("logs.delete_failed", filename=name, error=e))
+                else:
+                    log(f"  ❌ 删除失败 {name}: {e}")
 
     # 1.3 清理临时JPEG文件（tmp_*.jpg，如果有遗留在根目录的）
     tmp_jpg_pattern = os.path.join(directory, "tmp_*.jpg")
     tmp_jpg_files = glob.glob(tmp_jpg_pattern)
     tmp_jpg_files = [f for f in tmp_jpg_files if not os.path.basename(f).startswith('.')]
     if tmp_jpg_files:
-        log(f"  发现 {len(tmp_jpg_files)} 个临时JPEG文件（tmp_*.jpg），正在删除...")
+        if i18n:
+            log(i18n.t("logs.tmp_jpeg_found", count=len(tmp_jpg_files)))
+        else:
+            log(f"  发现 {len(tmp_jpg_files)} 个临时JPEG文件（tmp_*.jpg），正在删除...")
         deleted_tmp = 0
         for tmp_file in tmp_jpg_files:
             try:
                 os.remove(tmp_file)
                 deleted_tmp += 1
             except Exception as e:
-                log(f"  ❌ 删除失败 {os.path.basename(tmp_file)}: {e}")
+                if i18n:
+                    log(i18n.t("logs.delete_failed", filename=os.path.basename(tmp_file), error=e))
+                else:
+                    log(f"  ❌ 删除失败 {os.path.basename(tmp_file)}: {e}")
         if deleted_tmp > 0:
-            log(f"  ✅ 临时JPEG删除完成: {deleted_tmp} 成功")
+            if i18n:
+                log(i18n.t("logs.tmp_jpeg_done", count=deleted_tmp))
+            else:
+                log(f"  ✅ 临时JPEG删除完成: {deleted_tmp} 成功")
 
     # 2. 删除所有XMP侧车文件（Lightroom会优先读取XMP）
     if i18n:
@@ -282,7 +297,10 @@ def reset(directory, log_callback=None, i18n=None):
                 os.remove(xmp_file)
                 deleted_xmp += 1
             except Exception as e:
-                log(f"  ❌ 删除失败 {os.path.basename(xmp_file)}: {e}")
+                if i18n:
+                    log(i18n.t("logs.delete_failed", filename=os.path.basename(xmp_file), error=e))
+                else:
+                    log(f"  ❌ 删除失败 {os.path.basename(xmp_file)}: {e}")
         if i18n:
             log(i18n.t("logs.xmp_deleted", count=deleted_xmp))
         else:

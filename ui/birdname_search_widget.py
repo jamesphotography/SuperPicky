@@ -262,7 +262,7 @@ class BirdNameSearchWidget(QWidget):
         title_row = QHBoxLayout()
         title_row.setSpacing(6)
 
-        title_label = QLabel("🔍 查询鸟名")
+        title_label = QLabel(self.i18n.t("birdname_search.title"))
         title_label.setFixedHeight(28)
         title_label.setStyleSheet(f"""
             color: {COLORS['text_primary']};
@@ -272,7 +272,7 @@ class BirdNameSearchWidget(QWidget):
         title_row.addWidget(title_label)
         title_row.addStretch()
 
-        version_label = QLabel("请选择版本:")
+        version_label = QLabel(self.i18n.t("birdname_search.select_version"))
         version_label.setFixedHeight(28)
         version_label.setStyleSheet(
             f"color: {COLORS['text_secondary']}; font-size: 10px;"
@@ -319,7 +319,7 @@ class BirdNameSearchWidget(QWidget):
 
         self.search_input = QLineEdit()
         self.search_input.setFixedHeight(32)
-        self.search_input.setPlaceholderText("输入中文/英文/拼音/缩写")
+        self.search_input.setPlaceholderText(self.i18n.t("birdname_search.placeholder"))
         self.search_input.setStyleSheet(f"""
             QLineEdit {{
                 background-color: {COLORS['bg_input']};
@@ -336,7 +336,7 @@ class BirdNameSearchWidget(QWidget):
 
         self.clear_btn = QPushButton("✕")
         self.clear_btn.setFixedSize(32, 32)
-        self.clear_btn.setToolTip("清空搜索")
+        self.clear_btn.setToolTip(self.i18n.t("birdname_search.clear_tooltip"))
         self.clear_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: {COLORS['bg_card']};
@@ -375,7 +375,7 @@ class BirdNameSearchWidget(QWidget):
         results_area_layout.setContentsMargins(6, 6, 6, 6)
         results_area_layout.setSpacing(0)
 
-        self.empty_label = QLabel("请在上方输入关键词搜索")
+        self.empty_label = QLabel(self.i18n.t("birdname_search.prompt_enter"))
         self.empty_label.setAlignment(Qt.AlignCenter)
         self.empty_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.empty_label.setStyleSheet(f"""
@@ -477,12 +477,12 @@ class BirdNameSearchWidget(QWidget):
         v.addWidget(self.detail_header)
 
         # 罕见度行
-        self.detail_rarity_label = self._make_detail_row(v, "罕见度")
+        self.detail_rarity_label = self._make_detail_row(v, self.i18n.t("birdname_search.rarity"))
         # IUCN 行
         self.detail_iucn_label = self._make_detail_row(v, "IUCN")
 
         # 简介标题
-        intro_caption = QLabel("简介")
+        intro_caption = QLabel(self.i18n.t("birdname_search.intro"))
         intro_caption.setStyleSheet(
             f"color: {COLORS['text_tertiary']}; font-size: 10px; "
             f"font-weight: 600; background: transparent; border: none;"
@@ -545,7 +545,7 @@ class BirdNameSearchWidget(QWidget):
     def _load_versions(self):
         """加载版本列表，并还原上次选择的版本"""
         if not os.path.exists(self.db_path):
-            self.version_combo.addItem("暂无数据")
+            self.version_combo.addItem(self.i18n.t("birdname_search.no_data"))
             self.version_combo.setEnabled(False)
             return
         try:
@@ -560,7 +560,7 @@ class BirdNameSearchWidget(QWidget):
             conn.close()
 
             if not versions:
-                self.version_combo.addItem("暂无数据")
+                self.version_combo.addItem(self.i18n.t("birdname_search.no_data"))
                 self.version_combo.setEnabled(False)
                 return
 
@@ -581,7 +581,7 @@ class BirdNameSearchWidget(QWidget):
                 self.current_version_id = versions[0][0]
 
         except Exception:
-            self.version_combo.addItem("加载失败")
+            self.version_combo.addItem(self.i18n.t("birdname_search.load_failed"))
             self.version_combo.setEnabled(False)
         finally:
             self._loading_versions = False
@@ -671,7 +671,7 @@ class BirdNameSearchWidget(QWidget):
     def _display_results(self, results: List):
         self._clear_results()
         if not results:
-            self.empty_label.setText("未找到匹配结果")
+            self.empty_label.setText(self.i18n.t("birdname_search.no_match"))
             self.empty_label.show()
             self.results_scroll.hide()
             self.stats_label.hide()
@@ -714,7 +714,7 @@ class BirdNameSearchWidget(QWidget):
             self.results_layout.addWidget(card)
             self._cards.append(card)
 
-        self.stats_label.setText(f"找到 {len(results)} 个结果")
+        self.stats_label.setText(self.i18n.t("birdname_search.found_n", count=len(results)))
         self.stats_label.show()
 
     def _on_card_selected(self, bird_data: Dict):
@@ -800,7 +800,7 @@ class BirdNameSearchWidget(QWidget):
         if hasattr(self, "detail_frame"):
             self.detail_frame.hide()
         self.results_scroll.hide()
-        self.empty_label.setText("请在上方输入关键词搜索")
+        self.empty_label.setText(self.i18n.t("birdname_search.prompt_enter"))
         self.empty_label.show()
         self.stats_label.hide()
 

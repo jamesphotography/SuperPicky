@@ -110,8 +110,11 @@ class VideoBatchEngine:
         Process a batch of videos. Returns aggregate stats.
         """
         import time
-        from tools.video_organizer import VideoOrganizer, OrganizeOptions
+        from tools.video_organizer import (
+            VideoOrganizer, OrganizeOptions, record_organized_results,
+        )
         from core.video_analyzer import VideoAnalyzer
+        from tools.i18n import get_i18n
 
         stats = VideoBatchStats(total=len(video_paths))
         if not video_paths:
@@ -138,7 +141,18 @@ class VideoBatchEngine:
             flight_classifier=self._flight_clf,
             species_mode=self.species_mode,
         )
-        organizer = VideoOrganizer(options=OrganizeOptions(operation='move'))
+        # 落地命名 + SRT 文案跟随界面语言 / Folder & SRT labels follow UI language
+        _i18n = get_i18n()
+        _use_en = _i18n.current_lang.startswith('en')
+        organizer = VideoOrganizer(options=OrganizeOptions(
+            operation='move',
+            use_english=_use_en,
+            no_bird_folder=_i18n.t("video.folder_no_bird"),
+            other_species_folder=_i18n.t("video.folder_other_species"),
+            flying_label=_i18n.t("video.seg_flying"),
+            perched_label=_i18n.t("video.seg_perched"),
+        ))
+        org_results = []  # 收集用于写「归类清单」（供复原）/ collect for the manifest
 
         # 3. 逐个视频处理 / Process videos one by one
         batch_start = time.perf_counter()
@@ -172,6 +186,7 @@ class VideoBatchEngine:
             # 3b. 整理 / Organize
             try:
                 org_result = organizer.organize(path, result.segments)
+                org_results.append(org_result)
             except Exception as e:
                 self._log(log_cb, f"    ❌ 归类失败: {e}", "error")
                 stats.failed += 1
@@ -196,6 +211,12 @@ class VideoBatchEngine:
                 self._log(log_cb, f"    ❌ 整理失败: {org_result.error}", "error")
 
         stats.total_wall_ms = (time.perf_counter() - batch_start) * 1000.0
+
+        # 写「归类清单」，供主界面「重置」精确复原 / persist manifest for reset-undo
+        try:
+            record_organized_results(org_results)
+        except Exception:
+            pass
 
         # 4. 汇总日志 / Summary log
         self._log_summary(log_cb, stats)

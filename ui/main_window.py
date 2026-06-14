@@ -831,8 +831,8 @@ class SuperPickyMainWindow(QMainWindow):
 
         # ── V4.3 Phase 1: 视频分析菜单 ─────────────────────────
         # Standalone video analysis window (YOLO bird/no-bird, macOS only).
-        video_menu = menubar.addMenu("视频")
-        video_analyze_action = QAction("视频分析…", self)
+        video_menu = menubar.addMenu(self.i18n.t("menu.video_menu"))
+        video_analyze_action = QAction(self.i18n.t("menu.video_analysis"), self)
         video_analyze_action.triggered.connect(self._open_video_analyzer)
         video_menu.addAction(video_analyze_action)
         self._video_analyzer_window = None  # 懒加载 / lazy-loaded singleton
@@ -1715,10 +1715,10 @@ class SuperPickyMainWindow(QMainWindow):
                 return
             resume_reply = StyledMessageBox.question(
                 self,
-                "检测到未完成任务",
-                "这个目录存在未完成的处理记录。选择“继续处理”会从上次中断的位置继续；选择“重新开始”会先恢复目录，再重新处理。",
-                yes_text="继续处理",
-                no_text="重新开始"
+                self.i18n.t("dialogs.unfinished_title"),
+                self.i18n.t("dialogs.unfinished_body"),
+                yes_text=self.i18n.t("dialogs.continue_btn"),
+                no_text=self.i18n.t("dialogs.restart_btn")
             )
             if resume_reply == StyledMessageBox.Yes:
                 self._start_processing()
@@ -2077,10 +2077,10 @@ class SuperPickyMainWindow(QMainWindow):
             elif resume_state.exists():
                 resume_reply = StyledMessageBox.question(
                     self,
-                    "检测到未完成任务",
-                    "这个目录存在未完成的处理记录。选择“继续处理”会从上次中断的位置继续；选择“重新开始”会先恢复目录，再重新处理。",
-                    yes_text="继续处理",
-                    no_text="重新开始"
+                    self.i18n.t("dialogs.unfinished_title"),
+                    self.i18n.t("dialogs.unfinished_body"),
+                    yes_text=self.i18n.t("dialogs.continue_btn"),
+                    no_text=self.i18n.t("dialogs.restart_btn")
                 )
                 if resume_reply == StyledMessageBox.Yes:
                     resume_processing = True
@@ -2330,6 +2330,31 @@ class SuperPickyMainWindow(QMainWindow):
                 import shutil
 
                 exiftool_mgr = get_exiftool_manager()
+
+                # V4.3.0: 先复原视频归类（按「归类清单」把视频移回原位、删 SRT、清空子目录）。
+                # 视频鸟种子目录不是照片评分目录，照片端 reset 不认识，需独立复原。
+                # V4.3.0: Restore video organization first (manifest-driven undo): move videos
+                # back, delete SRTs, prune empty species folders. Video species folders are not
+                # photo rating folders, so the photo reset below won't touch them.
+                try:
+                    from tools.video_organizer import (
+                        restore_organized_videos, VIDEO_MANIFEST_NAME,
+                    )
+                    vid_total = {'restored': 0, 'dirs_removed': 0, 'manifests': 0}
+                    for _root, _dirs, _files in os.walk(directory_path):
+                        _dirs[:] = [d for d in _dirs if not d.startswith('.')]
+                        if VIDEO_MANIFEST_NAME in _files:
+                            vstats = restore_organized_videos(_root, log=emit_log)
+                            if vstats.get('manifest'):
+                                vid_total['manifests'] += 1
+                                vid_total['restored'] += vstats.get('restored', 0)
+                                vid_total['dirs_removed'] += vstats.get('dirs_removed', 0)
+                    if vid_total['manifests']:
+                        emit_log(i18n.t("logs.video_restore_done",
+                                        restored=vid_total['restored'],
+                                        dirs=vid_total['dirs_removed']))
+                except Exception as _ve:
+                    emit_log(i18n.t("logs.video_restore_failed", error=_ve))
 
                 # Batch mode: reset processed subdirectories first (deepest first)
                 from core.recursive_scanner import is_processed
@@ -2621,17 +2646,10 @@ class SuperPickyMainWindow(QMainWindow):
             return
 
         # 弹一次性提示 / Show one-time dialog
-        msg = (
-            f"📹 检测到目录中有 {total_videos} 个视频文件。\n\n"
-            f"SuperPicky 现已支持视频鸟类分析 + 自动归类。\n"
-            f"分析完成后会按鸟种分目录（与照片共享同一鸟种目录），\n"
-            f"同时生成 SRT 字幕。\n\n"
-            f"是否启用视频处理？\n"
-            f"（之后可在「参数设置」中切换）"
-        )
+        msg = self.i18n.t("dialogs.video_first_tip_body", count=total_videos)
         reply = StyledMessageBox.question(
-            self, "视频处理 — 首次提示", msg,
-            yes_text="启用", no_text="暂不启用"
+            self, self.i18n.t("dialogs.video_first_tip_title"), msg,
+            yes_text=self.i18n.t("dialogs.enable_btn"), no_text=self.i18n.t("dialogs.skip_btn")
         )
         # 不论用户怎么选，都标记已提示
         # Mark as prompted regardless of choice

@@ -329,7 +329,11 @@ def _absorb(host: BirdSegment, guest: BirdSegment) -> BirdSegment:
 
 def write_srt(segments: List[BirdSegment], output_path: str | Path,
               bird_label: str = "🐦 检测到鸟类",
-              no_bird_label: str = "[无鸟]") -> None:
+              no_bird_label: str = "[无鸟]",
+              *,
+              use_english: bool = False,
+              flying_label: str = "飞行中",
+              perched_label: str = "停栖") -> None:
     """
     把时间段列表写成 SRT 字幕文件
 
@@ -361,7 +365,12 @@ def write_srt(segments: List[BirdSegment], output_path: str | Path,
         lines.append(str(idx))
         lines.append(f"{_format_srt_time(seg.start_sec)} --> {_format_srt_time(seg.end_sec)}")
         if seg.has_bird:
-            lines.append(_format_bird_segment_caption(seg, bird_label))
+            lines.append(_format_bird_segment_caption(
+                seg, bird_label,
+                use_english=use_english,
+                flying_label=flying_label,
+                perched_label=perched_label,
+            ))
         else:
             lines.append(no_bird_label)
         lines.append("")  # 空行分隔
@@ -370,37 +379,47 @@ def write_srt(segments: List[BirdSegment], output_path: str | Path,
     out_path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def _format_bird_segment_caption(seg: BirdSegment, fallback_label: str) -> str:
+def _format_bird_segment_caption(seg: BirdSegment, fallback_label: str,
+                                 *,
+                                 use_english: bool = False,
+                                 flying_label: str = "飞行中",
+                                 perched_label: str = "停栖") -> str:
     """
-    根据 BirdSegment 已填充的字段组装有鸟段字幕
+    根据 BirdSegment 已填充的字段组装有鸟段字幕（跟随界面语言）
 
     优先级：
-        1. 有鸟种识别 → 用鸟种中文 + 英文
+        1. 有鸟种识别 → 用单一语言的鸟种名（英文模式优先 species_en，否则 species_zh）
         2. 无鸟种识别 → 使用 fallback_label
-        额外：is_flying 不为 None → 追加「飞行中 / 停栖」
+        额外：is_flying 不为 None → 追加飞行/停栖标签（由调用方按 locale 传入）
         始终：追加置信度（鸟种 conf > 0 用鸟种，否则用 YOLO conf）
 
+    参数:
+        use_english (bool): True 时鸟种名优先英文，飞行标签用英文
+        flying_label (str): 飞行状态文案（由调用方按 locale 传入）
+        perched_label (str): 停栖状态文案（由调用方按 locale 传入）
+
     Compose caption for a bird segment based on available Phase 2 fields.
-    Falls back gracefully to Phase 1 format when species/flight unset.
+    Species name and flight labels follow the UI language passed in by the caller,
+    keeping this module free of any i18n dependency (fully param-driven/testable).
     """
     parts: List[str] = []
 
-    # —— 鸟种部分 / Species part
+    # —— 鸟种部分（单一语言，跟随界面语言）/ Species part (single language, follows UI)
     if seg.species_zh or seg.species_en:
         # 飞行段用 🦅，停栖段用 🐦 / Flying = eagle emoji, perched = bird emoji
         emoji = "🦅" if seg.is_flying else "🐦"
         zh = seg.species_zh or ""
         en = seg.species_en or ""
-        if zh and en:
-            parts.append(f"{emoji} {zh} ({en})")
-        else:
-            parts.append(f"{emoji} {zh or en}")
+        # 英文模式优先英文名，缺失则回退中文；中文模式反之
+        # English mode prefers en (falls back to zh); zh mode is the reverse.
+        name = (en or zh) if use_english else (zh or en)
+        parts.append(f"{emoji} {name}")
     else:
         parts.append(fallback_label)
 
     # —— 飞行状态 / Flight state
     if seg.is_flying is not None:
-        parts.append("飞行中" if seg.is_flying else "停栖")
+        parts.append(flying_label if seg.is_flying else perched_label)
 
     # —— 置信度 / Confidence
     # 优先用鸟种置信度（更具体），否则用 YOLO 平均置信度

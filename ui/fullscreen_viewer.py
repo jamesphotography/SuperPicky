@@ -782,9 +782,9 @@ class FullscreenViewer(QWidget):
         self._update_focus_btn_style(True)
 
         # 功能2：锁定缩放按钮
-        self._lock_zoom_btn = QPushButton("🔓 锁定缩放")
+        self._lock_zoom_btn = QPushButton(self.i18n.t("fullscreen.lock_zoom_off"))
         self._lock_zoom_btn.setFixedHeight(36)
-        self._lock_zoom_btn.setToolTip("开启后翻页时保持当前缩放比例，并以鼠标位置为中心")
+        self._lock_zoom_btn.setToolTip(self.i18n.t("fullscreen.keep_zoom_tooltip"))
         self._lock_zoom_btn.clicked.connect(self._toggle_zoom_lock)
         self._update_lock_zoom_btn_style(False)
         h.addWidget(self._lock_zoom_btn)
@@ -823,9 +823,9 @@ class FullscreenViewer(QWidget):
         h.addWidget(self._rating_label)
 
         # 功能1：删除按钮（红色危险样式）
-        self._delete_btn = QPushButton("🗑 删除")
+        self._delete_btn = QPushButton(self.i18n.t("fullscreen.delete_btn"))
         self._delete_btn.setFixedHeight(36)
-        self._delete_btn.setToolTip("删除当前图片（移入回收站）")
+        self._delete_btn.setToolTip(self.i18n.t("fullscreen.delete_tooltip"))
         self._delete_btn.setStyleSheet(
             f"QPushButton {{ background-color: #3a1a1a;"
             f" border: 1px solid #cc3333;"
@@ -918,7 +918,7 @@ class FullscreenViewer(QWidget):
 
     def _update_lock_zoom_btn_style(self, locked: bool):
         if locked:
-            self._lock_zoom_btn.setText("🔒 锁定缩放")
+            self._lock_zoom_btn.setText(self.i18n.t("fullscreen.lock_zoom_on"))
             self._lock_zoom_btn.setStyleSheet(
                 f"QPushButton {{ background-color: {COLORS['bg_input']};"
                 f" border: 1px solid {COLORS['accent']};"
@@ -928,7 +928,7 @@ class FullscreenViewer(QWidget):
                 f" padding: 2px 10px; }}"
             )
         else:
-            self._lock_zoom_btn.setText("🔓 锁定缩放")
+            self._lock_zoom_btn.setText(self.i18n.t("fullscreen.lock_zoom_off"))
             self._lock_zoom_btn.setStyleSheet(
                 f"QPushButton {{ background-color: {COLORS['bg_card']};"
                 f" border: 1px solid {COLORS['border']};"

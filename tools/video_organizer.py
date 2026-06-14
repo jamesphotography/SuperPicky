@@ -21,6 +21,7 @@ plus SRT subtitles alongside.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -37,6 +38,13 @@ from core.video_segment import BirdSegment, write_srt
 # 数据结构 / Data structures
 # ============================================================================
 
+# 「其他鸟 / 无鸟」目录名的中英双语别名（用于跨语言幂等匹配）
+# Bilingual aliases for the "other species" / "no bird" folders, so the
+# idempotency guard recognizes folders created under either UI language.
+OTHER_SPECIES_FOLDER_ALIASES: Tuple[str, ...] = ("其他鸟", "Other birds")
+NO_BIRD_FOLDER_ALIASES: Tuple[str, ...] = ("无鸟", "No bird")
+
+
 @dataclass(slots=True)
 class OrganizeOptions:
     """
@@ -44,18 +52,27 @@ class OrganizeOptions:
 
     视频端不用星级（与照片端不同），直接在源视频父目录创建鸟种子目录：
         - 识别到具体鸟种 → 源目录/{鸟种}/{鸟种}_{日期}_{原名}.ext
-        - 有鸟但识别失败 → 源目录/{other_species_folder}/其他鸟_{日期}_{原名}.ext
-        - 完全无鸟       → 源目录/{no_bird_folder}/无鸟_{日期}_{原名}.ext
+        - 有鸟但识别失败 → 源目录/{other_species_folder}/{other}_{日期}_{原名}.ext
+        - 完全无鸟       → 源目录/{no_bird_folder}/{no_bird}_{日期}_{原名}.ext
 
     operation              : 'move'（默认）或 'copy'
     no_bird_folder         : 无鸟视频的目录名 / 命名前缀，默认 "无鸟"
     other_species_folder   : 有鸟但识别失败的目录名 / 命名前缀，默认 "其他鸟"
+    use_english            : True 时鸟种文件夹名/文件名前缀用英文名（species_en），
+                             False（默认）用中文名。由 UI 层按界面语言传入。
+    flying_label           : SRT 里飞行状态文案（按 locale 由调用方传入），默认 "飞行中"
+    perched_label          : SRT 里停栖状态文案（按 locale 由调用方传入），默认 "停栖"
 
     Videos are organized directly under the source parent dir, by species.
+    Localization (folder/prefix language + SRT labels) is decided by the UI layer
+    and passed in here, keeping the organizer itself free of i18n dependency.
     """
     operation: Literal['move', 'copy'] = 'move'
     no_bird_folder: str = "无鸟"
     other_species_folder: str = "其他鸟"
+    use_english: bool = False
+    flying_label: str = "飞行中"
+    perched_label: str = "停栖"
 
 
 @dataclass(slots=True)
@@ -67,6 +84,7 @@ class OrganizeResult:
     species_used: List[str] = field(default_factory=list)
     capture_date: Optional[datetime] = None
     success: bool = False
+    skipped: bool = False  # V4.3.0: 已归类视频被幂等跳过 / already-organized, idempotent skip
     error: Optional[str] = None
 
 
@@ -74,26 +92,36 @@ class OrganizeResult:
 # 鸟种聚合 / Species aggregation
 # ============================================================================
 
-def aggregate_species_by_duration(segments: List[BirdSegment]) -> List[Tuple[str, float]]:
+def aggregate_species_by_duration(
+    segments: List[BirdSegment],
+) -> List[Tuple[str, str, float]]:
     """
-    把段列表按鸟种聚合，输出 [(中文名, 总秒数), ...] 按时长降序
+    把段列表按鸟种聚合，输出 [(中文名, 英文名, 总秒数), ...] 按时长降序
 
-    多段同鸟种合并；空 species_zh 的段忽略；无鸟段忽略。
+    多段同鸟种合并（按中文名归并，同时保留英文名）；空 species_zh 的段忽略；无鸟段忽略。
+    同时返回中英双名，便于调用方按界面语言决定文件夹名/文件名前缀。
 
     参数:
         segments (List[BirdSegment]): 段列表
 
     返回:
-        List[Tuple[str, float]]: [(species_zh, total_sec), ...]，降序
+        List[Tuple[str, str, float]]: [(species_zh, species_en, total_sec), ...]，按时长降序
 
-    Aggregate segments by species, returning [(zh_name, total_sec), ...] sorted desc.
+    Aggregate segments by species, returning [(zh, en, total_sec), ...] sorted desc.
+    Both names are returned so the caller can pick per UI language.
     """
     totals: dict[str, float] = {}
+    en_map: dict[str, str] = {}
     for s in segments:
         if not s.has_bird or not s.species_zh:
             continue
         totals[s.species_zh] = totals.get(s.species_zh, 0.0) + s.duration_sec
-    return sorted(totals.items(), key=lambda kv: -kv[1])
+        # 记录该鸟种的英文名（同名段英文一致，后到不覆盖已有非空值）
+        # Record English name for this species (consistent across same-species segments).
+        if s.species_zh not in en_map and s.species_en:
+            en_map[s.species_zh] = s.species_en
+    ordered = sorted(totals.items(), key=lambda kv: -kv[1])
+    return [(zh, en_map.get(zh, ""), dur) for zh, dur in ordered]
 
 
 # ============================================================================
@@ -342,11 +370,48 @@ class VideoOrganizer:
         """
         result = OrganizeResult(source_path=video_path)
         try:
-            # 1. 聚合鸟种
+            # 1. 聚合鸟种（中英双名），按界面语言决定落地用的鸟种名
+            # Aggregate species (zh + en); pick display name per UI language.
             species_with_dur = aggregate_species_by_duration(segments)
-            species_list = [name for name, _ in species_with_dur]
+            use_en = self.options.use_english
+            # 落地用的鸟种名列表（英文模式优先英文，缺失回退中文；中文模式反之）
+            # Names used for folder/filename (en-first in English mode, zh-first otherwise).
+            species_list = [
+                (en or zh) if use_en else (zh or en)
+                for zh, en, _ in species_with_dur
+            ]
             result.species_used = species_list
             has_bird = any(s.has_bird for s in segments)
+
+            # V4.3.0: 幂等守卫——若视频已归类（已在对应鸟种目录里，且文件名已带该前缀），
+            # 直接跳过，避免反复归类导致目录逐层嵌套 + 文件名前缀叠加（见 Bird-Video-P3 事故）。
+            # 关键：文件夹名/前缀跟随界面语言，故守卫需同时匹配中、英两种命名，
+            # 否则「中文下归类、英文下重跑」会匹配不上而再次嵌套。
+            # V4.3.0: Idempotency guard — skip already-organized videos. Since folder/prefix
+            # names follow the UI language, the guard must match BOTH the zh and en variants,
+            # or a video organized under one language would be re-nested under the other.
+            if species_with_dur:
+                top_zh, top_en, _ = species_with_dur[0]
+                folder_candidates = {
+                    sanitize_path_component(top_zh),
+                    sanitize_path_component(top_en or top_zh),
+                }
+            elif has_bird:
+                folder_candidates = {
+                    sanitize_path_component(a) for a in OTHER_SPECIES_FOLDER_ALIASES
+                }
+            else:
+                folder_candidates = {
+                    sanitize_path_component(a) for a in NO_BIRD_FOLDER_ALIASES
+                }
+            source_p = Path(video_path)
+            if source_p.parent.name in folder_candidates and any(
+                source_p.name.startswith(fc + "_") for fc in folder_candidates
+            ):
+                result.target_video_path = video_path
+                result.skipped = True
+                result.success = True
+                return result
 
             # 2. 提取拍摄日期
             capture_date = get_video_capture_date(video_path, self.exiftool_path)
@@ -374,7 +439,12 @@ class VideoOrganizer:
             # 5. 写 SRT 到同目录同名（用 stem 替换扩展名）
             srt_path = final_target.with_suffix('.srt')
             try:
-                write_srt(segments, srt_path)
+                write_srt(
+                    segments, srt_path,
+                    use_english=self.options.use_english,
+                    flying_label=self.options.flying_label,
+                    perched_label=self.options.perched_label,
+                )
                 result.target_srt_path = str(srt_path)
             except Exception as e:
                 # SRT 失败不影响视频整理本身 / SRT failure does not fail the whole op
@@ -387,3 +457,165 @@ class VideoOrganizer:
             result.success = False
             result.error = str(e)
             return result
+
+
+# ============================================================================
+# 归类清单 / Organize manifest（用于「复原」可逆地撤销整理）
+# Organize manifest — records each move so a reset can undo the organization.
+# ============================================================================
+
+# 清单文件名（隐藏文件，与照片端 .superpicky_* 命名风格一致）
+# Manifest filename (hidden file, consistent with the photo-side .superpicky_* naming).
+VIDEO_MANIFEST_NAME = ".superpicky_video_manifest.json"
+_VIDEO_MANIFEST_VERSION = 1
+
+
+def record_organized_results(results: List[OrganizeResult]) -> List[str]:
+    """
+    把一次整理（move）的结果写成「归类清单」，供后续「复原」精确撤销。
+
+    清单按【原始视频所在目录】分组写入，每个目录一个 VIDEO_MANIFEST_NAME 文件，
+    记录「原始路径 → 落地视频路径 / SRT 路径」。已存在清单则合并去重（按原始路径）。
+
+    仅记录真正发生移动的条目（source_path 与落地路径不同、未被幂等跳过、成功）。
+    copy 模式不应调用本函数（原文件仍在，复原会重复）。
+
+    参数:
+        results (List[OrganizeResult]): VideoOrganizer.organize 的结果列表
+
+    返回:
+        List[str]: 实际写入/更新的清单文件路径列表
+
+    Persist a move-organize batch as a manifest so a later reset can undo it.
+    Manifests are grouped by the original directory of each source video.
+    """
+    by_dir: dict[str, List[dict]] = {}
+    for r in results:
+        if not r.success or r.skipped or not r.target_video_path:
+            continue
+        if os.path.abspath(r.source_path) == os.path.abspath(r.target_video_path):
+            continue  # 没有实际移动 / no real move
+        src_dir = os.path.dirname(os.path.abspath(r.source_path))
+        by_dir.setdefault(src_dir, []).append({
+            "original": os.path.abspath(r.source_path),
+            "video": os.path.abspath(r.target_video_path),
+            "srt": os.path.abspath(r.target_srt_path) if r.target_srt_path else None,
+        })
+
+    written: List[str] = []
+    for src_dir, entries in by_dir.items():
+        manifest_path = os.path.join(src_dir, VIDEO_MANIFEST_NAME)
+        existing: List[dict] = []
+        if os.path.exists(manifest_path):
+            try:
+                with open(manifest_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                existing = data.get("entries", []) if isinstance(data, dict) else []
+            except Exception:
+                existing = []
+        # 按 original 去重合并（新条目覆盖旧）/ merge-dedupe by original (new wins)
+        merged: dict[str, dict] = {e.get("original"): e for e in existing if e.get("original")}
+        for e in entries:
+            merged[e["original"]] = e
+        payload = {
+            "version": _VIDEO_MANIFEST_VERSION,
+            "entries": list(merged.values()),
+        }
+        try:
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+            written.append(manifest_path)
+        except Exception:
+            # 清单写失败不影响整理本身 / manifest failure must not break organizing
+            pass
+    return written
+
+
+def restore_organized_videos(directory: str, log=None) -> dict:
+    """
+    根据「归类清单」把视频复原到整理前的位置（撤销 organize）。
+
+    步骤：
+        1. 读取 directory 下的 VIDEO_MANIFEST_NAME
+        2. 逐条把落地视频移回原始路径（原始已存在则跳过、不覆盖）
+        3. 删除对应 SRT 字幕
+        4. 删除因此清空的鸟种子目录
+        5. 删除清单文件
+
+    参数:
+        directory (str): 包含归类清单的目录（即整理前视频所在目录）
+        log (callable | None): 可选日志回调
+
+    返回:
+        dict: {'manifest': bool, 'restored': int, 'missing': int, 'srt_removed': int,
+               'dirs_removed': int}
+
+    Restore organized videos to their pre-organize locations using the manifest.
+    """
+    def _log(msg: str) -> None:
+        if log:
+            log(msg)
+
+    stats = {"manifest": False, "restored": 0, "missing": 0,
+             "srt_removed": 0, "dirs_removed": 0}
+
+    manifest_path = os.path.join(directory, VIDEO_MANIFEST_NAME)
+    if not os.path.exists(manifest_path):
+        return stats
+    stats["manifest"] = True
+
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        entries = data.get("entries", []) if isinstance(data, dict) else []
+    except Exception as e:
+        _log(f"  ❌ 读取视频归类清单失败 / failed to read video manifest: {e}")
+        return stats
+
+    target_dirs: set[str] = set()
+    for entry in entries:
+        original = entry.get("original")
+        video = entry.get("video")
+        srt = entry.get("srt")
+        if not original or not video:
+            continue
+        if video:
+            target_dirs.add(os.path.dirname(video))
+        # 1. 移回原位 / move back
+        if os.path.exists(video):
+            try:
+                os.makedirs(os.path.dirname(original), exist_ok=True)
+                if os.path.exists(original):
+                    # 原始路径已被占用，保守跳过不覆盖 / don't overwrite an existing original
+                    _log(f"  ⚠️  原位已存在，跳过 / original exists, skipped: {original}")
+                else:
+                    shutil.move(video, original)
+                    stats["restored"] += 1
+            except Exception as e:
+                _log(f"  ❌ 复原失败 / restore failed {os.path.basename(video)}: {e}")
+        else:
+            stats["missing"] += 1
+        # 2. 删 SRT / delete SRT
+        if srt and os.path.exists(srt):
+            try:
+                os.remove(srt)
+                stats["srt_removed"] += 1
+            except Exception:
+                pass
+
+    # 3. 删除清空的鸟种子目录 / remove now-empty species folders
+    for d in sorted(target_dirs, key=len, reverse=True):
+        try:
+            if os.path.isdir(d) and not os.listdir(d):
+                os.rmdir(d)
+                stats["dirs_removed"] += 1
+        except Exception:
+            pass
+
+    # 4. 删除清单 / remove the manifest
+    try:
+        os.remove(manifest_path)
+    except Exception:
+        pass
+
+    return stats

@@ -1189,13 +1189,17 @@ class PhotoProcessor:
                         # Prepend species + IUCN lines to the DB caption.
                         existing = self.report_db.get_photo(file_prefix) or {}
                         old_cap = existing.get('caption') or ''
-                        prefix_lines = [f"鸟种：{cn_name or en_name}"]
+                        # V4.3.0: 鸟种名跟随界面语言（bird_title 已按语言选名），标签走 i18n
+                        # V4.3.0: Species name follows UI language (bird_title already
+                        # picks en/cn by locale); labels via i18n.
+                        prefix_lines = [self.i18n.t("logs.caption_species", name=bird_title)]
                         if iucn_category:
-                            prefix_lines.append(f"IUCN：{iucn_category}")
+                            prefix_lines.append(self.i18n.t("logs.caption_iucn", category=iucn_category))
                         prefix_block = "\n".join(prefix_lines)
-                        already_prefixed = (
-                            old_cap.startswith('鸟种：')
-                            or old_cap.startswith('备选鸟种')
+                        # 去重检查兼容中英双语前缀，避免跨语言重复处理时重复添加
+                        # Dedup check covers both zh/en prefixes for cross-language reprocessing.
+                        already_prefixed = old_cap.startswith(
+                            ('鸟种：', 'Species: ', '备选鸟种', 'Alt. species')
                         )
                         if old_cap and not already_prefixed:
                             self.report_db.update_photo(file_prefix, {'caption': prefix_block + '\n' + old_cap})
@@ -1240,8 +1244,14 @@ class PhotoProcessor:
                         try:
                             existing = self.report_db.get_photo(file_prefix) or {}
                             old_cap = existing.get('caption') or ''
-                            bird_line = f"\u5907\u9009\u9e1f\u79cd\uff1a{cn_name}\uff1f\uff08\u628a\u63e1\u5ea6 {birdid_confidence:.0f}%\uff09"
-                            if old_cap and not old_cap.startswith('\u5907\u9009\u9e1f\u79cd'):
+                            # V4.3.0: \u5907\u9009\u9e1f\u79cd\u540d\u8ddf\u968f\u754c\u9762\u8bed\u8a00\uff08low_conf_name\uff09\uff0c\u6807\u7b7e/\u628a\u63e1\u5ea6\u8d70 i18n
+                            # V4.3.0: Alt-species name follows UI language; labels via i18n.
+                            bird_line = self.i18n.t(
+                                "logs.caption_alt_species",
+                                name=low_conf_name,
+                                confidence=f"{birdid_confidence:.0f}",
+                            )
+                            if old_cap and not old_cap.startswith(('\u5907\u9009\u9e1f\u79cd', 'Alt. species')):
                                 self.report_db.update_photo(file_prefix, {'caption': bird_line + '\n' + old_cap})
                             elif not old_cap:
                                 self.report_db.update_photo(file_prefix, {'caption': bird_line})
@@ -2210,11 +2220,25 @@ class PhotoProcessor:
             target_extension = None
             
             # V4.0: 标签、对焦状态、详细评分说明（RAW 与纯 JPEG 共用，纯 JPEG 也写入 EXIF 题注/星级）
+            # V4.3.0: 色标文字跟随界面语言写入 xmp:Label。
+            # Lightroom 色标按「当前色标集的本地化名称」精确匹配文字：英文版默认集
+            # 是 Red/Green，中文版是 红色/绿色，跨语言文字对不上会显示为白框。
+            # 故按 i18n 语言写对应颜色名（飞鸟=绿色/Green，头部精焦=红色/Red），
+            # 假设用户慧眼与 Lightroom 语言一致（覆盖绝大多数场景）。
+            # 兜底：若语言包缺 key（t() 原样返回 key），退回英文，绝不把 key 串写进 LR。
+            # V4.3.0: Localize the xmp:Label text by UI language. Lightroom matches the
+            # label string against the active label set's localized names (Red/Green vs
+            # 红色/绿色); a cross-language mismatch renders as a white frame. Fall back
+            # to English if the language pack lacks the key.
             label = None
             if is_flying:
-                label = 'Green'
-            elif focus_sharpness_weight > 1.0:  # 头部对焦 (1.1)
-                label = 'Red'
+                label = self.i18n.t("xmp_labels.flight")
+                if label == "xmp_labels.flight":
+                    label = 'Green'
+            elif focus_sharpness_weight > 1.0:  # 头部对焦 (1.1) / head in focus
+                label = self.i18n.t("xmp_labels.focus")
+                if label == "xmp_labels.focus":
+                    label = 'Red'
             
             caption_lines = []
             caption_lines.append(self.i18n.t("logs.caption_final", rating=rating_value, reason=reason))
