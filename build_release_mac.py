@@ -1192,6 +1192,10 @@ def notarize_dmg(dmg_path: Path, config: BuildConfig) -> None:
 
     log_step("步骤 11: Apple 公证并装订")
     auth_args = notary_auth_arguments(config)
+    # --timeout 限制 --wait 的最长等待时长，避免 Apple 公证服务积压时 notarytool
+    # 无限期挂起（曾观察到单次 submit 干等 2 小时仍不返回，最终被 job 6h 超时杀掉）。
+    # --timeout caps how long --wait blocks, so a backed-up Apple notary service can't
+    # hang notarytool indefinitely (observed a single submit waiting 2h+).
     submit_command = [
         "xcrun",
         "notarytool",
@@ -1199,10 +1203,29 @@ def notarize_dmg(dmg_path: Path, config: BuildConfig) -> None:
         str(dmg_path),
         *auth_args,
         "--wait",
+        "--timeout",
+        "30m",
         "--output-format",
         "json",
     ]
-    result = run_command(submit_command, capture_output=True, label="Apple 公证")
+    # 公证提交可能因服务积压/网络在 --timeout 后失败；重试一次再放弃。
+    # Submission may fail after --timeout due to backlog/network; retry once before giving up.
+    max_attempts = 2
+    result = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            result = run_command(
+                submit_command, capture_output=True,
+                label=f"Apple 公证（第 {attempt}/{max_attempts} 次）",
+            )
+            break
+        except Exception as exc:  # noqa: BLE001 — 提交层失败统一重试
+            log_verbose("[警告] 公证提交第 %d/%d 次失败: %s", attempt, max_attempts, exc)
+            if attempt >= max_attempts:
+                raise RuntimeError(
+                    f"Apple 公证提交失败（已重试 {max_attempts} 次，疑似公证服务积压或超时）"
+                ) from exc
+            time.sleep(30)
     output = result.stdout.strip()
     if output:
         logger.info(output)
