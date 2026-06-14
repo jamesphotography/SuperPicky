@@ -802,6 +802,7 @@ def build_pkg(config: BuildConfig, paths: BuildPaths, signing_context: SigningCo
 
     # 7) productsign（Developer ID Installer）+ 校验
     installer_identity = signing_context.installer_identity if signing_context else None
+    prev_default_keychain: str | None = None  # 供签名后恢复默认 keychain
     if installer_identity:
         # —— 签 PKG 前的非交互加固 + 诊断 ——
         # productsign 卡死的两种已知成因：①钥匙串弹密码框（无头 CI 无人应答）
@@ -819,6 +820,16 @@ def build_pkg(config: BuildConfig, paths: BuildPaths, signing_context: SigningCo
                      signing_context.keychain_password, kc],
                     check=False, label="签 PKG 前重新解锁 keychain",
                 )
+            # 无头 CI 上 productsign 可能经「默认 keychain」解析 Installer 身份/私钥，
+            # 故临时把目标 keychain 设为默认（签完恢复），排除该差异导致的取 key 阻塞。
+            # productsign may resolve the identity via the *default* keychain on headless CI;
+            # temporarily make our keychain the default (restored after signing).
+            _cur = run_command(["security", "default-keychain", "-d", "user"],
+                               capture_output=True, check=False)
+            _m = re.search(r'"([^"]+)"', _cur.stdout or "")
+            prev_default_keychain = _m.group(1) if _m else None
+            run_command(["security", "default-keychain", "-d", "user", "-s", kc],
+                        check=False, label="临时设为默认 keychain")
             diag = run_command(["security", "find-identity", "-v", kc],
                                capture_output=True, check=False,
                                label="签 PKG 前列出 keychain 身份")
@@ -885,6 +896,11 @@ def build_pkg(config: BuildConfig, paths: BuildPaths, signing_context: SigningCo
             )
     else:
         log_verbose("[信息] 未提供 Installer 证书，PKG 未签名: %s", pkg_path)
+
+    # 恢复原默认 keychain（若曾临时改动）/ restore the previous default keychain
+    if prev_default_keychain:
+        run_command(["security", "default-keychain", "-d", "user", "-s", prev_default_keychain],
+                    check=False, label="恢复默认 keychain")
 
     # 清理中间产物（保留最终 pkg）
     remove_path(pkg_root)
