@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -366,3 +367,186 @@ def reset(directory, log_callback=None, i18n=None):
     else:
         log("\n✅ 目录重置完成！")
     return True
+
+
+# ============================================================================
+# 高级重置 / Advanced reset（无 manifest 时按「SuperPicky 生成目录」识别并摊平）
+# Advanced reset: when no manifest exists, recognize SuperPicky-generated folders
+# (by name) and recursively flatten their files back to the root, leaving any
+# user-created folders untouched so it can never move the wrong thing.
+# ============================================================================
+
+# 「其他鸟类」目录名（照片端 logs.folder_other_birds 的中英取值）
+# "Other Birds" folder labels (zh/en values of logs.folder_other_birds).
+_OTHER_BIRDS_LABELS = ("其他鸟类", "Other_Birds")
+# 旧版遗留评分目录名 / legacy rating folder names
+_LEGACY_RATING_FOLDERS = ("2星_良好_锐度", "2星_良好_美学")
+
+_SUPERPICKY_FOLDER_SET = None  # 缓存：所有「SuperPicky 生成目录名」集合
+
+
+def _bird_reference_db_path():
+    """
+    定位鸟种参考库 bird_reference.sqlite（dev + 打包均可）。
+    Locate bird_reference.sqlite for both dev and frozen builds.
+    """
+    try:
+        import birdid
+        candidate = os.path.join(os.path.dirname(birdid.__file__), "data", "bird_reference.sqlite")
+        if os.path.exists(candidate):
+            return candidate
+    except Exception:
+        pass
+    # 兜底：相对项目根 / fallback relative to project root
+    candidate = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                             "birdid", "data", "bird_reference.sqlite")
+    return candidate if os.path.exists(candidate) else None
+
+
+def _build_superpicky_folder_set():
+    """
+    构建「SuperPicky 生成目录名」匹配集：
+        鸟名(中文 chinese_simplified + 英文 english_name[空格→下划线])
+        ∪ 评分目录名(中文 RATING_FOLDER_NAMES + 英文 RATING_FOLDER_NAMES_EN + legacy)
+        ∪ 其他鸟类(中/英)
+    burst_ 前缀单独判断（不入集合）。结果缓存。
+
+    Build the set of folder names SuperPicky generates, so advanced reset only
+    touches those (never user folders).
+    """
+    global _SUPERPICKY_FOLDER_SET
+    if _SUPERPICKY_FOLDER_SET is not None:
+        return _SUPERPICKY_FOLDER_SET
+
+    names = set()
+    # 评分目录（中英两套 + legacy）/ rating folders (zh + en + legacy)
+    try:
+        from constants import RATING_FOLDER_NAMES, RATING_FOLDER_NAMES_EN
+        names.update(RATING_FOLDER_NAMES.values())
+        names.update(RATING_FOLDER_NAMES_EN.values())
+    except Exception:
+        pass
+    names.update(_LEGACY_RATING_FOLDERS)
+    names.update(_OTHER_BIRDS_LABELS)
+
+    # 鸟名（中文原样 + 英文空格转下划线，与照片端命名一致）
+    db_path = _bird_reference_db_path()
+    if db_path:
+        try:
+            with sqlite3.connect(db_path) as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT chinese_simplified, english_name FROM BirdCountInfo")
+                for cn, en in cur.fetchall():
+                    if cn:
+                        names.add(str(cn).strip())
+                    if en:
+                        names.add(str(en).strip().replace(" ", "_"))
+        except Exception:
+            pass
+
+    names.discard("")
+    _SUPERPICKY_FOLDER_SET = names
+    return names
+
+
+def _is_superpicky_folder(name: str) -> bool:
+    """目录名是否为 SuperPicky 生成（鸟名/评分/其他鸟类/burst_）。"""
+    if name.startswith("burst_"):
+        return True
+    return name in _build_superpicky_folder_set()
+
+
+def force_flatten_directory(directory, log_callback=None, i18n=None) -> dict:
+    """
+    高级重置核心：把「SuperPicky 生成的顶层目录」内的文件递归移回 directory 根。
+
+    仅处理顶层目录名匹配（鸟名 中+英 / 评分名 中+英 / 其他鸟类 / burst_）的目录，
+    用户自建目录原样不动。同名文件跳过、不覆盖、只移动不删除；移完删除清空的目录。
+    隐藏文件 / AppleDouble(._*) / .superpicky 内部目录一律跳过（不污染根目录；
+    .superpicky 由随后的 reset() 统一删除）。
+
+    Args:
+        directory: 目标目录（用户选中的根目录）
+        log_callback: 日志回调
+        i18n: I18n 实例
+
+    Returns:
+        dict: {'moved': int, 'skipped': int, 'dirs_removed': int, 'folders_matched': int}
+
+    Advanced-reset core: recursively move files out of SuperPicky-generated top-level
+    folders back to the root; user folders are left untouched. Conflicts are skipped
+    (never overwritten); nothing is deleted except now-empty matched folders.
+    """
+    def log(msg):
+        if log_callback:
+            log_callback(msg)
+        else:
+            print(msg)
+
+    stats = {"moved": 0, "skipped": 0, "dirs_removed": 0, "folders_matched": 0}
+    if not os.path.isdir(directory):
+        return stats
+
+    if i18n:
+        log(i18n.t("logs.adv_flatten_start"))
+    else:
+        log("\n🧹 高级重置：识别 SuperPicky 目录并摊平文件...")
+
+    try:
+        top_entries = sorted(os.listdir(directory))
+    except Exception:
+        return stats
+
+    matched_dirs = []
+    for entry in top_entries:
+        entry_path = os.path.join(directory, entry)
+        if not os.path.isdir(entry_path):
+            continue
+        if entry.startswith("."):  # 隐藏 / .superpicky 等内部目录，跳过
+            continue
+        if _is_superpicky_folder(entry):
+            matched_dirs.append(entry_path)
+
+    stats["folders_matched"] = len(matched_dirs)
+
+    for top_dir in matched_dirs:
+        # 递归把该匹配目录内的所有文件移回根（任意深度）
+        for root, dirs, files in os.walk(top_dir):
+            for fname in files:
+                if fname.startswith("."):  # ._* / .DS_Store 等
+                    continue
+                src = os.path.join(root, fname)
+                dst = os.path.join(directory, fname)
+                if os.path.exists(dst):
+                    stats["skipped"] += 1
+                    if i18n:
+                        log(i18n.t("logs.restore_skipped_exists", filename=fname))
+                    else:
+                        log(f"  ⏭️  同名跳过（不覆盖）: {fname}")
+                    continue
+                try:
+                    shutil.move(src, dst)
+                    stats["moved"] += 1
+                except Exception as e:
+                    if i18n:
+                        log(i18n.t("logs.move_failed", filename=fname, error=e))
+                    else:
+                        log(f"  ❌ 移动失败 {fname}: {e}")
+
+        # 删除清空的子目录（最深优先），再删顶层匹配目录
+        for root, dirs, files in os.walk(top_dir, topdown=False):
+            try:
+                if not os.listdir(root):
+                    os.rmdir(root)
+                    stats["dirs_removed"] += 1
+            except Exception:
+                pass
+
+    if i18n:
+        log(i18n.t("logs.adv_flatten_done",
+                   moved=stats["moved"], folders=stats["folders_matched"],
+                   skipped=stats["skipped"]))
+    else:
+        log(f"  ✅ 高级重置完成：识别 {stats['folders_matched']} 个目录，"
+            f"移回 {stats['moved']} 个文件，同名跳过 {stats['skipped']} 个")
+    return stats

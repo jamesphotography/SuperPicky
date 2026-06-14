@@ -2298,6 +2298,24 @@ class SuperPickyMainWindow(QMainWindow):
             if reply != StyledMessageBox.Yes:
                 return
 
+        # V4.3.0: 无 manifest（旧版/跨版本/鸟种优先新结构）时，询问是否「高级重置」——
+        # 按目录名识别 SuperPicky 生成的鸟种/评分/其他鸟类/burst 目录并把文件递归摊平回根。
+        # 有 manifest 则照旧（manifest 精确复原）。仅手动重置时询问。
+        # No manifest → offer advanced reset (name-based flatten); with manifest, keep
+        # the existing manifest-driven restore. Only prompt on manual reset.
+        advanced_flatten = False
+        if not skip_confirm:
+            manifest_path = os.path.join(self.directory_path, ".superpicky_manifest.json")
+            if not os.path.exists(manifest_path):
+                adv_reply = StyledMessageBox.question(
+                    self,
+                    self.i18n.t("messages.adv_reset_title"),
+                    self.i18n.t("messages.adv_reset_body"),
+                    yes_text=self.i18n.t("labels.yes"),
+                    no_text=self.i18n.t("labels.no")
+                )
+                advanced_flatten = (adv_reply == StyledMessageBox.Yes)
+
         self.log_text.clear()
         self.reset_btn.setEnabled(False)
         self.start_btn.setEnabled(False)
@@ -2316,6 +2334,7 @@ class SuperPickyMainWindow(QMainWindow):
         complete_signal = self.reset_complete_signal
         error_signal = self.reset_error_signal
         _skip_exif_reset = skip_exif_reset  # 传递给线程
+        _advanced_flatten = advanced_flatten  # 高级重置标志，传递给线程
 
         def run_reset():
             restore_stats = {'restored': 0, 'failed': 0}
@@ -2355,6 +2374,14 @@ class SuperPickyMainWindow(QMainWindow):
                                         dirs=vid_total['dirs_removed']))
                 except Exception as _ve:
                     emit_log(i18n.t("logs.video_restore_failed", error=_ve))
+
+                # V4.3.0: 高级重置——无 manifest 时按目录名识别 SuperPicky 目录并摊平。
+                # 先摊平到根，随后的 reset() 再统一删 .superpicky/XMP/日志 + 重置 EXIF。
+                # Advanced reset: name-based flatten first; the reset() below then wipes
+                # .superpicky/XMP/logs and resets EXIF on the flattened root files.
+                if _advanced_flatten:
+                    from tools.find_bird_util import force_flatten_directory
+                    force_flatten_directory(directory_path, log_callback=emit_log, i18n=i18n)
 
                 # Batch mode: reset processed subdirectories first (deepest first)
                 from core.recursive_scanner import is_processed
