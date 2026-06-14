@@ -35,6 +35,23 @@ build, this is the recommended version to settle on.
 - In-app update checking is now turned off across all builds — to upgrade, download the new version from the official download page. This replaces the previous in-app auto-update and sidesteps stale-patch issues after upgrades.
 - Windows installers now wipe old program files before installing; a new Uninstaller tool is provided for switching between Lite and Full builds.
 
+**Reset & Organization**
+- New **Advanced Reset**: when a folder has no manifest (older or cross-version
+  directories, or the new species-first layout), Reset offers to recognize
+  SuperPicky's species / rating / burst folders and move every photo back to the
+  selected directory — move-only, never overwriting same-named files, and your
+  own folders are left untouched.
+- Reset is now strictly non-destructive: same-name conflicts are skipped (never
+  overwritten) and folders are only removed once empty.
+- Burst (連拍) grouping now works correctly under the new species-first layout.
+- Video species names and SRT subtitles now follow the interface language
+  (an English UI shows English names); video organization is reversible via Reset.
+
+**Polish**
+- Browse now opens at the currently selected directory (falls back to Pictures).
+- macOS installer (.pkg in .dmg) is signed and notarized through a more reliable
+  CI signing path.
+
 ---
 
 ## Highlights since 4.1.0 (the 4.2.x line)

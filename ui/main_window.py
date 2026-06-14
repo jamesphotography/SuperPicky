@@ -2436,25 +2436,27 @@ class SuperPickyMainWindow(QMainWindow):
                     for entry in os.listdir(rating_path):
                         entry_path = os.path.join(rating_path, entry)
                         if os.path.isdir(entry_path):
-                            # 递归将所有文件移回评分目录
+                            # 递归将所有文件移回评分目录（V4.3.0: 同名跳过、绝不覆盖删除）
                             for root, dirs, files in os.walk(entry_path):
                                 for filename in files:
                                     src = os.path.join(root, filename)
                                     dst = os.path.join(rating_path, filename)
                                     if os.path.isfile(src):
+                                        if os.path.exists(dst):
+                                            continue  # 同名保留两者，不覆盖（数据安全）
                                         try:
-                                            if os.path.exists(dst):
-                                                os.remove(dst)
                                             shutil.move(src, dst)
                                             subdir_stats['files_restored'] += 1
                                         except Exception as e:
                                             emit_log(i18n.t("logs.move_failed", filename=filename, error=e))
-                            
-                            # 删除子目录
+
+                            # 删除子目录（V4.3.0: 仅当其内已无任何文件，避免误删残留）
                             try:
-                                if os.path.exists(entry_path):
-                                    shutil.rmtree(entry_path)
-                                subdir_stats['dirs_removed'] += 1
+                                if os.path.isdir(entry_path) and not any(
+                                    fs for _r, _d, fs in os.walk(entry_path)
+                                ):
+                                    shutil.rmtree(entry_path, ignore_errors=True)
+                                    subdir_stats['dirs_removed'] += 1
                             except Exception as e:
                                 emit_log(i18n.t("logs.burst_clean_failed", entry=entry, error=e))
                 
@@ -2483,9 +2485,9 @@ class SuperPickyMainWindow(QMainWindow):
                         src = os.path.join(rating_path, filename)
                         dst = os.path.join(directory_path, filename)
                         if os.path.isfile(src):
+                            if os.path.exists(dst):
+                                continue  # V4.3.0: 同名不覆盖根目录原文件（数据安全）
                             try:
-                                if os.path.exists(dst):
-                                    os.remove(dst)
                                 shutil.move(src, dst)
                                 fallback_restored += 1
                             except Exception as e:
@@ -2512,8 +2514,13 @@ class SuperPickyMainWindow(QMainWindow):
                 for rating_dir in rating_dirs:
                     rating_path = os.path.join(directory_path, rating_dir)
                     if os.path.exists(rating_path) and os.path.isdir(rating_path):
+                        # V4.3.0: 仅当评分目录内已无任何文件才删除，避免误删残留（数据安全）
+                        if any(fs for _r, _d, fs in os.walk(rating_path)):
+                            emit_log(i18n.t("logs.empty_dir_delete_failed",
+                                            dir=rating_dir, error="仍有残留文件，保留"))
+                            continue
                         try:
-                            shutil.rmtree(rating_path)
+                            shutil.rmtree(rating_path, ignore_errors=True)
                             emit_log(i18n.t("logs.empty_dir_deleted", dir=rating_dir))
                             deleted_dirs += 1
                         except Exception as e:

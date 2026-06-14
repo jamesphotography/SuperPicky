@@ -43,7 +43,7 @@ from core.flight_detector import FlightDetector, get_flight_detector, FlightResu
 from core.exposure_detector import ExposureDetector, get_exposure_detector, ExposureResult
 from core.focus_point_detector import get_focus_detector, verify_focus_in_bbox
 
-from constants import RATING_FOLDER_NAMES, RAW_EXTENSIONS, JPG_EXTENSIONS, HEIF_EXTENSIONS, get_rating_folder_name, get_rating_folder_names
+from constants import RATING_FOLDER_NAMES, RAW_EXTENSIONS, JPG_EXTENSIONS, HEIF_EXTENSIONS, get_rating_folder_names
 
 # 国际化
 from tools.i18n import get_i18n
@@ -701,8 +701,7 @@ class PhotoProcessor:
         from collections import defaultdict
         from core.burst_detector import BurstDetector
         from tools.exiftool_manager import get_exiftool_manager
-        from constants import get_rating_folder_name
-        
+
         stats = {'groups': 0, 'moved': 0}
         
         if not self.burst_map:
