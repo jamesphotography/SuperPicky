@@ -114,6 +114,24 @@ def _display_filename(photo: dict) -> str:
     return photo.get("filename") or ""
 
 
+def _is_no_bird_photo(photo: dict) -> bool:
+    """
+    判断当前记录是否为无鸟照片。
+
+    兼容 SQLite 清洗后的整数值，以及旧数据中可能存在的字符串 yes/no。
+
+    Return whether the current record represents a no-bird photo.
+
+    This accepts integer values cleaned by SQLite and older string yes/no data.
+    """
+    has_bird = photo.get("has_bird")
+    if isinstance(has_bird, str):
+        return has_bird.strip().lower() in {"no", "0", "false"}
+    if has_bird is not None:
+        return not bool(has_bird)
+    return photo.get("rating") == -1
+
+
 def _format_file_size(num_bytes: int) -> str:
     units = ["B", "KB", "MB", "GB", "TB"]
     size = float(max(num_bytes, 0))
@@ -566,7 +584,10 @@ class DetailPanel(QWidget):
         _rating_text = {5: "★★★★★", 4: "★★★★", 3: "★★★", 2: "★★", 1: "★", 0: "0", -1: "—"}
         rating = p.get("rating", 0)
 
-        focus = p.get("focus_status") or "—"
+        focus = p.get("focus_status")
+        if not focus and _is_no_bird_photo(p):
+            focus = self.i18n.t("browser.focus_no_bird")
+        focus = focus or "—"
         sharp = p.get("adj_sharpness")
         topiq = p.get("adj_topiq")
         fl = p.get("focal_length")
@@ -599,7 +620,7 @@ class DetailPanel(QWidget):
             f"{t('browser.meta_focus')}: {focus}",
             f"{t('browser.meta_sharpness')}: {f'{sharp:.1f}' if sharp is not None else '—'}",
             f"{t('browser.meta_aesthetic')}: {f'{topiq:.2f}' if topiq is not None else '—'}",
-            f"{t('browser.meta_confidence')}: {f'{conf*100:.1f}%' if conf else '—'}",
+            f"{t('browser.meta_confidence')}: {f'{conf*100:.1f}%' if conf is not None else '—'}",
             f"{t('browser.meta_rating')}: {_rating_text.get(rating, '—')}",
         ]
         text = "\n".join(lines)
@@ -807,7 +828,10 @@ class DetailPanel(QWidget):
             )
 
         # 对焦
-        focus = p.get("focus_status") or _unknown
+        focus = p.get("focus_status")
+        if not focus and _is_no_bird_photo(p):
+            focus = self.i18n.t("browser.focus_no_bird")
+        focus = focus or _unknown
         self._val_focus.setText(focus)
         color = _FOCUS_COLORS.get(focus, COLORS['text_primary'])
         self._val_focus.setStyleSheet(f"color: {color}; font-size: 12px; background: transparent;")
@@ -881,7 +905,7 @@ class DetailPanel(QWidget):
 
         # AI置信度
         conf = p.get("confidence")
-        self._val_confidence.setText(f"{conf*100:.1f}%" if conf else _unknown)
+        self._val_confidence.setText(f"{conf*100:.1f}%" if conf is not None else _unknown)
 
         file_path = p.get("current_path") or p.get("original_path") or ""
         if file_path and os.path.exists(file_path):

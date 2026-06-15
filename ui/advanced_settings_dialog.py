@@ -23,7 +23,6 @@ from tools.i18n import get_i18n
 from ui.styles import COLORS, FONTS
 from ui.custom_dialogs import StyledMessageBox
 
-
 class AdvancedSettingsDialog(QDialog):
     """参数设置对话框 - 顶部标签页布局"""
 
@@ -480,6 +479,23 @@ class AdvancedSettingsDialog(QDialog):
         """)
         preview_layout.addWidget(completion_sound_hint)
 
+        detail_metadata_check = QCheckBox(
+            self.i18n.t("advanced_settings.detail_metadata_for_rejected")
+        )
+        self.vars["detail_meta_for_rejected"] = detail_metadata_check
+        preview_layout.addWidget(detail_metadata_check)
+
+        detail_metadata_hint = QLabel(
+            self.i18n.t("advanced_settings.detail_metadata_hint")
+        )
+        detail_metadata_hint.setWordWrap(True)
+        detail_metadata_hint.setStyleSheet(f"""
+            color: {COLORS['text_muted']};
+            font-size: 11px;
+            margin-left: 24px;
+        """)
+        preview_layout.addWidget(detail_metadata_hint)
+
         # 说明：不保留预览图时，选鸟完成后自动打开 Finder 显示结果目录
 
         layout.addWidget(preview_group_widget)
@@ -637,6 +653,9 @@ class AdvancedSettingsDialog(QDialog):
         self.vars["completion_sound_enabled"].setChecked(
             self.config.completion_sound_enabled
         )
+        self.vars["detail_meta_for_rejected"].setChecked(
+            self.config.get_detail_metadata_for_rejected()
+        )
 
         # V4.3 Phase 5: 加载视频处理设置 / Load video processing config
         # 直接读 config dict（这些键没有 property，由 Phase 4 直接存 dict）
@@ -712,6 +731,9 @@ class AdvancedSettingsDialog(QDialog):
         self.config.set_keep_temp_files(self.vars["keep_temp_files"].isChecked())
         self.config.set_completion_sound_enabled(
             self.vars["completion_sound_enabled"].isChecked()
+        )
+        self.config.set_detail_metadata_for_rejected(
+            self.vars["detail_meta_for_rejected"].isChecked()
         )
 
         # 保存外部应用列表
