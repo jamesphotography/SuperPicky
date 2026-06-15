@@ -618,6 +618,8 @@
     "birdid_confidence": "ID Confidence",
     "birdid_confidence_hint": "Higher = More accurate, but may miss some species",
     "section_burst": "Burst Detection",
+    "burst_enabled": "Enable Burst Grouping",
+    "burst_enabled_hint": "When disabled, continuous shots are not grouped or moved into burst folders",
     "section_xmp": "XMP Write",
     "xmp_write": "XMP Sidecar Write",
     "xmp_write_hint": "When checked: write XMP sidecar only, do not modify RAW; when unchecked: write directly to ARW",

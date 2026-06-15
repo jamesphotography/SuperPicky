@@ -335,6 +335,10 @@ class WorkerThread(threading.Thread):
             birdid_country_code = None
             birdid_region_code = None
 
+        advanced_config = get_advanced_config()
+        burst_requested = self.ui_settings[7] if len(self.ui_settings) > 7 else True
+        detect_burst = bool(burst_requested) and advanced_config.burst_enabled
+
         settings = ProcessingSettings(
             ai_confidence=self.ui_settings[0],
             sharpness_threshold=self.ui_settings[1],
@@ -343,7 +347,7 @@ class WorkerThread(threading.Thread):
             normalization_mode=self.ui_settings[4] if len(self.ui_settings) > 4 else 'log_compression',
             detect_flight=self.ui_settings[5] if len(self.ui_settings) > 5 else True,
             detect_exposure=self.ui_settings[6] if len(self.ui_settings) > 6 else False,  # V3.8: 默认关闭
-            detect_burst=self.ui_settings[7] if len(self.ui_settings) > 7 else True,  # V4.0: 默认开启
+            detect_burst=detect_burst,  # V4.0: 主界面与高级设置共同控制连拍检测 / Main UI and Advanced Settings both gate burst detection
             # BirdID 设置
             auto_identify=birdid_auto_identify,
             birdid_use_ebird=birdid_use_ebird,
@@ -355,7 +359,7 @@ class WorkerThread(threading.Thread):
         # ── 写完整会话头（含所有设置）到日志文件 ────────────────
         from datetime import datetime as _dt
         try:
-            _adv = get_advanced_config()
+            _adv = advanced_config
             _on_off = lambda b: "On" if b else "Off"
             _session_header = "\n".join([
                 "",

@@ -31,6 +31,7 @@ class AdvancedConfig:
         "exposure_threshold": 0.10,  # 曝光阈值 (0.05-0.20) - 过曝/欠曝像素占比超过此值将降级一星
         
         # 连拍检测设置 V4.0.4
+        "burst_enabled": True,  # 启用连拍分组；关闭后跳过连拍检测与合并 / Enable burst grouping; skip detection and merge when off
         "burst_fps": 10,  # 连拍速度 (4-20张/秒) - 拍摄速度快于此值视为连拍
         "burst_min_count": 4,         # 连拍最少张数 (3-10) - 至少此数量连续照片才算连拍组
         
@@ -221,6 +222,11 @@ class AdvancedConfig:
         return self.config.get("exposure_threshold", 0.10)
     
     @property
+    def burst_enabled(self):
+        """是否启用连拍分组 / Return whether burst grouping is enabled."""
+        return bool(self.config.get("burst_enabled", True))
+
+    @property
     def burst_fps(self):
         """连拍速度 (4-20张/秒)"""
         return self.config.get("burst_fps", 10)
@@ -273,7 +279,11 @@ class AdvancedConfig:
     def set_exposure_threshold(self, value):
         """设置曝光阈值 (0.05-0.20)"""
         self.config["exposure_threshold"] = max(0.05, min(0.20, float(value)))
-    
+
+    def set_burst_enabled(self, value):
+        """设置是否启用连拍分组 / Save whether burst grouping is enabled."""
+        self.config["burst_enabled"] = bool(value)
+
     def set_burst_fps(self, value):
         """设置连拍速度 (4-20张/秒)"""
         self.config["burst_fps"] = max(4, min(20, int(value)))

@@ -223,6 +223,18 @@ class AdvancedSettingsDialog(QDialog):
         # 分隔线
         self._add_divider(layout)
 
+        burst_enabled = QCheckBox(self.i18n.t("advanced_settings.burst_enabled"))
+        self.vars["burst_enabled"] = burst_enabled
+        layout.addWidget(burst_enabled)
+
+        burst_enabled_hint = QLabel(self.i18n.t("advanced_settings.burst_enabled_hint"))
+        burst_enabled_hint.setStyleSheet(f"""
+            color: {COLORS['text_muted']};
+            font-size: 11px;
+            margin-left: 24px;
+        """)
+        layout.addWidget(burst_enabled_hint)
+
         # 连拍速度
         self.vars["burst_fps"] = self._create_slider_setting(
             layout,
@@ -232,6 +244,7 @@ class AdvancedSettingsDialog(QDialog):
             step=1,
             format_func=lambda v: f"{v} fps"
         )
+        burst_enabled.toggled.connect(self.vars["burst_fps"].setEnabled)
 
         layout.addStretch()
         return page
@@ -622,6 +635,8 @@ class AdvancedSettingsDialog(QDialog):
         self.vars["min_confidence"].setValue(int(self.config.min_confidence * 100))
         self.vars["min_sharpness"].setValue(int(self.config.min_sharpness))
         self.vars["min_nima"].setValue(int(self.config.min_nima * 10))
+        self.vars["burst_enabled"].setChecked(self.config.burst_enabled)
+        self.vars["burst_fps"].setEnabled(self.config.burst_enabled)
         self.vars["burst_fps"].setValue(int(self.config.burst_fps))
         self.vars["birdid_confidence"].setValue(int(self.config.birdid_confidence))
 
@@ -703,12 +718,14 @@ class AdvancedSettingsDialog(QDialog):
         min_confidence = self.vars["min_confidence"].value() / 100.0
         min_sharpness = self.vars["min_sharpness"].value()
         min_nima = self.vars["min_nima"].value() / 10.0
+        burst_enabled = self.vars["burst_enabled"].isChecked()
         burst_fps = self.vars["burst_fps"].value()
         birdid_confidence = self.vars["birdid_confidence"].value()
 
         self.config.set_min_confidence(min_confidence)
         self.config.set_min_sharpness(min_sharpness)
         self.config.set_min_nima(min_nima)
+        self.config.set_burst_enabled(burst_enabled)
         self.config.set_burst_fps(burst_fps)
         self.config.set_birdid_confidence(birdid_confidence)
 

@@ -618,6 +618,8 @@
     "birdid_confidence": "识别确信度",
     "birdid_confidence_hint": "越高越准确，但可能识别不出一些鸟种",
     "section_burst": "连拍设置",
+    "burst_enabled": "启用连拍分组",
+    "burst_enabled_hint": "关闭后不会把连续拍摄的照片分组，也不会移动到 burst 文件夹",
     "section_xmp": "XMP 写入",
     "xmp_write": "XMP 侧车写入",
     "xmp_write_hint": "勾选时只写 XMP 侧车文件，不修改原 RAW；不勾选时直接写入 ARW",
