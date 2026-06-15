@@ -502,6 +502,7 @@ class PhotoProcessor:
         exiftool_session_opened = False
         advanced_config = get_advanced_config()
         metadata_write_mode = str(advanced_config.get_metadata_write_mode()).strip().lower()
+        detect_burst = self.settings.detect_burst and advanced_config.burst_enabled
 
         try:
             if metadata_write_mode != "none":
@@ -513,7 +514,7 @@ class PhotoProcessor:
             raw_dict, jpg_dict, files_tbr = self._scan_files()
             
             # 阶段1.5: V4.0.4 早期连拍检测（只基于时间戳）
-            if self.settings.detect_burst:
+            if detect_burst:
                 self.burst_map = self._detect_bursts_early(raw_dict)
             
             # 阶段2: RAW转换
@@ -551,7 +552,7 @@ class PhotoProcessor:
                 self._move_files_to_rating_folders(raw_dict)
             
             # 阶段6: V4.0.4 跨目录连拍合并（在文件整理完成后）
-            if self.settings.detect_burst and self.burst_map and organize_files:
+            if detect_burst and self.burst_map and organize_files:
                 burst_stats = self._consolidate_burst_groups(raw_dict)
                 self.stats['burst_groups'] = burst_stats.get('groups', 0)
                 self.stats['burst_moved'] = burst_stats.get('moved', 0)
