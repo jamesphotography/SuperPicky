@@ -90,6 +90,10 @@ class AdvancedConfig:
         # 可选值: "rarity_desc" | "filename" | "sharpness_desc" | "aesthetic_desc"
         "browser_sort": "rarity_desc",
 
+        # 为 0 星/无鸟照片补充详情面板元数据。关闭后保留早期退出以提升速度。
+        # Populate detail-panel metadata for 0-star/no-bird photos. Disable to keep faster early exits.
+        "detail_metadata_for_rejected": False,
+
         # 浏览器删除确认弹窗（首次弹窗后可勾选「不再确认」关闭）
         "delete_confirm": True,
 
@@ -415,6 +419,42 @@ class AdvancedConfig:
         """保存浏览器排序偏好。"""
         if value in ("rarity_desc", "filename", "sharpness_desc", "aesthetic_desc"):
             self.config["browser_sort"] = value
+
+    def get_detail_metadata_for_rejected(self) -> bool:
+        """
+        返回是否为 0 星/无鸟照片补充详情面板元数据。
+
+        开启后，处理器会为早期拒绝照片写入可获得的相机 EXIF；对于低置信度但检测到鸟的照片，
+        还会继续执行必要的质量分析，以便结果浏览器显示锐度、美学、飞行和对焦信息。
+
+        Return whether detail-panel metadata should be populated for 0-star/no-bird photos.
+
+        When enabled, the processor writes available camera EXIF for early
+        rejects. For low-confidence photos where a bird is detected, it also
+        continues the needed quality analysis so the result browser can show
+        sharpness, aesthetics, flying, and focus information.
+        """
+        return bool(
+            self.config.get(
+                "detail_metadata_for_rejected",
+                self.DEFAULT_CONFIG["detail_metadata_for_rejected"],
+            )
+        )
+
+    def set_detail_metadata_for_rejected(self, enabled: bool):
+        """
+        保存 0 星/无鸟照片详情元数据补充开关。
+
+        参数:
+        enabled (bool): True 表示补充可获得的详情元数据，False 表示保留快速早期退出。
+
+        Save the detail-metadata population flag for 0-star/no-bird photos.
+
+        Parameters:
+        enabled (bool): True to populate available detail metadata, False to
+        keep the faster early-exit behavior.
+        """
+        self.config["detail_metadata_for_rejected"] = bool(enabled)
 
     @property
     def delete_confirm(self) -> bool:

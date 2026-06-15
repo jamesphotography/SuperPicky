@@ -500,7 +500,8 @@ class PhotoProcessor:
         self.stats['start_time'] = start_time
         exiftool_mgr = None
         exiftool_session_opened = False
-        metadata_write_mode = str(get_advanced_config().get_metadata_write_mode()).strip().lower()
+        advanced_config = get_advanced_config()
+        metadata_write_mode = str(advanced_config.get_metadata_write_mode()).strip().lower()
 
         try:
             if metadata_write_mode != "none":
@@ -937,6 +938,9 @@ class PhotoProcessor:
     
     def _process_images(self, files_tbr, raw_dict, display_start: int = 1, display_total: int = None):
         """处理所有图片 - AI检测、关键点检测与评分"""
+        advanced_config = get_advanced_config()
+        detail_metadata_for_rejected = advanced_config.get_detail_metadata_for_rejected()
+
         # 获取模型（已在启动时预加载，此处仅获取引用）
         # 用列表包装，使闭包可替换（MPS 周期重载时需要）
         _yolo_model_box = [load_yolo_model()]
@@ -1353,6 +1357,91 @@ class PhotoProcessor:
                 return None
             with focus_exif_lock:
                 return self._read_iso(in_filepath)
+
+        def read_detail_exif_safe(ctx: Dict[str, object], prefetched: Optional[dict]) -> dict:
+            """
+            为早期拒绝照片读取结果浏览器可显示的相机元数据。
+
+            优先复用 EXIF 预取结果；未预取时按 RAW → 当前 JPEG 的顺序读取，避免重复散落的读取逻辑。
+
+            Read camera metadata for early-rejected photos that the result
+            browser can display.
+
+            Reuse prefetched EXIF first; when it is unavailable, read RAW then
+            current JPEG so the fallback order stays consistent in one place.
+            """
+            if prefetched:
+                return dict(prefetched)
+
+            candidates = [
+                ctx.get("raw_path"),
+                ctx.get("filepath"),
+            ]
+            for candidate in candidates:
+                if not candidate or not os.path.exists(str(candidate)):
+                    continue
+                with focus_exif_lock:
+                    exif_data = self._read_all_exif_metadata(str(candidate))
+                if exif_data and any(v is not None for v in exif_data.values()):
+                    return exif_data
+            return {}
+
+        def calculate_rejected_quality_detail(in_filepath: str) -> dict:
+            """
+            为无鸟/早期拒绝照片计算可定义的质量详情。
+
+            无鸟照片没有鸟头区域和鸟框，因此这里使用整张图的 Tenengrad 锐度与整张图 TOPIQ 美学分。
+            这些值仅用于结果浏览器展示，不参与原有评星逻辑。
+
+            Calculate defined quality detail for no-bird/early-rejected photos.
+
+            A no-bird photo has no bird head region or bird bbox, so this uses
+            whole-image Tenengrad sharpness and whole-image TOPIQ aesthetics.
+            These values are for result-browser display only and do not affect
+            the existing rating logic.
+            """
+            nonlocal topiq_scorer
+
+            try:
+                import cv2
+                image_bgr = cv2.imdecode(
+                    np.fromfile(in_filepath, dtype=np.uint8),
+                    cv2.IMREAD_COLOR,
+                )
+            except Exception:
+                image_bgr = None
+
+            if image_bgr is None:
+                return {}
+
+            detail = {}
+            try:
+                image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+                full_mask = np.ones(image_rgb.shape[:2], dtype=np.uint8)
+                whole_sharpness = keypoint_detector._calculate_sharpness(
+                    image_rgb,
+                    full_mask,
+                )
+                detail["head_sharp"] = whole_sharpness
+                detail["adj_sharpness"] = whole_sharpness
+            except Exception:
+                pass
+
+            try:
+                scorer = topiq_scorer
+                if scorer is None:
+                    from iqa_scorer import get_iqa_scorer
+                    from config import get_best_device
+                    scorer = get_iqa_scorer(device=get_best_device().type)
+                    topiq_scorer = scorer
+                whole_topiq = scorer.calculate_from_array(image_bgr)
+                if whole_topiq is not None:
+                    detail["nima_score"] = whole_topiq
+                    detail["adj_topiq"] = whole_topiq
+            except Exception:
+                pass
+
+            return detail
         
         def build_yolo_item(index: int, in_filename: str) -> Dict[str, any]:
             ctx = resolve_file_context(in_filename)
@@ -1683,10 +1772,16 @@ class PhotoProcessor:
                         pass
                     add_photo_stage('yolo_refine', (time.time() - refine_start) * 1000)
             
-            # V4.1: 早期退出 - 无鸟或置信度低，跳过所有后续检测
-            # V4.2: 使用用户设置的 ai_confidence 阈值（百分比转小数）
+            # V4.1/V4.2: 无鸟或低置信度先标记为拒绝；是否早期退出由详情元数据设置决定。
+            # V4.1/V4.2: Mark no-bird/low-confidence photos as rejected first;
+            # detail-metadata settings decide whether the processor can exit early.
             confidence_threshold = self.settings.ai_confidence / 100.0
-            if not detected or (detected and confidence < confidence_threshold):
+            rejected_by_detection = not detected or (detected and confidence < confidence_threshold)
+            needs_expensive_rejected_detail = (
+                detail_metadata_for_rejected
+                and detected
+            )
+            if rejected_by_detection and not needs_expensive_rejected_detail:
                 photo_time_ms = (time.time() - photo_start_time) * 1000 + yolo_ms
                 
                 if not detected:
@@ -1705,6 +1800,22 @@ class PhotoProcessor:
                 
                 # 记录评分（用于文件移动）- V4.0.4: 使用 original_prefix 确保匹配 NEF
                 self.file_ratings[original_prefix] = rating_value
+
+                if detail_metadata_for_rejected and self.report_db:
+                    rejected_detail = {
+                        'filename': original_prefix,
+                        'has_bird': 1 if detected else 0,
+                        'confidence': confidence,
+                        'rating': rating_value,
+                        'caption': f"{rating_value}星 | {reason}",
+                    }
+                    rejected_detail.update(
+                        read_detail_exif_safe(yolo_item, prefetched_exif)
+                    )
+                    rejected_detail.update(
+                        calculate_rejected_quality_detail(filepath)
+                    )
+                    self.report_db.insert_photo(rejected_detail)
                 
                 # 写入简化 EXIF
                 if original_prefix in raw_dict:
@@ -2022,8 +2133,19 @@ class PhotoProcessor:
             if focus_data_available:
                 focus_x, focus_y = focus_result.x, focus_result.y
             
-            # 对焦点坐标获取：只对潜在 1 星及以上样本补读，减少低价值样本 IO
-            if preliminary_result.rating >= 1 and detected and bird_bbox is not None and img_dims is not None:
+            # 对焦点坐标获取：默认只对潜在 1 星及以上样本补读；详情元数据开启时也服务低置信度样本。
+            # Focus-point lookup: by default only for potential 1-star+ photos;
+            # when detail metadata is enabled, also serve low-confidence samples.
+            should_read_focus_for_detail = (
+                detail_metadata_for_rejected
+                and rejected_by_detection
+            )
+            if (
+                (preliminary_result.rating >= 1 or should_read_focus_for_detail)
+                and detected
+                and bird_bbox is not None
+                and img_dims is not None
+            ):
                 # 只在未预读到结果时再尝试一次
                 if not focus_data_available and can_read_focus_raw:
                     pre_focus_start = time.time()
@@ -2036,8 +2158,10 @@ class PhotoProcessor:
                         pass  # 对焦检测失败不影响处理
                     add_photo_stage('focus_prefetch', (time.time() - pre_focus_start) * 1000)
             
-            # V4.0: 对焦权重计算（仅对 1 星以上照片，节省时间）
-            if preliminary_result.rating >= 1:
+            # V4.0: 对焦权重计算（通常仅 1 星以上；详情元数据可扩展到低置信度样本）
+            # V4.0: Focus weighting, normally for 1-star+ photos; detail metadata
+            # can extend it to low-confidence samples.
+            if preliminary_result.rating >= 1 or should_read_focus_for_detail:
                 if focus_data_available and focus_result is not None:
                     # V3.9.4 修复：使用原图尺寸而非 resize 后的 img_dims
                     # 如果 w_orig/h_orig 为 None，使用 img_dims 作为后备
