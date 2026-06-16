@@ -335,7 +335,28 @@ class YOLOBirdDetector:
         confidence_threshold: float = 0.25,
         padding_ratio: float = 0.15,
         fill_color: Tuple[int, int, int] = (0, 0, 0),
+        focus_point: Optional[Tuple[float, float]] = None,
     ) -> Tuple[Optional[Image.Image], str]:
+        """
+        用 YOLO 检测鸟主体并方形裁剪。
+
+        参数:
+            image_input: 文件路径 或 PIL Image
+            confidence_threshold (float): YOLO 置信度阈值
+            padding_ratio (float): 裁剪框 padding 比例
+            fill_color: 补边颜色
+            focus_point (Optional[Tuple[float,float]]): 相机对焦点归一化坐标 (x,y)∈[0,1]。
+                多目标时优先选「bbox 包含对焦点」的框（与选鸟模式 ai_model.detect_and_draw_birds
+                对齐），都不含则回退最高置信度。仅 RAW 通常带此信息。
+
+        返回:
+            (裁剪后的 PIL RGB Image 或 None, 信息字符串)
+
+        Detect the bird subject with YOLO and square-crop it.
+        When focus_point is given and multiple birds are detected, prefer the bbox
+        containing the focus point (matching the main picking pipeline); otherwise
+        fall back to the highest-confidence detection.
+        """
         if self.model is None:
             return None, "YOLO模型未可用"
 
@@ -347,8 +368,16 @@ class YOLOBirdDetector:
             else:
                 return None, "不支持的图像输入类型"
 
-            img_array = np.array(image)
-            results = self.model(img_array, conf=confidence_threshold)
+            # ultralytics 约定 numpy 输入为 BGR；PIL 是 RGB，必须转换，
+            # 否则通道反转会让杂背景下的小鸟/弱对比目标漏检（与选鸟模式 cv2.imread 对齐）。
+            # ultralytics expects BGR numpy input; PIL is RGB, so convert — otherwise
+            # the channel swap makes small/low-contrast birds in clutter undetectable.
+            img_array = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+            # imgsz=1024 与选鸟模式 (preprocess_image → TARGET_IMAGE_SIZE=1024) 对齐：
+            # 默认 640 会把高像素原图直接降采样到 640，杂背景里的远距小鸟被抹掉而漏检。
+            # imgsz=1024 matches the picking pipeline; the default 640 downsamples a
+            # high-res frame too aggressively and drops small distant birds.
+            results = self.model(img_array, conf=confidence_threshold, imgsz=1024)
 
             detections = []
             for result in results:
@@ -370,8 +399,21 @@ class YOLOBirdDetector:
             if not detections:
                 return None, "未检测到鸟类"
 
-            best = max(detections, key=lambda x: x["confidence"])
             img_width, img_height = image.size
+
+            # —— 多目标选框：对焦点优先，回退最高置信度 ——
+            # —— Subject selection: focus-point first, fall back to top confidence ——
+            best = None
+            if len(detections) > 1 and focus_point is not None:
+                fx, fy = focus_point
+                fx_px, fy_px = int(fx * img_width), int(fy * img_height)
+                for det in detections:
+                    bx1, by1, bx2, by2 = det["bbox"]
+                    if bx1 <= fx_px <= bx2 and by1 <= fy_px <= by2:
+                        best = det
+                        break
+            if best is None:
+                best = max(detections, key=lambda x: x["confidence"])
 
             x1, y1, x2, y2 = best["bbox"]
             bbox_width = x2 - x1
@@ -908,6 +950,52 @@ def predict_bird(
     return results
 
 
+# RAW 扩展名（带相机对焦点元数据）；JPEG/HEIF 通常无对焦点。
+# RAW extensions that carry camera autofocus-point metadata.
+_FOCUS_RAW_EXTENSIONS = {
+    ".cr2", ".cr3", ".nef", ".nrw", ".arw", ".srf", ".dng", ".raf",
+    ".orf", ".rw2", ".pef", ".srw", ".raw", ".rwl", ".3fr", ".fff",
+    ".erf", ".mef", ".mos", ".mrw", ".x3f",
+}
+
+
+def _read_focus_point_for_path(
+    image_path: Optional[str],
+) -> Optional[Tuple[float, float]]:
+    """
+    从 RAW 文件读取相机自动对焦点（归一化坐标 x,y ∈ [0,1]）。
+
+    供识鸟面板 / CLI 在多目标场景下选「对焦的鸟」，与选鸟模式
+    (core.photo_processor → ai_model.detect_and_draw_birds) 的对焦点选框对齐。
+
+    参数:
+        image_path (Optional[str]): 图片路径；非 RAW 或读取失败返回 None。
+
+    返回:
+        Optional[Tuple[float, float]]: 归一化对焦点 (x, y)，无有效对焦点时 None。
+
+    Read the camera autofocus point (normalized x,y) from a RAW file so the
+    BirdID dock/CLI can pick the focused bird in multi-subject scenes, matching
+    the main picking pipeline. Returns None for non-RAW or on any failure.
+    """
+    if not image_path:
+        return None
+    ext = os.path.splitext(image_path)[1].lower()
+    if ext not in _FOCUS_RAW_EXTENSIONS:
+        return None
+    try:
+        # 延迟导入，避免 birdid 包对 core 的硬依赖（仅 RAW 路径才触发）。
+        # Lazy import to avoid a hard birdid→core dependency; only RAW hits this.
+        from core.focus_point_detector import get_focus_detector
+
+        focus = get_focus_detector().detect(image_path)
+        if focus is not None and getattr(focus, "is_valid", False):
+            return (float(focus.x), float(focus.y))
+    except Exception:
+        pass
+    return None
+
+
 def identify_bird(
     image_path: str,
     use_yolo: bool = True,
@@ -918,6 +1006,7 @@ def identify_bird(
     top_k: int = 5,
     name_format: Optional[str] = None,
     preloaded_crop: Optional[Image.Image] = None,
+    focus_point: Optional[Tuple[float, float]] = None,
 ) -> Dict:
     result = {
         "success": False,
@@ -939,11 +1028,19 @@ def identify_bird(
             image = load_image(image_path)
 
         if preloaded_crop is None and use_yolo and YOLO_AVAILABLE:
+            # 未显式传对焦点时，若输入是 RAW 则自动读取，用于多目标选框
+            # （与选鸟模式对齐）。JPEG 通常无对焦点，focus_point 保持 None。
+            # Auto-read the focus point from RAW when not explicitly provided, so
+            # multi-subject selection matches the main picking pipeline.
+            if focus_point is None:
+                focus_point = _read_focus_point_for_path(image_path)
             width, height = image.size
             if max(width, height) > 640:
                 detector = get_yolo_detector()
                 if detector:
-                    cropped, info = detector.detect_and_crop_bird(image)
+                    cropped, info = detector.detect_and_crop_bird(
+                        image, focus_point=focus_point
+                    )
                     if cropped:
                         image = cropped
                         result["yolo_info"] = info

@@ -73,13 +73,20 @@ def identify_single_osea(args, image_path: str) -> dict:
         # 加载图像
         image = load_image(image_path)
 
+        # RAW 自动对焦点：多目标时优先选「对焦的鸟」，与选鸟模式对齐
+        # Auto-read RAW focus point so multi-subject selection matches picking mode
+        from birdid.bird_identifier import _read_focus_point_for_path
+        focus_point = _read_focus_point_for_path(image_path)
+
         # YOLO 裁剪 (可选)
         if args.yolo and YOLO_AVAILABLE:
             width, height = image.size
             if max(width, height) > 640:
                 detector = get_yolo_detector()
                 if detector:
-                    cropped, info = detector.detect_and_crop_bird(image)
+                    cropped, info = detector.detect_and_crop_bird(
+                        image, focus_point=focus_point
+                    )
                     if cropped:
                         image = cropped
                         result['yolo_info'] = info
