@@ -657,6 +657,53 @@ def cmd_list_countries(args):
     return 0
 
 
+def add_identify_arguments(parser, multi: bool = True):
+    """
+    为「识别」命令添加共享参数。供本 CLI 与 superpicky_cli 的 identify 子命令复用，
+    确保两边参数与识别逻辑单一来源、不再分叉。
+
+    参数:
+        parser: argparse 解析器
+        multi (bool): True → 位置参数 images(nargs='+') + --batch（本 CLI）；
+                      False → 单张 image 位置参数（superpicky_cli）。
+
+    Shared argument set for the identify command, reused by both birdid_cli and
+    superpicky_cli so the two identify entry points stay in lockstep.
+    """
+    if multi:
+        parser.add_argument('images', nargs='+', help='图片文件路径 (支持 glob 模式)')
+    else:
+        parser.add_argument('image', help='图片文件路径')
+    parser.add_argument('-t', '--top', type=int, default=5,
+                        help='返回前 N 个结果 (默认: 5)')
+    # 模型选项
+    parser.add_argument('--model', '-m', type=str, default='birdid2024',
+                        choices=['birdid2024', 'osea'],
+                        help='选择模型: birdid2024 (默认) 或 osea')
+    parser.add_argument('--tta', action='store_true',
+                        help='启用 TTA 模式 (仅 OSEA 模型，更准但更慢)')
+    # YOLO / GPS / eBird 选项
+    parser.add_argument('--no-yolo', action='store_false', dest='yolo',
+                        help='禁用 YOLO 裁剪')
+    parser.add_argument('--no-gps', action='store_false', dest='gps',
+                        help='禁用 GPS 自动检测')
+    parser.add_argument('--no-ebird', action='store_false', dest='ebird',
+                        help='禁用 eBird 区域过滤')
+    parser.add_argument('--country', '-c', type=str, default=None,
+                        help='手动指定国家代码 (如 AU, CN, US)')
+    parser.add_argument('--region', '-r', type=str, default=None,
+                        help='手动指定区域代码 (如 AU-SA, CN-31)')
+    # 写入选项
+    parser.add_argument('--write-exif', '-w', action='store_true',
+                        help='将识别结果写入 EXIF (Title, Caption, Keywords)')
+    parser.add_argument('--threshold', type=float, default=70.0,
+                        help='写入EXIF的置信度阈值 (默认: 70%%)')
+    if multi:
+        parser.add_argument('--batch', '-b', action='store_true',
+                            help='批量模式 (简化输出)')
+    parser.set_defaults(yolo=True, gps=True, ebird=True)
+
+
 def main():
     """主入口"""
     parser = argparse.ArgumentParser(
@@ -681,45 +728,8 @@ Examples:
     
     # ===== 识别命令 (默认) =====
     p_identify = subparsers.add_parser('identify', help='识别鸟类 (默认)')
-    p_identify.add_argument('images', nargs='+', help='图片文件路径 (支持 glob 模式)')
-    p_identify.add_argument('-t', '--top', type=int, default=5,
-                           help='返回前 N 个结果 (默认: 5)')
+    add_identify_arguments(p_identify, multi=True)
 
-    # 模型选项
-    p_identify.add_argument('--model', '-m', type=str, default='birdid2024',
-                           choices=['birdid2024', 'osea'],
-                           help='选择模型: birdid2024 (默认) 或 osea')
-    p_identify.add_argument('--tta', action='store_true',
-                           help='启用 TTA 模式 (仅 OSEA 模型，更准但更慢)')
-
-    # YOLO 选项
-    p_identify.add_argument('--no-yolo', action='store_false', dest='yolo',
-                           help='禁用 YOLO 裁剪')
-    
-    # GPS 选项
-    p_identify.add_argument('--no-gps', action='store_false', dest='gps',
-                           help='禁用 GPS 自动检测')
-    
-    # eBird 选项
-    p_identify.add_argument('--no-ebird', action='store_false', dest='ebird',
-                           help='禁用 eBird 区域过滤')
-    p_identify.add_argument('--country', '-c', type=str, default=None,
-                           help='手动指定国家代码 (如 AU, CN, US)')
-    p_identify.add_argument('--region', '-r', type=str, default=None,
-                           help='手动指定区域代码 (如 AU-SA, CN-31)')
-    
-    # 写入选项
-    p_identify.add_argument('--write-exif', '-w', action='store_true',
-                           help='将识别结果写入 EXIF (Title, Caption, Keywords)')
-    p_identify.add_argument('--threshold', type=float, default=70.0,
-                           help='写入EXIF的置信度阈值 (默认: 70%%)')
-    
-    # 批量选项
-    p_identify.add_argument('--batch', '-b', action='store_true',
-                           help='批量模式 (简化输出)')
-    
-    p_identify.set_defaults(yolo=True, gps=True, ebird=True)
-    
     # ===== 按鸟种分目录命令 =====
     p_organize = subparsers.add_parser('organize', help='批量识别并按鸟种分目录')
     p_organize.add_argument('directory', help='照片目录路径')

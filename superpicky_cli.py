@@ -142,88 +142,52 @@ def cmd_burst(args):
 def cmd_process(args):
     """处理照片目录"""
     from tools.cli_processor import CLIProcessor
-    from core.photo_processor import ProcessingSettings
+    from tools.cli_settings import resolve_processing_settings, apply_config_overrides
     from advanced_config import get_advanced_config
-    
-    print_banner()
-    print(t("cli.target_dir", directory=args.directory))
-    print(t("cli.sharpness", value=args.sharpness))
-    print(t("cli.aesthetics", value=args.nima_threshold))
-    print(t("cli.detect_flight", value=t("cli.enabled") if args.flight else t("cli.disabled")))
-    print(t("cli.xmp", value=t("cli.enabled") if args.xmp else t("cli.disabled")))
-    print(t("cli.detect_burst", value=t("cli.enabled") if args.burst else t("cli.disabled")))
-    print(t("cli.organize_files", value=t("cli.enabled") if args.organize else t("cli.disabled")))
-    print(f"⚙️  清理临时: {'是' if args.cleanup else '否'}")
-    
-    # V4.0: 显示自动识鸟设置
-    auto_identify = getattr(args, 'auto_identify', False)
-    if auto_identify:
-        print(f"⚙️  自动识鸟: 是 (2★+ 照片)")
-        if getattr(args, 'birdid_country', None):
-            print(f"  └─ 国家: {args.birdid_country}")
-        if getattr(args, 'birdid_region', None):
-            print(f"  └─ 区域: {args.birdid_region}")
-        print(f"  └─ 置信度阈值: {getattr(args, 'birdid_threshold', 50.0)}%")
-    print()
-    
-    # 更新 ARW 写入策略
-    adv_config = get_advanced_config()
-    adv_config.config["arw_write_mode"] = "sidecar" if args.xmp else "embedded"
-    
-    # V4.1: 更新临时文件配置
-    # 如果指定了 --keep-temp-files 或 --no-keep-temp-files，优先使用
-    # 如果没指定，检查 --no-cleanup (args.cleanup=False) -> keep_temp=True
-    if hasattr(args, 'keep_temp'):
-        adv_config.config["keep_temp_files"] = args.keep_temp
-    elif not args.cleanup:
-        # 兼容旧参数：--no-cleanup 意味着保留临时文件
-        adv_config.config["keep_temp_files"] = True
-        
-    if hasattr(args, 'cleanup_days'):
-        adv_config.config["auto_cleanup_days"] = args.cleanup_days
-        
-    adv_config.save()
 
-    # V4.0: 构建 ProcessingSettings（与 GUI 完全一致）
-    settings = ProcessingSettings(
-        ai_confidence=args.confidence,
-        sharpness_threshold=args.sharpness,
-        nima_threshold=args.nima_threshold,
-        normalization_mode='log_compression',
-        detect_flight=args.flight,
-        detect_exposure=True,
-        detect_burst=args.burst,
-        # V4.0: BirdID 自动识别设置
-        auto_identify=auto_identify,
-        # V4.1: Crop
-        save_crop=args.save_crop,
-        birdid_use_ebird=True,
-        birdid_country_code=getattr(args, 'birdid_country', None) or "",
-        birdid_region_code=getattr(args, 'birdid_region', None) or "",
-        birdid_confidence_threshold=getattr(args, 'birdid_threshold', 50.0)
-    )
-    
-    # 创建处理器（直接传入 ProcessingSettings）
+    print_banner()
+
+    # 解析设置：CLI 显式 > advanced_config(= GUI 同源) > 默认。仅改内存，**不回写**。
+    adv_config = get_advanced_config()
+    apply_config_overrides(args, adv_config)                  # B 通道（folder_layout/metadata/min_*…）
+    # 兼容：--no-cleanup 且未显式指定保留时，等价于保留临时文件
+    if getattr(args, 'keep_temp', None) is None and not args.cleanup:
+        adv_config.config["keep_temp_files"] = True
+    if getattr(args, 'cleanup_days', None) is not None:
+        adv_config.config["auto_cleanup_days"] = args.cleanup_days
+    settings = resolve_processing_settings(args, adv_config)  # A 通道（ProcessingSettings）
+
+    print(t("cli.target_dir", directory=args.directory))
+    print(t("cli.sharpness", value=settings.sharpness_threshold))
+    print(t("cli.aesthetics", value=settings.nima_threshold))
+    print(t("cli.detect_flight", value=t("cli.enabled") if settings.detect_flight else t("cli.disabled")))
+    print(f"⚙️  曝光检测: {'是' if settings.detect_exposure else '否'}")
+    print(t("cli.detect_burst", value=t("cli.enabled") if settings.detect_burst else t("cli.disabled")))
+    print(t("cli.organize_files", value=t("cli.enabled") if args.organize else t("cli.disabled")))
+    print(f"⚙️  ARW 写入: {adv_config.config.get('arw_write_mode')}")
+    print(f"⚙️  清理临时: {'否' if adv_config.keep_temp_files else '是'}")
+
+    if settings.auto_identify:
+        print(f"⚙️  自动识鸟: 是 (2★+ 照片)")
+        if settings.birdid_country_code:
+            print(f"  └─ 国家: {settings.birdid_country_code}")
+        if settings.birdid_region_code:
+            print(f"  └─ 区域: {settings.birdid_region_code}")
+        print(f"  └─ 置信度阈值: {settings.birdid_confidence_threshold}%")
+    print()
+
     processor = CLIProcessor(
         dir_path=args.directory,
         verbose=not args.quiet,
         settings=settings
     )
-    
-    # 执行处理（PhotoProcessor 内部会处理自动识鸟）
-    # 执行处理（PhotoProcessor 内部会处理自动识鸟）
-    # V4.1: cleanup_temp 参数现在由 AdvancedConfig.keep_temp_files 控制
-    # 但为了兼容性，如果显式传递了参数，我们还是传递下去，不过 PhotoProcessor 内部会使用统一逻辑
+
+    # 连拍检测/跨目录合并由 PhotoProcessor 内部处理。
     stats = processor.process(
         organize_files=args.organize,
-        cleanup_temp=not adv_config.keep_temp_files  # 如果保留，则不清理
+        cleanup_temp=not adv_config.keep_temp_files  # 保留则不清理
     )
-    
-    # V4.0.5: 连拍检测已移至 PhotoProcessor 内部
-    # - 早期检测: _detect_bursts_early() 在文件扫描后执行
-    # - 跨目录合并: _consolidate_burst_groups() 在文件整理后执行
-    # 这样可以实现跨星级目录的连拍合并，将所有连拍照片移至最高星级目录
-    
+
     print("\n✅ 处理完成!")
     return 0
 
@@ -482,18 +446,29 @@ def cmd_restar(args):
     
     # 获取高级配置的 0 星阈值
     adv_config = get_advanced_config()
-    min_confidence = getattr(adv_config, 'min_confidence', 0.5)
+    # --confidence 显式给出时覆盖 min_confidence（与 GUI 同源旋钮），否则用配置值
+    if getattr(args, 'confidence', None) is not None:
+        min_confidence = args.confidence / 100.0
+    else:
+        min_confidence = getattr(adv_config, 'min_confidence', 0.5)
     min_sharpness = getattr(adv_config, 'min_sharpness', 250)
     min_nima = getattr(adv_config, 'min_nima', 4.0)
-    
+
+    # 锐度/美学阈值：未显式指定则跟随 skill 预设/配置（与 GUI 默认一致）
+    from core.skill_presets import get_skill_level_thresholds
+    preset_sharp, preset_aesth = get_skill_level_thresholds(
+        adv_config.skill_level, adv_config)
+    sharpness_threshold = args.sharpness if args.sharpness is not None else preset_sharp
+    nima_threshold = args.nima_threshold if args.nima_threshold is not None else preset_aesth
+
     # 重新计算评分
     new_photos = engine.recalculate_ratings(
         photos=engine.photos_data,
         min_confidence=min_confidence,
         min_sharpness=min_sharpness,
         min_nima=min_nima,
-        sharpness_threshold=args.sharpness,
-        nima_threshold=args.nima_threshold
+        sharpness_threshold=sharpness_threshold,
+        nima_threshold=nima_threshold
     )
     
     # 统计变化
@@ -709,91 +684,44 @@ def cmd_info(args):
 
 
 def cmd_identify(args):
-    """识别鸟类"""
-    from birdid.bird_identifier import identify_bird, YOLO_AVAILABLE, RAW_SUPPORT
+    """识别鸟类。
+
+    委托给 birdid_cli 的共享实现（identify_single / display_result / write_exif），
+    与 `birdid_cli identify` 完全同一套逻辑（支持 osea/tta/ebird/country/region），
+    不再维护本地的简化版（已合并，消除分叉）。
+    """
+    import birdid_cli
 
     print_banner()
-    print(f"\n🐦 鸟类识别")
+    print(f"\n🐦 鸟类识别 / Bird Identification")
     print(f"📸 图片: {args.image}")
-    print(f"⚙️  YOLO裁剪: {'是' if args.yolo else '否'}")
-    print(f"⚙️  GPS过滤: {'是' if args.gps else '否'}")
-    print(f"⚙️  返回数量: {args.top}")
-    print()
-
-    if not YOLO_AVAILABLE:
-        print("⚠️  YOLO 模块未安装，将使用完整图像识别")
-
-    # 执行识别
+    print(f"🤖 模型: {getattr(args, 'model', 'birdid2024').upper()}"
+          + (" + TTA" if getattr(args, 'model', '') == 'osea' and getattr(args, 'tta', False) else ""))
+    print(f"⚙️  YOLO裁剪: {'是' if args.yolo else '否'}  GPS: {'是' if args.gps else '否'}"
+          f"  eBird: {'是' if getattr(args, 'ebird', True) else '否'}")
     print("🔍 正在识别...")
-    result = identify_bird(
-        args.image,
-        use_yolo=args.yolo,
-        use_gps=args.gps,
-        top_k=args.top
-    )
 
-    if not result['success']:
-        print(f"\n❌ 识别失败: {result.get('error', '未知错误')}")
-        return 1
+    result = birdid_cli.identify_single(args, args.image)
+    success = birdid_cli.display_result(result, verbose=True)
 
-    # 显示结果
-    print(f"\n{'═' * 50}")
-    print("  识别结果")
-    print(f"{'═' * 50}")
-
-    if result.get('yolo_info'):
-        print(f"\n📍 YOLO检测: {result['yolo_info']}")
-
-    if result.get('gps_info'):
-        gps = result['gps_info']
-        print(f"🌍 GPS位置: {gps['info']}")
-
-    results = result.get('results', [])
-    if not results:
-        print("\n⚠️  未能识别出鸟类")
-        return 0
-
-    print(f"\n🐦 Top-{len(results)} 识别结果:")
-    for i, r in enumerate(results, 1):
-        cn_name = r.get('cn_name', '未知')
-        en_name = r.get('en_name', 'Unknown')
-        confidence = r.get('confidence', 0)
-        ebird_match = "✓" if r.get('ebird_match') else ""
-
-        print(f"  {i}. {cn_name} ({en_name})")
-        print(f"     置信度: {confidence:.1f}% {ebird_match}")
-
-    # 写入 EXIF（如果启用）
-    if args.write_exif and results:
-        from tools.exiftool_manager import get_exiftool_manager
-
-        best = results[0]
-        bird_name = f"{best['cn_name']} ({best['en_name']})"
-
-        print(f"\n📝 写入 EXIF Title...")
-        exiftool_mgr = get_exiftool_manager()
-        stats = exiftool_mgr.batch_set_metadata([{
-            'file': args.image,
-            'title': bird_name,
-            'caption': bird_name,
-        }])
-
-        if stats.get('success', 0) > 0:
-            print(f"  ✅ 已写入: {bird_name}")
+    if getattr(args, 'write_exif', False) and success:
+        print(f"\n📝 写入 EXIF...")
+        if birdid_cli.write_exif(args.image, result, args.threshold):
+            print(f"  ✅ 已写入: {result['results'][0]['cn_name']}")
         else:
             print(f"  ❌ 写入失败")
 
     print()
-    return 0
+    return 0 if success else 1
 
 
 def cmd_batch(args):
     """递归批量处理子目录"""
     from core.recursive_scanner import is_dangerous_root, is_processed, scan_directories
     from core.batch_processor import BatchProcessor
-    from core.photo_processor import ProcessingSettings
+    from tools.cli_settings import resolve_processing_settings, apply_config_overrides
     from advanced_config import get_advanced_config
-    
+
     print_banner()
     print(f"\n📂 批量处理: {args.directory}")
 
@@ -835,33 +763,13 @@ def cmd_batch(args):
             print("❌ 已取消")
             return 1
     
-    # 更新高级配置
+    # 解析设置：CLI 显式 > advanced_config(= GUI) > 默认。仅改内存，不回写。
     adv_config = get_advanced_config()
-    adv_config.config["arw_write_mode"] = "sidecar" if args.xmp else "embedded"
-    if hasattr(args, 'keep_temp'):
-        adv_config.config["keep_temp_files"] = args.keep_temp
-    elif not args.cleanup:
+    apply_config_overrides(args, adv_config)
+    if getattr(args, 'keep_temp', None) is None and not args.cleanup:
         adv_config.config["keep_temp_files"] = True
-    adv_config.save()
-    
-    # 构建 ProcessingSettings
-    auto_identify = getattr(args, 'auto_identify', False)
-    settings = ProcessingSettings(
-        ai_confidence=args.confidence,
-        sharpness_threshold=args.sharpness,
-        nima_threshold=args.nima_threshold,
-        normalization_mode='log_compression',
-        detect_flight=args.flight,
-        detect_exposure=True,
-        detect_burst=args.burst,
-        auto_identify=auto_identify,
-        save_crop=getattr(args, 'save_crop', False),
-        birdid_use_ebird=True,
-        birdid_country_code=getattr(args, 'birdid_country', None) or "",
-        birdid_region_code=getattr(args, 'birdid_region', None) or "",
-        birdid_confidence_threshold=getattr(args, 'birdid_threshold', 50.0),
-    )
-    
+    settings = resolve_processing_settings(args, adv_config)
+
     # 执行批量处理
     processor = BatchProcessor(
         root_dir=args.directory,
@@ -938,6 +846,77 @@ def cmd_batch_reset(args):
     return 0 if fail_count == 0 else 1
 
 
+def _add_processing_args(parser):
+    """
+    为 process / batch 添加共享的处理参数。
+
+    设计：可覆盖项一律 `default=None`（哨兵）。None = 用户未在命令行指定 →
+    由 tools/cli_settings 回落到 advanced_config（与 GUI 同源），使「不带参数」时
+    默认值与 GUI 完全一致；显式给出则覆盖。每个设置都有 flag → 完全可控（面向 agent）。
+    布尔三态用 argparse.BooleanOptionalAction（--x / --no-x，未给为 None）。
+    """
+    parser.add_argument('directory', help='照片目录路径')
+    # —— 评分阈值 / Scoring thresholds ——
+    parser.add_argument('-s', '--sharpness', type=int, default=None,
+                        help='锐度阈值 (默认: 跟随 skill 预设/配置)')
+    parser.add_argument('-n', '--nima-threshold', type=float, default=None,
+                        help='美学阈值 TOPIQ (默认: 跟随 skill 预设/配置)')
+    parser.add_argument('-c', '--confidence', type=int, default=None,
+                        help='AI置信度阈值 0-100 (默认: 配置 min_confidence×100)')
+    parser.add_argument('--skill-level',
+                        choices=['beginner', 'intermediate', 'master', 'custom'],
+                        default=None,
+                        help='摄影水平预设，驱动锐度/美学默认 (默认: 配置)')
+    # —— 检测开关（三态）/ Detection toggles ——
+    parser.add_argument('--flight', action=argparse.BooleanOptionalAction, default=None,
+                        help='飞鸟检测 (默认: 跟随配置；GUI 默认关)')
+    parser.add_argument('--burst', action=argparse.BooleanOptionalAction, default=None,
+                        help='连拍检测 (默认: 跟随配置；GUI 默认关)')
+    parser.add_argument('--exposure', action=argparse.BooleanOptionalAction, default=None,
+                        help='曝光检测 (默认: 跟随配置；GUI 默认关)')
+    parser.add_argument('--exposure-threshold', type=float, default=None,
+                        help='曝光阈值 0.05-0.20 (默认: 配置)')
+    # —— 0 星判定阈值（高级）/ Zero-star thresholds ——
+    parser.add_argument('--min-sharpness', type=int, default=None,
+                        help='0星锐度下限 (默认: 配置)')
+    parser.add_argument('--min-nima', type=float, default=None,
+                        help='0星美学下限 (默认: 配置)')
+    parser.add_argument('--picked-top', type=int, default=None,
+                        help='精选 Top 百分比 (默认: 配置)')
+    # —— 元数据 / 目录布局 / Metadata & layout ——
+    parser.add_argument('--xmp', action=argparse.BooleanOptionalAction, default=None,
+                        help='[兼容] 写 XMP 侧车不改 RAW (= --arw-write-mode sidecar)')
+    parser.add_argument('--arw-write-mode',
+                        choices=['sidecar', 'embedded', 'inplace', 'auto'], default=None,
+                        help='ARW 写入策略 (默认: 配置)')
+    parser.add_argument('--metadata-mode',
+                        choices=['embedded', 'sidecar', 'none'], default=None,
+                        help='元数据写入模式 (默认: 配置)')
+    parser.add_argument('--folder-layout',
+                        choices=['species-first', 'rating-first'], default=None,
+                        help='分目录布局 (默认: 配置)')
+    parser.add_argument('--name-format',
+                        choices=['default', 'avilist', 'clements', 'birdlife', 'scientific'],
+                        default=None, help='鸟种英文名格式 (默认: 配置)')
+    # —— BirdID 自动识鸟 / Auto bird ID ——
+    parser.add_argument('--auto-identify', '-i', action='store_true', default=False,
+                        help='自动识别 2★+ 照片鸟种并按鸟种分目录')
+    parser.add_argument('--ebird', action=argparse.BooleanOptionalAction, default=None,
+                        help='BirdID eBird 地区过滤 (默认: 开)')
+    parser.add_argument('--birdid-country', type=str, default=None,
+                        help='BirdID 国家代码 (如 AU, CN, US)')
+    parser.add_argument('--birdid-region', type=str, default=None,
+                        help='BirdID 区域代码 (如 AU-SA)')
+    parser.add_argument('--birdid-threshold', type=float, default=None,
+                        help='BirdID 置信度阈值 (默认: 配置)')
+    # —— 临时文件 / 裁剪 / Temp & crop ——
+    parser.add_argument('--keep-temp-files', action=argparse.BooleanOptionalAction,
+                        dest='keep_temp', default=None,
+                        help='保留临时预览图 (默认: 配置)')
+    parser.add_argument('--save-crop', action='store_true', default=False,
+                        help='保留 bird/debug 裁剪图 (.superpicky/cache/debug)')
+
+
 def main():
     """主入口"""
     parser = argparse.ArgumentParser(
@@ -959,58 +938,19 @@ Examples:
     subparsers = parser.add_subparsers(dest='command', help='可用命令')
     
     # ===== process 命令 =====
+    # 设计：可覆盖项一律 default=None（哨兵）。None = 用户未指定 → 由 tools/cli_settings
+    # 回落到 advanced_config（与 GUI 同源，默认值一致）。每项都有 flag → 完全可控（面向 agent）。
     p_process = subparsers.add_parser('process', help=t("cli.cmd_process"))
-    p_process.add_argument('directory', help='照片目录路径')
-    p_process.add_argument('-s', '--sharpness', type=int, default=400,
-                          help='锐度阈值 (默认: 400, 范围: 200-600)')
-    p_process.add_argument('-n', '--nima-threshold', type=float, default=5.0,
-                          help='美学阈值 (TOPIQ, 默认: 5.0, 范围: 4.0-7.0)')
-    p_process.add_argument('-c', '--confidence', type=int, default=50,
-                          help='AI置信度阈值 (默认: 50)')
-    # 飞鸟检测（使用 store_true/store_false 组合，通过 set_defaults 设置默认值为 True）
-    p_process.add_argument('--flight', action='store_true', dest='flight',
-                          help='识别飞鸟 (默认: 开启)')
-    p_process.add_argument('--no-flight', action='store_false', dest='flight',
-                          help='禁用飞鸟识别')
-    # 连拍检测（同样方式）
-    p_process.add_argument('--burst', action='store_true', dest='burst',
-                          help='连拍检测 (默认: 开启)')
-    p_process.add_argument('--no-burst', action='store_false', dest='burst',
-                          help='禁用连拍检测')
-    # XMP 侧车写入
-    p_process.add_argument('--xmp', action='store_true', dest='xmp',
-                          help='写入XMP侧车(不改RAW)')
-    p_process.add_argument('--no-xmp', action='store_false', dest='xmp',
-                          help='直接写入RAW(默认)')
+    _add_processing_args(p_process)
     p_process.add_argument('--no-organize', action='store_false', dest='organize',
                           help='不移动文件到分类文件夹')
     p_process.add_argument('--no-cleanup', action='store_false', dest='cleanup',
                           help='不清理临时JPG文件')
-    p_process.add_argument('-q', '--quiet', action='store_true',
-                          help='静默模式')
-    # V4.0: 自动识鸟选项
-    p_process.add_argument('--auto-identify', '-i', action='store_true',
-                          help='自动识别 2★+ 照片的鸟种并按鸟种分目录')
-    p_process.add_argument('--birdid-country', type=str, default=None,
-                          help='BirdID 国家代码 (如 AU, CN, US)')
-    p_process.add_argument('--birdid-region', type=str, default=None,
-                          help='BirdID 区域代码 (如 AU-SA, CN-31)')
-    p_process.add_argument('--birdid-threshold', type=float, default=50.0,
-                          help='BirdID 置信度阈值 (默认: 50%%)')
-    # V4.1: 临时文件管理
-    p_process.add_argument('--keep-temp-files', action='store_true', dest='keep_temp',
-                          help='保留临时预览图片（默认: 开启）')
-    p_process.add_argument('--no-keep-temp-files', action='store_false', dest='keep_temp',
-                          help='不保留临时预览图片')
+    p_process.add_argument('-q', '--quiet', action='store_true', help='静默模式')
     p_process.add_argument('--cleanup-days', type=int, default=30,
                           help='自动清理周期（天），0=永久 (默认: 30)')
-    p_process.add_argument('--save-crop', action='store_true',
-                          help='保留 bird/debug 裁剪图片 (保存到 .superpicky/cache/debug)')
-                          
-    # V3.9: 使用 set_defaults 确保 flight, burst 默认为 True
-    # V4.1: keep_temp 默认为 True
-    p_process.set_defaults(organize=True, cleanup=True, burst=True, flight=True, auto_identify=False, xmp=False, keep_temp=True)
-    
+    p_process.set_defaults(organize=True, cleanup=True)
+
     # ===== reset 命令 =====
     p_reset = subparsers.add_parser('reset', help=t("cli.cmd_reset"))
     p_reset.add_argument('directory', help='照片目录路径')
@@ -1020,12 +960,12 @@ Examples:
     # ===== restar 命令 =====
     p_restar = subparsers.add_parser('restar', help=t("cli.cmd_restar"))
     p_restar.add_argument('directory', help='照片目录路径')
-    p_restar.add_argument('-s', '--sharpness', type=int, default=400,
-                         help='新锐度阈值 (默认: 400, 范围: 200-600)')
-    p_restar.add_argument('-n', '--nima-threshold', type=float, default=5.0,
-                         help='TOPIQ 美学评分阈值 (默认: 5.0, 范围: 4.0-7.0)')
-    p_restar.add_argument('-c', '--confidence', type=int, default=50,
-                         help='AI置信度阈值 (默认: 50)')
+    p_restar.add_argument('-s', '--sharpness', type=int, default=None,
+                         help='新锐度阈值 (默认: 跟随 skill 预设/配置)')
+    p_restar.add_argument('-n', '--nima-threshold', type=float, default=None,
+                         help='TOPIQ 美学评分阈值 (默认: 跟随 skill 预设/配置)')
+    p_restar.add_argument('-c', '--confidence', type=int, default=None,
+                         help='AI置信度阈值 0-100 (默认: 配置 min_confidence×100)')
     p_restar.add_argument('--burst', action='store_true', default=True,
                          help='连拍检测 (默认: 开启)')
     p_restar.add_argument('--no-burst', action='store_false', dest='burst',
@@ -1059,45 +999,17 @@ Examples:
     p_burst.set_defaults(phash=True)
 
     # ===== identify 命令 =====
+    # 与 birdid_cli 共用同一套参数（model/tta/ebird/country/region…）与识别逻辑，避免分叉。
+    import birdid_cli
     p_identify = subparsers.add_parser('identify', help=t("cli.cmd_identify"))
-    p_identify.add_argument('image', help='图片文件路径')
-    p_identify.add_argument('-t', '--top', type=int, default=5,
-                           help='返回前 N 个结果 (默认: 5)')
-    p_identify.add_argument('--no-yolo', action='store_false', dest='yolo',
-                           help='禁用 YOLO 裁剪')
-    p_identify.add_argument('--no-gps', action='store_false', dest='gps',
-                           help='禁用 GPS 过滤')
-    p_identify.add_argument('--write-exif', action='store_true',
-                           help='将识别结果写入 EXIF Title')
-    p_identify.set_defaults(yolo=True, gps=True)
+    birdid_cli.add_identify_arguments(p_identify, multi=False)
     
     # ===== batch 命令 =====
+    # 共享处理参数（可覆盖项 default=None，与 process 一致），加 batch 专属选项。
     p_batch = subparsers.add_parser('batch', help='递归批量处理子目录')
-    p_batch.add_argument('directory', help='根目录路径')
-    p_batch.add_argument('-s', '--sharpness', type=int, default=400,
-                        help='锐度阈值 (默认: 400)')
-    p_batch.add_argument('-n', '--nima-threshold', type=float, default=5.0,
-                        help='美学阈值 (默认: 5.0)')
-    p_batch.add_argument('-c', '--confidence', type=int, default=50,
-                        help='AI置信度阈值 (默认: 50)')
-    p_batch.add_argument('--flight', action='store_true', dest='flight',
-                        help='识别飞鸟 (默认: 开启)')
-    p_batch.add_argument('--no-flight', action='store_false', dest='flight')
-    p_batch.add_argument('--burst', action='store_true', dest='burst',
-                        help='连拍检测 (默认: 开启)')
-    p_batch.add_argument('--no-burst', action='store_false', dest='burst')
-    p_batch.add_argument('--xmp', action='store_true', dest='xmp',
-                        help='写入XMP侧车')
-    p_batch.add_argument('--no-xmp', action='store_false', dest='xmp')
+    _add_processing_args(p_batch)
     p_batch.add_argument('--no-organize', action='store_false', dest='organize')
     p_batch.add_argument('--no-cleanup', action='store_false', dest='cleanup')
-    p_batch.add_argument('--auto-identify', '-i', action='store_true')
-    p_batch.add_argument('--birdid-country', type=str, default=None)
-    p_batch.add_argument('--birdid-region', type=str, default=None)
-    p_batch.add_argument('--birdid-threshold', type=float, default=50.0)
-    p_batch.add_argument('--save-crop', action='store_true')
-    p_batch.add_argument('--keep-temp-files', action='store_true', dest='keep_temp')
-    p_batch.add_argument('--no-keep-temp-files', action='store_false', dest='keep_temp')
     p_batch.add_argument('--skip-existing', action='store_true',
                         help='跳过已处理的目录')
     p_batch.add_argument('--dry-run', action='store_true',
@@ -1107,8 +1019,7 @@ Examples:
     p_batch.add_argument('-y', '--yes', action='store_true',
                         help='跳过确认提示')
     p_batch.add_argument('-q', '--quiet', action='store_true')
-    p_batch.set_defaults(organize=True, cleanup=True, burst=True, flight=True,
-                        auto_identify=False, xmp=False, keep_temp=True,
+    p_batch.set_defaults(organize=True, cleanup=True,
                         skip_existing=False, dry_run=False)
     
     # ===== batch-reset 命令 =====

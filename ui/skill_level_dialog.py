@@ -13,28 +13,10 @@ from PySide6.QtGui import QFont
 
 from ui.styles import COLORS
 
-
-# 预设配置常量
-SKILL_PRESETS = {
-    "beginner": {
-        "sharpness": 300,
-        "aesthetics": 4.5,
-        "name_key": "skill_level.beginner",
-        "desc_key": "skill_level.beginner_desc"
-    },
-    "intermediate": {
-        "sharpness": 380,
-        "aesthetics": 4.8,
-        "name_key": "skill_level.intermediate",
-        "desc_key": "skill_level.intermediate_desc"
-    },
-    "master": {
-        "sharpness": 520,
-        "aesthetics": 5.5,
-        "name_key": "skill_level.master",
-        "desc_key": "skill_level.master_desc"
-    }
-}
+# SKILL_PRESETS / get_skill_level_thresholds 已抽到 core.skill_presets（无 Qt 依赖，
+# GUI 与 CLI 共用）。此处 re-export，保持现有 `from ui.skill_level_dialog import ...` 不变。
+# Re-exported from core.skill_presets so existing GUI imports keep working unchanged.
+from core.skill_presets import SKILL_PRESETS, get_skill_level_thresholds
 
 
 class SkillLevelCard(QFrame):
@@ -330,19 +312,5 @@ class SkillLevelSelector(QWidget):
         self._update_selection(level_key)
 
 
-def get_skill_level_thresholds(level_key: str, config=None) -> tuple:
-    """
-    获取指定水平的阈值
-    
-    Args:
-        level_key: 水平键 ("beginner", "intermediate", "master", "custom")
-        config: 配置对象，仅在 custom 模式下需要
-    
-    Returns:
-        (sharpness, aesthetics) 元组
-    """
-    if level_key == "custom" and config:
-        return (config.custom_sharpness, config.custom_aesthetics)
-    
-    preset = SKILL_PRESETS.get(level_key, SKILL_PRESETS["intermediate"])
-    return (preset["sharpness"], preset["aesthetics"])
+# get_skill_level_thresholds 已移至 core.skill_presets 并在文件顶部 re-export。
+# Moved to core.skill_presets; re-exported at the top of this file.
