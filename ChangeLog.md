@@ -52,6 +52,12 @@ build, this is the recommended version to settle on.
 - macOS installer (.pkg in .dmg) is signed and notarized through a more reliable
   CI signing path.
 
+**Intel Mac Is Back on the Latest (4.3.0)**
+- Intel Macs now default to CPU (FP32). The legacy MPS path on old AMD dGPUs was
+  actually slower — running FP16 poorly and falling back to CPU for YOLO anyway.
+  Forcing CPU restores smooth performance beyond the 4.1.0 baseline, so Intel
+  users can move up from 4.2.1.
+
 ---
 
 ## Highlights since 4.1.0 (the 4.2.x line)
@@ -73,8 +79,17 @@ build, this is the recommended version to settle on.
 
 ## Distribution Notes
 - **Apple Silicon Mac**: single full installer (`.dmg`) — see Release assets
-- **Intel Mac**: please stay on **v4.2.1**, the last Intel-supported release (PyTorch no longer ships for Intel Macs)
-- **Windows**: the **Lite** installer covers all configurations; the **CUDA/GPU** build is distributed separately (large file) — ask if you need it
+- **Intel Mac**: a dedicated **v4.3.0** full installer (`.dmg`) is now available.
+  It runs on CPU (FP32); we removed the legacy MPS/AMD-dGPU path that was actually
+  slower, restoring smooth performance beyond the 4.1.0 baseline. Intel users no
+  longer need to stay on 4.2.1.
+- **Windows** — we recommend the **Full** builds (bundled AI runtime, works out of
+  the box, no first-run download):
+  - **CPU Full** — runs on any PC.
+  - **GPU (CUDA) Full** — for NVIDIA GPUs; distributed via Google Drive / Baidu
+    Netdisk due to its large size.
+  - The **Lite** installer (~190 MB) still covers all configurations, downloading
+    the AI runtime on first launch — fine when your network is reliable.
 
 ---
 
@@ -108,6 +123,11 @@ build, this is the recommended version to settle on.
 - 所有版本均已关闭应用内更新检测 —— 升级请前往官网下载页获取新版本。这取代了原先的应用内自动更新，并规避了升级后旧补丁覆盖新代码的问题。
 - Windows 安装包升级时会先清空旧程序文件；并新增卸载工具，用于在 Lite 与 Full 之间切换。
 
+**Intel Mac 重回最新版（4.3.0）**
+- Intel Mac 现默认走 CPU（FP32）运行。此前在老款 AMD 独显上误用 MPS 反而更慢
+  （FP16 表现差、YOLO 还得回退 CPU 重算），改为强制 CPU 后性能恢复并超过 4.1.0
+  水平，Intel 用户可从 4.2.1 升级上来。
+
 ---
 
 ## 自 4.1.0 以来的重点更新（4.2.x 系列）
@@ -129,5 +149,12 @@ build, this is the recommended version to settle on.
 
 ## 分发说明
 - **Apple Silicon Mac**：单一完整安装包（`.dmg`），见 Release 资产
-- **Intel Mac**：请继续使用 **v4.2.1**（最后一个支持 Intel 的版本，PyTorch 已不再为 Intel Mac 发布更新）
-- **Windows**：**Lite** 安装包覆盖所有配置；**CUDA/GPU** 版本因体积较大单独分发，需要可联系获取
+- **Intel Mac**：现已提供 **v4.3.0** 完整安装包（`.dmg`）。该版本走 CPU（FP32）
+  运行，我们移除了反而更慢的老款 MPS/AMD 独显路径，性能恢复并超过 4.1.0 水平。
+  Intel 用户无需再停留在 4.2.1。
+- **Windows**：推荐下载**完整版（Full）**（内置 AI 运行时，开箱即用，无需首启下载）：
+  - **CPU 完整版** —— 适用于所有电脑。
+  - **GPU（CUDA）完整版** —— 面向 NVIDIA 显卡；因体积较大，通过 Google Drive /
+    百度网盘分发。
+  - **Lite** 安装包（约 190 MB）仍覆盖所有配置，首次启动时在线下载 AI 运行时，
+    网络良好时适用。
