@@ -703,11 +703,11 @@
         var CN_PROXY_PREFIX = 'https://gh-proxy.com/';
 
         var PLATFORMS = [
-            { key: 'mac_arm64', labelCn: 'macOS · Apple Silicon (M1/M2/M3/M4/M5)',                labelEn: 'macOS · Apple Silicon (M1/M2/M3/M4/M5)',              badge: 'macOS',   cardClass: 'featured',          tooltipCn: null, tooltipEn: null },
+            { key: 'mac_arm64', labelCn: 'macOS · Apple Silicon (M1/M2/M3/M4/M5)',                labelEn: 'macOS · Apple Silicon (M1/M2/M3/M4/M5)',              badge: 'macOS',   cardClass: 'featured',          tooltipCn: null, tooltipEn: null,                                                                                                                                          primaryLink: 'github' },
             { key: 'mac_intel', labelCn: 'macOS · Intel x64（2020 年前 Mac）',                     labelEn: 'macOS · Intel x64 (pre-2020 Macs)',                  badge: 'macOS',   cardClass: '',                  tooltipCn: '≈1.3 GB', tooltipEn: '≈1.3 GB' },
-            { key: 'win_cpu',   labelCn: 'Windows · x64 · CPU 自带 PyTorch + 模型',                labelEn: 'Windows · x64 · CPU · bundled PyTorch + models',      badge: 'Windows', cardClass: 'windows featured',  tooltipCn: '✅ 安装即用，无需联网下载 · 约 749 MB', tooltipEn: '✅ Install-and-run, no extra download · ≈749 MB' },
+            { key: 'win_cpu',   labelCn: 'Windows · x64 · CPU 自带 PyTorch + 模型',                labelEn: 'Windows · x64 · CPU · bundled PyTorch + models',      badge: 'Windows', cardClass: 'windows',           tooltipCn: '✅ 安装即用，无需联网下载 · 约 749 MB', tooltipEn: '✅ Install-and-run, no extra download · ≈749 MB' },
             { key: 'win_lite',  labelCn: 'Windows · x64 · Lite 精简版（首启自动下载模型）',          labelEn: 'Windows · x64 · Lite (downloads models on first run)', badge: 'Windows', cardClass: 'windows',           tooltipCn: '≈196 MB · 首次启动按硬件自动下载 AI 引擎与模型', tooltipEn: '≈196 MB · downloads AI engine + models on first launch' },
-            { key: 'win_cuda',  labelCn: 'Windows · x64 · GPU CUDA 加速版（仅 NVIDIA 显卡）',     labelEn: 'Windows · x64 · GPU CUDA build (NVIDIA only)',        badge: 'Windows', cardClass: 'windows',           tooltipCn: 'Full CUDA ≈2.0 GB · 仅网盘分发，因超出 GitHub 单文件 2 GiB 上限', tooltipEn: 'Full CUDA ≈2.0 GB · netdisk-only (exceeds GitHub 2 GiB single-asset cap)', noGitHub: true },
+            { key: 'win_cuda',  labelCn: 'Windows · x64 · GPU CUDA 加速版（仅 NVIDIA 显卡）',     labelEn: 'Windows · x64 · GPU CUDA build (NVIDIA only)',        badge: 'Windows', cardClass: 'windows featured',  tooltipCn: 'Full CUDA ≈2.0 GB · 仅网盘分发，因超出 GitHub 单文件 2 GiB 上限', tooltipEn: 'Full CUDA ≈2.0 GB · netdisk-only (exceeds GitHub 2 GiB single-asset cap)', noGitHub: true, primaryLink: 'drive' },
         ];
 
         function mkEl(tag, cls) { var e = document.createElement(tag); if (cls) e.className = cls; return e; }
@@ -772,15 +772,17 @@
                 if (!p.noGitHub && ghFile) {
                     var ghUrl = GH_BASE + tag + '/' + ghFile;
                     var cnUrl = CN_PROXY_PREFIX + ghUrl;
-                    links.appendChild(mkBtn(ghUrl, 'btn-secondary', p.tooltipCn, p.tooltipEn, 'GitHub', 'GitHub'));
+                    var ghCls = p.primaryLink === 'github' ? 'btn-primary' : 'btn-secondary';
+                    links.appendChild(mkBtn(ghUrl, ghCls, p.tooltipCn, p.tooltipEn, 'GitHub ↓', 'GitHub ↓'));
                     links.appendChild(mkBtn(cnUrl, 'btn-secondary', p.tooltipCn, p.tooltipEn, '大陆镜像', 'China Mirror'));
                 }
 
                 if (driveUrl) {
-                    links.appendChild(mkBtn(driveUrl, 'btn-secondary', p.tooltipCn, p.tooltipEn, 'Google Drive', 'Google Drive'));
+                    var driveCls = p.primaryLink === 'drive' ? 'btn-primary' : 'btn-secondary';
+                    links.appendChild(mkBtn(driveUrl, driveCls, p.tooltipCn, p.tooltipEn, 'Google Drive ↓', 'Google Drive ↓'));
                 }
                 if (baiduUrl) {
-                    links.appendChild(mkBtn(baiduUrl, 'btn-primary', p.tooltipCn, p.tooltipEn, '百度网盘', 'Baidu'));
+                    links.appendChild(mkBtn(baiduUrl, 'btn-secondary', p.tooltipCn, p.tooltipEn, '百度网盘', 'Baidu'));
                 }
 
                 card.appendChild(info); card.appendChild(links);
