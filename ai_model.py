@@ -3,6 +3,7 @@ import time
 import cv2
 import numpy as np
 from ultralytics import YOLO
+from typing import Optional
 from tools.utils import log_message
 from config import config, get_lazy_registry
 # V3.2: 移除未使用的 sharpness 计算器导入
@@ -52,16 +53,36 @@ def load_yolo_model(log_callback=None):
     return model
 
 
-def preprocess_image(image_path, target_size=None):
-    """预处理图像"""
+def read_image_bgr(image_path: str) -> Optional[np.ndarray]:
+    """以 BGR 格式读取图像，兼容 Windows 中文路径。"""
+    try:
+        data = np.fromfile(image_path, dtype=np.uint8)
+        if data.size == 0:
+            return None
+        return cv2.imdecode(data, cv2.IMREAD_COLOR)
+    except Exception:
+        return None
+
+
+def preprocess_image(
+    image_path: str,
+    target_size: Optional[int] = None,
+    source_image: Optional[np.ndarray] = None,
+) -> Optional[np.ndarray]:
+    """预处理图像，允许复用上游已解码的 BGR 图像。"""
     if target_size is None:
         target_size = config.ai.TARGET_IMAGE_SIZE
-    
-    img = cv2.imread(image_path)
+
+    img = source_image if source_image is not None else read_image_bgr(image_path)
+    if img is None:
+        return None
+
     h, w = img.shape[:2]
     scale = target_size / max(w, h)
-    img = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
-    return img
+    new_size = (int(w * scale), int(h * scale))
+    if new_size == (w, h):
+        return img.copy()
+    return cv2.resize(img, new_size, interpolation=cv2.INTER_AREA)
 
 
 # V3.2: 移除 _get_sharpness_calculator（锐度现在由 keypoint_detector 计算）
@@ -74,7 +95,18 @@ def _get_iqa_scorer():
     return registry.get_or_create(key, lambda: get_iqa_scorer(device=get_best_device().type))
 
 
-def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, i18n=None, skip_nima=False, focus_point=None, report_db=None):
+def detect_and_draw_birds(
+    image_path,
+    model,
+    output_path,
+    dir,
+    ui_settings,
+    i18n=None,
+    skip_nima=False,
+    focus_point=None,
+    report_db=None,
+    decoded_image: Optional[np.ndarray] = None,
+):
     """
     检测并标记鸟类（V4.2 - 支持多鸟对焦点选择）
 
@@ -87,6 +119,7 @@ def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, i18n
         i18n: I18n instance for internationalization (optional)
         skip_nima: 如果为True，跳过NIMA计算（用于双眼不可见的情况）
         focus_point: 对焦点坐标 (x, y)，归一化 0-1，用于多鸟时选择对焦的鸟
+        decoded_image: 复用上游已解码的 BGR 图像，减少重复 JPEG 解码
     
     Returns:
         元组 (found_bird, bird_result, confidence, sharpness, nima_score, bird_bbox, img_dims, bird_mask, bird_count)
@@ -121,7 +154,10 @@ def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, i18n
 
     # Step 1: 图像预处理
     step_start = time.time()
-    image = preprocess_image(image_path)
+    image = preprocess_image(image_path, source_image=decoded_image)
+    if image is None:
+        log_message(f"ERROR: cannot decode image {image_path}", dir)
+        return None
     height, width, _ = image.shape
     preprocess_time = (time.time() - step_start) * 1000
     # V3.3: 简化日志，移除步骤详情
@@ -419,8 +455,7 @@ def detect_and_draw_birds(image_path, model, output_path, dir, ui_settings, i18n
         try:
             # Mask is already resized to image size by ultralytics by default in modern versions
             # But let's verify if we need to resize
-            # results[0].masks.data is a torch tensor on GPU/CPU
-            raw_mask = results[0].masks.data[bird_idx].cpu().numpy()
+            raw_mask = masks[bird_idx]
             
             # Ensure mask is same size as processed image (width, height)
             if raw_mask.shape != (height, width):
