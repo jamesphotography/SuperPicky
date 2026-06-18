@@ -31,7 +31,7 @@ from datetime import datetime
 
 # 现有模块
 from tools.find_bird_util import raw_to_jpeg
-from ai_model import load_yolo_model, detect_and_draw_birds
+from ai_model import load_yolo_model, detect_and_draw_birds, read_image_bgr
 from tools.report_db import ReportDB
 from tools.exiftool_manager import get_exiftool_manager
 from tools.file_utils import ensure_hidden_directory, clear_readonly_attribute
@@ -1336,13 +1336,18 @@ class PhotoProcessor:
                 'can_read_focus_raw': in_can_read_focus_raw,
             }
         
-        def run_yolo_detection(in_filepath: str, focus_point: Optional[Tuple[float, float]] = None):
+        def run_yolo_detection(
+            in_filepath: str,
+            focus_point: Optional[Tuple[float, float]] = None,
+            decoded_image: Optional[np.ndarray] = None,
+        ):
             # 单模型实例在”预取线程 + 主线程复选”两处复用，串行化推理调用以保证稳定性
             with yolo_infer_lock:
                 return detect_and_draw_birds(
                     in_filepath, _yolo_model_box[0], None, self.dir_path, ui_settings, None,
                     skip_nima=True, focus_point=focus_point,
-                    report_db=self.report_db
+                    report_db=self.report_db,
+                    decoded_image=decoded_image,
                 )
         
         def read_focus_result_safe(in_raw_path: Optional[str]):
@@ -1448,10 +1453,11 @@ class PhotoProcessor:
             in_filepath = ctx['filepath']
             
             yolo_start = time.time()
+            decoded_image = read_image_bgr(in_filepath)
             yolo_result = None
             yolo_error = None
             try:
-                yolo_result = run_yolo_detection(in_filepath, None)
+                yolo_result = run_yolo_detection(in_filepath, None, decoded_image)
                 if yolo_result is None:
                     yolo_error = self.i18n.t("logs.cannot_process", filename=in_filename)
             except Exception as e:
@@ -1466,6 +1472,7 @@ class PhotoProcessor:
                 'raw_ext': ctx['raw_ext'],
                 'raw_path': ctx['raw_path'],
                 'can_read_focus_raw': ctx['can_read_focus_raw'],
+                'decoded_image': decoded_image,
                 'result': yolo_result,
                 'error': yolo_error,
                 'yolo_ms': (time.time() - yolo_start) * 1000,
@@ -1690,8 +1697,6 @@ class PhotoProcessor:
                  # RAW+JPG 配对照片或纯 JPG：直接将 JPG 路径写入 temp_jpeg_path
                  path_update_data['temp_jpeg_path'] = os.path.relpath(yolo_item['filepath'], self.dir_path)
                  
-            if path_update_data and self.report_db:
-                 self.report_db.update_photo(original_prefix, path_update_data)
             raw_ext = yolo_item['raw_ext']
             raw_path = yolo_item['raw_path']
             can_read_focus_raw = yolo_item['can_read_focus_raw']
@@ -1771,7 +1776,11 @@ class PhotoProcessor:
                 if focus_point_for_selection is not None:
                     refine_start = time.time()
                     try:
-                        refined_result = run_yolo_detection(filepath, focus_point_for_selection)
+                        refined_result = run_yolo_detection(
+                            filepath,
+                            focus_point_for_selection,
+                            yolo_item.get('decoded_image'),
+                        )
                         if refined_result is not None:
                             detected, _, confidence, sharpness, _, bird_bbox, img_dims, bird_mask, bird_count = refined_result
                     except Exception:
@@ -1806,6 +1815,9 @@ class PhotoProcessor:
                 
                 # 记录评分（用于文件移动）- V4.0.4: 使用 original_prefix 确保匹配 NEF
                 self.file_ratings[original_prefix] = rating_value
+
+                if path_update_data and self.report_db:
+                    self.report_db.update_photo(original_prefix, path_update_data)
 
                 if detail_metadata_for_rejected and self.report_db:
                     rejected_detail = {
@@ -1844,11 +1856,10 @@ class PhotoProcessor:
 
                 # 即使置信度不足，只要检测到鸟就生成 crop_debug 供浏览预览
                 # (yolo_debug_path 已由 ai_model.py 写入 DB，crop_debug 同步生成保持一致)
-                if detected and bird_bbox is not None and img_dims is not None:
+                should_build_debug = bool(self.callbacks.crop_preview or self.settings.save_crop)
+                if detected and should_build_debug and bird_bbox is not None and img_dims is not None:
                     try:
-                        import cv2 as _cv2_early
-                        # _orig = _cv2_early.imread(filepath)
-                        _orig = _cv2_early.imdecode(np.fromfile(filepath, dtype=np.uint8), _cv2_early.IMREAD_COLOR)
+                        _orig = yolo_item.get('decoded_image')
                         if _orig is not None:
                             _h, _w = _orig.shape[:2]
                             _sw, _sh = img_dims
@@ -1860,7 +1871,13 @@ class PhotoProcessor:
                             _oh = int(min(_bh * _sy, _h - _oy))
                             _crop = _orig[_oy:_oy + _oh, _ox:_ox + _ow]
                             if _crop.size > 0:
-                                self._save_debug_crop(filename, _crop)
+                                debug_img = self._save_debug_crop(
+                                    filename,
+                                    _crop,
+                                    write_file=self.settings.save_crop,
+                                )
+                                if debug_img is not None and self.callbacks.crop_preview:
+                                    self.callbacks.crop_preview(debug_img, None)
                     except Exception:
                         pass
 
@@ -1897,8 +1914,9 @@ class PhotoProcessor:
             if use_keypoints and detected and bird_bbox is not None and img_dims is not None:
                 try:
                     import cv2
-                    # orig_img = cv2.imread(filepath)  # 只读取一次!
-                    orig_img = cv2.imdecode(np.fromfile(filepath, dtype=np.uint8), cv2.IMREAD_COLOR)
+                    orig_img = yolo_item.get('decoded_image')
+                    if orig_img is None:
+                        orig_img = read_image_bgr(filepath)
                     if orig_img is not None:
                         h_orig, w_orig = orig_img.shape[:2]
                         # 获取YOLO处理时的图像尺寸
@@ -2274,7 +2292,8 @@ class PhotoProcessor:
                     focus_status_en = "WORST"
             
             # V3.9: 生成调试可视化图（仅对有鸟的照片）
-            if detected and bird_crop_bgr is not None:
+            should_build_debug = bool(self.callbacks.crop_preview or self.settings.save_crop)
+            if detected and should_build_debug and bird_crop_bgr is not None:
                 # 计算裁剪区域内的坐标
                 head_center_crop = None
                 if head_center_orig is not None:
@@ -2317,7 +2336,8 @@ class PhotoProcessor:
                         head_center_crop,
                         head_radius_val,
                         focus_point_crop,
-                        focus_status_en  # 使用英文标签
+                        focus_status_en,  # 使用英文标签
+                        write_file=self.settings.save_crop,
                     )
                     # V4.2: 发送裁剪预览到 UI（同时传对焦状态供 dock 显示）
                     if debug_img is not None and self.callbacks.crop_preview:
@@ -2503,6 +2523,7 @@ class PhotoProcessor:
                     adj_topiq_csv,  # V4.1: 调整后美学
                     prefetched_exif,  # V2: EXIF 元数据
                     caption,  # V4.1: 评分说明
+                    path_update_data,  # 合并路径字段，减少一次 DB update
                 )
                 add_photo_stage('csv_update', (time.time() - csv_update_start) * 1000)
                 
@@ -2531,7 +2552,12 @@ class PhotoProcessor:
                         self.star2_reasons[file_prefix] = 'nima'  # 保留原字段名兼容
                     else:
                         self.star2_reasons[file_prefix] = 'both'
-            
+            else:
+                # 目标文件不存在时仍写入路径字段，确保 DB 记录不丢失
+                # Write path fields even when the target file is missing to keep DB record intact
+                if path_update_data and self.report_db:
+                    self.report_db.update_photo(original_prefix, path_update_data)
+
             self._perf_record_photo(photo_time_ms, photo_stage_ms, early_exit=False)
             mark_resume_completed(original_prefix)
         
@@ -2756,7 +2782,8 @@ class PhotoProcessor:
         head_center_crop: tuple = None,
         head_radius: int = None,
         focus_point_crop: tuple = None,
-        focus_status: str = None
+        focus_status: str = None,
+        write_file: bool = True,
     ):
         """
         V3.9: 保存调试可视化图片到 .superpicky/debug_crops/ 目录
@@ -2767,11 +2794,6 @@ class PhotoProcessor:
         - 🔴 红色十字: 对焦点位置
         """
         import cv2
-        
-        # 创建调试目录（Windows 下自动隐藏）
-        debug_dir = os.path.join(self.dir_path, ".superpicky", "cache", "crop_debug")
-        ensure_hidden_directory(os.path.join(self.dir_path, ".superpicky"))
-        os.makedirs(debug_dir, exist_ok=True)
         
         # 复制原图
         debug_img = bird_crop_bgr.copy()
@@ -2809,21 +2831,27 @@ class PhotoProcessor:
             cv2.putText(debug_img, focus_status, (10, 30), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
         
-        # 保存调试图
-        # V4.0.5: filename 可能包含子目录前缀（如 .superpicky/cache/_Z9W1029.jpg），需取 basename
-        file_prefix = os.path.splitext(os.path.basename(filename))[0]
-        debug_path = os.path.join(debug_dir, f"{file_prefix}.jpg")
-        cv2.imwrite(debug_path, debug_img, [cv2.IMWRITE_JPEG_QUALITY, 85])
-        
-        # NOTE: debug_crop_path 由 ai_model.py 的 insert_photo() 统一写入数据库
-        # V4.2: 现在 debug_crop_path 专门指代 crop_debug 图片，此处需要回写数据库
-        if hasattr(self, 'report_db') and self.report_db:
-             try:
-                 rel_path = os.path.relpath(debug_path, self.dir_path)
-                 # 更新数据库中的 debug_crop_path 字段
-                 self.report_db.update_photo(file_prefix, {"debug_crop_path": rel_path})
-             except Exception:
-                 pass
+        if write_file:
+            # 创建调试目录（Windows 下自动隐藏）
+            debug_dir = os.path.join(self.dir_path, ".superpicky", "cache", "crop_debug")
+            ensure_hidden_directory(os.path.join(self.dir_path, ".superpicky"))
+            os.makedirs(debug_dir, exist_ok=True)
+
+            # 保存调试图
+            # V4.0.5: filename 可能包含子目录前缀（如 .superpicky/cache/_Z9W1029.jpg），需取 basename
+            file_prefix = os.path.splitext(os.path.basename(filename))[0]
+            debug_path = os.path.join(debug_dir, f"{file_prefix}.jpg")
+            cv2.imwrite(debug_path, debug_img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+
+            # NOTE: debug_crop_path 由 ai_model.py 的 insert_photo() 统一写入数据库
+            # V4.2: 现在 debug_crop_path 专门指代 crop_debug 图片，此处需要回写数据库
+            if hasattr(self, 'report_db') and self.report_db:
+                try:
+                    rel_path = os.path.relpath(debug_path, self.dir_path)
+                    # 更新数据库中的 debug_crop_path 字段
+                    self.report_db.update_photo(file_prefix, {"debug_crop_path": rel_path})
+                except Exception:
+                    pass
         
         # V4.2: 返回标注后的图像，用于 UI 实时预览
         return debug_img
@@ -2874,6 +2902,7 @@ class PhotoProcessor:
             adj_topiq: float = None,  # V4.1: 调整后美学
             exif_data: dict = None,  # V2: EXIF 元数据
             caption: str = None,  # V4.1: 评分说明
+            extra_data: Optional[Dict] = None,
     ):
         """更新报告数据库中的关键点数据和评分（SQLite 版本）"""
         if self.report_db is None:
@@ -2898,6 +2927,9 @@ class PhotoProcessor:
         # V2: 合并 EXIF 元数据（先合并，再覆盖 caption，避免 exif_data 里的空值覆盖评分说明）
         if exif_data:
             data.update(exif_data)
+
+        if extra_data:
+            data.update(extra_data)
 
         # caption 最后写入，确保不被 exif_data 里的空 Caption-Abstract 覆盖
         if caption is not None:
