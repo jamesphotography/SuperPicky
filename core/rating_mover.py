@@ -19,6 +19,29 @@ from core.folder_layout import compute_target_folder, normalize_layout
 _manifest_lock = threading.Lock()
 
 
+def _cleanup_empty_dirs(dir_path: str, old_folder_abs: str) -> None:
+    """
+    从 old_folder_abs 开始，逐级向上删除空目录，直到 dir_path（根目录）为止。
+    Walk up from old_folder_abs, removing empty directories until dir_path is reached.
+
+    Args:
+        dir_path:       批处理根目录（绝对路径），不会被删除
+        old_folder_abs: 刚才移走文件的那个目录（绝对路径）
+    """
+    root = os.path.normpath(dir_path)
+    current = os.path.normpath(old_folder_abs)
+    while current != root:
+        try:
+            if not os.path.isdir(current):
+                break
+            if os.listdir(current):  # 非空，停止
+                break
+            os.rmdir(current)
+            current = os.path.dirname(current)
+        except Exception:
+            break
+
+
 def _is_in_burst(rel_path: str) -> bool:
     """
     检查相对路径中是否含有 burst_ 段。
@@ -155,6 +178,9 @@ def move_photo_on_metadata_change(
     if jpeg_abs and moved_jpeg_rel:
         _update_manifest(dir_path, os.path.basename(jpeg_abs), new_rel_folder)
 
+    # 12. 清理旧目录（若已空）
+    _cleanup_empty_dirs(dir_path, os.path.dirname(current_abs))
+
     return True
 
 
@@ -284,6 +310,9 @@ def _change_bird_species_single(
         if jpeg_abs and "temp_jpeg_path" in path_update:
             _update_manifest(dir_path, os.path.basename(jpeg_abs), new_rel_folder)
 
+        # 清理旧目录（若已空）
+        _cleanup_empty_dirs(dir_path, os.path.dirname(current_abs))
+
     # 合并写入 DB
     all_updates = {**species_update, **path_update}
     if report_db is not None:
@@ -346,6 +375,8 @@ def _change_bird_species_burst(
             try:
                 shutil.move(burst_folder_abs, new_burst_parent_abs)
                 moved = True
+                # burst 文件夹移走后，清理旧星等目录和鸟种目录（若已空）
+                _cleanup_empty_dirs(dir_path, rating_folder_abs)
             except Exception:
                 pass
 

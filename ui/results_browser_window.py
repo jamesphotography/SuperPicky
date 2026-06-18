@@ -1203,7 +1203,10 @@ class ResultsBrowserWindow(QMainWindow):
         db_key = _photo_db_key(photo)
         base_dir = photo.get("_base_dir") or self._directory
 
-        # 更新缓存列表中的 photo dict（让 UI 立即反映新鸟名）
+        # 同步更新 photo 副本 + 缓存列表（让 UI 立即反映新鸟名）
+        # Update both the local photo copy and the cached list so show_photo displays the new name.
+        photo["bird_species_cn"] = new_cn
+        photo["bird_species_en"] = new_en
         for p in self._filtered_photos:
             if _photo_identity(p) == _photo_identity(photo):
                 p["bird_species_cn"] = new_cn
@@ -2172,7 +2175,10 @@ class ResultsBrowserWidget(QWidget):
         db_key = _photo_db_key(photo)
         base_dir = photo.get("_base_dir") or self._directory
 
-        # 更新缓存列表中的 photo dict（让 UI 立即反映新鸟名）
+        # 同步更新 photo 副本 + 缓存列表（让 UI 立即反映新鸟名）
+        # Update both the local photo copy and the cached list so show_photo displays the new name.
+        photo["bird_species_cn"] = new_cn
+        photo["bird_species_en"] = new_en
         for p in self._filtered_photos:
             if _photo_identity(p) == _photo_identity(photo):
                 p["bird_species_cn"] = new_cn

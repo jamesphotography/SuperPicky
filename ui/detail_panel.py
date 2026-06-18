@@ -421,22 +421,26 @@ class DetailPanel(QWidget):
         self._val_caption.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px; font-family: {FONTS['mono']}; background: transparent;")
         self._val_caption.setWordWrap(True)
 
-        # 鸟种行：鸟名标签 + 铅笔编辑按钮（横向排列）
-        # Species row: bird name label + pencil edit button (side by side).
+        # 鸟种行：鸟名标签 + 「编辑/Edit」文字按钮（横向排列）
+        # Species row: bird name label + "编辑/Edit" text button (side by side).
+        _edit_label = "Edit" if self.i18n.current_lang.startswith("en") else "编辑"
         self._edit_species_btn = QToolButton()
-        self._edit_species_btn.setText("✏")
-        self._edit_species_btn.setFixedSize(18, 18)
-        self._edit_species_btn.setToolTip(self.i18n.t("browser.edit_species_tooltip"))
+        self._edit_species_btn.setText(_edit_label)
+        self._edit_species_btn.setFixedHeight(20)
         self._edit_species_btn.setCursor(Qt.PointingHandCursor)
         self._edit_species_btn.setStyleSheet(f"""
             QToolButton {{
                 background: transparent;
-                border: none;
+                border: 1px solid {COLORS['border']};
+                border-radius: 3px;
                 color: {COLORS['text_muted']};
-                font-size: 11px;
-                padding: 0;
+                font-size: 10px;
+                padding: 0 4px;
             }}
-            QToolButton:hover {{ color: {COLORS['accent']}; }}
+            QToolButton:hover {{
+                border-color: {COLORS['accent']};
+                color: {COLORS['accent']};
+            }}
         """)
         self._edit_species_btn.clicked.connect(self._on_edit_species_clicked)
         self._edit_species_btn.hide()  # 无照片时隐藏 / hidden until a photo is loaded
