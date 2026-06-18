@@ -1241,6 +1241,7 @@
     "sort_aesthetic": "Aesthetic↓",
     "species_all": "— All —",
     "species_copied": "✓ Copied",
+    "edit_species_tooltip": "Change bird species",
     "focus_toggle": "Focus ●",
     "focus_no_bird": "No bird",
     "prev_arrow": "◀ Prev",
@@ -1378,5 +1379,14 @@
     "lock_zoom_on": "🔒 Lock Zoom",
     "lock_zoom_off": "🔓 Lock Zoom",
     "delete_btn": "🗑 Delete"
+  },
+  "bird_species_edit": {
+    "title": "Change Bird Species",
+    "hint": "Search and select the correct species. Files will be moved automatically after confirmation.",
+    "search_placeholder": "Type Chinese name, English name or pinyin…",
+    "prompt": "Enter a keyword to search for bird species",
+    "no_match": "No matching species found",
+    "confirm": "Confirm",
+    "cancel": "Cancel"
   }
 }

@@ -530,6 +530,24 @@ class ReportDB:
             )
             return [dict(row) for row in cursor.fetchall()]
 
+    def get_photos_by_burst_id(self, burst_id: int, **kwargs) -> List[dict]:
+        """
+        按 burst_id 查询同组所有连拍照片。
+        **kwargs 仅用于与 MergedReportDB 签名兼容，在此忽略。
+
+        Args:
+            burst_id: 连拍组 ID
+
+        Returns:
+            该组所有照片的数据字典列表，按 burst_position / filename 排序
+        """
+        with self._lock:
+            cursor = self._conn.execute(
+                "SELECT * FROM photos WHERE burst_id = ? ORDER BY burst_position, filename",
+                (burst_id,),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
     def get_distinct_species(self, use_en: bool = False, ratings: list = None) -> List[str]:
         """
         获取数据库中去重后的鸟种名称列表（用于结果浏览器筛选下拉框）。

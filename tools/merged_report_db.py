@@ -266,6 +266,36 @@ class MergedReportDB:
                 return
             raise
     
+    def get_photos_by_burst_id(self, burst_id: int, abs_source_dir: Optional[str] = None) -> List[dict]:
+        """
+        按 burst_id 查询同组所有连拍照片。连拍组是 per-directory 的，
+        abs_source_dir 用于在多目录模式下精确定位，避免跨目录 burst_id 冲突。
+
+        Args:
+            burst_id:       连拍组 ID
+            abs_source_dir: 照片所在目录绝对路径（可选，传入后仅查该子库）
+
+        Returns:
+            该组所有照片的数据字典列表（含 source_dir 字段）
+        """
+        where = "burst_id = ?"
+        params: List[Any] = [burst_id]
+        if abs_source_dir:
+            try:
+                rel = os.path.relpath(abs_source_dir, self.root_dir)
+                where += " AND source_dir = ?"
+                params.append(rel)
+            except ValueError:
+                pass  # Windows 跨盘符时忽略 source_dir 过滤
+        sql, base_params = self._build_union_sql(
+            where=where,
+            order="ORDER BY burst_position, filename",
+            extra_params=params,
+        )
+        with self._lock:
+            cursor = self._conn.execute(sql, base_params)
+            return [dict(row) for row in cursor.fetchall()]
+
     def get_photos_by_filters(self, filters: Optional[dict] = None) -> List[dict]:
         """按筛选条件查询（兼容 ReportDB 接口）"""
         filters = filters or {}
