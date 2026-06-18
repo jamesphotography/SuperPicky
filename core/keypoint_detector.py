@@ -319,26 +319,31 @@ class KeypointDetector:
         V3.7 改动: 使用 Tenengrad (Sobel梯度) 替代 Laplacian以减少噪点干扰
         并使用对数归一化将结果映射到 0-1000 范围
         """
-        if mask.sum() == 0:
+        if image is None or mask is None:
             return 0.0
-        
-        # 转灰度
-        if len(image.shape) == 3:
-            gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+
+        mask_u8 = mask.astype(np.uint8, copy=False)
+        if cv2.countNonZero(mask_u8) == 0:
+            return 0.0
+
+        x, y, width, height = cv2.boundingRect(mask_u8)
+        if width <= 0 or height <= 0:
+            return 0.0
+
+        roi = image[y:y + height, x:x + width]
+        roi_mask = mask_u8[y:y + height, x:x + width]
+        if cv2.countNonZero(roi_mask) == 0:
+            return 0.0
+
+        if len(roi.shape) == 3:
+            gray = cv2.cvtColor(roi, cv2.COLOR_RGB2GRAY)
         else:
-            gray = image
-        
-        # Tenengrad 算子 (Sobel梯度平方和)
-        gx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
-        gy = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
-        gradient_magnitude = gx ** 2 + gy ** 2
-        
-        # 只取掩码区域的平均值
-        mask_pixels = mask > 0
-        if mask_pixels.sum() == 0:
-            return 0.0
-            
-        raw_sharpness = float(gradient_magnitude[mask_pixels].mean())
+            gray = roi
+
+        gx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+        gy = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
+        gradient_magnitude = cv2.add(cv2.multiply(gx, gx), cv2.multiply(gy, gy))
+        raw_sharpness = float(cv2.mean(gradient_magnitude, mask=roi_mask)[0])
         
         # 对数归一化到 0-1000
         # V4.0 修复: 降低 MIN_VAL，之前 1460 太高导致锐利照片也返回 0
