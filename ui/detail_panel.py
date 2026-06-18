@@ -10,7 +10,7 @@ from typing import Optional
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QScrollArea, QFrame, QFormLayout,
-    QSizePolicy
+    QSizePolicy, QToolButton
 )
 from PySide6.QtCore import Qt, Signal, QSize, QThread, Slot, QTimer
 from PySide6.QtGui import QPixmap, QFont, QGuiApplication, QImage
@@ -232,6 +232,9 @@ class DetailPanel(QWidget):
     prev_requested = Signal()
     next_requested = Signal()
     rating_change_requested = Signal(object, int)
+    # 用户点击铅笔图标请求修改鸟种，携带当前 photo dict
+    # Emitted when user clicks the pencil icon to edit bird species; carries current photo dict.
+    species_edit_requested = Signal(object)
 
     def __init__(self, i18n, parent=None):
         super().__init__(parent)
@@ -418,10 +421,43 @@ class DetailPanel(QWidget):
         self._val_caption.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px; font-family: {FONTS['mono']}; background: transparent;")
         self._val_caption.setWordWrap(True)
 
+        # 鸟种行：鸟名标签 + 「编辑/Edit」文字按钮（横向排列）
+        # Species row: bird name label + "编辑/Edit" text button (side by side).
+        _edit_label = "Edit" if self.i18n.current_lang.startswith("en") else "编辑"
+        self._edit_species_btn = QToolButton()
+        self._edit_species_btn.setText(_edit_label)
+        self._edit_species_btn.setFixedHeight(20)
+        self._edit_species_btn.setCursor(Qt.PointingHandCursor)
+        self._edit_species_btn.setStyleSheet(f"""
+            QToolButton {{
+                background: transparent;
+                border: 1px solid {COLORS['border']};
+                border-radius: 3px;
+                color: {COLORS['text_muted']};
+                font-size: 10px;
+                padding: 0 4px;
+            }}
+            QToolButton:hover {{
+                border-color: {COLORS['accent']};
+                color: {COLORS['accent']};
+            }}
+        """)
+        self._edit_species_btn.clicked.connect(self._on_edit_species_clicked)
+        self._edit_species_btn.hide()  # 无照片时隐藏 / hidden until a photo is loaded
+
+        species_row_layout = QHBoxLayout()
+        species_row_layout.setContentsMargins(0, 0, 0, 0)
+        species_row_layout.setSpacing(4)
+        species_row_layout.addWidget(self._val_species, 1)
+        species_row_layout.addWidget(self._edit_species_btn, 0, Qt.AlignVCenter)
+
+        # 鸟种行单独用 layout 形式插入（含铅笔按钮）
+        # Species row inserted as a layout (includes pencil button).
+        form.addRow(_lbl("browser.meta_species"), species_row_layout)
+
         rows = [
             # V4.2.7: 鸟类信息 3 行连续（鸟种 → 全球罕见度 → IUCN）
             # V4.2.7: Three bird-related rows kept adjacent for natural reading.
-            ("browser.meta_species",    self._val_species),
             ("browser.meta_gbif_rarity", self._val_gbif_rarity),
             ("browser.meta_iucn",       self._val_iucn),
             ("browser.meta_focus",      self._val_focus),
@@ -528,6 +564,7 @@ class DetailPanel(QWidget):
         ):
             val.setText("—")
         self._rating_label.setText("—")
+        self._edit_species_btn.hide()
         self._caption_content.setVisible(False)
         self._caption_expanded = False
         self._update_caption_toggle_label()
@@ -660,6 +697,14 @@ class DetailPanel(QWidget):
         if cur == self.i18n.t("browser.species_copied"):
             self._val_species.setText(original)
             self._val_species.setToolTip(original)
+
+    def _on_edit_species_clicked(self):
+        """
+        用户点击铅笔图标 → 发出 species_edit_requested 信号，由上层窗口处理弹窗逻辑。
+        User clicks the pencil icon → emit species_edit_requested; the parent window handles the dialog.
+        """
+        if self._current_photo:
+            self.species_edit_requested.emit(dict(self._current_photo))
 
     def _nav_btn_style(self) -> str:
         """导航按钮（◀/▶）样式 — 比一般次级按钮更明显。"""
@@ -860,13 +905,15 @@ class DetailPanel(QWidget):
         else:
             self._val_flying.setText(_unknown)
 
-        # 鸟种（跟随界面语言）
+        # 鸟种（跟随界面语言）+ 显示铅笔编辑按钮
+        # Bird species (follows UI language) + show pencil edit button.
         if self.i18n.current_lang.startswith('en'):
             species = p.get("bird_species_en") or p.get("bird_species_cn") or _unknown
         else:
             species = p.get("bird_species_cn") or p.get("bird_species_en") or _unknown
         self._val_species.setText(species)
         self._val_species.setToolTip(species)
+        self._edit_species_btn.show()
 
         # IUCN 红色名录（中英全名 + 缩写，按官方色着色）
         # IUCN Red List (full name + abbreviation, official color)

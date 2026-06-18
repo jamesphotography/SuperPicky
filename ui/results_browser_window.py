@@ -174,6 +174,39 @@ def _trigger_rating_move(
     threading.Thread(target=_do, daemon=True).start()
 
 
+def _trigger_species_change(
+    dir_path: str,
+    photo: dict,
+    new_bird_cn: str,
+    new_bird_en: str,
+    report_db,
+    db_key,
+) -> None:
+    """
+    在后台线程中执行因改鸟种引发的 DB 更新与文件移动。
+    连拍组整组处理；普通照片仅移动当前文件。
+
+    Spawn a daemon thread to update species in DB and move files after a species change.
+    Burst groups are handled as a whole; single photos move individually.
+    """
+    from advanced_config import get_advanced_config
+    from core.rating_mover import change_bird_species
+
+    layout = get_advanced_config().folder_layout
+
+    def _do() -> None:
+        try:
+            change_bird_species(
+                dir_path, photo, new_bird_cn, new_bird_en, layout, report_db, db_key
+            )
+        except Exception as e:
+            from tools.utils import log_message
+            log_message(f"[rating_mover] species change failed: {e}")
+
+    import threading
+    threading.Thread(target=_do, daemon=True).start()
+
+
 # ============================================================
 #  C4 — 右键菜单实现（应用列表来自用户配置）
 # ============================================================
@@ -515,6 +548,7 @@ class ResultsBrowserWindow(QMainWindow):
         self._detail_panel.prev_requested.connect(self._prev_photo)
         self._detail_panel.next_requested.connect(self._next_photo)
         self._detail_panel.rating_change_requested.connect(self._on_rating_changed)
+        self._detail_panel.species_edit_requested.connect(self._on_species_edit_requested)
         outer_h.addWidget(self._detail_panel, 0)
 
     def _build_toolbar(self) -> QWidget:
@@ -1149,6 +1183,59 @@ class ResultsBrowserWindow(QMainWindow):
             return path if path and os.path.exists(path) else None
         return None
 
+    def _on_species_edit_requested(self, photo: dict):
+        """
+        用户点击铅笔图标 → 弹出鸟种搜索对话框，确认后后台更新 DB + 移动文件。
+        User clicks pencil icon → open bird species search dialog; on confirm, update DB and move files in background.
+        """
+        from ui.bird_species_edit_dialog import BirdSpeciesEditDialog
+        from PySide6.QtWidgets import QDialog
+
+        dialog = BirdSpeciesEditDialog(parent=self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        new_cn = dialog.selected_cn
+        new_en = dialog.selected_en
+        if not new_cn and not new_en:
+            return
+
+        db_key = _photo_db_key(photo)
+        base_dir = photo.get("_base_dir") or self._directory
+
+        # 1. 同步更新 photo 副本 + 缓存列表
+        # Update both the local photo copy and the cached list so show_photo displays the new name.
+        photo["bird_species_cn"] = new_cn
+        photo["bird_species_en"] = new_en
+        for p in self._filtered_photos:
+            if _photo_identity(p) == _photo_identity(photo):
+                p["bird_species_cn"] = new_cn
+                p["bird_species_en"] = new_en
+                break
+
+        # 2. 同步写入 DB 鸟种字段（使下拉刷新立即生效；文件移动仍在后台执行）
+        # Write species fields to DB synchronously so the dropdown refresh sees new data immediately.
+        if self._db:
+            self._db.update_photo(db_key, {
+                "bird_species_cn": new_cn or None,
+                "bird_species_en": new_en or None,
+            })
+
+        # 3. 刷新详情面板
+        self._detail_panel.show_photo(photo)
+
+        # 4. 刷新左侧鸟种下拉
+        use_en = self.i18n.current_lang.startswith("en")
+        current_filters = self._filter_panel.get_filters()
+        new_species = self._db.get_distinct_species(
+            use_en=use_en, ratings=current_filters.get("ratings")
+        )
+        self._filter_panel.update_species_list(new_species)
+
+        # 5. 后台执行文件移动（同时更新连拍组其他成员的 DB 鸟种字段及 current_path）
+        # Background: move files and update burst group members' DB records.
+        _trigger_species_change(base_dir, photo, new_cn, new_en, self._db, db_key)
+
     @Slot(list)
     def _on_multi_selection_changed(self, photos: list):
         """C3：多选状态变化，更新工具栏显示。"""
@@ -1594,6 +1681,7 @@ class ResultsBrowserWidget(QWidget):
         self._detail_panel.prev_requested.connect(self._prev_photo)
         self._detail_panel.next_requested.connect(self._next_photo)
         self._detail_panel.rating_change_requested.connect(self._on_rating_changed)
+        self._detail_panel.species_edit_requested.connect(self._on_species_edit_requested)
         outer_h.addWidget(self._detail_panel, 0)
 
         # 底部状态栏（简单 label）
@@ -2083,6 +2171,59 @@ class ResultsBrowserWidget(QWidget):
             path = photo.get("current_path") or photo.get("original_path") or ""
             return path if path and os.path.exists(path) else None
         return None
+
+    def _on_species_edit_requested(self, photo: dict):
+        """
+        用户点击铅笔图标 → 弹出鸟种搜索对话框，确认后后台更新 DB + 移动文件。
+        User clicks pencil icon → open bird species search dialog; on confirm, update DB and move files in background.
+        """
+        from ui.bird_species_edit_dialog import BirdSpeciesEditDialog
+        from PySide6.QtWidgets import QDialog
+
+        dialog = BirdSpeciesEditDialog(parent=self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        new_cn = dialog.selected_cn
+        new_en = dialog.selected_en
+        if not new_cn and not new_en:
+            return
+
+        db_key = _photo_db_key(photo)
+        base_dir = photo.get("_base_dir") or self._directory
+
+        # 1. 同步更新 photo 副本 + 缓存列表
+        # Update both the local photo copy and the cached list so show_photo displays the new name.
+        photo["bird_species_cn"] = new_cn
+        photo["bird_species_en"] = new_en
+        for p in self._filtered_photos:
+            if _photo_identity(p) == _photo_identity(photo):
+                p["bird_species_cn"] = new_cn
+                p["bird_species_en"] = new_en
+                break
+
+        # 2. 同步写入 DB 鸟种字段（使下拉刷新立即生效；文件移动仍在后台执行）
+        # Write species fields to DB synchronously so the dropdown refresh sees new data immediately.
+        if self._db:
+            self._db.update_photo(db_key, {
+                "bird_species_cn": new_cn or None,
+                "bird_species_en": new_en or None,
+            })
+
+        # 3. 刷新详情面板
+        self._detail_panel.show_photo(photo)
+
+        # 4. 刷新左侧鸟种下拉
+        use_en = self.i18n.current_lang.startswith("en")
+        current_filters = self._filter_panel.get_filters()
+        new_species = self._db.get_distinct_species(
+            use_en=use_en, ratings=current_filters.get("ratings")
+        )
+        self._filter_panel.update_species_list(new_species)
+
+        # 5. 后台执行文件移动（同时更新连拍组其他成员的 DB 鸟种字段及 current_path）
+        # Background: move files and update burst group members' DB records.
+        _trigger_species_change(base_dir, photo, new_cn, new_en, self._db, db_key)
 
     @Slot(list)
     def _on_multi_selection_changed(self, photos: list):

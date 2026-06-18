@@ -1241,6 +1241,7 @@
     "sort_aesthetic": "美学↓",
     "species_all": "— 全部 —",
     "species_copied": "✓ 鸟名已复制",
+    "edit_species_tooltip": "修改鸟种",
     "focus_toggle": "焦 ●",
     "focus_no_bird": "无鸟",
     "prev_arrow": "◀ 上一张",
@@ -1378,5 +1379,14 @@
     "lock_zoom_on": "🔒 锁定缩放",
     "lock_zoom_off": "🔓 锁定缩放",
     "delete_btn": "🗑 删除"
+  },
+  "bird_species_edit": {
+    "title": "修改鸟种",
+    "hint": "搜索并选择正确的鸟种，确认后将自动更新目录和数据库。",
+    "search_placeholder": "输入中文名、英文名或拼音…",
+    "prompt": "请输入关键词搜索鸟种",
+    "no_match": "未找到匹配的鸟种",
+    "confirm": "确认修改",
+    "cancel": "取消"
   }
 }
