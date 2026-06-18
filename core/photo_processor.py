@@ -2552,7 +2552,12 @@ class PhotoProcessor:
                         self.star2_reasons[file_prefix] = 'nima'  # 保留原字段名兼容
                     else:
                         self.star2_reasons[file_prefix] = 'both'
-            
+            else:
+                # 目标文件不存在时仍写入路径字段，确保 DB 记录不丢失
+                # Write path fields even when the target file is missing to keep DB record intact
+                if path_update_data and self.report_db:
+                    self.report_db.update_photo(original_prefix, path_update_data)
+
             self._perf_record_photo(photo_time_ms, photo_stage_ms, early_exit=False)
             mark_resume_completed(original_prefix)
         
