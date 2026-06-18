@@ -127,3 +127,8 @@ docs/Promotion/
 # 构建输出目录output
 output/
 docs/superpowers/
+
+# === 微信公众号推广素材（本地专用，禁止上传 GitHub）===
+# 含发布脚本 publish_wechat.py（从环境变量读 AppSecret，无硬编码）、
+# 草稿状态 .draft_state.json、文章 HTML 与配图等私密/体积较大内容。
+docs/Promotion/
