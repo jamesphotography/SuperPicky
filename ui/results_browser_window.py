@@ -133,6 +133,47 @@ def _burst_totals_from_photos(photos: list) -> Counter:
     return Counter(p["burst_id"] for p in photos if p.get("burst_id") is not None)
 
 
+def _photo_bird_name(photo: dict, i18n) -> str:
+    """
+    按界面语言从 photo dict 取鸟种名，供 compute_target_folder 使用。
+    Return the species name in the UI language for folder-name computation.
+    """
+    use_en = i18n.current_lang.startswith("en")
+    key = "bird_species_en" if use_en else "bird_species_cn"
+    return (photo.get(key) or "").strip()
+
+
+def _trigger_rating_move(
+    dir_path: str,
+    photo: dict,
+    new_rating: int,
+    i18n,
+    report_db,
+    db_key,
+) -> None:
+    """
+    在后台线程中执行因改星等引发的文件移动。
+    Spawn a daemon thread to move files after a rating change.
+    """
+    from advanced_config import get_advanced_config
+    from core.rating_mover import move_photo_on_metadata_change
+
+    bird_name = _photo_bird_name(photo, i18n)
+    layout = get_advanced_config().folder_layout
+
+    def _do() -> None:
+        try:
+            move_photo_on_metadata_change(
+                dir_path, photo, new_rating, bird_name, layout, report_db, db_key
+            )
+        except Exception as e:
+            from tools.utils import log_message
+            log_message(f"[rating_mover] move failed: {e}")
+
+    import threading
+    threading.Thread(target=_do, daemon=True).start()
+
+
 # ============================================================
 #  C4 — 右键菜单实现（应用列表来自用户配置）
 # ============================================================
@@ -1068,7 +1109,7 @@ class ResultsBrowserWindow(QMainWindow):
 
     @Slot(object, int)
     def _on_rating_changed(self, photo_or_filename, new_rating: int):
-        """详情面板评分修改：写入 DB + 刷新缩略图角标 + 异步写 EXIF。"""
+        """详情面板评分修改：写入 DB + 刷新缩略图角标 + 异步写 EXIF + 后台移动文件。"""
         current_photo = _coerce_photo(
             photo_or_filename,
             self._filtered_photos,
@@ -1095,6 +1136,10 @@ class ResultsBrowserWindow(QMainWindow):
                 args=(file_path, new_rating),
                 daemon=True,
             ).start()
+        # 后台移动文件（仅已整理的照片；burst / 根目录 / 新旧相同 时内部自动跳过）
+        if current_photo:
+            base_dir = current_photo.get("_base_dir") or self._directory
+            _trigger_rating_move(base_dir, current_photo, new_rating, self.i18n, self._db, db_key)
 
     def _get_photo_file_path(self, photo_or_filename) -> "str | None":
         """根据 photo 或 filename 查找照片绝对路径。"""
@@ -1999,7 +2044,7 @@ class ResultsBrowserWidget(QWidget):
 
     @Slot(object, int)
     def _on_rating_changed(self, photo_or_filename, new_rating: int):
-        """详情面板评分修改：写入 DB + 刷新缩略图角标 + 异步写 EXIF。"""
+        """详情面板评分修改：写入 DB + 刷新缩略图角标 + 异步写 EXIF + 后台移动文件。"""
         current_photo = _coerce_photo(
             photo_or_filename,
             self._filtered_photos,
@@ -2026,6 +2071,10 @@ class ResultsBrowserWidget(QWidget):
                 args=(file_path, new_rating),
                 daemon=True,
             ).start()
+        # 后台移动文件（仅已整理的照片；burst / 根目录 / 新旧相同 时内部自动跳过）
+        if current_photo:
+            base_dir = current_photo.get("_base_dir") or self._directory
+            _trigger_rating_move(base_dir, current_photo, new_rating, self.i18n, self._db, db_key)
 
     def _get_photo_file_path(self, photo_or_filename) -> "str | None":
         """根据 photo 或 filename 查找照片绝对路径。"""
