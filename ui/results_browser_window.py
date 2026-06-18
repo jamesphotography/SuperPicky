@@ -1203,7 +1203,7 @@ class ResultsBrowserWindow(QMainWindow):
         db_key = _photo_db_key(photo)
         base_dir = photo.get("_base_dir") or self._directory
 
-        # 同步更新 photo 副本 + 缓存列表（让 UI 立即反映新鸟名）
+        # 1. 同步更新 photo 副本 + 缓存列表
         # Update both the local photo copy and the cached list so show_photo displays the new name.
         photo["bird_species_cn"] = new_cn
         photo["bird_species_en"] = new_en
@@ -1213,10 +1213,27 @@ class ResultsBrowserWindow(QMainWindow):
                 p["bird_species_en"] = new_en
                 break
 
-        # 刷新详情面板显示
+        # 2. 同步写入 DB 鸟种字段（使下拉刷新立即生效；文件移动仍在后台执行）
+        # Write species fields to DB synchronously so the dropdown refresh sees new data immediately.
+        if self._db:
+            self._db.update_photo(db_key, {
+                "bird_species_cn": new_cn or None,
+                "bird_species_en": new_en or None,
+            })
+
+        # 3. 刷新详情面板
         self._detail_panel.show_photo(photo)
 
-        # 后台执行 DB 更新 + 文件移动
+        # 4. 刷新左侧鸟种下拉
+        use_en = self.i18n.current_lang.startswith("en")
+        current_filters = self._filter_panel.get_filters()
+        new_species = self._db.get_distinct_species(
+            use_en=use_en, ratings=current_filters.get("ratings")
+        )
+        self._filter_panel.update_species_list(new_species)
+
+        # 5. 后台执行文件移动（同时更新连拍组其他成员的 DB 鸟种字段及 current_path）
+        # Background: move files and update burst group members' DB records.
         _trigger_species_change(base_dir, photo, new_cn, new_en, self._db, db_key)
 
     @Slot(list)
@@ -2175,7 +2192,7 @@ class ResultsBrowserWidget(QWidget):
         db_key = _photo_db_key(photo)
         base_dir = photo.get("_base_dir") or self._directory
 
-        # 同步更新 photo 副本 + 缓存列表（让 UI 立即反映新鸟名）
+        # 1. 同步更新 photo 副本 + 缓存列表
         # Update both the local photo copy and the cached list so show_photo displays the new name.
         photo["bird_species_cn"] = new_cn
         photo["bird_species_en"] = new_en
@@ -2185,10 +2202,27 @@ class ResultsBrowserWidget(QWidget):
                 p["bird_species_en"] = new_en
                 break
 
-        # 刷新详情面板显示
+        # 2. 同步写入 DB 鸟种字段（使下拉刷新立即生效；文件移动仍在后台执行）
+        # Write species fields to DB synchronously so the dropdown refresh sees new data immediately.
+        if self._db:
+            self._db.update_photo(db_key, {
+                "bird_species_cn": new_cn or None,
+                "bird_species_en": new_en or None,
+            })
+
+        # 3. 刷新详情面板
         self._detail_panel.show_photo(photo)
 
-        # 后台执行 DB 更新 + 文件移动
+        # 4. 刷新左侧鸟种下拉
+        use_en = self.i18n.current_lang.startswith("en")
+        current_filters = self._filter_panel.get_filters()
+        new_species = self._db.get_distinct_species(
+            use_en=use_en, ratings=current_filters.get("ratings")
+        )
+        self._filter_panel.update_species_list(new_species)
+
+        # 5. 后台执行文件移动（同时更新连拍组其他成员的 DB 鸟种字段及 current_path）
+        # Background: move files and update burst group members' DB records.
         _trigger_species_change(base_dir, photo, new_cn, new_en, self._db, db_key)
 
     @Slot(list)
