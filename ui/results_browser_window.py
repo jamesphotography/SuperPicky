@@ -1243,11 +1243,27 @@ class ResultsBrowserWindow(QMainWindow):
         Open the crop advisor dialog (non-destructive preview).
         """
         from ui.crop_advisor_dialog import CropAdvisorDialog
-        base_dir = photo.get("_base_dir") or self._directory
-        path = photo.get("current_path") or photo.get("original_path")
-        if path and not os.path.isabs(path):
-            path = os.path.join(base_dir, path)
+        # 复用详情面板的显示图解析：优先可解码的 temp JPEG，
+        # 避免把 RAW(current_path)喂给弹窗——cv2/PIL 解不了 RAW 会报 TIFF 错。
+        # Reuse the detail panel's display-path resolution: prefer the decodable
+        # temp JPEG, never feed a RAW file (cv2/PIL can't decode it).
+        rp = self._resolve_photo_paths(photo)
+        path = rp.get("temp_jpeg_path")
         if not path or not os.path.exists(path):
+            path = rp.get("debug_crop_path")
+        if not path or not os.path.exists(path):
+            op = rp.get("original_path") or rp.get("current_path")
+            if op and os.path.exists(op) and os.path.splitext(op)[1].lower() in ('.jpg', '.jpeg'):
+                path = op
+            else:
+                path = None
+        if not path or not os.path.exists(path):
+            from ui.custom_dialogs import StyledMessageBox
+            StyledMessageBox.warning(
+                self,
+                self.i18n.t("crop_advisor.title"),
+                self.i18n.t("crop_advisor.no_decodable_image"),
+            )
             return
         dialog = CropAdvisorDialog(image_path=path, parent=self)
         dialog.exec()
@@ -2248,11 +2264,27 @@ class ResultsBrowserWidget(QWidget):
         Open the crop advisor dialog (non-destructive preview).
         """
         from ui.crop_advisor_dialog import CropAdvisorDialog
-        base_dir = photo.get("_base_dir") or self._directory
-        path = photo.get("current_path") or photo.get("original_path")
-        if path and not os.path.isabs(path):
-            path = os.path.join(base_dir, path)
+        # 复用详情面板的显示图解析：优先可解码的 temp JPEG，
+        # 避免把 RAW(current_path)喂给弹窗——cv2/PIL 解不了 RAW 会报 TIFF 错。
+        # Reuse the detail panel's display-path resolution: prefer the decodable
+        # temp JPEG, never feed a RAW file (cv2/PIL can't decode it).
+        rp = self._resolve_photo_paths(photo)
+        path = rp.get("temp_jpeg_path")
         if not path or not os.path.exists(path):
+            path = rp.get("debug_crop_path")
+        if not path or not os.path.exists(path):
+            op = rp.get("original_path") or rp.get("current_path")
+            if op and os.path.exists(op) and os.path.splitext(op)[1].lower() in ('.jpg', '.jpeg'):
+                path = op
+            else:
+                path = None
+        if not path or not os.path.exists(path):
+            from ui.custom_dialogs import StyledMessageBox
+            StyledMessageBox.warning(
+                self,
+                self.i18n.t("crop_advisor.title"),
+                self.i18n.t("crop_advisor.no_decodable_image"),
+            )
             return
         dialog = CropAdvisorDialog(image_path=path, parent=self)
         dialog.exec()
