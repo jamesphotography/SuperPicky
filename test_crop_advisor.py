@@ -121,3 +121,59 @@ def test_advise_two_birds_uses_union():
     for s in res.suggestions:  # 含两鸟并集 (40,40,340,260) / contains union of two birds
         x1, y1, x2, y2 = s.box
         assert x1 <= 40 and y1 <= 40 and x2 >= 340 and y2 >= 260
+
+
+# ── A. 新增:喙不可见时三分法水平居中测试 / New: beak-occluded → horizontal centering ──
+
+def test_thirds_center_no_beak_centers_horizontally():
+    """
+    beak_xy=None 时(_keypoints 对低置信喙返回 None),_thirds_center 应水平居中于眼
+    而不是猜测朝向;垂直三分法规则仍然应用。
+
+    When beak_xy is None (returned by _keypoints for low-confidence beak),
+    _thirds_center must center the crop horizontally on the eye instead of
+    guessing gaze direction; vertical rule-of-thirds is still applied.
+    """
+    subject = (60, 60, 140, 140)
+    eye = (90, 100)
+    cx, cy = ca._thirds_center(subject, eye, None, 1.5, 400, 300, 10)
+    assert cx == pytest.approx(eye[0])   # 无水平朝向偏置,中心对齐眼睛 / no horizontal gaze bias
+    assert cy > eye[1]                    # 垂直三分法仍生效 / vertical rule-of-thirds still applied
+
+
+# ── B. 新增:EXIF 旋转感知加载器测试 / New: EXIF-aware loader orientation test ──
+
+def test_load_image_exif_aware_applies_orientation(tmp_path):
+    """
+    写一张 orientation=6(顺时针 90°)的 JPEG,再用 _load_image_exif_aware 读取,
+    期望返回数组宽高已被纠正(与 PIL exif_transpose 结果一致)。
+
+    Write a JPEG with EXIF orientation=6 (rotate 90° CW), load via
+    _load_image_exif_aware, and assert the returned array has swapped
+    width/height compared to the raw stored pixel buffer.
+    """
+    from PIL import Image
+    import io
+
+    # 制作一张非正方形图(30×10 像素,宽>高)
+    # Create a non-square image (30×10 px, wider than tall)
+    pil_img = Image.new("RGB", (30, 10), color=(128, 64, 32))
+
+    # 写入带 Orientation=6 的 EXIF(顺时针 90° → 纠正后应为 10×30)
+    # Write with Orientation=6 (CW 90°); after correction the array should be 10w×30h
+    exif_bytes = pil_img.getexif()
+    exif_bytes[0x0112] = 6   # tag 274 = Orientation
+    buf = io.BytesIO()
+    pil_img.save(buf, format="JPEG", exif=exif_bytes.tobytes())
+    jpg_path = tmp_path / "orient6.jpg"
+    jpg_path.write_bytes(buf.getvalue())
+
+    arr = ca._load_image_exif_aware(str(jpg_path))
+    assert arr is not None, "_load_image_exif_aware 返回了 None / returned None"
+    h, w = arr.shape[:2]
+    # orientation=6 纠正后:原 30×10 → 10 宽 × 30 高
+    # After orientation=6 correction: original 30w×10h becomes 10w×30h
+    assert w < h, (
+        f"EXIF 旋转未被应用:期望宽<高(10×30),实际 w={w} h={h} / "
+        f"EXIF orientation not applied: expected w<h (10×30), got w={w} h={h}"
+    )

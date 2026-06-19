@@ -6,7 +6,7 @@ CACNet cropping wrapper. Fixed CPU inference to avoid MPS grid_sample/pixel_shuf
 from __future__ import annotations
 
 import os
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -20,8 +20,8 @@ from config import get_install_scoped_resource_path
 # 与 CACNet config_cropping.cfg.image_size 对应
 # Matches CACNet config_cropping.cfg.image_size
 _NET_SIZE: int = 224
-_MEAN: list = [0.485, 0.456, 0.406]
-_STD: list = [0.229, 0.224, 0.225]
+_MEAN: List[float] = [0.485, 0.456, 0.406]
+_STD: List[float] = [0.229, 0.224, 0.225]
 
 
 def _default_weight_path() -> str:

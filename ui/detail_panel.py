@@ -450,9 +450,8 @@ class DetailPanel(QWidget):
 
         # 裁剪建议按钮（镜像鸟种编辑按钮）
         # Crop Advice button, mirroring the species-edit button.
-        _crop_label = "Crop" if self.i18n.current_lang.startswith("en") else "裁剪建议"
         self._crop_advice_btn = QToolButton()
-        self._crop_advice_btn.setText(_crop_label)
+        self._crop_advice_btn.setText(self.i18n.t("browser.crop_advice_btn"))
         self._crop_advice_btn.setFixedHeight(20)
         self._crop_advice_btn.setCursor(Qt.PointingHandCursor)
         self._crop_advice_btn.setStyleSheet(self._edit_species_btn.styleSheet())

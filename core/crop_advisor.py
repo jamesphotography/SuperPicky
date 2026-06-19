@@ -7,7 +7,6 @@
 """
 from __future__ import annotations
 
-import os
 import cv2
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Callable
@@ -111,28 +110,82 @@ def _fit_ratio_box(subject: Box, ratio_wh: float, center: Tuple[float, float],
 
 
 def _thirds_center(subject: Box, eye_xy: Tuple[float, float],
-                   beak_xy: Tuple[float, float], ratio_wh: float,
+                   beak_xy: Optional[Tuple[float, float]], ratio_wh: float,
                    img_w: int, img_h: int, min_margin_px: int) -> Tuple[float, float]:
     """
     计算使"鸟眼落在视线对侧三分交点"的目标裁剪框中心。
     朝向由 眼→喙 向量判定:喙在眼右 → 鸟朝右 → 眼放画面左 1/3(前方留空)。
+    若喙不可见(beak_xy=None),无法判定朝向,水平方向直接以眼为中心;
+    垂直三分法规则无论如何都生效。
 
     Compute target crop-box center so bird eye lands on rule-of-thirds crossing
     opposite the gaze direction. Facing right → eye at left 1/3.
+    When beak_xy is None (beak occluded / low confidence), gaze direction is
+    unknown; center horizontally on the eye without bias. Vertical rule-of-thirds
+    is applied regardless.
+
+    参数 / Parameters:
+        subject (Box): 鸟类检测框 (x1,y1,x2,y2) / Bird detection box.
+        eye_xy: 眼睛的原图像素坐标 / Eye pixel coords in original image.
+        beak_xy: 喙的原图像素坐标;可见度不足时为 None / Beak pixel coords, or None if occluded.
+        ratio_wh (float): 裁剪框宽高比 / Crop box width-to-height ratio.
+        img_w (int): 图像宽度 / Image width.
+        img_h (int): 图像高度 / Image height.
+        min_margin_px (int): 最小边距像素 / Minimum margin in pixels.
+
+    返回 / Returns:
+        Tuple[float, float]: 目标裁剪框中心 (cx, cy) / Target crop-box center (cx, cy).
     """
     sx1, sy1, sx2, sy2 = subject
     need_w = (sx2 - sx1) + 2 * min_margin_px
     box_w = max(need_w, ((sy2 - sy1) + 2 * min_margin_px) * ratio_wh)
     box_h = box_w / ratio_wh
     ex, ey = eye_xy
-    # 水平:朝右→眼在 1/3 处(中心 = 眼 + box_w/6);朝左→眼在 2/3 处(中心 = 眼 - box_w/6)
-    # Horizontal: facing right → eye at 1/3 (center = eye + box_w/6); left → eye at 2/3
-    face_right = beak_xy[0] >= ex
-    cx = ex + box_w / 6.0 if face_right else ex - box_w / 6.0
+    if beak_xy is None:
+        # 喙不可见,朝向未知:水平方向以眼为中心,不做朝向偏置
+        # Beak occluded / unknown gaze: no horizontal bias, center on eye
+        cx = ex
+    else:
+        # 水平:朝右→眼在 1/3 处(中心 = 眼 + box_w/6);朝左→眼在 2/3 处(中心 = 眼 - box_w/6)
+        # Horizontal: facing right → eye at 1/3 (center = eye + box_w/6); left → eye at 2/3
+        face_right = beak_xy[0] >= ex
+        cx = ex + box_w / 6.0 if face_right else ex - box_w / 6.0
     # 垂直:眼放上 1/3(中心 = 眼 + box_h/6,使眼偏上)
     # Vertical: eye at upper 1/3 (center = eye + box_h/6 to push eye upward)
     cy = ey + box_h / 6.0
     return (cx, cy)
+
+
+# ── 模块私有工具 / Module-private utilities ───────────────────────────────────
+
+def _load_image_exif_aware(path: str) -> Optional[np.ndarray]:
+    """
+    读取图片并自动应用 EXIF 方向标签,返回 BGR ndarray。
+    使用 PIL.ImageOps.exif_transpose 纠正旋转/翻转,避免 cv2.imdecode 忽略 EXIF 的问题。
+    读取失败返回 None。
+
+    Load image with automatic EXIF orientation correction, returning BGR ndarray.
+    Uses PIL.ImageOps.exif_transpose to fix rotation/flip, avoiding the issue
+    where cv2.imdecode silently ignores the EXIF orientation tag.
+    Returns None on failure.
+
+    参数 / Parameters:
+        path (str): 图片文件路径 / Path to the image file.
+
+    返回 / Returns:
+        Optional[np.ndarray]: BGR 格式图像数组;失败时为 None / BGR image array, or None on failure.
+    """
+    try:
+        from PIL import Image, ImageOps
+        pil_img = Image.open(path)
+        pil_img = ImageOps.exif_transpose(pil_img)
+        rgb = pil_img.convert("RGB")
+        arr = np.array(rgb, dtype=np.uint8)
+        # RGB → BGR
+        bgr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+        return bgr
+    except Exception:  # noqa: BLE001 — 任何读取/转换失败均静默返回 None
+        return None
 
 
 # ── 默认依赖实现 / Default dependencies ───────────────────────────────────────
@@ -163,19 +216,28 @@ def _detect_birds(image_bgr: np.ndarray) -> List[Tuple[Box, float]]:
     return out
 
 
-def _keypoints(image_bgr: np.ndarray, bird_bbox: Box) -> Optional[Tuple[Tuple[float, float], Tuple[float, float]]]:
+def _keypoints(
+    image_bgr: np.ndarray, bird_bbox: Box
+) -> Optional[Tuple[Tuple[float, float], Optional[Tuple[float, float]]]]:
     """
-    默认关键点检测:返回 (eye_px, beak_px) 或 None。坐标为原图像素。
-    Default keypoint detection; returns (eye_px, beak_px) in original image pixel coords, or None.
+    默认关键点检测:返回 (eye_px, beak_px) 或 (eye_px, None) 或 None。
+    当喙的可见度低于 KeypointDetector.VISIBILITY_THRESHOLD 时,返回 (eye_px, None),
+    以避免低置信喙坐标翻转三分法朝向判断。
+
+    Default keypoint detection; returns (eye_px, beak_px), (eye_px, None), or None.
+    When beak visibility is below KeypointDetector.VISIBILITY_THRESHOLD, returns
+    (eye_px, None) to prevent a low-confidence beak coord from flipping the
+    rule-of-thirds gaze direction.
 
     参数 / Parameters:
         image_bgr (np.ndarray): BGR 格式原图 / Input image in BGR format.
         bird_bbox (Box): 鸟类检测框 (x1,y1,x2,y2) / Bird detection box.
 
     返回 / Returns:
-        Optional[Tuple[...]]: (眼睛像素坐标, 喙像素坐标) 或 None / (eye pixel coords, beak pixel coords) or None.
+        Optional[Tuple[...]]: (眼睛坐标, 喙坐标|None) 或 None
+                              (eye coords, beak coords or None) or None if eye undetected.
     """
-    from core.keypoint_detector import get_keypoint_detector
+    from core.keypoint_detector import KeypointDetector, get_keypoint_detector
     x1, y1, x2, y2 = bird_bbox
     crop = image_bgr[y1:y2, x1:x2]
     if crop.size == 0:
@@ -187,6 +249,10 @@ def _keypoints(image_bgr: np.ndarray, bird_bbox: Box) -> Optional[Tuple[Tuple[fl
     cw, ch = (x2 - x1), (y2 - y1)
     eye = kp.left_eye if kp.left_eye_vis >= kp.right_eye_vis else kp.right_eye
     eye_px = (x1 + eye[0] * cw, y1 + eye[1] * ch)
+    # 喙可见度守卫:低置信喙坐标不可用于朝向判断,返回 None
+    # Beak visibility guard: low-confidence beak coords must not flip gaze direction
+    if kp.beak_vis < KeypointDetector.VISIBILITY_THRESHOLD:
+        return (eye_px, None)
     beak_px = (x1 + kp.beak[0] * cw, y1 + kp.beak[1] * ch)
     return (eye_px, beak_px)
 
@@ -266,8 +332,7 @@ def advise_crops(image_path: str, *,
         from core.cacnet_cropper import get_cacnet_cropper
         cacnet_fn = lambda img: get_cacnet_cropper().predict_box(img)
     if _image_loader is None:
-        from ai_model import read_image_bgr
-        _image_loader = read_image_bgr
+        _image_loader = _load_image_exif_aware
 
     # ── 读图 / Load image ─────────────────────────────────────────────────────
     image_bgr = _image_loader(image_path)
@@ -292,13 +357,13 @@ def advise_crops(image_path: str, *,
         # Single bird: use CACNet center + keypoint rule-of-thirds
         subject = birds[0][0]
         b_star = cacnet_fn(image_bgr)
-        cacnet_center = ((b_star[0] + b_star[2]) / 2.0, (b_star[1] + b_star[3]) / 2.0)
+        anchor_center = ((b_star[0] + b_star[2]) / 2.0, (b_star[1] + b_star[3]) / 2.0)
         kp = keypoint_fn(image_bgr, subject)
     else:
         # 多鸟(2-3):取并集,跳过 CACNet 和关键点
-        # Multiple birds (2-3): use union bbox, skip CACNet and keypoints
+        # Multiple birds (2-3): use union bbox center as anchor; skip CACNet and keypoints
         subject = _union_bbox([b[0] for b in birds])
-        cacnet_center = ((subject[0] + subject[2]) / 2.0, (subject[1] + subject[3]) / 2.0)
+        anchor_center = ((subject[0] + subject[2]) / 2.0, (subject[1] + subject[3]) / 2.0)
         kp = None  # 多鸟不做三分法 / No rule-of-thirds for multi-bird
 
     # ── 按比例生成裁剪候选 / Generate crops per ratio ─────────────────────────
@@ -307,7 +372,7 @@ def advise_crops(image_path: str, *,
     suggestions: List[CropSuggestion] = []
     for label in ratios:
         rwh = _parse_ratio(label)
-        centers = [cacnet_center]
+        centers = [anchor_center]
         if kp is not None:
             eye, beak = kp
             centers.append(_thirds_center(subject, eye, beak, rwh, img_w, img_h, min_margin_px))
