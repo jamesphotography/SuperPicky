@@ -81,6 +81,8 @@ a = Analysis(
         'ultralytics',
         'torch',
         'torchvision',
+        'einops',
+        'core.vendor.cacnet.cacnet_model',
         'PIL',
         'cv2',
         'numpy',
