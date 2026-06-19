@@ -236,6 +236,9 @@ class CropAdvisorDialog(QDialog):
         self._image_bgr: Optional[np.ndarray] = read_image_bgr(image_path)
         self._suggestions: List[CropSuggestion] = []
 
+        # 当前展示的候选(用于模式切换时还原) / Currently displayed suggestion (for mode-switch restore)
+        self._current_suggestion: Optional[CropSuggestion] = None
+
         # 手动模式状态 / Manual mode state
         self._manual_mode: bool = False
 
@@ -290,6 +293,22 @@ class CropAdvisorDialog(QDialog):
         self._worker.done.connect(self._on_done)
         self._worker.start()
 
+    # ── 窗口关闭事件 / Window close event ─────────────────────────────────────
+
+    def closeEvent(self, event) -> None:  # type: ignore[override]
+        """
+        弹窗关闭前等待后台工作线程退出,避免对象析构后信号仍连接到已销毁的槽。
+        Wait for the background worker to finish before closing to avoid use-after-free
+        when the worker still holds a live signal connection to _on_done.
+
+        参数 / Parameters:
+            event: Qt 关闭事件 / Qt close event.
+        """
+        if self._worker.isRunning():
+            self._worker.quit()
+            self._worker.wait(2000)  # 最多等待 2 秒 / Wait up to 2 seconds
+        super().closeEvent(event)
+
     # ── 后台结果回调 / Background result callback ─────────────────────────────
 
     def _on_done(self, result: CropAdviceResult) -> None:
@@ -313,10 +332,13 @@ class CropAdvisorDialog(QDialog):
             return
 
         top = self._suggestions[0]
-        self._status_lbl.setText(
-            f"{self._i18n.t('crop_advisor.recommended')}: "
-            f"{top.ratio_label} · {top.topiq_score:.2f}"
-        )
+        # 仅在非手动模式时更新状态标签,避免覆盖"手动裁剪"标签 /
+        # Only update status label when NOT in manual mode to avoid overwriting "Manual crop" label.
+        if not self._manual_mode:
+            self._status_lbl.setText(
+                f"{self._i18n.t('crop_advisor.recommended')}: "
+                f"{top.ratio_label} · {top.topiq_score:.2f}"
+            )
         self._show_main(top)
         self._build_strip()
 
@@ -343,9 +365,11 @@ class CropAdvisorDialog(QDialog):
             # 手动模式:显示完整原图 / Manual mode: display the full original image
             self._show_full_image()
         else:
-            # 建议模式:恢复候选预览 / Suggestion mode: restore suggestion preview
+            # 建议模式:恢复上次选中候选(或首条候选);若尚无候选则清空预览 /
+            # Suggestion mode: restore last-selected suggestion (fallback to first); clear if none.
             if self._suggestions:
-                self._show_main(self._suggestions[0])
+                restore = self._current_suggestion if self._current_suggestion is not None else self._suggestions[0]
+                self._show_main(restore)
             else:
                 # 尚无候选时清空预览 / No suggestions yet; clear preview
                 self._preview.clear()
@@ -379,6 +403,8 @@ class CropAdvisorDialog(QDialog):
         if self._manual_mode:
             # 手动模式下点击候选条不切换主预览 / Ignore filmstrip clicks in manual mode
             return
+        # 记录当前展示的候选,供退出手动模式时还原 / Track for mode-switch restore
+        self._current_suggestion = s
         pix = _bgr_to_pixmap(s.preview_bgr)
         self._preview.setPixmap(pix)
         self._status_lbl.setText(
@@ -519,10 +545,14 @@ class CropAdvisorDialog(QDialog):
             return
 
         # Step 3: 转换为像素图内相对坐标 / Convert to pixmap-local coords
+        # QRect.right()/bottom() 是包含端点(inclusive),需 +1 转为 exclusive end,
+        # 以便拖到图像边缘时坐标正好等于像素图宽度/高度。
+        # QRect.right()/bottom() are inclusive; add 1 for exclusive end so a drag to the
+        # exact image edge maps to the full pixmap width/height (not one pixel short).
         rel_x1 = float(clipped.left() - pix_rect.left())
         rel_y1 = float(clipped.top() - pix_rect.top())
-        rel_x2 = float(clipped.right() - pix_rect.left())
-        rel_y2 = float(clipped.bottom() - pix_rect.top())
+        rel_x2 = float(clipped.right() + 1 - pix_rect.left())
+        rel_y2 = float(clipped.bottom() + 1 - pix_rect.top())
 
         # Step 4: 映射回全图原图坐标 / Map to full-original-image coords
         ox1, oy1 = self._map_manual_to_orig(rel_x1, rel_y1, self._full_pix_w, self._full_pix_h)
