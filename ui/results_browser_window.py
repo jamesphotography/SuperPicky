@@ -549,6 +549,7 @@ class ResultsBrowserWindow(QMainWindow):
         self._detail_panel.next_requested.connect(self._next_photo)
         self._detail_panel.rating_change_requested.connect(self._on_rating_changed)
         self._detail_panel.species_edit_requested.connect(self._on_species_edit_requested)
+        self._detail_panel.crop_advice_requested.connect(self._on_crop_advice_requested)
         outer_h.addWidget(self._detail_panel, 0)
 
     def _build_toolbar(self) -> QWidget:
@@ -1236,6 +1237,21 @@ class ResultsBrowserWindow(QMainWindow):
         # Background: move files and update burst group members' DB records.
         _trigger_species_change(base_dir, photo, new_cn, new_en, self._db, db_key)
 
+    def _on_crop_advice_requested(self, photo: dict):
+        """
+        打开裁剪建议弹窗（非破坏性预览）。
+        Open the crop advisor dialog (non-destructive preview).
+        """
+        from ui.crop_advisor_dialog import CropAdvisorDialog
+        base_dir = photo.get("_base_dir") or self._directory
+        path = photo.get("current_path") or photo.get("original_path")
+        if path and not os.path.isabs(path):
+            path = os.path.join(base_dir, path)
+        if not path or not os.path.exists(path):
+            return
+        dialog = CropAdvisorDialog(image_path=path, parent=self)
+        dialog.exec()
+
     @Slot(list)
     def _on_multi_selection_changed(self, photos: list):
         """C3：多选状态变化，更新工具栏显示。"""
@@ -1682,6 +1698,7 @@ class ResultsBrowserWidget(QWidget):
         self._detail_panel.next_requested.connect(self._next_photo)
         self._detail_panel.rating_change_requested.connect(self._on_rating_changed)
         self._detail_panel.species_edit_requested.connect(self._on_species_edit_requested)
+        self._detail_panel.crop_advice_requested.connect(self._on_crop_advice_requested)
         outer_h.addWidget(self._detail_panel, 0)
 
         # 底部状态栏（简单 label）
@@ -2224,6 +2241,21 @@ class ResultsBrowserWidget(QWidget):
         # 5. 后台执行文件移动（同时更新连拍组其他成员的 DB 鸟种字段及 current_path）
         # Background: move files and update burst group members' DB records.
         _trigger_species_change(base_dir, photo, new_cn, new_en, self._db, db_key)
+
+    def _on_crop_advice_requested(self, photo: dict):
+        """
+        打开裁剪建议弹窗（非破坏性预览）。
+        Open the crop advisor dialog (non-destructive preview).
+        """
+        from ui.crop_advisor_dialog import CropAdvisorDialog
+        base_dir = photo.get("_base_dir") or self._directory
+        path = photo.get("current_path") or photo.get("original_path")
+        if path and not os.path.isabs(path):
+            path = os.path.join(base_dir, path)
+        if not path or not os.path.exists(path):
+            return
+        dialog = CropAdvisorDialog(image_path=path, parent=self)
+        dialog.exec()
 
     @Slot(list)
     def _on_multi_selection_changed(self, photos: list):
