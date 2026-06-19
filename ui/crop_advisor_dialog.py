@@ -23,10 +23,11 @@ from typing import List, Optional, Tuple
 import cv2
 import numpy as np
 from PySide6.QtCore import Qt, QPoint, QRect, QThread, Signal
-from PySide6.QtGui import QImage, QMouseEvent, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QImage, QMouseEvent, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
+    QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -44,6 +45,22 @@ from core.crop_advisor import (
     score_manual_crop,
 )
 from tools.i18n import get_i18n
+
+try:
+    from ui.styles import COLORS
+except Exception:  # 主题缺失时的安全兜底 / Safe fallback if theme unavailable
+    COLORS = {}
+
+
+def _c(key: str, fallback: str) -> str:
+    """读取主题色,缺失则用兜底值 / Read a theme color with a fallback."""
+    return COLORS.get(key, fallback)
+
+
+# 主预览长边像素 / Main preview longest side (px)
+_MAIN_PREVIEW_MAX = 760
+# 候选缩略图长边像素 / Filmstrip thumbnail longest side (px)
+_THUMB_MAX = 132
 
 
 # ── 辅助函数 / Helper functions ───────────────────────────────────────────────
@@ -248,26 +265,54 @@ class CropAdvisorDialog(QDialog):
         self._full_pix_h: int = 0
 
         self.setWindowTitle(self._i18n.t("crop_advisor.title"))
-        self.resize(640, 720)
+        self.resize(980, 900)
+        self.setStyleSheet(self._build_stylesheet())
 
         root = QVBoxLayout(self)
+        root.setContentsMargins(20, 18, 20, 18)
+        root.setSpacing(14)
 
-        # ── 状态标签 / Status label ───────────────────────────────────────────
-        self._status_lbl = QLabel(self._i18n.t("crop_advisor.computing"))
+        # ── 状态标签(徽标式) / Status label (badge style) ────────────────────
+        self._status_lbl = QLabel("🔍 " + self._i18n.t("crop_advisor.computing"))
+        self._status_lbl.setObjectName("statusBadge")
         self._status_lbl.setAlignment(Qt.AlignCenter)
         root.addWidget(self._status_lbl)
 
-        # ── 主预览(支持手动模式下鼠标绘制) / Main preview (mouse drawing in manual mode) ─
+        # ── 主预览容器(带阴影/圆角) / Main preview container (shadow + rounded) ─
+        preview_container = QFrame()
+        preview_container.setObjectName("previewContainer")
+        pc_layout = QVBoxLayout(preview_container)
+        pc_layout.setContentsMargins(10, 10, 10, 10)
         self._preview = _PreviewLabel()
         self._preview.crop_drawn.connect(self._on_crop_drawn)
-        root.addWidget(self._preview, 1)
+        pc_layout.addWidget(self._preview)
 
-        # ── 候选横向滚动条 / Horizontal filmstrip ────────────────────────────
+        # 阴影加在容器上,避免与预览的自绘橡皮筋冲突 /
+        # Shadow on the container (not the label) to avoid clashing with rubber-band painting.
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(34)
+        shadow.setColor(QColor(0, 0, 0, 150))
+        shadow.setOffset(0, 6)
+        preview_container.setGraphicsEffect(shadow)
+        root.addWidget(preview_container, 1)
+
+        # 打开即显示未裁剪原图作为底图,避免一片空白;分析完成后替换为裁剪结果 /
+        # Show the uncropped full image immediately so the dialog isn't blank;
+        # it is replaced by the recommended crop once analysis finishes.
+        if self._image_bgr is not None:
+            self._preview.setPixmap(_bgr_to_pixmap(self._image_bgr, max_side=_MAIN_PREVIEW_MAX))
+
+        # ── 候选条:横向滚动,禁用竖向滚动 / Filmstrip: horizontal scroll, no vertical ─
         self._strip = QScrollArea()
+        self._strip.setObjectName("filmstrip")
         self._strip.setWidgetResizable(True)
-        self._strip.setFixedHeight(120)
+        self._strip.setFixedHeight(186)
+        self._strip.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._strip.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._strip_inner = QWidget()
         self._strip_layout = QHBoxLayout(self._strip_inner)
+        self._strip_layout.setContentsMargins(6, 6, 6, 6)
+        self._strip_layout.setSpacing(10)
         self._strip_layout.setAlignment(Qt.AlignLeft)
         self._strip.setWidget(self._strip_inner)
         root.addWidget(self._strip)
@@ -277,12 +322,15 @@ class CropAdvisorDialog(QDialog):
         btn_row.addStretch(1)
 
         self._manual_btn = QPushButton(self._i18n.t("crop_advisor.manual_mode"))
+        self._manual_btn.setObjectName("manualBtn")
         self._manual_btn.setCheckable(True)
         self._manual_btn.setChecked(False)
+        self._manual_btn.setCursor(Qt.PointingHandCursor)
         self._manual_btn.clicked.connect(self._toggle_manual_mode)
         btn_row.addWidget(self._manual_btn)
 
         close_btn = QPushButton(self._i18n.t("crop_advisor.close"))
+        close_btn.setCursor(Qt.PointingHandCursor)
         close_btn.clicked.connect(self.accept)
         btn_row.addWidget(close_btn)
 
@@ -292,6 +340,36 @@ class CropAdvisorDialog(QDialog):
         self._worker = _Worker(image_path)
         self._worker.done.connect(self._on_done)
         self._worker.start()
+
+    def _build_stylesheet(self) -> str:
+        """构建弹窗主题样式(深色,带圆角/阴影观感)。Build the dialog's dark theme stylesheet."""
+        bg = _c("bg_elevated", "#1e1e24")
+        card = _c("bg_card", "#26262e")
+        border = _c("border_subtle", "#3a3a44")
+        text = _c("text_primary", "#e8e8ea")
+        sub = _c("text_secondary", "#a8a8b0")
+        accent = _c("accent", "#3b82f6")
+        return f"""
+            QDialog {{ background: {bg}; }}
+            QLabel {{ color: {text}; }}
+            QLabel#statusBadge {{
+                color: {text}; font-size: 15px; font-weight: 600;
+                padding: 8px 14px; background: {card};
+                border: 1px solid {border}; border-radius: 10px;
+            }}
+            QFrame#previewContainer {{
+                background: {card}; border: 1px solid {border}; border-radius: 14px;
+            }}
+            QScrollArea#filmstrip {{ background: transparent; border: none; }}
+            QPushButton {{
+                color: {text}; background: {card}; border: 1px solid {border};
+                border-radius: 9px; padding: 8px 18px; font-size: 13px;
+            }}
+            QPushButton:hover {{ border-color: {accent}; }}
+            QPushButton#manualBtn:checked {{
+                background: {accent}; border-color: {accent}; color: #ffffff; font-weight: 600;
+            }}
+        """
 
     # ── 窗口关闭事件 / Window close event ─────────────────────────────────────
 
@@ -383,7 +461,7 @@ class CropAdvisorDialog(QDialog):
         """
         if self._image_bgr is None:
             return
-        pix = _bgr_to_pixmap(self._image_bgr, max_side=480)
+        pix = _bgr_to_pixmap(self._image_bgr, max_side=_MAIN_PREVIEW_MAX)
         self._full_pix_w = pix.width()
         self._full_pix_h = pix.height()
         self._preview.setPixmap(pix)
@@ -405,11 +483,12 @@ class CropAdvisorDialog(QDialog):
             return
         # 记录当前展示的候选,供退出手动模式时还原 / Track for mode-switch restore
         self._current_suggestion = s
-        pix = _bgr_to_pixmap(s.preview_bgr)
+        pix = _bgr_to_pixmap(s.preview_bgr, max_side=_MAIN_PREVIEW_MAX)
         self._preview.setPixmap(pix)
         self._status_lbl.setText(
             f"{self._i18n.t('crop_advisor.recommended')}: {s.ratio_label} · {s.topiq_score:.2f}"
         )
+        self._highlight_selected()
 
     # ── 候选条 / Filmstrip ────────────────────────────────────────────────────
 
@@ -423,20 +502,62 @@ class CropAdvisorDialog(QDialog):
             item = self._strip_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
+        self._strip_cells = []
 
-        for s in self._suggestions:
+        accent = _c("accent", "#3b82f6")
+        border = _c("border_subtle", "#3a3a44")
+        card = _c("bg_card", "#26262e")
+        sub = _c("text_secondary", "#a8a8b0")
+
+        for idx, s in enumerate(self._suggestions):
             cell = QFrame()
+            cell.setFixedWidth(_THUMB_MAX + 24)
+            cell.setProperty("selected", "false")
+            cell.setCursor(Qt.PointingHandCursor)
+            cell.setStyleSheet(
+                f'QFrame {{ background: {card}; border: 2px solid {border}; border-radius: 10px; }}'
+                f'QFrame[selected="true"] {{ border: 2px solid {accent}; }}'
+            )
             v = QVBoxLayout(cell)
+            v.setContentsMargins(6, 6, 6, 6)
+            v.setSpacing(4)
 
             thumb = QLabel()
-            thumb.setPixmap(_bgr_to_pixmap(s.preview_bgr, max_side=96))
-            thumb.setCursor(Qt.PointingHandCursor)
-            # lambda 默认参数捕获当前 s / lambda default arg captures current s
-            thumb.mousePressEvent = lambda _e, sug=s: self._show_main(sug)
-
+            thumb.setAlignment(Qt.AlignCenter)
+            thumb.setAttribute(Qt.WA_TransparentForMouseEvents, True)  # 点击透传到 cell
+            thumb.setPixmap(_bgr_to_pixmap(s.preview_bgr, max_side=_THUMB_MAX))
             v.addWidget(thumb)
-            v.addWidget(QLabel(f"{s.ratio_label} · {s.topiq_score:.2f}"))
+
+            tag = "★ " if idx == 0 else ""
+            score_lbl = QLabel(f"{tag}{s.ratio_label} · {s.topiq_score:.2f}")
+            score_lbl.setAlignment(Qt.AlignCenter)
+            score_lbl.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            score_lbl.setStyleSheet(
+                "border: none; background: transparent; font-size: 12px; "
+                f"font-weight: {'700' if idx == 0 else '500'}; "
+                f"color: {accent if idx == 0 else sub};"
+            )
+            v.addWidget(score_lbl)
+
+            # 整格点击切换主预览 / Click the whole cell to switch the main preview
+            cell.mousePressEvent = lambda _e, sug=s: self._on_thumb_clicked(sug)
             self._strip_layout.addWidget(cell)
+            self._strip_cells.append((cell, s))
+
+        self._highlight_selected()
+
+    def _on_thumb_clicked(self, s: CropSuggestion) -> None:
+        """点击候选缩略图:建议模式下切换主预览。Click a thumbnail to switch the main preview."""
+        if self._manual_mode:
+            return
+        self._show_main(s)
+
+    def _highlight_selected(self) -> None:
+        """根据当前候选高亮对应缩略图边框。Highlight the cell matching the current suggestion."""
+        for cell, s in getattr(self, "_strip_cells", []):
+            cell.setProperty("selected", "true" if s is self._current_suggestion else "false")
+            cell.style().unpolish(cell)
+            cell.style().polish(cell)
 
     # ── 手动裁剪坐标映射 / Manual crop coordinate mapping ────────────────────
 

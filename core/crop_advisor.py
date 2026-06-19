@@ -268,8 +268,13 @@ def _topiq(crop_bgr: np.ndarray) -> Optional[float]:
     返回 / Returns:
         Optional[float]: TOPIQ 分数,失败返回 None / TOPIQ score, or None on failure.
     """
+    # 用 get_best_device().type 作为单例 key,与 ai_model 的 TOPIQ 单例保持一致,
+    # 避免再加载一份 TOPIQ 模型(否则 'mps' 默认 key 与主程序 key 不同会重复加载)。
+    # Key the singleton by get_best_device().type to match ai_model's TOPIQ instance,
+    # so we reuse the already-loaded model instead of loading a second copy.
     from iqa_scorer import get_iqa_scorer
-    return get_iqa_scorer().calculate_from_array(crop_bgr)
+    from config import get_best_device
+    return get_iqa_scorer(device=get_best_device().type).calculate_from_array(crop_bgr)
 
 
 # ── 编排 / Orchestration ─────────────────────────────────────────────────────
