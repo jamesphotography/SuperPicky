@@ -1,20 +1,20 @@
 # -*- coding: utf-8 -*-
 """
-裁剪建议弹窗(布局 A:主预览 + 候选条 + 手动裁剪)。非破坏性。
+裁剪建议弹窗(布局:左侧竖排候选条 + 右侧大预览 + 手动裁剪)。非破坏性。
 后台线程跑 advise_crops,完成回主线程渲染。
+
+布局说明:
+- 笔记本屏幕宽度富余、高度紧张,故候选条置于左侧竖排,右侧留给尽量大的预览。
+- 预览按 KeepAspectRatio 同时贴合可用区域的宽与高(完整显示,不裁切、不拉伸),
+  并随窗口缩放自适应。
 
 模式说明:
 - 建议模式(默认):主预览显示选中候选的裁剪区域;候选条可切换;禁止鼠标拖拽。
 - 手动模式:主预览显示完整原图;允许鼠标拖拽框选任意区域;松手后对全图坐标打分。
 
-Crop Advisor Dialog (Layout A: main preview + filmstrip + manual crop). Non-destructive.
-Background thread runs advise_crops; result is rendered on main thread via Signal.
-
-Mode notes:
-- Suggestion mode (default): main preview shows the selected suggestion's crop; filmstrip
-  switches suggestions; mouse dragging is DISABLED.
-- Manual mode: main preview shows the FULL original image; mouse dragging is ENABLED;
-  on release, score_manual_crop is called with coords mapped to the full original image.
+Crop Advisor Dialog (left vertical filmstrip + large right preview + manual crop).
+Non-destructive. Background thread runs advise_crops; rendered on main thread via Signal.
+The preview fits BOTH width and height (KeepAspectRatio) and rescales with the window.
 """
 from __future__ import annotations
 
@@ -57,26 +57,22 @@ def _c(key: str, fallback: str) -> str:
     return COLORS.get(key, fallback)
 
 
-# 主预览长边像素 / Main preview longest side (px)
-_MAIN_PREVIEW_MAX = 760
-# 候选缩略图长边像素 / Filmstrip thumbnail longest side (px)
-_THUMB_MAX = 132
+# 预览/缩略图渲染源图最大边(实际显示再按区域缩放) /
+# Max side of the rendered source pixmap (the on-screen size is fit to the area afterwards).
+_PREVIEW_SRC_MAX = 1600
+# 左侧候选缩略图长边像素 / Left filmstrip thumbnail longest side (px)
+_THUMB_MAX = 150
+# 左侧候选条固定宽度 / Fixed width of the left filmstrip (px)
+_STRIP_WIDTH = 184
 
 
 # ── 辅助函数 / Helper functions ───────────────────────────────────────────────
 
 
-def _bgr_to_pixmap(bgr: np.ndarray, max_side: int = 480) -> QPixmap:
+def _bgr_to_pixmap(bgr: np.ndarray, max_side: int = _PREVIEW_SRC_MAX) -> QPixmap:
     """
     将 BGR ndarray 转换为 QPixmap,长边最大为 max_side 像素。
     Convert a BGR ndarray to QPixmap, with longest side capped at max_side pixels.
-
-    参数 / Parameters:
-        bgr (np.ndarray): BGR 格式图像 / Image in BGR format.
-        max_side (int): 输出最大边长,默认 480 / Max output side length, default 480.
-
-    返回 / Returns:
-        QPixmap: 转换后的 Qt 像素图 / Converted Qt pixmap.
     """
     h, w = bgr.shape[:2]
     scale = min(1.0, max_side / max(h, w))
@@ -100,21 +96,10 @@ class _Worker(QThread):
     done: Signal = Signal(object)  # CropAdviceResult
 
     def __init__(self, image_path: str) -> None:
-        """
-        初始化工作线程。
-        Initialize the worker thread.
-
-        参数 / Parameters:
-            image_path (str): 图片文件路径 / Path to the image file.
-        """
         super().__init__()
         self._path = image_path
 
     def run(self) -> None:
-        """
-        线程入口:调用 advise_crops,异常时安全降级为 no_bird 结果。
-        Thread entry: call advise_crops; on exception, fall back to a safe no_bird result.
-        """
         try:
             result = advise_crops(self._path)
         except Exception:  # 线程内不崩 / Never crash the thread
@@ -122,53 +107,87 @@ class _Worker(QThread):
         self.done.emit(result)
 
 
-# ── 支持鼠标绘制矩形的预览标签 / Preview label that supports mouse-drawn rectangles ─
+# ── 支持鼠标绘制矩形 + 自适应缩放的预览标签 / Preview label: rubber-band + fit-scaling ─
 
 
 class _PreviewLabel(QLabel):
     """
-    扩展 QLabel,支持鼠标拖拽绘制裁剪矩形并发出 crop_drawn 信号。
-    仅当 drawing_enabled 为 True 时,才响应鼠标事件(手动模式下开启)。
+    扩展 QLabel:
+    - 持有"源像素图"并按 KeepAspectRatio 缩放到当前控件尺寸(完整显示,随窗口自适应);
+    - 手动模式下支持鼠标拖拽绘制裁剪矩形并发出 crop_drawn 信号。
 
-    Extended QLabel that supports drag-to-draw a crop rectangle and emits crop_drawn signal.
-    Mouse drag is only active when drawing_enabled is True (set in manual mode).
-
-    用法 / Usage:
-        连接 crop_drawn(QRect) 信号;矩形坐标为标签内像素坐标(含居中偏移)。
-        Connect the crop_drawn(QRect) signal; rect coords are in label-local pixels
-        (already accounting for the centered pixmap offset).
+    Extended QLabel that:
+    - holds a "source pixmap" and scales it to the current widget size with KeepAspectRatio
+      (full display, rescales with the window);
+    - supports drag-to-draw a crop rectangle (emits crop_drawn) in manual mode.
     """
 
-    # 信号:携带标签内矩形(含像素图偏移) / Signal: carries label-local rect (offset included)
-    crop_drawn: Signal = Signal(QRect)
+    crop_drawn: Signal = Signal(QRect)  # 携带标签内矩形 / label-local rect
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.setAlignment(Qt.AlignCenter)
-        self.setMinimumHeight(420)
+        self.setMinimumSize(320, 320)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        self._drag_start: Optional[QPoint] = None   # 拖拽起点 / Drag start point
-        self._drag_end: Optional[QPoint] = None     # 拖拽终点 / Drag end point
-        self._drawing: bool = False                  # 是否正在拖拽 / Actively dragging
-        self.drawing_enabled: bool = False           # 手动模式开关 / Manual mode gate
+        self._src: Optional[QPixmap] = None     # 源像素图 / source pixmap
+        self._disp_w: int = 0                    # 当前显示像素图宽 / displayed pixmap width
+        self._disp_h: int = 0                    # 当前显示像素图高 / displayed pixmap height
+
+        self._drag_start: Optional[QPoint] = None
+        self._drag_end: Optional[QPoint] = None
+        self._drawing: bool = False
+        self.drawing_enabled: bool = False       # 手动模式开关 / manual mode gate
+
+    # ── 源图与自适应缩放 / Source image & fit-scaling ─────────────────────────
+
+    def set_source(self, pixmap: Optional[QPixmap]) -> None:
+        """设置源像素图并按当前尺寸缩放显示。Set source pixmap and scale to fit current size."""
+        self._src = pixmap
+        self._apply_scaled()
+
+    def clear_source(self) -> None:
+        """清空预览。Clear the preview."""
+        self._src = None
+        self._disp_w = self._disp_h = 0
+        self.clear()
+
+    def _apply_scaled(self) -> None:
+        """把源图按 KeepAspectRatio 缩放到当前控件尺寸,完整显示。"""
+        if self._src is None or self._src.isNull():
+            self._disp_w = self._disp_h = 0
+            return
+        target = self.size()
+        scaled = self._src.scaled(
+            target, Qt.KeepAspectRatio, Qt.SmoothTransformation
+        )
+        self._disp_w = scaled.width()
+        self._disp_h = scaled.height()
+        self.setPixmap(scaled)
+
+    def resizeEvent(self, event) -> None:  # type: ignore[override]
+        """窗口缩放时重新适配;清除已绘橡皮筋(坐标已失效)。"""
+        self._apply_scaled()
+        self.clear_rubber_band()
+        super().resizeEvent(event)
+
+    def current_pixmap_rect(self) -> QRect:
+        """当前显示像素图在标签内的居中矩形(用于手动坐标映射)。"""
+        if self._disp_w == 0 or self._disp_h == 0:
+            return QRect()
+        ox = (self.width() - self._disp_w) // 2
+        oy = (self.height() - self._disp_h) // 2
+        return QRect(ox, oy, self._disp_w, self._disp_h)
+
+    # ── 橡皮筋绘制 / Rubber-band drawing ──────────────────────────────────────
 
     def clear_rubber_band(self) -> None:
-        """
-        清除已绘制的橡皮筋矩形。在切换模式时调用。
-        Clear any drawn rubber-band rectangle. Call when switching modes.
-        """
         self._drag_start = None
         self._drag_end = None
         self._drawing = False
         self.update()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
-        """
-        按下左键记录起点,清除上次绘制。仅在 drawing_enabled 时响应。
-        Left-press records the start point and clears the previous rectangle.
-        Only active when drawing_enabled is True.
-        """
         if self.drawing_enabled and event.button() == Qt.LeftButton:
             self._drag_start = event.position().toPoint()
             self._drag_end = None
@@ -177,43 +196,28 @@ class _PreviewLabel(QLabel):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        """
-        拖拽时实时刷新矩形(视觉反馈),不计算分数。
-        Update rectangle visually while dragging; no score computed during move (debounce).
-        """
         if self.drawing_enabled and self._drawing and (event.buttons() & Qt.LeftButton):
             self._drag_end = event.position().toPoint()
             self.update()
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
-        """
-        松开左键:确定终点,发出 crop_drawn 信号,停止绘制状态。仅在 drawing_enabled 时响应。
-        Left-release: finalize end point, emit crop_drawn signal, end drawing state.
-        Only active when drawing_enabled is True.
-        """
         if self.drawing_enabled and event.button() == Qt.LeftButton and self._drawing:
             self._drag_end = event.position().toPoint()
             self._drawing = False
             self.update()
             if self._drag_start is not None and self._drag_end is not None:
-                # 构造标准化矩形(x1<x2,y1<y2) / Build normalized rect (x1<x2, y1<y2)
                 rect = QRect(self._drag_start, self._drag_end).normalized()
-                if rect.width() > 4 and rect.height() > 4:  # 过滤误触 / Filter accidental clicks
+                if rect.width() > 4 and rect.height() > 4:
                     self.crop_drawn.emit(rect)
         super().mouseReleaseEvent(event)
 
     def paintEvent(self, event) -> None:  # type: ignore[override]
-        """
-        绘制底图后叠加半透明红色矩形框(仅手动模式下可见)。
-        Paint the underlying pixmap then overlay a dashed red rectangle (visible in manual mode only).
-        """
         super().paintEvent(event)
         if self.drawing_enabled and self._drag_start is not None and self._drag_end is not None:
             rect = QRect(self._drag_start, self._drag_end).normalized()
             painter = QPainter(self)
-            pen = QPen(Qt.red, 2, Qt.DashLine)
-            painter.setPen(pen)
+            painter.setPen(QPen(Qt.red, 2, Qt.DashLine))
             painter.drawRect(rect)
             painter.end()
 
@@ -223,62 +227,57 @@ class _PreviewLabel(QLabel):
 
 class CropAdvisorDialog(QDialog):
     """
-    裁剪建议弹窗:布局 A(顶部状态栏 + 主预览 + 横向候选条 + 按钮行)。
+    裁剪建议弹窗:左侧竖排候选条 + 右侧(状态徽标 + 大预览 + 按钮行)。
 
     两种模式:
     - 建议模式(默认):主预览显示选中候选的裁剪图;候选条切换;禁止拖拽。
     - 手动模式:主预览显示完整原图;允许拖拽框选;松手调 score_manual_crop 打分。
-
-    Crop Advisor Dialog: Layout A (status label + main preview + horizontal filmstrip + buttons).
-
-    Two modes:
-    - Suggestion mode (default): main preview shows the selected suggestion's crop;
-      filmstrip switches; dragging DISABLED.
-    - Manual mode: main preview shows the FULL original image; dragging ENABLED;
-      on release, score_manual_crop is called with correctly mapped full-image coords.
     """
 
     def __init__(self, image_path: str, parent: Optional[QWidget] = None) -> None:
-        """
-        初始化弹窗,立即启动后台分析线程。
-        Initialize the dialog and immediately start the background analysis thread.
-
-        参数 / Parameters:
-            image_path (str): 待分析图片的文件路径 / Path to the image to analyze.
-            parent (Optional[QWidget]): Qt 父窗口 / Qt parent widget.
-        """
         super().__init__(parent)
         self._i18n = get_i18n()
         self._image_path: str = image_path
         self._image_bgr: Optional[np.ndarray] = read_image_bgr(image_path)
         self._suggestions: List[CropSuggestion] = []
+        self._strip_cells: List[Tuple[QFrame, CropSuggestion]] = []
 
-        # 当前展示的候选(用于模式切换时还原) / Currently displayed suggestion (for mode-switch restore)
         self._current_suggestion: Optional[CropSuggestion] = None
-
-        # 手动模式状态 / Manual mode state
         self._manual_mode: bool = False
 
-        # 手动模式下全图的实际显示尺寸(像素图宽高),用于坐标映射。
-        # In manual mode: the actual displayed pixmap size of the full image, used for mapping.
-        self._full_pix_w: int = 0
-        self._full_pix_h: int = 0
-
         self.setWindowTitle(self._i18n.t("crop_advisor.title"))
-        self.resize(980, 900)
+        self.resize(1100, 820)
         self.setStyleSheet(self._build_stylesheet())
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(20, 18, 20, 18)
+        # ── 顶层左右布局 / Top-level left|right layout ────────────────────────
+        root = QHBoxLayout(self)
+        root.setContentsMargins(16, 16, 16, 16)
         root.setSpacing(14)
 
-        # ── 状态标签(徽标式) / Status label (badge style) ────────────────────
+        # ── 左侧:竖排候选条 / Left: vertical filmstrip ───────────────────────
+        self._strip = QScrollArea()
+        self._strip.setObjectName("filmstrip")
+        self._strip.setWidgetResizable(True)
+        self._strip.setFixedWidth(_STRIP_WIDTH)
+        self._strip.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._strip.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._strip_inner = QWidget()
+        self._strip_layout = QVBoxLayout(self._strip_inner)
+        self._strip_layout.setContentsMargins(6, 6, 6, 6)
+        self._strip_layout.setSpacing(10)
+        self._strip_layout.setAlignment(Qt.AlignTop)
+        self._strip.setWidget(self._strip_inner)
+        root.addWidget(self._strip)
+
+        # ── 右侧:状态徽标 + 大预览 + 按钮行 / Right column ────────────────────
+        right = QVBoxLayout()
+        right.setSpacing(12)
+
         self._status_lbl = QLabel("🔍 " + self._i18n.t("crop_advisor.computing"))
         self._status_lbl.setObjectName("statusBadge")
         self._status_lbl.setAlignment(Qt.AlignCenter)
-        root.addWidget(self._status_lbl)
+        right.addWidget(self._status_lbl)
 
-        # ── 主预览容器(带阴影/圆角) / Main preview container (shadow + rounded) ─
         preview_container = QFrame()
         preview_container.setObjectName("previewContainer")
         pc_layout = QVBoxLayout(preview_container)
@@ -287,54 +286,33 @@ class CropAdvisorDialog(QDialog):
         self._preview.crop_drawn.connect(self._on_crop_drawn)
         pc_layout.addWidget(self._preview)
 
-        # 阴影加在容器上,避免与预览的自绘橡皮筋冲突 /
-        # Shadow on the container (not the label) to avoid clashing with rubber-band painting.
         shadow = QGraphicsDropShadowEffect(self)
         shadow.setBlurRadius(34)
         shadow.setColor(QColor(0, 0, 0, 150))
         shadow.setOffset(0, 6)
         preview_container.setGraphicsEffect(shadow)
-        root.addWidget(preview_container, 1)
+        right.addWidget(preview_container, 1)
 
-        # 打开即显示未裁剪原图作为底图,避免一片空白;分析完成后替换为裁剪结果 /
-        # Show the uncropped full image immediately so the dialog isn't blank;
-        # it is replaced by the recommended crop once analysis finishes.
+        # 打开即显示未裁剪原图,避免空白;分析完成后替换为裁剪结果 /
+        # Show the uncropped full image immediately so it isn't blank.
         if self._image_bgr is not None:
-            self._preview.setPixmap(_bgr_to_pixmap(self._image_bgr, max_side=_MAIN_PREVIEW_MAX))
+            self._preview.set_source(_bgr_to_pixmap(self._image_bgr))
 
-        # ── 候选条:横向滚动,禁用竖向滚动 / Filmstrip: horizontal scroll, no vertical ─
-        self._strip = QScrollArea()
-        self._strip.setObjectName("filmstrip")
-        self._strip.setWidgetResizable(True)
-        self._strip.setFixedHeight(186)
-        self._strip.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self._strip.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._strip_inner = QWidget()
-        self._strip_layout = QHBoxLayout(self._strip_inner)
-        self._strip_layout.setContentsMargins(6, 6, 6, 6)
-        self._strip_layout.setSpacing(10)
-        self._strip_layout.setAlignment(Qt.AlignLeft)
-        self._strip.setWidget(self._strip_inner)
-        root.addWidget(self._strip)
-
-        # ── 按钮行:手动裁剪切换 + 关闭 / Button row: manual-mode toggle + close ─
         btn_row = QHBoxLayout()
         btn_row.addStretch(1)
-
         self._manual_btn = QPushButton(self._i18n.t("crop_advisor.manual_mode"))
         self._manual_btn.setObjectName("manualBtn")
         self._manual_btn.setCheckable(True)
-        self._manual_btn.setChecked(False)
         self._manual_btn.setCursor(Qt.PointingHandCursor)
         self._manual_btn.clicked.connect(self._toggle_manual_mode)
         btn_row.addWidget(self._manual_btn)
-
         close_btn = QPushButton(self._i18n.t("crop_advisor.close"))
         close_btn.setCursor(Qt.PointingHandCursor)
         close_btn.clicked.connect(self.accept)
         btn_row.addWidget(close_btn)
+        right.addLayout(btn_row)
 
-        root.addLayout(btn_row)
+        root.addLayout(right, 1)
 
         # ── 启动后台线程 / Start background thread ────────────────────────────
         self._worker = _Worker(image_path)
@@ -342,12 +320,11 @@ class CropAdvisorDialog(QDialog):
         self._worker.start()
 
     def _build_stylesheet(self) -> str:
-        """构建弹窗主题样式(深色,带圆角/阴影观感)。Build the dialog's dark theme stylesheet."""
+        """构建弹窗深色主题样式。Build the dialog's dark theme stylesheet."""
         bg = _c("bg_elevated", "#1e1e24")
         card = _c("bg_card", "#26262e")
         border = _c("border_subtle", "#3a3a44")
         text = _c("text_primary", "#e8e8ea")
-        sub = _c("text_secondary", "#a8a8b0")
         accent = _c("accent", "#3b82f6")
         return f"""
             QDialog {{ background: {bg}; }}
@@ -360,7 +337,7 @@ class CropAdvisorDialog(QDialog):
             QFrame#previewContainer {{
                 background: {card}; border: 1px solid {border}; border-radius: 14px;
             }}
-            QScrollArea#filmstrip {{ background: transparent; border: none; }}
+            QScrollArea#filmstrip {{ background: {card}; border: 1px solid {border}; border-radius: 12px; }}
             QPushButton {{
                 color: {text}; background: {card}; border: 1px solid {border};
                 border-radius: 9px; padding: 8px 18px; font-size: 13px;
@@ -374,29 +351,16 @@ class CropAdvisorDialog(QDialog):
     # ── 窗口关闭事件 / Window close event ─────────────────────────────────────
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
-        """
-        弹窗关闭前等待后台工作线程退出,避免对象析构后信号仍连接到已销毁的槽。
-        Wait for the background worker to finish before closing to avoid use-after-free
-        when the worker still holds a live signal connection to _on_done.
-
-        参数 / Parameters:
-            event: Qt 关闭事件 / Qt close event.
-        """
+        """关闭前等待后台线程退出,避免对象析构后信号仍连接到已销毁的槽。"""
         if self._worker.isRunning():
             self._worker.quit()
-            self._worker.wait(2000)  # 最多等待 2 秒 / Wait up to 2 seconds
+            self._worker.wait(2000)
         super().closeEvent(event)
 
     # ── 后台结果回调 / Background result callback ─────────────────────────────
 
     def _on_done(self, result: CropAdviceResult) -> None:
-        """
-        后台线程完成后在主线程渲染结果。
-        Render result on main thread after background thread completes.
-
-        参数 / Parameters:
-            result (CropAdviceResult): advise_crops 返回值 / Return value from advise_crops.
-        """
+        """后台完成后在主线程渲染结果。"""
         if result.status == "no_bird":
             self._status_lbl.setText(self._i18n.t("crop_advisor.no_bird"))
             return
@@ -410,8 +374,6 @@ class CropAdvisorDialog(QDialog):
             return
 
         top = self._suggestions[0]
-        # 仅在非手动模式时更新状态标签,避免覆盖"手动裁剪"标签 /
-        # Only update status label when NOT in manual mode to avoid overwriting "Manual crop" label.
         if not self._manual_mode:
             self._status_lbl.setText(
                 f"{self._i18n.t('crop_advisor.recommended')}: "
@@ -423,81 +385,45 @@ class CropAdvisorDialog(QDialog):
     # ── 模式切换 / Mode toggle ────────────────────────────────────────────────
 
     def _toggle_manual_mode(self, checked: bool) -> None:
-        """
-        切换手动/建议模式:
-        - 手动模式 ON:主预览切换为完整原图;开启鼠标拖拽;清除橡皮筋。
-        - 手动模式 OFF:恢复当前候选(或首条候选)的裁剪预览;禁用拖拽;清除橡皮筋。
-
-        Toggle between manual and suggestion modes:
-        - Manual ON:  show full original image; enable mouse drag; clear rubber band.
-        - Manual OFF: restore selected (or top) suggestion crop; disable drag; clear rubber band.
-
-        参数 / Parameters:
-            checked (bool): 按钮按下状态 / Button checked state.
-        """
+        """切换手动/建议模式。"""
         self._manual_mode = checked
         self._preview.drawing_enabled = checked
         self._preview.clear_rubber_band()
 
         if checked:
-            # 手动模式:显示完整原图 / Manual mode: display the full original image
             self._show_full_image()
         else:
-            # 建议模式:恢复上次选中候选(或首条候选);若尚无候选则清空预览 /
-            # Suggestion mode: restore last-selected suggestion (fallback to first); clear if none.
             if self._suggestions:
-                restore = self._current_suggestion if self._current_suggestion is not None else self._suggestions[0]
+                restore = self._current_suggestion or self._suggestions[0]
                 self._show_main(restore)
             else:
-                # 尚无候选时清空预览 / No suggestions yet; clear preview
-                self._preview.clear()
+                self._preview.clear_source()
                 self._status_lbl.setText(self._i18n.t("crop_advisor.computing"))
 
     def _show_full_image(self) -> None:
-        """
-        在手动模式下,将完整原图缩放后显示在主预览中,并记录实际像素图尺寸用于坐标映射。
-        In manual mode, display the full original image scaled to fit the preview,
-        and record the actual pixmap size for coordinate mapping.
-        """
+        """手动模式:显示完整原图(自适应缩放)。"""
         if self._image_bgr is None:
             return
-        pix = _bgr_to_pixmap(self._image_bgr, max_side=_MAIN_PREVIEW_MAX)
-        self._full_pix_w = pix.width()
-        self._full_pix_h = pix.height()
-        self._preview.setPixmap(pix)
+        self._preview.set_source(_bgr_to_pixmap(self._image_bgr))
         self._status_lbl.setText(self._i18n.t("crop_advisor.manual_mode"))
 
     # ── 主预览(建议模式) / Main preview (suggestion mode) ─────────────────────
 
     def _show_main(self, s: CropSuggestion) -> None:
-        """
-        将指定候选渲染为主预览(建议模式)。手动模式下调用此方法会被忽略。
-        Render the given suggestion as the main preview (suggestion mode).
-        Calls in manual mode are ignored to avoid overwriting the full-image view.
-
-        参数 / Parameters:
-            s (CropSuggestion): 要展示的裁剪候选 / The crop suggestion to display.
-        """
+        """将指定候选渲染为主预览(完整显示)。手动模式下忽略。"""
         if self._manual_mode:
-            # 手动模式下点击候选条不切换主预览 / Ignore filmstrip clicks in manual mode
             return
-        # 记录当前展示的候选,供退出手动模式时还原 / Track for mode-switch restore
         self._current_suggestion = s
-        pix = _bgr_to_pixmap(s.preview_bgr, max_side=_MAIN_PREVIEW_MAX)
-        self._preview.setPixmap(pix)
+        self._preview.set_source(_bgr_to_pixmap(s.preview_bgr))
         self._status_lbl.setText(
             f"{self._i18n.t('crop_advisor.recommended')}: {s.ratio_label} · {s.topiq_score:.2f}"
         )
         self._highlight_selected()
 
-    # ── 候选条 / Filmstrip ────────────────────────────────────────────────────
+    # ── 候选条(左侧竖排) / Filmstrip (left, vertical) ────────────────────────
 
     def _build_strip(self) -> None:
-        """
-        清空并重建缩略图候选条。
-        Clear and rebuild the thumbnail filmstrip.
-        """
-        # 清除旧控件 / Remove old widgets
+        """清空并重建左侧竖排缩略图候选条。"""
         while self._strip_layout.count():
             item = self._strip_layout.takeAt(0)
             if item.widget():
@@ -506,12 +432,11 @@ class CropAdvisorDialog(QDialog):
 
         accent = _c("accent", "#3b82f6")
         border = _c("border_subtle", "#3a3a44")
-        card = _c("bg_card", "#26262e")
+        card = _c("bg_elevated", "#1e1e24")
         sub = _c("text_secondary", "#a8a8b0")
 
         for idx, s in enumerate(self._suggestions):
             cell = QFrame()
-            cell.setFixedWidth(_THUMB_MAX + 24)
             cell.setProperty("selected", "false")
             cell.setCursor(Qt.PointingHandCursor)
             cell.setStyleSheet(
@@ -524,7 +449,7 @@ class CropAdvisorDialog(QDialog):
 
             thumb = QLabel()
             thumb.setAlignment(Qt.AlignCenter)
-            thumb.setAttribute(Qt.WA_TransparentForMouseEvents, True)  # 点击透传到 cell
+            thumb.setAttribute(Qt.WA_TransparentForMouseEvents, True)
             thumb.setPixmap(_bgr_to_pixmap(s.preview_bgr, max_side=_THUMB_MAX))
             v.addWidget(thumb)
 
@@ -539,161 +464,69 @@ class CropAdvisorDialog(QDialog):
             )
             v.addWidget(score_lbl)
 
-            # 整格点击切换主预览 / Click the whole cell to switch the main preview
             cell.mousePressEvent = lambda _e, sug=s: self._on_thumb_clicked(sug)
             self._strip_layout.addWidget(cell)
             self._strip_cells.append((cell, s))
 
+        self._strip_layout.addStretch(1)
         self._highlight_selected()
 
     def _on_thumb_clicked(self, s: CropSuggestion) -> None:
-        """点击候选缩略图:建议模式下切换主预览。Click a thumbnail to switch the main preview."""
+        """点击候选缩略图:建议模式下切换主预览。"""
         if self._manual_mode:
             return
         self._show_main(s)
 
     def _highlight_selected(self) -> None:
-        """根据当前候选高亮对应缩略图边框。Highlight the cell matching the current suggestion."""
-        for cell, s in getattr(self, "_strip_cells", []):
+        """根据当前候选高亮对应缩略图边框。"""
+        for cell, s in self._strip_cells:
             cell.setProperty("selected", "true" if s is self._current_suggestion else "false")
             cell.style().unpolish(cell)
             cell.style().polish(cell)
 
     # ── 手动裁剪坐标映射 / Manual crop coordinate mapping ────────────────────
 
-    def _pixmap_rect_in_label(self, pix_w: int, pix_h: int) -> QRect:
-        """
-        计算指定尺寸的像素图在 QLabel(AlignCenter)内的实际绘制矩形(居中偏移量)。
-        Compute the actual drawn rect of a pixmap of given size inside the QLabel
-        when the label uses AlignCenter.
-
-        原理 / Rationale:
-            居中偏移量 = (标签边长 - 像素图边长) // 2。
-            Centering offset = (label_side - pixmap_side) // 2.
-
-        参数 / Parameters:
-            pix_w (int): 像素图宽度(像素) / Pixmap width in pixels.
-            pix_h (int): 像素图高度(像素) / Pixmap height in pixels.
-
-        返回 / Returns:
-            QRect: 像素图在标签内的绘制矩形 / Drawn rect of the pixmap within the label.
-        """
-        lw = self._preview.width()
-        lh = self._preview.height()
-        ox = (lw - pix_w) // 2
-        oy = (lh - pix_h) // 2
-        return QRect(ox, oy, pix_w, pix_h)
-
     def _map_manual_to_orig(
-        self,
-        rel_x: float,
-        rel_y: float,
-        pix_w: int,
-        pix_h: int,
+        self, rel_x: float, rel_y: float, pix_w: int, pix_h: int
     ) -> Tuple[int, int]:
-        """
-        将手动模式下像素图内坐标(相对于像素图左上角)映射回原图像素坐标。
-
-        Map a point in pixmap-local coords (relative to pixmap top-left) back to
-        original-image pixel coordinates.
-
-        映射原理 / Mapping rationale:
-            手动模式下像素图是对全图等比缩放的结果:
-                scale = pix_w / orig_w  (== pix_h / orig_h,因保持宽高比)
-            因此:
-                orig_x = rel_x / scale = rel_x * orig_w / pix_w
-                orig_y = rel_y / scale = rel_y * orig_h / pix_h
-
-            In manual mode the pixmap is the full image scaled uniformly:
-                scale = pix_w / orig_w  (== pix_h / orig_h, aspect preserved)
-            Therefore:
-                orig_x = rel_x / scale = rel_x * orig_w / pix_w
-                orig_y = rel_y / scale = rel_y * orig_h / pix_h
-
-        参数 / Parameters:
-            rel_x (float): 相对于像素图左上角的 x 坐标 / x relative to pixmap top-left.
-            rel_y (float): 相对于像素图左上角的 y 坐标 / y relative to pixmap top-left.
-            pix_w (int): 像素图宽度(像素) / Pixmap width in pixels.
-            pix_h (int): 像素图高度(像素) / Pixmap height in pixels.
-
-        返回 / Returns:
-            Tuple[int, int]: 原图像素坐标 (px, py) / Original image pixel coords (px, py).
-        """
+        """像素图内相对坐标 → 原图像素坐标(按 orig/pix 比例)。"""
         if self._image_bgr is None or pix_w == 0 or pix_h == 0:
             return 0, 0
         oh, ow = self._image_bgr.shape[:2]
-        px = int(rel_x * ow / pix_w)
-        py = int(rel_y * oh / pix_h)
-        return px, py
-
-    # ── 手动裁剪回调 / Manual crop callback ──────────────────────────────────
+        return int(rel_x * ow / pix_w), int(rel_y * oh / pix_h)
 
     def _on_crop_drawn(self, label_rect: QRect) -> None:
-        """
-        用户在主预览上拖拽释放后触发(仅手动模式有效):
-        将标签坐标正确映射回全图原图坐标后打分。
-
-        Triggered on mouse release after drawing a rectangle (only valid in manual mode):
-        maps label coords back to full-original-image coords and scores the manual crop.
-
-        坐标映射步骤 / Coordinate mapping steps:
-            1. 获取全图像素图在 QLabel 内的居中偏移矩形 pix_rect。
-               Get the centering-offset rect of the full-image pixmap inside QLabel.
-            2. 将鼠标框 label_rect 裁剪到 pix_rect 内,防止越界。
-               Clip the drawn label_rect to pix_rect to prevent out-of-bounds.
-            3. 减去偏移量得到像素图内相对坐标。
-               Subtract offset to get pixmap-local relative coords.
-            4. 按 orig/pix 比例换算为原图像素坐标 (x1,y1,x2,y2)。
-               Scale by orig/pix ratio to get original-image pixel coords.
-            5. 调用 score_manual_crop,将分数写入状态标签。
-               Call score_manual_crop and write the score to the status label.
-
-        参数 / Parameters:
-            label_rect (QRect): 鼠标拖拽框,相对于 QLabel / Mouse drag rect in label-local coords.
-        """
-        # 仅手动模式下处理 / Only process in manual mode
-        if not self._manual_mode:
-            return
-        if self._image_bgr is None or self._full_pix_w == 0 or self._full_pix_h == 0:
+        """手动模式拖拽释放:映射回原图坐标并打分。"""
+        if not self._manual_mode or self._image_bgr is None:
             return
 
-        # Step 1: 全图像素图在标签内的实际矩形 / Actual pixmap rect within label
-        pix_rect = self._pixmap_rect_in_label(self._full_pix_w, self._full_pix_h)
+        pix_rect = self._preview.current_pixmap_rect()
+        if pix_rect.isEmpty():
+            return
+        pix_w, pix_h = pix_rect.width(), pix_rect.height()
 
-        # Step 2: 将鼠标框裁剪到像素图区域内 / Clip to pixmap bounds
         clipped = label_rect.intersected(pix_rect)
         if clipped.isEmpty():
             return
 
-        # Step 3: 转换为像素图内相对坐标 / Convert to pixmap-local coords
-        # QRect.right()/bottom() 是包含端点(inclusive),需 +1 转为 exclusive end,
-        # 以便拖到图像边缘时坐标正好等于像素图宽度/高度。
-        # QRect.right()/bottom() are inclusive; add 1 for exclusive end so a drag to the
-        # exact image edge maps to the full pixmap width/height (not one pixel short).
+        # QRect.right()/bottom() 为包含端点,+1 转 exclusive,使拖到边缘正好等于全宽/全高。
         rel_x1 = float(clipped.left() - pix_rect.left())
         rel_y1 = float(clipped.top() - pix_rect.top())
         rel_x2 = float(clipped.right() + 1 - pix_rect.left())
         rel_y2 = float(clipped.bottom() + 1 - pix_rect.top())
 
-        # Step 4: 映射回全图原图坐标 / Map to full-original-image coords
-        ox1, oy1 = self._map_manual_to_orig(rel_x1, rel_y1, self._full_pix_w, self._full_pix_h)
-        ox2, oy2 = self._map_manual_to_orig(rel_x2, rel_y2, self._full_pix_w, self._full_pix_h)
+        ox1, oy1 = self._map_manual_to_orig(rel_x1, rel_y1, pix_w, pix_h)
+        ox2, oy2 = self._map_manual_to_orig(rel_x2, rel_y2, pix_w, pix_h)
 
-        # 保证 x1<x2, y1<y2 且坐标不超图边界 / Ensure x1<x2, y1<y2, clamped to image bounds
         oh, ow = self._image_bgr.shape[:2]
         x1 = max(0, min(ox1, ox2))
         y1 = max(0, min(oy1, oy2))
         x2 = min(ow, max(ox1, ox2))
         y2 = min(oh, max(oy1, oy2))
-
-        # 退化框(零面积)不打分 / Reject degenerate (zero-area) box
         if x2 <= x1 or y2 <= y1:
             return
 
-        box = (x1, y1, x2, y2)
-
-        # Step 5: 打分并显示 / Score and display
-        score = score_manual_crop(self._image_bgr, box)
+        score = score_manual_crop(self._image_bgr, (x1, y1, x2, y2))
         if score is not None:
             self._status_lbl.setText(
                 f"{self._i18n.t('crop_advisor.manual_score')}: {score:.2f}"
