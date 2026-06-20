@@ -1379,7 +1379,7 @@
     "delete_tooltip": "删除当前图片（移入回收站）",
     "lock_zoom_on": "🔒 锁定缩放",
     "lock_zoom_off": "🔓 锁定缩放",
-    "delete_btn": "🗑 删除",
+    "delete_btn": "删除",
     "grp_view": "浏览",
     "grp_edit": "编辑",
     "tb_focus": "焦点",

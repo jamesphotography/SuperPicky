@@ -433,50 +433,9 @@ class DetailPanel(QWidget):
         self._val_caption.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px; font-family: {FONTS['mono']}; background: transparent;")
         self._val_caption.setWordWrap(True)
 
-        # 鸟种行：鸟名标签 + 「编辑/Edit」文字按钮（横向排列）
-        # Species row: bird name label + "编辑/Edit" text button (side by side).
-        _edit_label = "Edit" if self.i18n.current_lang.startswith("en") else "编辑"
-        self._edit_species_btn = QToolButton()
-        self._edit_species_btn.setText(_edit_label)
-        self._edit_species_btn.setFixedHeight(20)
-        self._edit_species_btn.setCursor(Qt.PointingHandCursor)
-        self._edit_species_btn.setStyleSheet(f"""
-            QToolButton {{
-                background: transparent;
-                border: 1px solid {COLORS['border']};
-                border-radius: 3px;
-                color: {COLORS['text_muted']};
-                font-size: 10px;
-                padding: 0 4px;
-            }}
-            QToolButton:hover {{
-                border-color: {COLORS['accent']};
-                color: {COLORS['accent']};
-            }}
-        """)
-        self._edit_species_btn.clicked.connect(self._on_edit_species_clicked)
-        self._edit_species_btn.hide()  # 无照片时隐藏 / hidden until a photo is loaded
-
-        # 裁剪建议按钮（镜像鸟种编辑按钮）
-        # Crop Advice button, mirroring the species-edit button.
-        self._crop_advice_btn = QToolButton()
-        self._crop_advice_btn.setText(self.i18n.t("browser.crop_advice_btn"))
-        self._crop_advice_btn.setFixedHeight(20)
-        self._crop_advice_btn.setCursor(Qt.PointingHandCursor)
-        self._crop_advice_btn.setStyleSheet(self._edit_species_btn.styleSheet())
-        self._crop_advice_btn.clicked.connect(self._on_crop_advice_clicked)
-        self._crop_advice_btn.hide()  # 无照片时隐藏 / hidden until a photo is loaded
-
-        species_row_layout = QHBoxLayout()
-        species_row_layout.setContentsMargins(0, 0, 0, 0)
-        species_row_layout.setSpacing(4)
-        species_row_layout.addWidget(self._val_species, 1)
-        species_row_layout.addWidget(self._edit_species_btn, 0, Qt.AlignVCenter)
-        species_row_layout.addWidget(self._crop_advice_btn, 0, Qt.AlignVCenter)
-
-        # 鸟种行单独用 layout 形式插入（含铅笔按钮 + 裁剪建议按钮）
-        # Species row inserted as a layout (includes pencil button + crop advice button).
-        form.addRow(_lbl("browser.meta_species"), species_row_layout)
+        # 鸟种行:仅鸟名标签(编辑鸟种 / 裁剪建议已移至大图模式左侧工具栏)
+        # Species row: name label only (edit / crop-advice moved to the big-image toolbar).
+        form.addRow(_lbl("browser.meta_species"), self._val_species)
 
         rows = [
             # V4.2.7: 鸟类信息 3 行连续（鸟种 → 全球罕见度 → IUCN）
@@ -587,8 +546,6 @@ class DetailPanel(QWidget):
         ):
             val.setText("—")
         self._rating_label.setText("—")
-        self._edit_species_btn.hide()
-        self._crop_advice_btn.hide()
         self._caption_content.setVisible(False)
         self._caption_expanded = False
         self._update_caption_toggle_label()
@@ -722,22 +679,6 @@ class DetailPanel(QWidget):
         if cur == self.i18n.t("browser.species_copied"):
             self._val_species.setText(original)
             self._val_species.setToolTip(original)
-
-    def _on_edit_species_clicked(self):
-        """
-        用户点击铅笔图标 → 发出 species_edit_requested 信号，由上层窗口处理弹窗逻辑。
-        User clicks the pencil icon → emit species_edit_requested; the parent window handles the dialog.
-        """
-        if self._current_photo:
-            self.species_edit_requested.emit(dict(self._current_photo))
-
-    def _on_crop_advice_clicked(self):
-        """
-        用户点击"裁剪建议"按钮 → 发出 crop_advice_requested 信号，由上层处理弹窗逻辑。
-        User clicks the "Crop Advice" button → emit crop_advice_requested; the parent handles the dialog.
-        """
-        if self._current_photo:
-            self.crop_advice_requested.emit(dict(self._current_photo))
 
     def _nav_btn_style(self) -> str:
         """导航按钮（◀/▶）样式 — 比一般次级按钮更明显。"""
@@ -944,8 +885,6 @@ class DetailPanel(QWidget):
             species = p.get("bird_species_cn") or p.get("bird_species_en") or _unknown
         self._val_species.setText(species)
         self._val_species.setToolTip(species)
-        self._edit_species_btn.show()
-        self._crop_advice_btn.show()
 
         # IUCN 红色名录（中英全名 + 缩写，按官方色着色）
         # IUCN Red List (full name + abbreviation, official color)

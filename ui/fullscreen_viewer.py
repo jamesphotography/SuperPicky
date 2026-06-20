@@ -876,6 +876,15 @@ class FullscreenViewer(QWidget):
         )
         return lbl
 
+    def _hline(self) -> QFrame:
+        """左栏分组之间的细横线分隔。"""
+        line = QFrame()
+        line.setFixedHeight(1)
+        line.setStyleSheet(
+            f"background-color: {COLORS['border_subtle']}; border: none; margin: 7px 4px 3px;"
+        )
+        return line
+
     def _build_left_toolbar(self) -> QWidget:
         bar = QWidget()
         bar.setFixedWidth(128)
@@ -887,8 +896,7 @@ class FullscreenViewer(QWidget):
         v.setContentsMargins(8, 10, 8, 10)
         v.setSpacing(5)
 
-        # —— 浏览 / View ——
-        v.addWidget(self._group_label(self.i18n.t("fullscreen.grp_view")))
+        # —— 浏览组(无标签,置顶) ——
         self._focus_btn = self._tool_btn("focus.svg", self.i18n.t("fullscreen.tb_focus"),
                                          self._on_focus_btn_clicked)
         self._focus_btn.setToolTip(self.i18n.t("browser.focus_toggle_tooltip"))
@@ -905,8 +913,8 @@ class FullscreenViewer(QWidget):
                                              self._toggle_crop_view)
         v.addWidget(self._crop_view_btn)
 
-        # —— 编辑 / Edit ——
-        v.addWidget(self._group_label(self.i18n.t("fullscreen.grp_edit")))
+        # —— 编辑组(横线分隔) ——
+        v.addWidget(self._hline())
         self._edit_species_btn = self._tool_btn("square-pen.svg", self.i18n.t("fullscreen.tb_species"),
                                                 self._on_edit_species_clicked)
         v.addWidget(self._edit_species_btn)
