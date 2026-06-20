@@ -129,8 +129,13 @@ def checkbox_indicator_qss(size: int = 15, unchecked_color: str = None, checked_
     cc = checked_color or COLORS.get("accent", "#00d4aa")
     u = tinted_png_path("circle.svg", uc, size)
     c = tinted_png_path("circle-check.svg", cc, size)
+    # 覆盖全局 QCheckBox::indicator 的方框/绿色背景与边框,只留圆圈图标本身。
+    # Override the global indicator's box background/border so only the circle icon shows.
     return (
-        f"QCheckBox::indicator {{ width: {size}px; height: {size}px; }}"
-        f"QCheckBox::indicator:unchecked {{ image: url({u}); }}"
-        f"QCheckBox::indicator:checked {{ image: url({c}); }}"
+        f"QCheckBox::indicator {{ width: {size}px; height: {size}px;"
+        f" border: none; background: transparent; border-radius: 0px; }}"
+        f"QCheckBox::indicator:unchecked {{ image: url({u}); border: none; background: transparent; }}"
+        f"QCheckBox::indicator:checked {{ image: url({c}); border: none; background: transparent; }}"
+        f"QCheckBox::indicator:hover {{ border: none; background: transparent; }}"
+        f"QCheckBox::indicator:checked:hover {{ image: url({c}); border: none; background: transparent; }}"
     )
