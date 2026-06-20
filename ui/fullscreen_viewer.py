@@ -795,6 +795,17 @@ class FullscreenViewer(QWidget):
 
         h.addStretch()
 
+        # 鸟种名(居中)
+        self._species_label = QLabel("")
+        self._species_label.setStyleSheet(
+            f"QLabel {{ color: {COLORS['accent']}; font-size: 14px; font-weight: 600;"
+            f" background: transparent; }}"
+        )
+        self._species_label.setAlignment(Qt.AlignCenter)
+        h.addWidget(self._species_label)
+
+        h.addStretch()
+
         # 连拍信息(隐藏式)
         self._burst_info_btn = QPushButton("")
         self._burst_info_btn.setFixedHeight(28)
@@ -1129,6 +1140,15 @@ class FullscreenViewer(QWidget):
 
         filename = os.path.basename(photo.get("current_path") or photo.get("original_path") or "") or photo.get("filename", "")
         self._filename_label.setText(filename)
+
+        # 鸟种名(居中,跟随语言)
+        _is_en = getattr(self.i18n, "current_lang", "zh_CN").startswith("en")
+        if _is_en:
+            _species = photo.get("bird_species_en") or photo.get("bird_species_cn") or ""
+        else:
+            _species = photo.get("bird_species_cn") or photo.get("bird_species_en") or ""
+        self._species_label.setText(_species)
+
         self._update_burst_info(photo)
 
         rating = photo.get("rating", 0)

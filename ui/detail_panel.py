@@ -433,10 +433,9 @@ class DetailPanel(QWidget):
         self._val_caption.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px; font-family: {FONTS['mono']}; background: transparent;")
         self._val_caption.setWordWrap(True)
 
-        # 鸟种行:仅鸟名标签(编辑鸟种 / 裁剪建议已移至大图模式左侧工具栏)
-        # Species row: name label only (edit / crop-advice moved to the big-image toolbar).
-        form.addRow(_lbl("browser.meta_species"), self._val_species)
-
+        # 鸟种、文件名不在此显示(已移至大图顶条:鸟种居中 / 文件名右侧),避免重复。
+        # Species & filename are shown in the big-image top strip instead (centered species
+        # / right-aligned filename), so they are intentionally omitted here.
         rows = [
             # V4.2.7: 鸟类信息 3 行连续（鸟种 → 全球罕见度 → IUCN）
             # V4.2.7: Three bird-related rows kept adjacent for natural reading.
@@ -453,7 +452,6 @@ class DetailPanel(QWidget):
             ("browser.meta_focal",      self._val_focal),
             ("browser.meta_confidence", self._val_confidence),
             ("browser.meta_filesize",   self._val_filesize),
-            ("browser.meta_filename",   self._val_filename),
             ("browser.meta_datetime",   self._val_datetime),
         ]
         for key, val_widget in rows:
