@@ -29,6 +29,10 @@ Box = Tuple[int, int, int, int]  # (x1,y1,x2,y2)
 # Sentinel label for the "original (uncropped)" candidate; the UI localizes it.
 ORIGINAL_LABEL: str = "__original__"
 
+# "纯鸟图(YOLO 鸟身框,紧贴零留白)"候选的标签哨兵;UI 据此显示本地化文案。
+# Sentinel for the "bird-only (tight YOLO bbox)" candidate; the UI localizes it.
+BIRD_ONLY_LABEL: str = "__bird_only__"
+
 
 def _log(msg: str) -> None:
     """裁剪建议诊断日志(打到 stdout,随应用日志面板可见)。Crop Advisor diagnostic log."""
@@ -451,6 +455,21 @@ def advise_crops(image_path: str, *,
             topiq_score=float(orig_score),
             preview_bgr=image_bgr,
         ))
+
+    # 再加"纯鸟图"候选:YOLO 鸟身框(单鸟)或并集框(多鸟)紧贴裁剪,零留白,带自身 TOPIQ。
+    # Add a "bird-only" candidate: the tight YOLO bbox (single) / union bbox (multi),
+    # zero margin, with its own TOPIQ score.
+    bx1, by1, bx2, by2 = subject
+    bird_crop = image_bgr[by1:by2, bx1:bx2]
+    if bird_crop.size > 0:
+        bird_score = topiq_fn(bird_crop)
+        if bird_score is not None:
+            suggestions.append(CropSuggestion(
+                ratio_label=BIRD_ONLY_LABEL,
+                box=(bx1, by1, bx2, by2),
+                topiq_score=float(bird_score),
+                preview_bgr=bird_crop,
+            ))
 
     # TOPIQ 降序排列 / Sort by TOPIQ descending
     suggestions.sort(key=lambda s: s.topiq_score, reverse=True)

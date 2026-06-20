@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
 
 from ai_model import read_image_bgr
 from core.crop_advisor import (
+    BIRD_ONLY_LABEL,
     ORIGINAL_LABEL,
     CropAdviceResult,
     CropSuggestion,
@@ -359,9 +360,11 @@ class CropAdvisorDialog(QDialog):
         super().closeEvent(event)
 
     def _label_for(self, s: CropSuggestion) -> str:
-        """候选标签:原图哨兵显示本地化"原图",其余显示比例。Localize the candidate label."""
+        """候选标签:特殊哨兵显示本地化文案,其余显示比例。Localize the candidate label."""
         if s.ratio_label == ORIGINAL_LABEL:
             return self._i18n.t("crop_advisor.original")
+        if s.ratio_label == BIRD_ONLY_LABEL:
+            return self._i18n.t("crop_advisor.bird_only")
         return s.ratio_label
 
     # ── 后台结果回调 / Background result callback ─────────────────────────────
