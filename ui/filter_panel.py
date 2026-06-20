@@ -16,7 +16,11 @@ from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtGui import QIcon
 
 from ui.styles import COLORS, FONTS
-from ui.icon_utils import load_tinted_icon, stars_pixmap, tinted_png_path
+from ui.icon_utils import load_tinted_icon, stars_pixmap
+
+# 排序项图标:降序项(rarity/sharpness/aesthetic)用向下箭头,当前选中项用对勾
+_SORT_DESC_ICON = "arrow-down.svg"
+_SORT_SELECTED_ICON = "check.svg"
 
 # 用图标替代 emoji/文字的评分筹码。
 # Rating chips rendered as icons instead of emoji/text.
@@ -130,9 +134,6 @@ class FilterPanel(QWidget):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(20)
 
-        # 下拉框统一的 SVG 向下箭头(染成次要文字色)
-        _arrow_png = tinted_png_path("arrow-down.svg", COLORS['text_secondary'], 12)
-
         # --- 鸟种（置顶）---
         layout.addWidget(_section_label(self.i18n.t("browser.section_species")))
         self.species_combo = QComboBox()
@@ -204,8 +205,7 @@ class FilterPanel(QWidget):
             }}
             QComboBox:hover {{ border-color: {COLORS['text_muted']}; }}
             QComboBox:focus {{ border-color: {COLORS['accent']}; }}
-            QComboBox::drop-down {{ border: none; width: 22px; }}
-            QComboBox::down-arrow {{ image: url({_arrow_png}); width: 11px; height: 11px; }}
+            QComboBox::drop-down {{ border: none; width: 20px; }}
             QComboBox QAbstractItemView {{
                 background-color: {COLORS['bg_elevated']};
                 border: 1px solid {COLORS['border']};
@@ -226,6 +226,7 @@ class FilterPanel(QWidget):
         if idx >= 0:
             self._sort_combo.setCurrentIndex(idx)
         self._sort_combo.currentIndexChanged.connect(self._on_sort_changed)
+        self._refresh_sort_icons()
         layout.addWidget(self._sort_combo)
 
         layout.addStretch()
@@ -544,6 +545,7 @@ class FilterPanel(QWidget):
         idx = self._sort_combo.findData(saved_sort)
         self._sort_combo.setCurrentIndex(idx if idx >= 0 else 0)
         self._sort_combo.blockSignals(False)
+        self._refresh_sort_icons()
 
         self._emit_filters()
 
@@ -560,11 +562,24 @@ class FilterPanel(QWidget):
     #  信号
     # ------------------------------------------------------------------
 
+    def _refresh_sort_icons(self):
+        """排序项图标:当前选中项→对勾(check);其余降序项→向下箭头;文件名无图标。"""
+        cur = self._sort_combo.currentIndex()
+        for i in range(self._sort_combo.count()):
+            data = self._sort_combo.itemData(i)
+            if i == cur:
+                self._sort_combo.setItemIcon(i, load_tinted_icon(_SORT_SELECTED_ICON, COLORS['accent'], 14))
+            elif isinstance(data, str) and data.endswith("_desc"):
+                self._sort_combo.setItemIcon(i, load_tinted_icon(_SORT_DESC_ICON, COLORS['text_secondary'], 14))
+            else:
+                self._sort_combo.setItemIcon(i, QIcon())
+
     def _on_sort_changed(self, *_):
         sort_val = self._sort_combo.currentData()
         if sort_val:
             self._adv_config.set_browser_sort(sort_val)
             self._adv_config.save()
+        self._refresh_sort_icons()
         self._emit_filters()
 
     def _emit_filters(self, *_):
