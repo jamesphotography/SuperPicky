@@ -40,7 +40,7 @@ from ui.styles import (
     COLORS, FONTS, LOG_COLORS, PROGRESS_INFO_STYLE, PROGRESS_PERCENT_STYLE
 )
 from ui.custom_dialogs import StyledMessageBox
-from ui.icon_utils import load_tinted_icon, ICON_IDLE
+from ui.icon_utils import load_tinted_icon, checkbox_indicator_qss, ICON_IDLE
 from ui.skill_level_dialog import SkillLevelDialog, SKILL_PRESETS, get_skill_level_thresholds
 from ui.welcome_onboarding_dialog import EnvironmentRepairDialog, WelcomeOnboardingDialog
 from core.initialization_manager import InitializationManager
@@ -1333,6 +1333,7 @@ class SuperPickyMainWindow(QMainWindow):
 
         self.flight_check = QCheckBox()
         self.flight_check.setChecked(self.config.flight_check)
+        self.flight_check.setStyleSheet(checkbox_indicator_qss(16, COLORS['text_muted'], COLORS['accent']))
         flight_layout.addWidget(self.flight_check)
 
         header_layout.addLayout(flight_layout)
@@ -1347,6 +1348,7 @@ class SuperPickyMainWindow(QMainWindow):
         
         self.burst_check = QCheckBox()
         self.burst_check.setChecked(self.config.burst_check)
+        self.burst_check.setStyleSheet(checkbox_indicator_qss(16, COLORS['text_muted'], COLORS['accent']))
         burst_layout.addWidget(self.burst_check)
         
         header_layout.addLayout(burst_layout)
@@ -1364,6 +1366,7 @@ class SuperPickyMainWindow(QMainWindow):
         birdid_layout.addWidget(birdid_label)
         
         self.birdid_check = QCheckBox()
+        self.birdid_check.setStyleSheet(checkbox_indicator_qss(16, COLORS['text_muted'], COLORS['accent']))
         # 从保存的设置中读取状态
         birdid_saved_state = False
         try:

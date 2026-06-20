@@ -16,7 +16,7 @@ from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtGui import QIcon
 
 from ui.styles import COLORS, FONTS
-from ui.icon_utils import load_tinted_icon, stars_pixmap
+from ui.icon_utils import load_tinted_icon, stars_pixmap, checkbox_indicator_qss
 
 # 排序项图标:降序项(rarity/sharpness/aesthetic)用向下箭头,当前选中项用对勾
 _SORT_DESC_ICON = "arrow-down.svg"
@@ -366,23 +366,10 @@ class FilterPanel(QWidget):
             label = label_zh if _is_zh else mode
             cb = QCheckBox(label)
             cb.setChecked(mode in _defaults)
-            cb.setStyleSheet(f"""
-                QCheckBox {{
-                    color: {color};
-                    font-size: 12px;
-                    spacing: 4px;
-                }}
-                QCheckBox::indicator {{
-                    width: 14px; height: 14px;
-                    border-radius: 3px;
-                    border: 1px solid {COLORS['border']};
-                    background: transparent;
-                }}
-                QCheckBox::indicator:checked {{
-                    background-color: {color};
-                    border-color: {color};
-                }}
-            """)
+            cb.setStyleSheet(
+                f"QCheckBox {{ color: {color}; font-size: 12px; spacing: 6px; }}"
+                + checkbox_indicator_qss(15, COLORS['text_muted'], color)
+            )
             cb.stateChanged.connect(self._emit_filters)
             self._focus_checks[mode] = cb
             row.addWidget(cb)
@@ -411,7 +398,8 @@ class FilterPanel(QWidget):
             cb = QCheckBox(label_text)
             cb.setChecked(True)
             cb.setStyleSheet(
-                f"QCheckBox {{ color: {COLORS['text_secondary']}; font-size: 12px; }}"
+                f"QCheckBox {{ color: {COLORS['text_secondary']}; font-size: 12px; spacing: 6px; }}"
+                + checkbox_indicator_qss(15, COLORS['text_muted'], COLORS['accent'])
             )
             cb.stateChanged.connect(self._emit_filters)
             self._flight_cbs[value] = cb

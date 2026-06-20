@@ -115,3 +115,22 @@ def tinted_png_path(svg_name: str, color: str, size: int = 12, dpr: float = 2.0)
     if not os.path.exists(path):
         render_tinted_image(svg_name, color, size, dpr).save(path, "PNG")
     return path.replace(os.sep, "/")
+
+
+def checkbox_indicator_qss(size: int = 15, unchecked_color: str = None, checked_color: str = None) -> str:
+    """
+    返回把 QCheckBox 指示器换成 circle.svg(未选)/circle-check.svg(选中)的样式片段。
+    未选=圆圈(灰),选中=带勾圆圈(默认 accent 绿,可指定)。
+
+    Return a QSS snippet replacing the QCheckBox indicator with circle.svg (unchecked)
+    and circle-check.svg (checked). Append it to a widget's existing QCheckBox style.
+    """
+    uc = unchecked_color or COLORS.get("text_muted", "#8a8a8a")
+    cc = checked_color or COLORS.get("accent", "#00d4aa")
+    u = tinted_png_path("circle.svg", uc, size)
+    c = tinted_png_path("circle-check.svg", cc, size)
+    return (
+        f"QCheckBox::indicator {{ width: {size}px; height: {size}px; }}"
+        f"QCheckBox::indicator:unchecked {{ image: url({u}); }}"
+        f"QCheckBox::indicator:checked {{ image: url({c}); }}"
+    )
