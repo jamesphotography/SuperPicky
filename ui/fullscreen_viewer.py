@@ -1124,7 +1124,11 @@ class FullscreenViewer(QWidget):
         self._update_burst_info(photo)
 
         rating = photo.get("rating", 0)
-        if isinstance(rating, int) and rating >= 1:
+        if photo.get("picked"):
+            self._rating_label.setPixmap(
+                load_tinted_icon("crown.svg", COLORS['star_gold'], 18).pixmap(QSize(18, 18))
+            )
+        elif isinstance(rating, int) and rating >= 1:
             self._rating_label.setPixmap(stars_pixmap(rating, COLORS['star_gold'], size=16))
         else:
             self._rating_label.setText("")

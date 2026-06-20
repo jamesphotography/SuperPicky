@@ -19,6 +19,7 @@ from PySide6.QtCore import Qt, Signal, QThread, QObject, Slot, QSize, QTimer, QP
 from PySide6.QtGui import QPixmap, QColor, QPainter, QPen, QFont, QBrush, QImage
 
 from ui.styles import COLORS, FONTS
+from ui.icon_utils import render_tinted_image
 
 
 # 对焦状态指示颜色（WORST 不显示圆点）
@@ -86,10 +87,20 @@ def _draw_static_overlays(image: QImage, photo: dict):
     painter.setRenderHint(QPainter.Antialiasing)
 
     rating = photo.get("rating", 0)
+    picked = photo.get("picked")
     focus = photo.get("focus_status")
 
-    # 右上角：评分星标(文字 ★,沿用原样)
-    if rating and rating > 0:
+    # 右上角：精选 → 皇冠(取代星级);否则 → 评分星标(文字 ★)
+    if picked:
+        crown_px = 15
+        crown_img = render_tinted_image("crown.svg", COLORS['star_gold'], size=crown_px, dpr=1.0)
+        rect_w, rect_h = crown_px + 10, 18
+        x = image.width() - rect_w - 4
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 170))
+        painter.drawRoundedRect(x, 4, rect_w, rect_h, 4, 4)
+        painter.drawImage(x + 5, 4 + (rect_h - crown_px) // 2, crown_img)
+    elif rating and rating > 0:
         if rating >= 4:
             stars = f"{rating}★"
         else:

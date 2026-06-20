@@ -873,9 +873,13 @@ class DetailPanel(QWidget):
         is_zh = not lang.startswith('en')
         _unknown = "—"
 
-        # 评分（支持 -1 ~ 5）:1~5 星用 SVG 金星 pixmap,0/-1 用文字
+        # 评分:精选→皇冠(取代星级);1~5 星→SVG 金星;0/-1→文字
         rating = p.get("rating", 0)
-        if isinstance(rating, int) and rating >= 1:
+        if p.get("picked"):
+            self._rating_label.setPixmap(
+                load_tinted_icon("crown.svg", COLORS['star_gold'], 22).pixmap(QSize(22, 22))
+            )
+        elif isinstance(rating, int) and rating >= 1:
             self._rating_label.setPixmap(stars_pixmap(rating, COLORS['star_gold'], size=18))
         else:
             self._rating_label.setText("0" if rating == 0 else _unknown)

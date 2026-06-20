@@ -348,12 +348,15 @@ class MergedReportDB:
             where_clauses.append(f"{species_col} = ?")
             params.append(species_val.strip())
         
+        # 精选:直接用持久 picked 列(与单库一致;旧目录需重跑选鸟)
+        if filters.get("picked_only", False):
+            where_clauses.append("picked = 1")
+
         where_sql = " AND ".join(where_clauses) if where_clauses else ""
-        
+
         # 排序
         sort_by = filters.get("sort_by") or "filename"
-        picked_only = filters.get("picked_only", False)
-        
+
         if sort_by == "sharpness_desc":
             order = "ORDER BY COALESCE(adj_sharpness, head_sharp, -1e99) DESC, filename ASC"
         elif sort_by == "aesthetic_desc":
@@ -369,21 +372,7 @@ class MergedReportDB:
         with self._lock:
             cursor = self._conn.execute(sql, base_params)
             results = [dict(row) for row in cursor.fetchall()]
-        
-        if picked_only and results:
-            results.sort(key=lambda x: (
-                x.get("adj_topiq", x.get("nima_score", -1e99)),
-                x.get("adj_sharpness", x.get("head_sharp", -1e99)),
-            ), reverse=True)
-            num_to_keep = max(1, int(len(results) * 0.25))
-            results = results[:num_to_keep]
-            if sort_by == "sharpness_desc":
-                results.sort(key=lambda x: -(x.get("adj_sharpness") or x.get("head_sharp") or -1e99))
-            elif sort_by == "aesthetic_desc":
-                results.sort(key=lambda x: -(x.get("adj_topiq") or x.get("nima_score") or -1e99))
-            else:
-                results.sort(key=lambda x: (x.get("source_dir", ""), x.get("filename", "")))
-        
+
         return results
     
     def get_distinct_species(self, use_en: bool = False, ratings: list = None) -> List[str]:
