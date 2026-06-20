@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
 
 from ai_model import read_image_bgr
 from core.crop_advisor import (
+    ORIGINAL_LABEL,
     CropAdviceResult,
     CropSuggestion,
     advise_crops,
@@ -357,6 +358,12 @@ class CropAdvisorDialog(QDialog):
             self._worker.wait(2000)
         super().closeEvent(event)
 
+    def _label_for(self, s: CropSuggestion) -> str:
+        """候选标签:原图哨兵显示本地化"原图",其余显示比例。Localize the candidate label."""
+        if s.ratio_label == ORIGINAL_LABEL:
+            return self._i18n.t("crop_advisor.original")
+        return s.ratio_label
+
     # ── 后台结果回调 / Background result callback ─────────────────────────────
 
     def _on_done(self, result: CropAdviceResult) -> None:
@@ -377,7 +384,7 @@ class CropAdvisorDialog(QDialog):
         if not self._manual_mode:
             self._status_lbl.setText(
                 f"{self._i18n.t('crop_advisor.recommended')}: "
-                f"{top.ratio_label} · {top.topiq_score:.2f}"
+                f"{self._label_for(top)} · {top.topiq_score:.2f}"
             )
         self._show_main(top)
         self._build_strip()
@@ -416,7 +423,7 @@ class CropAdvisorDialog(QDialog):
         self._current_suggestion = s
         self._preview.set_source(_bgr_to_pixmap(s.preview_bgr))
         self._status_lbl.setText(
-            f"{self._i18n.t('crop_advisor.recommended')}: {s.ratio_label} · {s.topiq_score:.2f}"
+            f"{self._i18n.t('crop_advisor.recommended')}: {self._label_for(s)} · {s.topiq_score:.2f}"
         )
         self._highlight_selected()
 
@@ -454,7 +461,7 @@ class CropAdvisorDialog(QDialog):
             v.addWidget(thumb)
 
             tag = "★ " if idx == 0 else ""
-            score_lbl = QLabel(f"{tag}{s.ratio_label} · {s.topiq_score:.2f}")
+            score_lbl = QLabel(f"{tag}{self._label_for(s)} · {s.topiq_score:.2f}")
             score_lbl.setAlignment(Qt.AlignCenter)
             score_lbl.setAttribute(Qt.WA_TransparentForMouseEvents, True)
             score_lbl.setStyleSheet(

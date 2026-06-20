@@ -1399,6 +1399,7 @@
     "manual_mode": "Manual crop",
     "manual_score": "Manual crop score",
     "close": "Close",
-    "no_decodable_image": "Cannot read this photo (possibly a RAW file). Use Crop Advice on photos that have a generated JPEG."
+    "no_decodable_image": "Cannot read this photo (possibly a RAW file). Use Crop Advice on photos that have a generated JPEG.",
+    "original": "Original"
   }
 }

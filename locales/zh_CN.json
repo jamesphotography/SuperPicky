@@ -1399,6 +1399,7 @@
     "manual_mode": "手动裁剪",
     "manual_score": "手动裁剪评分",
     "close": "关闭",
-    "no_decodable_image": "无法读取该照片(可能是 RAW 原始文件)。请对已生成 JPEG 的照片使用裁剪建议。"
+    "no_decodable_image": "无法读取该照片(可能是 RAW 原始文件)。请对已生成 JPEG 的照片使用裁剪建议。",
+    "original": "原图"
   }
 }

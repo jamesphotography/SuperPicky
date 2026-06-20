@@ -25,6 +25,10 @@ RATIOS_PORTRAIT: List[str] = ["1:1", "4:5", "3:4", "2:3", "5:7", "5:8", "9:16"]
 
 Box = Tuple[int, int, int, int]  # (x1,y1,x2,y2)
 
+# "原图(不裁剪)"候选的标签哨兵;UI 据此显示本地化文案。
+# Sentinel label for the "original (uncropped)" candidate; the UI localizes it.
+ORIGINAL_LABEL: str = "__original__"
+
 
 def _log(msg: str) -> None:
     """裁剪建议诊断日志(打到 stdout,随应用日志面板可见)。Crop Advisor diagnostic log."""
@@ -435,6 +439,18 @@ def advise_crops(image_path: str, *,
                                       topiq_score=float(score), preview_bgr=crop)
         if best is not None:
             suggestions.append(best)
+
+    # 把"原图(不裁剪)"也作为一个候选,带其自身 TOPIQ 分,供用户参考与"不裁"选择。
+    # Add the original (uncropped) image as a candidate with its own TOPIQ score,
+    # so the user can compare "crop vs no-crop" and pick keeping the full frame.
+    orig_score = topiq_fn(image_bgr)
+    if orig_score is not None:
+        suggestions.append(CropSuggestion(
+            ratio_label=ORIGINAL_LABEL,
+            box=(0, 0, img_w, img_h),
+            topiq_score=float(orig_score),
+            preview_bgr=image_bgr,
+        ))
 
     # TOPIQ 降序排列 / Sort by TOPIQ descending
     suggestions.sort(key=lambda s: s.topiq_score, reverse=True)
