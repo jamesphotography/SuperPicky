@@ -164,7 +164,8 @@ class FilterPanel(QWidget):
                 min-height: 24px;
             }}
         """)
-        self.species_combo.currentIndexChanged.connect(self._emit_filters)
+        self.species_combo.currentIndexChanged.connect(self._on_species_changed)
+        self._refresh_species_icon()
         layout.addWidget(self.species_combo)
 
         layout.addWidget(self._divider())
@@ -464,6 +465,7 @@ class FilterPanel(QWidget):
         if idx >= 0:
             self.species_combo.setCurrentIndex(idx)
         self.species_combo.blockSignals(False)
+        self._refresh_species_icon()
 
     # ------------------------------------------------------------------
     #  筛选状态读取
@@ -538,6 +540,7 @@ class FilterPanel(QWidget):
         self.species_combo.blockSignals(True)
         self.species_combo.setCurrentIndex(0)
         self.species_combo.blockSignals(False)
+        self._refresh_species_icon()
 
         # 排序 → 恢复用户上次选择（不强制重置为锐度）
         self._sort_combo.blockSignals(True)
@@ -561,6 +564,19 @@ class FilterPanel(QWidget):
     # ------------------------------------------------------------------
     #  信号
     # ------------------------------------------------------------------
+
+    def _refresh_species_icon(self):
+        """鸟种下拉:当前选中项显示对勾(check),其余无图标。"""
+        cur = self.species_combo.currentIndex()
+        for i in range(self.species_combo.count()):
+            if i == cur:
+                self.species_combo.setItemIcon(i, load_tinted_icon(_SORT_SELECTED_ICON, COLORS['accent'], 14))
+            else:
+                self.species_combo.setItemIcon(i, QIcon())
+
+    def _on_species_changed(self, *_):
+        self._refresh_species_icon()
+        self._emit_filters()
 
     def _refresh_sort_icons(self):
         """排序项图标:当前选中项→对勾(check);其余降序项→向下箭头;文件名无图标。"""

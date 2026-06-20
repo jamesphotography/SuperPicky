@@ -1228,7 +1228,7 @@
     "exposure_good": "Normal",
     "exposure_over": "Overexposed",
     "exposure_under": "Underexposed",
-    "back": "← Back",
+    "back": "Back",
     "back_tooltip": "Back to Main",
     "size_label": "SIZE",
     "section_species": "SPECIES",

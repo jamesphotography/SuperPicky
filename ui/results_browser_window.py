@@ -573,7 +573,7 @@ class ResultsBrowserWindow(QMainWindow):
 
         # P2: 返回主界面按钮（最左侧）
         back_btn = QPushButton("  " + self.i18n.t("browser.back"))
-        back_btn.setIcon(load_tinted_icon("gallery-thumbnails.svg", ICON_IDLE, 16))
+        back_btn.setIcon(load_tinted_icon("birdhouse.svg", ICON_IDLE, 16))
         back_btn.setIconSize(QSize(16, 16))
         back_btn.setObjectName("tertiary")
         back_btn.setFixedHeight(32)
@@ -1759,7 +1759,7 @@ class ResultsBrowserWidget(QWidget):
         layout.setSpacing(12)
 
         back_btn = QPushButton("  " + self.i18n.t("browser.back"))
-        back_btn.setIcon(load_tinted_icon("gallery-thumbnails.svg", ICON_IDLE, 16))
+        back_btn.setIcon(load_tinted_icon("birdhouse.svg", ICON_IDLE, 16))
         back_btn.setIconSize(QSize(16, 16))
         back_btn.setObjectName("tertiary")
         back_btn.setFixedHeight(32)

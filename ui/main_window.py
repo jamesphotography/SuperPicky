@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QSystemTrayIcon, QApplication  # V4.0: 系统托盘图标
 )
-from PySide6.QtCore import Qt, Signal, QObject, Slot, QTimer, QPropertyAnimation, QEasingCurve, QMimeData, QThread, QStandardPaths
+from PySide6.QtCore import Qt, Signal, QObject, Slot, QTimer, QPropertyAnimation, QEasingCurve, QMimeData, QThread, QStandardPaths, QSize
 from PySide6.QtGui import QFont, QPixmap, QIcon, QAction, QTextCursor, QColor, QDragEnterEvent, QDropEvent
 
 from tools.i18n import get_i18n, set_primary_language
@@ -40,6 +40,7 @@ from ui.styles import (
     COLORS, FONTS, LOG_COLORS, PROGRESS_INFO_STYLE, PROGRESS_PERCENT_STYLE
 )
 from ui.custom_dialogs import StyledMessageBox
+from ui.icon_utils import load_tinted_icon, ICON_IDLE
 from ui.skill_level_dialog import SkillLevelDialog, SKILL_PRESETS, get_skill_level_thresholds
 from ui.welcome_onboarding_dialog import EnvironmentRepairDialog, WelcomeOnboardingDialog
 from core.initialization_manager import InitializationManager
@@ -1288,7 +1289,9 @@ class SuperPickyMainWindow(QMainWindow):
         self.dir_input.pathDropped.connect(self._on_path_dropped)     # V3.9: 拖放目录
         dir_layout.addWidget(self.dir_input, 1)
 
-        browse_btn = QPushButton(self.i18n.t("labels.browse"))
+        browse_btn = QPushButton("  " + self.i18n.t("labels.browse"))
+        browse_btn.setIcon(load_tinted_icon("folder.svg", ICON_IDLE, 16))
+        browse_btn.setIconSize(QSize(16, 16))
         browse_btn.setObjectName("browse")
         browse_btn.setMinimumWidth(100)
         browse_btn.clicked.connect(self._browse_directory)
