@@ -16,7 +16,7 @@ from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtGui import QIcon
 
 from ui.styles import COLORS, FONTS
-from ui.icon_utils import load_tinted_icon, stars_pixmap
+from ui.icon_utils import load_tinted_icon, stars_pixmap, tinted_png_path
 
 # 用图标替代 emoji/文字的评分筹码。
 # Rating chips rendered as icons instead of emoji/text.
@@ -102,7 +102,7 @@ class FilterPanel(QWidget):
         from advanced_config import get_advanced_config
         self._adv_config = get_advanced_config()
 
-        self.setFixedWidth(220)
+        self.setFixedWidth(236)
         self.setStyleSheet(
             f"background-color: {COLORS['bg_elevated']};"
             f" border-right: 1px solid {COLORS['border_subtle']};"
@@ -130,6 +130,9 @@ class FilterPanel(QWidget):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(20)
 
+        # 下拉框统一的 SVG 向下箭头(染成次要文字色)
+        _arrow_png = tinted_png_path("arrow-down.svg", COLORS['text_secondary'], 12)
+
         # --- 鸟种（置顶）---
         layout.addWidget(_section_label(self.i18n.t("browser.section_species")))
         self.species_combo = QComboBox()
@@ -145,7 +148,8 @@ class FilterPanel(QWidget):
             }}
             QComboBox:hover {{ border-color: {COLORS['text_muted']}; }}
             QComboBox:focus {{ border-color: {COLORS['accent']}; }}
-            QComboBox::drop-down {{ border: none; width: 20px; }}
+            QComboBox::drop-down {{ border: none; width: 22px; }}
+            QComboBox::down-arrow {{ image: url({_arrow_png}); width: 11px; height: 11px; }}
             QComboBox QAbstractItemView {{
                 background-color: {COLORS['bg_elevated']};
                 border: 1px solid {COLORS['border']};
@@ -201,7 +205,8 @@ class FilterPanel(QWidget):
             }}
             QComboBox:hover {{ border-color: {COLORS['text_muted']}; }}
             QComboBox:focus {{ border-color: {COLORS['accent']}; }}
-            QComboBox::drop-down {{ border: none; width: 20px; }}
+            QComboBox::drop-down {{ border: none; width: 22px; }}
+            QComboBox::down-arrow {{ image: url({_arrow_png}); width: 11px; height: 11px; }}
             QComboBox QAbstractItemView {{
                 background-color: {COLORS['bg_elevated']};
                 border: 1px solid {COLORS['border']};

@@ -20,6 +20,17 @@ from PySide6.QtGui import QPixmap, QColor, QPainter, QPen, QFont, QBrush, QImage
 
 from ui.styles import COLORS, FONTS
 from ui.icon_utils import render_tinted_image
+from tools.i18n import get_i18n
+
+
+def _display_name(photo: dict) -> str:
+    """卡片底部显示名:优先鸟种(跟随语言),无鸟种则用文件名。"""
+    is_en = get_i18n().current_lang.startswith("en")
+    if is_en:
+        species = photo.get("bird_species_en") or photo.get("bird_species_cn")
+    else:
+        species = photo.get("bird_species_cn") or photo.get("bird_species_en")
+    return species or photo.get("filename", "")
 
 
 # 对焦状态指示颜色（WORST 不显示圆点）
@@ -393,10 +404,11 @@ class ThumbnailCard(QFrame):
         self.img_label.setText("") 
         layout.addWidget(self.img_label)
 
-        # 文件名 label
-        fn = photo.get("filename", "")
+        # 卡片底部:默认显示鸟种(无则文件名);悬停整张卡显示文件名
+        fn = _display_name(photo)
         if self.is_burst_group and self.burst_count > 1:
             fn = f"{fn} ({self.burst_count})"
+        self.setToolTip(photo.get("filename", ""))
         self.name_label = QLabel(fn)
         self.name_label.setAlignment(Qt.AlignCenter)
         self.name_label.setStyleSheet(f"""
