@@ -148,8 +148,7 @@ class FilterPanel(QWidget):
             }}
             QComboBox:hover {{ border-color: {COLORS['text_muted']}; }}
             QComboBox:focus {{ border-color: {COLORS['accent']}; }}
-            QComboBox::drop-down {{ border: none; width: 22px; }}
-            QComboBox::down-arrow {{ image: url({_arrow_png}); width: 11px; height: 11px; }}
+            QComboBox::drop-down {{ border: none; width: 20px; }}
             QComboBox QAbstractItemView {{
                 background-color: {COLORS['bg_elevated']};
                 border: 1px solid {COLORS['border']};

@@ -654,7 +654,12 @@ class ThumbnailGrid(QScrollArea):
 
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.setStyleSheet(f"QScrollArea {{ background-color: {COLORS['bg_primary']}; border: none; }}")
+        self.setStyleSheet(
+            f"QScrollArea {{ background-color: {COLORS['bg_primary']}; border: none; }}"
+            # 悬停文件名提示:纯文字,无黑色背景框
+            f"QToolTip {{ color: {COLORS['text_primary']}; background-color: transparent;"
+            f" border: none; padding: 0px; font-size: 11px; }}"
+        )
         self.setFocusPolicy(Qt.StrongFocus)
 
         self._container = QWidget()
