@@ -38,8 +38,8 @@ _RATING_OPTIONS = [
     ("3",     "★★★", [3, 4, 5]),
     ("2",     "★★",  [2]),
     ("1",     "★",   [1]),
-    ("0",     "0",   [0]),          # 0星（有鸟但评分为0）
-    ("nobird", "×",  [-1]),         # 无鸟
+    # 未选用：0星(有鸟但0分) + 无鸟(-1) 合并为一个 ⊘ 筹码,避免 0 与无鸟混淆
+    ("nobird", "×",  [-1, 0]),
 ]
 # 默认勾选的评分按钮（V4.2.7：3星 + 2星，与摄影师常用「能用的片子」一致）
 # Default checked rating buttons (V4.2.7): 3★ + 2★ — matches the "keeper" pile
@@ -258,7 +258,16 @@ class FilterPanel(QWidget):
         self._rating_btns: dict = {}  # mode -> QPushButton
 
         # 窄按钮固定宽度(★★★ 用 Expanding,留出 3 颗星空间)
-        _narrow = {"2": 40, "1": 30, "0": 24, "nobird": 24, "picked": 32}
+        _narrow = {"2": 40, "1": 30, "nobird": 32, "picked": 32}
+        # 图标筹码 tooltip(图标无文字,用提示说明含义)
+        _is_zh = not getattr(self.i18n, 'current_lang', 'zh_CN').startswith('en')
+        _tips = {
+            "picked": "精选 Top 25%" if _is_zh else "Picked (Top 25%)",
+            "3": "三星" if _is_zh else "3 stars",
+            "2": "二星" if _is_zh else "2 stars",
+            "1": "一星" if _is_zh else "1 star",
+            "nobird": "未选用:0星 / 无鸟" if _is_zh else "Unrated: 0★ / no bird",
+        }
 
         for mode, label, ratings in _RATING_OPTIONS:
             active = (mode in self._active_ratings)
@@ -267,6 +276,8 @@ class FilterPanel(QWidget):
             else:
                 btn = QPushButton(label)
             btn.setFixedHeight(30)
+            if mode in _tips:
+                btn.setToolTip(_tips[mode])
             if mode in _narrow:
                 btn.setFixedWidth(_narrow[mode])
             else:
