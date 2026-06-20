@@ -955,16 +955,21 @@ class FullscreenViewer(QWidget):
             f" padding: 2px 10px; }}"
         )
 
-        prev_btn = QPushButton(self.i18n.t("browser.prev_arrow"))
+        prev_btn = QPushButton("  " + self.i18n.t("browser.prev"))
+        prev_btn.setIcon(load_tinted_icon("arrow-left.svg", ICON_IDLE, 16))
+        prev_btn.setIconSize(QSize(16, 16))
         prev_btn.setFixedHeight(32)
-        prev_btn.setFixedWidth(100)
+        prev_btn.setFixedWidth(108)
         prev_btn.setStyleSheet(_nav_btn_style)
         prev_btn.clicked.connect(self.prev_requested)
         h.addWidget(prev_btn)
 
-        next_btn = QPushButton(self.i18n.t("browser.next_arrow"))
+        next_btn = QPushButton(self.i18n.t("browser.next") + "  ")
+        next_btn.setIcon(load_tinted_icon("arrow-right.svg", ICON_IDLE, 16))
+        next_btn.setIconSize(QSize(16, 16))
+        next_btn.setLayoutDirection(Qt.RightToLeft)  # 图标置于文字右侧
         next_btn.setFixedHeight(32)
-        next_btn.setFixedWidth(100)
+        next_btn.setFixedWidth(108)
         next_btn.setStyleSheet(_nav_btn_style)
         next_btn.clicked.connect(self.next_requested)
         h.addWidget(next_btn)

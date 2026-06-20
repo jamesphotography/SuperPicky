@@ -23,8 +23,10 @@ from PySide6.QtWidgets import (
     QSlider, QComboBox, QMessageBox, QSizePolicy, QApplication,
     QStackedWidget, QMenu
 )
-from PySide6.QtCore import Qt, Signal, Slot, QProcess
+from PySide6.QtCore import Qt, Signal, Slot, QProcess, QSize
 from PySide6.QtGui import QAction, QKeyEvent, QIcon, QFont
+
+from ui.icon_utils import load_tinted_icon, ICON_IDLE
 
 from ui.styles import COLORS, GLOBAL_STYLE, FONTS
 from ui.filter_panel import FilterPanel
@@ -570,7 +572,9 @@ class ResultsBrowserWindow(QMainWindow):
         layout.setSpacing(12)
 
         # P2: 返回主界面按钮（最左侧）
-        back_btn = QPushButton(self.i18n.t("browser.back"))
+        back_btn = QPushButton("  " + self.i18n.t("browser.back"))
+        back_btn.setIcon(load_tinted_icon("gallery-thumbnails.svg", ICON_IDLE, 16))
+        back_btn.setIconSize(QSize(16, 16))
         back_btn.setObjectName("tertiary")
         back_btn.setFixedHeight(32)
         back_btn.setToolTip(self.i18n.t("browser.back_tooltip"))
@@ -1754,7 +1758,9 @@ class ResultsBrowserWidget(QWidget):
         layout.setContentsMargins(16, 8, 16, 8)
         layout.setSpacing(12)
 
-        back_btn = QPushButton(self.i18n.t("browser.back"))
+        back_btn = QPushButton("  " + self.i18n.t("browser.back"))
+        back_btn.setIcon(load_tinted_icon("gallery-thumbnails.svg", ICON_IDLE, 16))
+        back_btn.setIconSize(QSize(16, 16))
         back_btn.setObjectName("tertiary")
         back_btn.setFixedHeight(32)
         back_btn.setToolTip(self.i18n.t("browser.back_tooltip"))

@@ -12,9 +12,14 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
     QPushButton, QCheckBox, QComboBox, QScrollArea, QFrame, QSizePolicy
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QSize
 
 from ui.styles import COLORS, FONTS
+from ui.icon_utils import load_tinted_icon
+
+# 用图标替代 emoji 的评分筹码:精选(🏆→皇冠)、无鸟(×→禁止圈)
+# Rating chips rendered as icons instead of emoji.
+_ICON_CHIPS = {"picked": "crown.svg", "nobird": "circle-off.svg"}
 
 
 # 评分按钮配置 (mode_key, label, ratings_list)
@@ -247,20 +252,31 @@ class FilterPanel(QWidget):
         _narrow = {"2": 30, "1": 24, "0": 24, "nobird": 24, "picked": 32}
 
         for mode, label, ratings in _RATING_OPTIONS:
-            btn = QPushButton(label)
+            active = (mode in self._active_ratings)
+            if mode in _ICON_CHIPS:
+                btn = QPushButton("")  # 图标筹码,无文字
+                btn.setIconSize(QSize(16, 16))
+            else:
+                btn = QPushButton(label)
             btn.setFixedHeight(30)
             if mode in _narrow:
                 btn.setFixedWidth(_narrow[mode])
             else:
                 btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-            active = (mode in self._active_ratings)
             btn.setStyleSheet(self._rating_btn_style(active, mode))
+            if mode in _ICON_CHIPS:
+                self._apply_chip_icon(btn, mode, active)
             _m = mode
             btn.clicked.connect(lambda _=None, m=_m: self._on_rating_btn(m))
             self._rating_btns[mode] = btn
             row.addWidget(btn)
 
         return w
+
+    def _apply_chip_icon(self, btn, mode: str, active: bool) -> None:
+        """给图标型筹码按激活态染色:激活=金,常态=灰。"""
+        color = COLORS['star_gold'] if active else COLORS['text_muted']
+        btn.setIcon(load_tinted_icon(_ICON_CHIPS[mode], color, 16))
 
     def _rating_btn_style(self, active: bool, mode: str = "") -> str:
         # 精选按钮用金色高亮
@@ -292,7 +308,10 @@ class FilterPanel(QWidget):
         else:
             self._active_ratings.add(mode)
         for m, btn in self._rating_btns.items():
-            btn.setStyleSheet(self._rating_btn_style(m in self._active_ratings, m))
+            _active = m in self._active_ratings
+            btn.setStyleSheet(self._rating_btn_style(_active, m))
+            if m in _ICON_CHIPS:
+                self._apply_chip_icon(btn, m, _active)
         self._emit_filters()
 
     # ------------------------------------------------------------------
@@ -467,7 +486,10 @@ class FilterPanel(QWidget):
         # 评分 → 默认 ★★★ + ★★
         self._active_ratings = set(_DEFAULT_RATINGS)
         for m, btn in self._rating_btns.items():
-            btn.setStyleSheet(self._rating_btn_style(m in _DEFAULT_RATINGS, m))
+            _active = m in _DEFAULT_RATINGS
+            btn.setStyleSheet(self._rating_btn_style(_active, m))
+            if m in _ICON_CHIPS:
+                self._apply_chip_icon(btn, m, _active)
 
         # 对焦 → 默认全选
         _defaults = set(_DEFAULT_CHECKED_FOCUS)
@@ -501,6 +523,8 @@ class FilterPanel(QWidget):
         self._active_ratings = set()
         for m, btn in self._rating_btns.items():
             btn.setStyleSheet(self._rating_btn_style(False, m))
+            if m in _ICON_CHIPS:
+                self._apply_chip_icon(btn, m, False)
         self._emit_filters()
 
     # ------------------------------------------------------------------

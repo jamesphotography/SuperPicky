@@ -16,6 +16,7 @@ from PySide6.QtCore import Qt, Signal, QSize, QThread, Slot, QTimer
 from PySide6.QtGui import QPixmap, QFont, QGuiApplication, QImage
 
 from ui.styles import COLORS, FONTS
+from ui.icon_utils import load_tinted_icon, ICON_IDLE, ICON_ACTIVE
 from core.rarity_tier import gbif_score_to_tier, tier_name, tier_icon, tier_color
 
 
@@ -293,10 +294,14 @@ class DetailPanel(QWidget):
         nb_layout.setContentsMargins(8, 4, 8, 4)
         nb_layout.setSpacing(6)
 
-        prev_btn = QPushButton(f"◀  {self.i18n.t('browser.prev')}")
-        next_btn = QPushButton(f"{self.i18n.t('browser.next')}  ▶")
+        prev_btn = QPushButton(f"  {self.i18n.t('browser.prev')}")
+        prev_btn.setIcon(load_tinted_icon("arrow-left.svg", ICON_IDLE, 16))
+        next_btn = QPushButton(f"{self.i18n.t('browser.next')}  ")
+        next_btn.setIcon(load_tinted_icon("arrow-right.svg", ICON_IDLE, 16))
+        next_btn.setLayoutDirection(Qt.RightToLeft)  # 图标置于文字右侧 / icon on the right
         for btn in (prev_btn, next_btn):
             btn.setFixedHeight(30)
+            btn.setIconSize(QSize(16, 16))
             btn.setStyleSheet(self._nav_btn_style())
         prev_btn.clicked.connect(self.prev_requested)
         next_btn.clicked.connect(self.next_requested)
@@ -330,7 +335,9 @@ class DetailPanel(QWidget):
         rating_row.addWidget(self._rating_label)
         rating_row.addStretch()
 
-        dec_btn = QPushButton("▼")
+        dec_btn = QPushButton()
+        dec_btn.setIcon(load_tinted_icon("star-minus.svg", ICON_IDLE, 16))
+        dec_btn.setIconSize(QSize(16, 16))
         dec_btn.setFixedSize(28, 28)
         dec_btn.setToolTip(self.i18n.t("labels.rating_dec_tooltip"))
         dec_btn.setStyleSheet(f"""
@@ -351,7 +358,9 @@ class DetailPanel(QWidget):
         dec_btn.clicked.connect(self._on_rating_dec)
         rating_row.addWidget(dec_btn)
 
-        inc_btn = QPushButton("▲")
+        inc_btn = QPushButton()
+        inc_btn.setIcon(load_tinted_icon("star-plus.svg", ICON_ACTIVE, 16))
+        inc_btn.setIconSize(QSize(16, 16))
         inc_btn.setFixedSize(28, 28)
         inc_btn.setToolTip(self.i18n.t("labels.rating_inc_tooltip"))
         inc_btn.setStyleSheet(f"""
@@ -594,9 +603,10 @@ class DetailPanel(QWidget):
         self._update_caption_toggle_label()
 
     def _update_caption_toggle_label(self):
-        arrow = "▼" if self._caption_expanded else "▶"
-        label = self.i18n.t("browser.meta_caption")
-        self._caption_toggle_btn.setText(f"{arrow} {label}")
+        svg = "arrow-down.svg" if self._caption_expanded else "arrow-right.svg"
+        self._caption_toggle_btn.setIcon(load_tinted_icon(svg, ICON_IDLE, 14))
+        self._caption_toggle_btn.setIconSize(QSize(14, 14))
+        self._caption_toggle_btn.setText(f"  {self.i18n.t('browser.meta_caption')}")
 
     def _on_rating_dec(self):
         """▼ 按钮：评分 -1（最低 -1）。"""
