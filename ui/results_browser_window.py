@@ -1257,6 +1257,11 @@ class ResultsBrowserWindow(QMainWindow):
                 path = op
             else:
                 path = None
+        print(
+            f"🪶 [CropAdvisor] 入口解析: temp_jpeg={rp.get('temp_jpeg_path')!r} "
+            f"debug_crop={rp.get('debug_crop_path')!r} current={rp.get('current_path')!r} "
+            f"original={rp.get('original_path')!r} → 选用={path!r}"
+        )
         if not path or not os.path.exists(path):
             from ui.custom_dialogs import StyledMessageBox
             StyledMessageBox.warning(
@@ -2278,6 +2283,11 @@ class ResultsBrowserWidget(QWidget):
                 path = op
             else:
                 path = None
+        print(
+            f"🪶 [CropAdvisor] 入口解析: temp_jpeg={rp.get('temp_jpeg_path')!r} "
+            f"debug_crop={rp.get('debug_crop_path')!r} current={rp.get('current_path')!r} "
+            f"original={rp.get('original_path')!r} → 选用={path!r}"
+        )
         if not path or not os.path.exists(path):
             from ui.custom_dialogs import StyledMessageBox
             StyledMessageBox.warning(

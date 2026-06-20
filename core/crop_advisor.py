@@ -26,6 +26,11 @@ RATIOS_PORTRAIT: List[str] = ["1:1", "4:5", "3:4", "2:3", "5:7", "5:8", "9:16"]
 Box = Tuple[int, int, int, int]  # (x1,y1,x2,y2)
 
 
+def _log(msg: str) -> None:
+    """裁剪建议诊断日志(打到 stdout,随应用日志面板可见)。Crop Advisor diagnostic log."""
+    print(f"🪶 [CropAdvisor] {msg}")
+
+
 @dataclass
 class CropSuggestion:
     """单个裁剪候选。"""
@@ -184,7 +189,8 @@ def _load_image_exif_aware(path: str) -> Optional[np.ndarray]:
         # RGB → BGR
         bgr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
         return bgr
-    except Exception:  # noqa: BLE001 — 任何读取/转换失败均静默返回 None
+    except Exception as e:  # noqa: BLE001 — 读取/转换失败返回 None(并记日志便于定位)
+        _log(f"EXIF 加载失败 path={path} err={e!r}")
         return None
 
 
@@ -209,10 +215,18 @@ def _detect_birds(image_bgr: np.ndarray) -> List[Tuple[Box, float]]:
     boxes = results[0].boxes.xyxy.cpu().numpy()
     confs = results[0].boxes.conf.cpu().numpy()
     clss = results[0].boxes.cls.cpu().numpy()
+    # 诊断:打印全部原始检测(类别+置信度),便于判断"漏鸟"是类别错/置信低/还是真没检出
+    # Diagnostic: dump every raw detection (class+conf) so we can tell whether a missed
+    # bird is a wrong class, a low-confidence box, or genuinely nothing detected.
+    bird_cls = config.ai.BIRD_CLASS_ID
+    raw = [(int(k), round(float(c), 3)) for k, c in zip(clss, confs)]
+    _log(f"YOLO raw detections (cls,conf) = {raw if raw else '[]'} ; bird_class={bird_cls}")
     out: List[Tuple[Box, float]] = []
     for (x1, y1, x2, y2), c, k in zip(boxes, confs, clss):
-        if int(k) == config.ai.BIRD_CLASS_ID:
+        if int(k) == bird_cls:
             out.append(((int(x1), int(y1), int(x2), int(y2)), float(c)))
+    _log(f"bird-class boxes (before {BIRD_CONF_THRESHOLD} filter) = "
+         f"{[(b, round(cf, 3)) for b, cf in out] if out else '[]'}")
     return out
 
 
@@ -339,10 +353,13 @@ def advise_crops(image_path: str, *,
         _image_loader = _load_image_exif_aware
 
     # ── 读图 / Load image ─────────────────────────────────────────────────────
+    _log(f"advise_crops 输入路径 = {image_path}")
     image_bgr = _image_loader(image_path)
     if image_bgr is None:
+        _log("图像加载失败(None)→ no_bird。常见原因:路径不可解码(如 RAW)或文件损坏。")
         return CropAdviceResult(status="no_bird", bird_count=0)
     img_h, img_w = image_bgr.shape[:2]
+    _log(f"已加载图像 {img_w}x{img_h}")
     short_side = min(img_w, img_h)
     min_margin_px = int(short_side * MIN_MARGIN_RATIO)
 
@@ -350,9 +367,12 @@ def advise_crops(image_path: str, *,
     # 严格使用 > 阈值(不含等于)/ Strict threshold: strictly greater than
     birds = [b for b in detect_fn(image_bgr) if b[1] > BIRD_CONF_THRESHOLD]
     n = len(birds)
+    _log(f"过滤后(conf>{BIRD_CONF_THRESHOLD})合格鸟数 N={n}")
     if n == 0:
+        _log("N=0 → no_bird")
         return CropAdviceResult(status="no_bird", bird_count=0)
     if n > MAX_BIRDS_FOR_AUTO:
+        _log(f"N>{MAX_BIRDS_FOR_AUTO} → too_many_birds")
         return CropAdviceResult(status="too_many_birds", bird_count=n)
 
     # ── 候选中心生成 / Candidate center generation ────────────────────────────
@@ -361,16 +381,20 @@ def advise_crops(image_path: str, *,
         # Single bird: subject-centered anchor + keypoint rule-of-thirds
         subject = birds[0][0]
         kp = keypoint_fn(image_bgr, subject)
+        _log(f"单鸟 subject={subject} 关键点={'有(三分法)' if kp else '无(仅居中)'}")
     else:
         # 多鸟(2-3):取并集,跳过关键点(不做三分法)
         # Multiple birds (2-3): use union bbox; skip keypoints (no rule-of-thirds)
         subject = _union_bbox([b[0] for b in birds])
         kp = None  # 多鸟不做三分法 / No rule-of-thirds for multi-bird
+        _log(f"多鸟 N={n} 并集 subject={subject}")
 
     anchor_center = ((subject[0] + subject[2]) / 2.0, (subject[1] + subject[3]) / 2.0)
 
     # ── 按比例生成裁剪候选 / Generate crops per ratio ─────────────────────────
-    ratios = RATIOS_LANDSCAPE if _pick_orientation(subject) == "landscape" else RATIOS_PORTRAIT
+    orientation = _pick_orientation(subject)
+    ratios = RATIOS_LANDSCAPE if orientation == "landscape" else RATIOS_PORTRAIT
+    _log(f"方向={orientation} 比例集={ratios}")
 
     suggestions: List[CropSuggestion] = []
     for label in ratios:
@@ -397,4 +421,6 @@ def advise_crops(image_path: str, *,
 
     # TOPIQ 降序排列 / Sort by TOPIQ descending
     suggestions.sort(key=lambda s: s.topiq_score, reverse=True)
+    _log(f"生成候选 {len(suggestions)} 个: "
+         f"{[(s.ratio_label, round(s.topiq_score, 2)) for s in suggestions]}")
     return CropAdviceResult(suggestions=suggestions, status="ok", bird_count=n)
