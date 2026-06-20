@@ -877,6 +877,11 @@ class ThumbnailGrid(QScrollArea):
             self._batch_timer.stop()
             # 补一个尾部弹簧
             self._grid.setRowStretch(last_row + 1, 1)
+            # 尾部弹性列:让卡片靠左对齐(结果少时不被均分撑开/居中散开)
+            # 先清零所有列拉伸,避免列数变化时旧拉伸列残留导致错位
+            for _c in range(max(self._grid.columnCount(), col_count) + 1):
+                self._grid.setColumnStretch(_c, 0)
+            self._grid.setColumnStretch(col_count, 1)
             # 完成后移除 MinimumHeight 限制，让布局自由发挥
             self._container.setMinimumHeight(0)
 

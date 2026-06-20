@@ -639,17 +639,21 @@ class ResultsBrowserWindow(QMainWindow):
         self._compare_btn.clicked.connect(self._enter_comparison)
         layout.addWidget(self._compare_btn)
 
-        # 缩略图尺寸滑块
+        # 缩略图尺寸:标签 + 滑块绑成一组,紧贴显示
+        size_box = QHBoxLayout()
+        size_box.setContentsMargins(0, 0, 0, 0)
+        size_box.setSpacing(6)
         size_label = QLabel(self.i18n.t("browser.size_label"))
         size_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 10px; background: transparent;")
-        layout.addWidget(size_label)
+        size_box.addWidget(size_label)
 
         self._size_slider = QSlider(Qt.Horizontal)
         self._size_slider.setRange(80, 300)
         self._size_slider.setValue(160)
         self._size_slider.setFixedWidth(100)
         self._size_slider.valueChanged.connect(self._on_size_changed)
-        layout.addWidget(self._size_slider)
+        size_box.addWidget(self._size_slider)
+        layout.addLayout(size_box)
 
         return bar
 
