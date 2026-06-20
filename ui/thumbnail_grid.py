@@ -19,6 +19,7 @@ from PySide6.QtCore import Qt, Signal, QThread, QObject, Slot, QSize, QTimer, QP
 from PySide6.QtGui import QPixmap, QColor, QPainter, QPen, QFont, QBrush, QImage
 
 from ui.styles import COLORS, FONTS
+from ui.icon_utils import render_tinted_image
 
 
 # 对焦状态指示颜色（WORST 不显示圆点）
@@ -88,25 +89,28 @@ def _draw_static_overlays(image: QImage, photo: dict):
     rating = photo.get("rating", 0)
     focus = photo.get("focus_status")
 
-    # 右上角：评分星标
+    # 右上角：评分角标 = 数字 + 单颗 SVG 金星(按评分色)
     if rating and rating > 0:
-        if rating >= 4:
-            stars = f"{rating}★"
-        else:
-            stars = "★" * rating
         color = _RATING_COLORS.get(rating, QColor(COLORS['text_muted']))
-        bg = QColor(0, 0, 0, 160)
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(bg)
-        rect_w = 40 if rating >= 4 else 36
-        rect_h = 16
-        x = image.width() - rect_w - 4
-        painter.drawRoundedRect(x, 4, rect_w, rect_h, 4, 4)
-        painter.setPen(color)
+        num = str(rating)
+        star_px = 12
+        star_img = render_tinted_image("star.svg", color.name(), size=star_px, dpr=1.0)
         font = QFont()
-        font.setPixelSize(10)
+        font.setPixelSize(11)
+        font.setBold(True)
         painter.setFont(font)
-        painter.drawText(x, 4, rect_w, rect_h, Qt.AlignCenter, stars)
+        tw = painter.fontMetrics().horizontalAdvance(num)
+        pad, gap = 5, 2
+        rect_w = pad + tw + gap + star_px + pad
+        rect_h = 18
+        x = image.width() - rect_w - 4
+        y = 4
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 160))
+        painter.drawRoundedRect(x, y, rect_w, rect_h, 4, 4)
+        painter.setPen(color)
+        painter.drawText(x + pad, y, tw, rect_h, Qt.AlignVCenter | Qt.AlignLeft, num)
+        painter.drawImage(x + pad + tw + gap, y + (rect_h - star_px) // 2, star_img)
 
     # 右下角：对焦状态圆点
     if focus and focus in _FOCUS_DOT_COLORS:

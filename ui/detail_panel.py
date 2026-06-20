@@ -16,7 +16,7 @@ from PySide6.QtCore import Qt, Signal, QSize, QThread, Slot, QTimer
 from PySide6.QtGui import QPixmap, QFont, QGuiApplication, QImage
 
 from ui.styles import COLORS, FONTS
-from ui.icon_utils import load_tinted_icon, ICON_IDLE, ICON_ACTIVE
+from ui.icon_utils import load_tinted_icon, stars_pixmap, ICON_IDLE, ICON_ACTIVE
 from core.rarity_tier import gbif_score_to_tier, tier_name, tier_icon, tier_color
 
 
@@ -873,18 +873,12 @@ class DetailPanel(QWidget):
         is_zh = not lang.startswith('en')
         _unknown = "—"
 
-        # 评分（支持 -1 ~ 5）
+        # 评分（支持 -1 ~ 5）:1~5 星用 SVG 金星 pixmap,0/-1 用文字
         rating = p.get("rating", 0)
-        _rating_text = {
-            5: "★★★★★",
-            4: "★★★★",
-            3: "★★★",
-            2: "★★",
-            1: "★",
-            0: "0",
-            -1: "—",
-        }
-        self._rating_label.setText(_rating_text.get(rating, _unknown))
+        if isinstance(rating, int) and rating >= 1:
+            self._rating_label.setPixmap(stars_pixmap(rating, COLORS['star_gold'], size=18))
+        else:
+            self._rating_label.setText("0" if rating == 0 else _unknown)
 
         # GBIF 全球罕见度 → 5-tier 圆形充填图标 + tier 名 + 小字分数
         # GBIF rarity → 5-tier circle glyph + tier label + small score

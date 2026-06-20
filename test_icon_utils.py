@@ -40,6 +40,22 @@ def test_render_tinted_image_colored(name):
     assert solid > 0, f"{name} 渲染后无实心像素(SVG 可能无效/未染色)"
 
 
+def test_stars_image_width_scales_with_count():
+    """N 颗星的图宽随 count 增加;count=0 返回空图。"""
+    empty = iu.stars_image(0, "#d4a800", size=16)
+    assert empty.isNull()
+    one = iu.stars_image(1, "#d4a800", size=16, dpr=1.0)
+    three = iu.stars_image(3, "#d4a800", size=16, dpr=1.0)
+    assert not one.isNull() and not three.isNull()
+    assert three.width() > one.width()  # 3 星比 1 星宽
+    # 有金色实心像素
+    target = QColor("#d4a800")
+    assert any(
+        three.pixelColor(x, y).alpha() >= 250
+        for y in range(three.height()) for x in range(three.width())
+    )
+
+
 def test_missing_svg_returns_transparent():
     """不存在的 SVG 返回透明图而非崩溃。"""
     img = iu.render_tinted_image("__nope__.svg", "#00d4aa", size=20)

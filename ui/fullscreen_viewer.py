@@ -18,7 +18,7 @@ from PySide6.QtGui import QPixmap, QImage, QPainter, QPen, QColor, QBrush
 
 from ui.styles import COLORS, FONTS
 from ui.icon_utils import (
-    load_tinted_icon, ICON_IDLE, ICON_ACTIVE, ICON_DISABLED, ICON_DANGER,
+    load_tinted_icon, stars_pixmap, ICON_IDLE, ICON_ACTIVE, ICON_DISABLED, ICON_DANGER,
 )
 
 
@@ -1124,8 +1124,10 @@ class FullscreenViewer(QWidget):
         self._update_burst_info(photo)
 
         rating = photo.get("rating", 0)
-        _rating_text = {5: "★★★★★", 4: "★★★★", 3: "★★★", 2: "★★", 1: "★"}
-        self._rating_label.setText(_rating_text.get(rating, ""))
+        if isinstance(rating, int) and rating >= 1:
+            self._rating_label.setPixmap(stars_pixmap(rating, COLORS['star_gold'], size=16))
+        else:
+            self._rating_label.setText("")
 
         # 1. 立即显示缩略图缓存
         try:

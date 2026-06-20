@@ -65,3 +65,32 @@ def render_tinted_image(svg_name: str, color: str, size: int = 20, dpr: float = 
 def load_tinted_icon(svg_name: str, color: str, size: int = 20, dpr: float = 1.0) -> QIcon:
     """渲染并染色为 QIcon(运行时使用,需 QGuiApplication)。"""
     return QIcon(QPixmap.fromImage(render_tinted_image(svg_name, color, size, dpr)))
+
+
+def stars_image(count: int, color: str, size: int = 16, gap: int = 2, dpr: float = 2.0) -> QImage:
+    """
+    横排渲染 count 颗 star.svg 染成 color,返回一张 QImage(headless 安全)。
+    count<=0 返回空图。dpr 用于 Retina 锐利显示。
+
+    Render `count` star.svg horizontally tinted to `color` into one QImage.
+    """
+    count = max(0, int(count))
+    if count == 0:
+        return QImage()
+    s = max(1, int(round(size * dpr)))
+    g = max(0, int(round(gap * dpr)))
+    star = render_tinted_image("star.svg", color, size=s, dpr=1.0)  # s×s 像素,dpr=1
+    total_w = count * s + (count - 1) * g
+    row = QImage(total_w, s, QImage.Format_ARGB32_Premultiplied)
+    row.fill(Qt.transparent)
+    painter = QPainter(row)
+    for i in range(count):
+        painter.drawImage(i * (s + g), 0, star)
+    painter.end()
+    row.setDevicePixelRatio(dpr)
+    return row
+
+
+def stars_pixmap(count: int, color: str, size: int = 16, gap: int = 2, dpr: float = 2.0) -> QPixmap:
+    """stars_image 的 QPixmap 版(供 QLabel.setPixmap,需 QGuiApplication)。"""
+    return QPixmap.fromImage(stars_image(count, color, size, gap, dpr))
