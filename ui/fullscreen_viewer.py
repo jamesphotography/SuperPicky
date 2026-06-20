@@ -1135,8 +1135,8 @@ class FullscreenViewer(QWidget):
 
         # 1. 立即显示缩略图缓存
         try:
-            from ui.thumbnail_grid import _thumb_cache
-            cached = _thumb_cache.get(filename)
+            from ui.thumbnail_grid import _thumb_cache, _overlay_key
+            cached = _thumb_cache.get(_overlay_key(photo))
             if cached and not cached.isNull():
                 self._img_label.set_pixmap(cached)
                 # 功能2：缩略图加载后直接还原锁定的缩放和位置

@@ -52,6 +52,22 @@ def _photo_key(photo: dict):
     return filename
 
 
+def _overlay_key(photo: dict):
+    """
+    缩略图缓存键:身份键 + 影响右上/左下角标的状态(评分/精选/对焦/连拍)。
+    把这些烤进缓存的状态纳入键,使其变化(如重跑选鸟后 picked 变化)时缓存自动失效,
+    避免显示过期角标。身份键 _photo_key 不含可变状态,继续用于卡片/选择。
+    """
+    return (
+        _photo_key(photo),
+        photo.get("rating", 0),
+        1 if photo.get("picked") else 0,
+        photo.get("focus_status"),
+        photo.get("burst_position"),
+        photo.get("burst_total"),
+    )
+
+
 # ============================================================
 #  LRU 缩略图缓存
 # ============================================================
@@ -212,9 +228,10 @@ class _ThumbnailWorker(QThread):
                 
             photo, thumb_size = task
             photo_key = _photo_key(photo)
-            
-            # 先查缓存
-            cached = _thumb_cache.get(photo_key)
+            ckey = _overlay_key(photo)
+
+            # 先查缓存(键含角标状态,过期角标自动失效)
+            cached = _thumb_cache.get(ckey)
             if cached is not None:
                 self.manager.signals.thumbnail_ready.emit(photo_key, cached)
                 continue
@@ -233,7 +250,7 @@ class _ThumbnailWorker(QThread):
                     pixmap = pixmap.copy(x, y, thumb_size, thumb_size)
 
                 _draw_static_overlays(pixmap, photo)
-                _thumb_cache.put(photo_key, pixmap)
+                _thumb_cache.put(ckey, pixmap)
                 self.manager.signals.thumbnail_ready.emit(photo_key, pixmap)
             else:
                 self.manager.signals.thumbnail_ready.emit(photo_key, QImage())
@@ -833,7 +850,7 @@ class ThumbnailGrid(QScrollArea):
             # 强制设置行最小高度
             self._grid.setRowMinimumHeight(row, self._thumb_size + 32)
 
-            cached = _thumb_cache.get(photo_key)
+            cached = _thumb_cache.get(_overlay_key(photo))
             if cached:
                 card.set_pixmap(cached)
 
@@ -899,7 +916,7 @@ class ThumbnailGrid(QScrollArea):
             image = _load_thumbnail_image(card.photo, self._thumb_size)
             if image and not image.isNull():
                 _draw_static_overlays(image, card.photo)
-                _thumb_cache.put(photo_key, image)
+                _thumb_cache.put(_overlay_key(card.photo), image)
                 card.set_pixmap(image)
             else:
                 card._draw_overlays()
