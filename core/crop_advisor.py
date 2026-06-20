@@ -2,7 +2,7 @@
 """
 裁剪建议编排模块 / Crop Advisor.
 
-对单张鸟照生成多比例裁剪候选(CACNet 定构图 + 标准比例套框 + 三分法),
+对单张鸟照生成多比例裁剪候选(标准比例套框 + 主体居中/鸟眼三分法 + TOPIQ 择优),
 用 TOPIQ 排序;并支持对用户手动框打分。全程非破坏性。
 """
 from __future__ import annotations
@@ -303,7 +303,6 @@ def score_manual_crop(image_bgr: np.ndarray, box: Box,
 
 def advise_crops(image_path: str, *,
                  detect_fn: Optional[Callable] = None,
-                 cacnet_fn: Optional[Callable] = None,
                  keypoint_fn: Optional[Callable] = None,
                  topiq_fn: Optional[Callable] = None,
                  _image_loader: Optional[Callable] = None) -> CropAdviceResult:
@@ -312,18 +311,21 @@ def advise_crops(image_path: str, *,
     Generate multi-ratio crop suggestions sorted by TOPIQ score descending.
     All dependencies are injectable for testing without loading real models.
 
+    构图策略:每个标准比例下,以"主体居中"和(单鸟时)"鸟眼三分法"两种中心生成候选,
+    再由 TOPIQ 打分择优。不依赖任何专用裁剪模型。
+    Composition: per ratio, generate candidates centered on the subject and (single bird)
+    on the rule-of-thirds eye position, then pick the best by TOPIQ. No dedicated crop model.
+
     参数 / Parameters:
         image_path (str): 图片文件路径 / Path to the image file.
         detect_fn: 鸟类检测函数(image_bgr→[(bbox,conf)]);默认 _detect_birds。
                    Bird detection fn (image_bgr→[(bbox,conf)]); default _detect_birds.
-        cacnet_fn: CACNet 构图建议函数(image_bgr→bbox);默认 get_cacnet_cropper().predict_box。
-                   CACNet composition fn (image_bgr→bbox); default get_cacnet_cropper().predict_box.
         keypoint_fn: 关键点函数(image_bgr,bird_bbox→(eye_px,beak_px)|None);默认 _keypoints。
                      Keypoint fn (image_bgr,bird_bbox→(eye_px,beak_px)|None); default _keypoints.
         topiq_fn: 图像质量打分函数(crop_bgr→float|None);默认 _topiq。
                   IQA scoring fn (crop_bgr→float|None); default _topiq.
-        _image_loader: 图片读取函数(path→ndarray|None);默认 read_image_bgr。仅供测试注入。
-                       Image loader fn (path→ndarray|None); default read_image_bgr. Test-only.
+        _image_loader: 图片读取函数(path→ndarray|None);默认 EXIF 感知加载。仅供测试注入。
+                       Image loader fn (path→ndarray|None); default EXIF-aware loader. Test-only.
 
     返回 / Returns:
         CropAdviceResult: status ∈ {ok, no_bird, too_many_birds},含排好序的裁剪建议列表。
@@ -333,9 +335,6 @@ def advise_crops(image_path: str, *,
     detect_fn = detect_fn or _detect_birds
     keypoint_fn = keypoint_fn or _keypoints
     topiq_fn = topiq_fn or _topiq
-    if cacnet_fn is None:
-        from core.cacnet_cropper import get_cacnet_cropper
-        cacnet_fn = lambda img: get_cacnet_cropper().predict_box(img)
     if _image_loader is None:
         _image_loader = _load_image_exif_aware
 
@@ -358,18 +357,17 @@ def advise_crops(image_path: str, *,
 
     # ── 候选中心生成 / Candidate center generation ────────────────────────────
     if n == 1:
-        # 单鸟:用 CACNet 中心 + 关键点三分法
-        # Single bird: use CACNet center + keypoint rule-of-thirds
+        # 单鸟:主体居中作锚点 + 关键点三分法
+        # Single bird: subject-centered anchor + keypoint rule-of-thirds
         subject = birds[0][0]
-        b_star = cacnet_fn(image_bgr)
-        anchor_center = ((b_star[0] + b_star[2]) / 2.0, (b_star[1] + b_star[3]) / 2.0)
         kp = keypoint_fn(image_bgr, subject)
     else:
-        # 多鸟(2-3):取并集,跳过 CACNet 和关键点
-        # Multiple birds (2-3): use union bbox center as anchor; skip CACNet and keypoints
+        # 多鸟(2-3):取并集,跳过关键点(不做三分法)
+        # Multiple birds (2-3): use union bbox; skip keypoints (no rule-of-thirds)
         subject = _union_bbox([b[0] for b in birds])
-        anchor_center = ((subject[0] + subject[2]) / 2.0, (subject[1] + subject[3]) / 2.0)
         kp = None  # 多鸟不做三分法 / No rule-of-thirds for multi-bird
+
+    anchor_center = ((subject[0] + subject[2]) / 2.0, (subject[1] + subject[3]) / 2.0)
 
     # ── 按比例生成裁剪候选 / Generate crops per ratio ─────────────────────────
     ratios = RATIOS_LANDSCAPE if _pick_orientation(subject) == "landscape" else RATIOS_PORTRAIT

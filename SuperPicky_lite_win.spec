@@ -150,8 +150,6 @@ runtime_bootstrap_stdlib_hiddenimports = [
 
 app_hiddenimports = [
     'ultralytics',
-    'einops',
-    'core.vendor.cacnet.cacnet_model',
     'PIL',
     'cv2',
     'numpy',

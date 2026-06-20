@@ -24,4 +24,3 @@ httpx>=0.27.0
 huggingface_hub>=0.23.0
 
 # CACNet 构图裁剪网络依赖 / Required by CACNet composition-aware cropping model
-einops>=0.6.0

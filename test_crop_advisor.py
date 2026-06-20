@@ -69,7 +69,6 @@ def test_advise_no_bird():
     res = ca.advise_crops(
         "x.jpg",
         detect_fn=lambda img: [],
-        cacnet_fn=lambda img: (0, 0, 10, 10),
         keypoint_fn=lambda img, b: None,
         topiq_fn=_fake_topiq,
         _image_loader=lambda p: _img(),
@@ -82,7 +81,6 @@ def test_advise_too_many_birds():
     res = ca.advise_crops(
         "x.jpg",
         detect_fn=lambda img: birds,
-        cacnet_fn=lambda img: (0, 0, 10, 10),
         keypoint_fn=lambda img, b: None,
         topiq_fn=_fake_topiq,
         _image_loader=lambda p: _img(),
@@ -94,7 +92,6 @@ def test_advise_single_bird_sorted_desc():
     res = ca.advise_crops(
         "x.jpg",
         detect_fn=lambda img: [((160, 120, 240, 180), 0.95)],
-        cacnet_fn=lambda img: (140, 100, 260, 200),
         keypoint_fn=lambda img, b: ((200, 150), (235, 150)),
         topiq_fn=_fake_topiq,
         _image_loader=lambda p: _img(400, 300),
@@ -112,7 +109,6 @@ def test_advise_two_birds_uses_union():
     res = ca.advise_crops(
         "x.jpg",
         detect_fn=lambda img: [((40, 40, 80, 80), 0.9), ((300, 200, 340, 260), 0.8)],
-        cacnet_fn=lambda img: (0, 0, 1, 1),  # 多鸟不应被调用,给哨兵
         keypoint_fn=lambda img, b: (_ for _ in ()).throw(AssertionError("多鸟不应调用关键点")),
         topiq_fn=_fake_topiq,
         _image_loader=lambda p: _img(400, 300),
