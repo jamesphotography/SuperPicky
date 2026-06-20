@@ -1379,7 +1379,14 @@
     "delete_tooltip": "Delete current image (move to Trash)",
     "lock_zoom_on": "🔒 Lock Zoom",
     "lock_zoom_off": "🔓 Lock Zoom",
-    "delete_btn": "🗑 Delete"
+    "delete_btn": "🗑 Delete",
+    "grp_view": "View",
+    "grp_edit": "Edit",
+    "tb_focus": "Focus",
+    "tb_lock": "Lock",
+    "tb_closeup": "Close-up",
+    "tb_species": "Species",
+    "tb_auto": "Auto-edit"
   },
   "bird_species_edit": {
     "title": "Change Bird Species",

@@ -11,12 +11,15 @@ from collections import OrderedDict
 from typing import Optional
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QFrame
 )
-from PySide6.QtCore import Qt, Signal, QThread, QTimer, Slot, QEvent
+from PySide6.QtCore import Qt, Signal, QThread, QTimer, Slot, QEvent, QSize
 from PySide6.QtGui import QPixmap, QImage, QPainter, QPen, QColor, QBrush
 
 from ui.styles import COLORS, FONTS
+from ui.icon_utils import (
+    load_tinted_icon, ICON_IDLE, ICON_ACTIVE, ICON_DISABLED, ICON_DANGER,
+)
 
 
 # 焦点状态颜色映射
@@ -709,6 +712,8 @@ class FullscreenViewer(QWidget):
     burst_sequence_requested = Signal(dict)
     delete_requested = Signal(dict)   # 功能1：携带当前 photo dict
     context_menu_requested = Signal(dict, object)   # (photo, QPoint全局坐标)
+    species_edit_requested = Signal(dict)   # 左栏「编辑鸟种」→ 父窗口复用既有处理
+    crop_advice_requested = Signal(dict)    # 左栏「裁剪建议」→ 父窗口复用既有处理
 
     def __init__(self, i18n, parent=None):
         super().__init__(parent)
@@ -724,6 +729,9 @@ class FullscreenViewer(QWidget):
         self._locked_ox: float = 0.0   # 锁定时的图片左上角 x 偏移
         self._locked_oy: float = 0.0   # 锁定时的图片左上角 y 偏移
 
+        # 全图/特写 视图状态（特写=显示 debug 裁切图，仅当其存在时可用）
+        self._use_crop_view: bool = False
+
         self.setStyleSheet(f"background-color: {COLORS['bg_void']};")
         self.setFocusPolicy(Qt.StrongFocus)            # 允许接收键盘事件
         self._build_ui()
@@ -733,110 +741,193 @@ class FullscreenViewer(QWidget):
     # ------------------------------------------------------------------
 
     def _build_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        # 顶层:左工具栏 | 右(顶条信息 + 大图 + 底部导航)
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
-        # --- 顶栏 52px ---
-        top_bar = self._build_top_bar()
-        layout.addWidget(top_bar)
+        # --- 左侧工具栏(PS 风格,图标+文字) ---
+        outer.addWidget(self._build_left_toolbar())
 
-        # --- 图片区域（stretch=1）---
+        # --- 右侧列 ---
+        right = QWidget()
+        rcol = QVBoxLayout(right)
+        rcol.setContentsMargins(0, 0, 0, 0)
+        rcol.setSpacing(0)
+
+        # 顶条:返回 + 文件名 + 星级(仅信息+返回,不放操作)
+        rcol.addWidget(self._build_top_strip())
+
+        # 图片区域(stretch=1)
         self._img_label = _FullscreenImageLabel()
         self._img_label.right_clicked.connect(self._on_img_right_clicked)
-        layout.addWidget(self._img_label, 1)
+        rcol.addWidget(self._img_label, 1)
 
-        # --- 底部导航栏 44px ---
-        bottom_bar = self._build_bottom_bar()
-        layout.addWidget(bottom_bar)
+        # 底部导航栏
+        rcol.addWidget(self._build_bottom_bar())
 
-    def _build_top_bar(self) -> QWidget:
+        outer.addWidget(right, 1)
+
+    # ------------------------------------------------------------------
+    #  顶条(信息):返回 + 文件名 + 星级
+    # ------------------------------------------------------------------
+
+    def _build_top_strip(self) -> QWidget:
         bar = QWidget()
-        bar.setFixedHeight(52)
-        bar.setStyleSheet(f"""
-            QWidget {{
-                background-color: rgba(26, 26, 26, 210);
-                border-bottom: 1px solid {COLORS['border_subtle']};
-            }}
-        """)
+        bar.setFixedHeight(44)
+        bar.setStyleSheet(
+            f"QWidget {{ background-color: rgba(26,26,26,210);"
+            f" border-bottom: 1px solid {COLORS['border_subtle']}; }}"
+        )
         h = QHBoxLayout(bar)
-        h.setContentsMargins(16, 0, 16, 0)
+        h.setContentsMargins(14, 0, 16, 0)
         h.setSpacing(12)
 
-        # 返回按钮
-        back_btn = QPushButton(self.i18n.t("browser.back"))
-        back_btn.setObjectName("secondary")
-        back_btn.setFixedHeight(36)
-        back_btn.setMinimumWidth(100)
+        # 返回(回到网格)
+        back_btn = QPushButton("  " + self.i18n.t("browser.back"))
+        back_btn.setIcon(load_tinted_icon("gallery-thumbnails.svg", ICON_IDLE, 18))
+        back_btn.setIconSize(QSize(18, 18))
+        back_btn.setFixedHeight(32)
+        back_btn.setCursor(Qt.PointingHandCursor)
+        back_btn.setStyleSheet(self._toolbtn_qss())
         back_btn.clicked.connect(self.close_requested)
         h.addWidget(back_btn)
 
-        # 焦点图层开关按钮
-        self._focus_btn = QPushButton(self.i18n.t("browser.focus_toggle"))
-        self._focus_btn.setFixedHeight(36)
-        self._focus_btn.setMinimumWidth(80)
-        self._focus_btn.setToolTip(self.i18n.t("browser.focus_toggle_tooltip"))
-        self._focus_btn.clicked.connect(self._on_focus_btn_clicked)
-        h.addWidget(self._focus_btn)
-        # 初始状态：焦点开启 → active 样式
-        self._update_focus_btn_style(True)
-
-        # 功能2：锁定缩放按钮
-        self._lock_zoom_btn = QPushButton(self.i18n.t("fullscreen.lock_zoom_off"))
-        self._lock_zoom_btn.setFixedHeight(36)
-        self._lock_zoom_btn.setToolTip(self.i18n.t("fullscreen.keep_zoom_tooltip"))
-        self._lock_zoom_btn.clicked.connect(self._toggle_zoom_lock)
-        self._update_lock_zoom_btn_style(False)
-        h.addWidget(self._lock_zoom_btn)
-
         h.addStretch()
+
+        # 连拍信息(隐藏式)
         self._burst_info_btn = QPushButton("")
-        self._burst_info_btn.setFixedHeight(30)
+        self._burst_info_btn.setFixedHeight(28)
         self._burst_info_btn.hide()
         self._burst_info_btn.clicked.connect(self._on_burst_info_clicked)
         h.addWidget(self._burst_info_btn)
 
-        # 文件名标签
+        # 文件名
         self._filename_label = QLabel("")
-        self._filename_label.setStyleSheet(f"""
-            QLabel {{
-                color: {COLORS['text_primary']};
-                font-size: 13px;
-                font-family: {FONTS['mono']};
-                background: transparent;
-            }}
-        """)
+        self._filename_label.setStyleSheet(
+            f"QLabel {{ color: {COLORS['text_primary']}; font-size: 13px;"
+            f" font-family: {FONTS['mono']}; background: transparent; }}"
+        )
         self._filename_label.setAlignment(Qt.AlignCenter)
         h.addWidget(self._filename_label)
 
-        # 评分标签
+        # 星级
         self._rating_label = QLabel("")
-        self._rating_label.setStyleSheet(f"""
-            QLabel {{
-                color: {COLORS['star_gold']};
-                font-size: 16px;
-                background: transparent;
-                min-width: 60px;
-            }}
-        """)
+        self._rating_label.setStyleSheet(
+            f"QLabel {{ color: {COLORS['star_gold']}; font-size: 16px;"
+            f" background: transparent; min-width: 60px; }}"
+        )
         self._rating_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         h.addWidget(self._rating_label)
 
-        # 功能1：删除按钮（红色危险样式）
-        self._delete_btn = QPushButton(self.i18n.t("fullscreen.delete_btn"))
-        self._delete_btn.setFixedHeight(36)
-        self._delete_btn.setToolTip(self.i18n.t("fullscreen.delete_tooltip"))
-        self._delete_btn.setStyleSheet(
-            f"QPushButton {{ background-color: #3a1a1a;"
-            f" border: 1px solid #cc3333;"
-            f" border-radius: 6px;"
-            f" color: #ff6666;"
-            f" font-size: 12px;"
-            f" padding: 2px 12px; }}"
-            f"QPushButton:hover {{ background-color: #cc3333; color: #ffffff; }}"
+        return bar
+
+    # ------------------------------------------------------------------
+    #  左侧工具栏(PS 风格,图标+文字)
+    # ------------------------------------------------------------------
+
+    def _toolbtn_qss(self, active: bool = False, danger: bool = False) -> str:
+        """左对齐图标+文字按钮样式;active=激活绿,danger=危险红。"""
+        if danger:
+            return (
+                "QPushButton { text-align:left; padding:7px 9px; border:1px solid #4a2020;"
+                " border-radius:7px; background:transparent; color:#ff6666; font-size:12px; }"
+                "QPushButton:hover { background:#3a1a1a; border-color:#cc3333; }"
+            )
+        if active:
+            return (
+                f"QPushButton {{ text-align:left; padding:7px 9px; border:1px solid {COLORS['accent']};"
+                f" border-radius:7px; background:{COLORS['accent_dim']}; color:{COLORS['accent']};"
+                f" font-size:12px; }}"
+            )
+        return (
+            f"QPushButton {{ text-align:left; padding:7px 9px; border:1px solid {COLORS['border_subtle']};"
+            f" border-radius:7px; background:transparent; color:{COLORS['text_secondary']}; font-size:12px; }}"
+            f"QPushButton:hover {{ background:{COLORS['bg_card']}; }}"
+            f"QPushButton:disabled {{ color:{ICON_DISABLED}; border-color:#242424; background:transparent; }}"
         )
-        self._delete_btn.clicked.connect(self._on_delete_clicked)
-        h.addWidget(self._delete_btn)
+
+    def _tool_btn(self, svg: str, text: str, on_click=None, *,
+                  danger: bool = False, enabled: bool = True) -> QPushButton:
+        """构建一个左栏图标+文字按钮。svg 记入 property 供切换态重新染色。"""
+        btn = QPushButton("  " + text)
+        btn.setProperty("svg", svg)
+        btn.setIconSize(QSize(18, 18))
+        btn.setEnabled(enabled)
+        btn.setCursor(Qt.PointingHandCursor if enabled else Qt.ArrowCursor)
+        color = ICON_DISABLED if not enabled else (ICON_DANGER if danger else ICON_IDLE)
+        btn.setIcon(load_tinted_icon(svg, color, 18))
+        btn.setStyleSheet(self._toolbtn_qss(danger=danger))
+        if on_click is not None:
+            btn.clicked.connect(on_click)
+        return btn
+
+    def _set_toggle_state(self, btn: QPushButton, active: bool) -> None:
+        """切换态按钮:激活=绿图标+绿描边,常态=灰。"""
+        svg = btn.property("svg")
+        btn.setIcon(load_tinted_icon(svg, ICON_ACTIVE if active else ICON_IDLE, 18))
+        btn.setStyleSheet(self._toolbtn_qss(active=active))
+
+    def _group_label(self, text: str) -> QLabel:
+        lbl = QLabel(text)
+        lbl.setStyleSheet(
+            f"QLabel {{ color:{COLORS['text_muted']}; font-size:9px; font-weight:600;"
+            f" letter-spacing:1px; padding:8px 4px 2px; background:transparent; }}"
+        )
+        return lbl
+
+    def _build_left_toolbar(self) -> QWidget:
+        bar = QWidget()
+        bar.setFixedWidth(128)
+        bar.setStyleSheet(
+            f"QWidget {{ background-color: {COLORS['bg_elevated']};"
+            f" border-right: 1px solid {COLORS['border_subtle']}; }}"
+        )
+        v = QVBoxLayout(bar)
+        v.setContentsMargins(8, 10, 8, 10)
+        v.setSpacing(5)
+
+        # —— 浏览 / View ——
+        v.addWidget(self._group_label(self.i18n.t("fullscreen.grp_view")))
+        self._focus_btn = self._tool_btn("focus.svg", self.i18n.t("fullscreen.tb_focus"),
+                                         self._on_focus_btn_clicked)
+        self._focus_btn.setToolTip(self.i18n.t("browser.focus_toggle_tooltip"))
+        v.addWidget(self._focus_btn)
+        self._update_focus_btn_style(True)   # 默认焦点开
+
+        self._lock_zoom_btn = self._tool_btn("lock.svg", self.i18n.t("fullscreen.tb_lock"),
+                                             self._toggle_zoom_lock)
+        self._lock_zoom_btn.setToolTip(self.i18n.t("fullscreen.keep_zoom_tooltip"))
+        v.addWidget(self._lock_zoom_btn)
+        self._update_lock_zoom_btn_style(False)
+
+        self._crop_view_btn = self._tool_btn("bird.svg", self.i18n.t("fullscreen.tb_closeup"),
+                                             self._toggle_crop_view)
+        v.addWidget(self._crop_view_btn)
+
+        # —— 编辑 / Edit ——
+        v.addWidget(self._group_label(self.i18n.t("fullscreen.grp_edit")))
+        self._edit_species_btn = self._tool_btn("square-pen.svg", self.i18n.t("fullscreen.tb_species"),
+                                                self._on_edit_species_clicked)
+        v.addWidget(self._edit_species_btn)
+        self._crop_advice_btn = self._tool_btn("AI-Srop.svg", self.i18n.t("browser.crop_advice_btn"),
+                                               self._on_crop_advice_clicked)
+        v.addWidget(self._crop_advice_btn)
+        # 后续功能:暂灰禁用
+        self._manual_crop_btn = self._tool_btn("crop.svg", self.i18n.t("crop_advisor.manual_mode"),
+                                               None, enabled=False)
+        v.addWidget(self._manual_crop_btn)
+        self._auto_retouch_btn = self._tool_btn("image-plus.svg", self.i18n.t("fullscreen.tb_auto"),
+                                                None, enabled=False)
+        v.addWidget(self._auto_retouch_btn)
+
+        v.addStretch()
+
+        # —— 删除(沉底·红) ——
+        self._delete_btn = self._tool_btn("trash-2.svg", self.i18n.t("fullscreen.delete_btn"),
+                                          self._on_delete_clicked, danger=True)
+        self._delete_btn.setToolTip(self.i18n.t("fullscreen.delete_tooltip"))
+        v.addWidget(self._delete_btn)
 
         return bar
 
@@ -917,26 +1008,8 @@ class FullscreenViewer(QWidget):
             self._locked_oy = lbl._draw_oy
 
     def _update_lock_zoom_btn_style(self, locked: bool):
-        if locked:
-            self._lock_zoom_btn.setText(self.i18n.t("fullscreen.lock_zoom_on"))
-            self._lock_zoom_btn.setStyleSheet(
-                f"QPushButton {{ background-color: {COLORS['bg_input']};"
-                f" border: 1px solid {COLORS['accent']};"
-                f" border-radius: 6px;"
-                f" color: {COLORS['accent']};"
-                f" font-size: 12px;"
-                f" padding: 2px 10px; }}"
-            )
-        else:
-            self._lock_zoom_btn.setText(self.i18n.t("fullscreen.lock_zoom_off"))
-            self._lock_zoom_btn.setStyleSheet(
-                f"QPushButton {{ background-color: {COLORS['bg_card']};"
-                f" border: 1px solid {COLORS['border']};"
-                f" border-radius: 6px;"
-                f" color: {COLORS['text_secondary']};"
-                f" font-size: 12px;"
-                f" padding: 2px 10px; }}"
-            )
+        """锁定缩放按钮切换态(激活=绿)。"""
+        self._set_toggle_state(self._lock_zoom_btn, locked)
 
     # 功能1：删除按钮点击
     def _on_delete_clicked(self):
@@ -945,25 +1018,45 @@ class FullscreenViewer(QWidget):
             self.delete_requested.emit(self._current_photo)
 
     def _update_focus_btn_style(self, visible: bool):
-        """visible=True → accent 激活色；False → 灰色 secondary 样式。"""
-        if visible:
-            self._focus_btn.setStyleSheet(
-                f"QPushButton {{ background-color: {COLORS['bg_input']};"
-                f" border: 1px solid {COLORS['accent']};"
-                f" border-radius: 6px;"
-                f" color: {COLORS['accent']};"
-                f" font-size: 12px;"
-                f" padding: 2px 10px; }}"
-            )
-        else:
-            self._focus_btn.setStyleSheet(
-                f"QPushButton {{ background-color: {COLORS['bg_card']};"
-                f" border: 1px solid {COLORS['border']};"
-                f" border-radius: 6px;"
-                f" color: {COLORS['text_secondary']};"
-                f" font-size: 12px;"
-                f" padding: 2px 10px; }}"
-            )
+        """焦点按钮切换态(可见=激活绿)。"""
+        self._set_toggle_state(self._focus_btn, visible)
+
+    # ------------------------------------------------------------------
+    #  左栏新增动作:编辑鸟种 / 裁剪建议 / 全图特写切换
+    # ------------------------------------------------------------------
+
+    def _on_edit_species_clicked(self):
+        """发出编辑鸟种信号,由父窗口复用既有处理弹窗。"""
+        if self._current_photo:
+            self.species_edit_requested.emit(self._current_photo)
+
+    def _on_crop_advice_clicked(self):
+        """发出裁剪建议信号,由父窗口复用既有处理弹窗。"""
+        if self._current_photo:
+            self.crop_advice_requested.emit(self._current_photo)
+
+    def _toggle_crop_view(self):
+        """全图 ⇄ 特写(debug 裁切图)切换。特写图不存在时此按钮已禁用。"""
+        self._use_crop_view = not self._use_crop_view
+        self._set_toggle_state(self._crop_view_btn, self._use_crop_view)
+        if self._current_photo:
+            if self._use_crop_view:
+                self._load_crop_view_image(self._current_photo)
+            else:
+                # 退回全图:重新走正常显示流程
+                self.show_photo(self._current_photo)
+
+    def _load_crop_view_image(self, photo: dict):
+        """同步加载 debug 裁切图并显示(特写视图)。"""
+        path = photo.get("debug_crop_path")
+        if path and not os.path.isabs(path):
+            base = photo.get("_base_dir") or ""
+            path = os.path.join(base, path) if base else path
+        if not path or not os.path.exists(path):
+            return
+        img = QImage(path)
+        if not img.isNull():
+            self._img_label.set_pixmap(QPixmap.fromImage(img))
 
     # ------------------------------------------------------------------
     #  公共接口
@@ -998,6 +1091,20 @@ class FullscreenViewer(QWidget):
         6. 触发 ±10 张预加载
         """
         self._current_photo = photo  # 功能1：保存当前 photo 供删除按钮使用
+
+        # 换图时:重置为全图视图,并按 debug 裁切图是否存在启用「特写」按钮
+        self._use_crop_view = False
+        if hasattr(self, "_crop_view_btn"):
+            self._set_toggle_state(self._crop_view_btn, False)
+            _dcp = photo.get("debug_crop_path")
+            if _dcp and not os.path.isabs(_dcp):
+                _b = photo.get("_base_dir") or ""
+                _dcp = os.path.join(_b, _dcp) if _b else _dcp
+            _has_crop = bool(_dcp and os.path.exists(_dcp))
+            self._crop_view_btn.setEnabled(_has_crop)
+            self._crop_view_btn.setIcon(
+                load_tinted_icon("bird.svg", ICON_IDLE if _has_crop else ICON_DISABLED, 18)
+            )
 
         # 功能2：锁定缩放 — 换图前保存当前 scale + ox/oy，换图后直接还原
         if self._zoom_locked:

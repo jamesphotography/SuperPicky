@@ -534,6 +534,8 @@ class ResultsBrowserWindow(QMainWindow):
         self._fullscreen.next_requested.connect(self._fullscreen_next)
         self._fullscreen.delete_requested.connect(self._on_delete_photo)
         self._fullscreen.context_menu_requested.connect(self._on_fullscreen_context_menu)
+        self._fullscreen.species_edit_requested.connect(self._on_species_edit_requested)
+        self._fullscreen.crop_advice_requested.connect(self._on_crop_advice_requested)
         self._fullscreen.burst_sequence_requested.connect(self._open_burst_sequence)
         self._stack.addWidget(self._fullscreen)   # index 1
 
@@ -1705,6 +1707,8 @@ class ResultsBrowserWidget(QWidget):
         self._fullscreen.next_requested.connect(self._fullscreen_next)
         self._fullscreen.delete_requested.connect(self._on_delete_photo)
         self._fullscreen.context_menu_requested.connect(self._on_fullscreen_context_menu)
+        self._fullscreen.species_edit_requested.connect(self._on_species_edit_requested)
+        self._fullscreen.crop_advice_requested.connect(self._on_crop_advice_requested)
         self._stack.addWidget(self._fullscreen)
 
         # Page 2: 对比查看器（C5）
