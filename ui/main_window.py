@@ -1562,7 +1562,10 @@ class SuperPickyMainWindow(QMainWindow):
         btn_layout.addStretch()
 
         # 查看选鸟结果按钮（主按钮，默认隐藏）
-        self.view_results_btn = QPushButton(self.i18n.t("labels.view_results_arrow"))
+        self.view_results_btn = QPushButton(self.i18n.t("labels.view_results_arrow") + "  ")
+        self.view_results_btn.setIcon(load_tinted_icon("arrow-right.svg", ICON_IDLE, 16))
+        self.view_results_btn.setIconSize(QSize(16, 16))
+        self.view_results_btn.setLayoutDirection(Qt.RightToLeft)  # 箭头置于文字右侧
         self.view_results_btn.setMinimumWidth(160)
         self.view_results_btn.setMinimumHeight(40)
         self.view_results_btn.clicked.connect(self._open_results_smart)
