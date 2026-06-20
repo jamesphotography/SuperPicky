@@ -1267,7 +1267,8 @@
     "delete_failed": "Delete Failed",
     "delete_failed_msg": "Failed to move file to Trash:\n{error}",
     "no_result": "⚠ No results",
-    "matched_count": "{count} matched"
+    "matched_count": "{count} matched",
+    "crop_advice_btn": "Crop Advice"
   },
   "video": {
     "title_phase1": "Video Analysis (Phase 1 · YOLO bird/no-bird only)",
@@ -1388,5 +1389,18 @@
     "no_match": "No matching species found",
     "confirm": "Confirm",
     "cancel": "Cancel"
+  },
+  "crop_advisor": {
+    "title": "Crop Advice",
+    "computing": "Analyzing best crop…",
+    "no_bird": "No bird detected; cannot suggest a crop",
+    "too_many_birds": "Too many birds (>3); please crop manually",
+    "recommended": "Recommended",
+    "manual_mode": "Manual crop",
+    "manual_score": "Manual crop score",
+    "close": "Close",
+    "no_decodable_image": "Cannot read this photo (possibly a RAW file). Use Crop Advice on photos that have a generated JPEG.",
+    "original": "Original",
+    "bird_only": "Bird only"
   }
 }

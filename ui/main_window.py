@@ -3130,7 +3130,11 @@ class SuperPickyMainWindow(QMainWindow):
                 from iqa_scorer import get_iqa_scorer
                 device = get_best_device()
                 self.log_signal.emit(self.i18n.t("preload.iqa_loading", device=device.type), "info")
-                get_iqa_scorer(device=device.type)
+                # 真正加载 TOPIQ 权重(而非仅创建评分器对象),使其在启动时即就绪,
+                # 之后裁剪建议/选鸟复用同一已热实例,不再触发现加载。
+                # Actually load the TOPIQ weights now (not just create the scorer object),
+                # so crop advisor / bird selection reuse the warm singleton later.
+                get_iqa_scorer(device=device.type).preload()
                 self.log_signal.emit(self.i18n.t("preload.iqa_loaded"), "success")
                 results.append(("IQA", True, None))
             except Exception as e:

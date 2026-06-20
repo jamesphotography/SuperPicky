@@ -1267,7 +1267,8 @@
     "delete_failed": "删除失败",
     "delete_failed_msg": "无法将文件移入回收站：\n{error}",
     "no_result": "⚠ 无结果",
-    "matched_count": "{count} 张匹配"
+    "matched_count": "{count} 张匹配",
+    "crop_advice_btn": "裁剪建议"
   },
   "video": {
     "title_phase1": "视频分析（Phase 1 · 仅 YOLO 有鸟/无鸟）",
@@ -1388,5 +1389,18 @@
     "no_match": "未找到匹配的鸟种",
     "confirm": "确认修改",
     "cancel": "取消"
+  },
+  "crop_advisor": {
+    "title": "裁剪建议",
+    "computing": "正在分析最佳裁剪…",
+    "no_bird": "未检测到鸟,无法生成裁剪建议",
+    "too_many_birds": "鸟较多(超过 3 只),建议手工裁剪",
+    "recommended": "推荐",
+    "manual_mode": "手动裁剪",
+    "manual_score": "手动裁剪评分",
+    "close": "关闭",
+    "no_decodable_image": "无法读取该照片(可能是 RAW 原始文件)。请对已生成 JPEG 的照片使用裁剪建议。",
+    "original": "原图",
+    "bird_only": "纯鸟图"
   }
 }

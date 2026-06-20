@@ -1,6 +1,9 @@
 # Git worktrees
 .worktrees/
 
+# Superpowers 可视化草图工作目录 / brainstorm visual companion
+.superpowers/
+
 # Python
 __pycache__/
 *.py[cod]
