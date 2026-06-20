@@ -207,25 +207,42 @@ def _detect_birds(image_bgr: np.ndarray) -> List[Tuple[Box, float]]:
     返回 / Returns:
         List[Tuple[Box, float]]: 所有鸟类检测框和置信度 / All bird bboxes with confidence scores.
     """
-    from ai_model import load_yolo_model
+    from ai_model import load_yolo_model, preprocess_image
     from config import get_lazy_registry, get_best_device
     registry = get_lazy_registry()
     model = registry.get_or_create("crop_advisor.yolo", load_yolo_model)
-    results = model(image_bgr, device=get_best_device().type)
+
+    # 关键:与选鸟主流程一致,先用同一 preprocess_image 缩到 TARGET_IMAGE_SIZE 再检测。
+    # 否则把全分辨率(如 8256px)直接交给 YOLO 单步缩到 640,会糊掉偏小的鸟导致漏检。
+    # 检测在缩放图上做,再把框按比例还原回全图(裁剪/打分仍用全分辨率,保画质)。
+    # CRITICAL: match the bird-selection pipeline — resize via the SAME preprocess_image
+    # to TARGET_IMAGE_SIZE before detection. Feeding full-res straight to YOLO (one-step
+    # downscale to 640) blurs out small birds and misses them. Detect on the resized image,
+    # then scale boxes back to full-res (cropping/scoring still use full-res for quality).
+    det_img = preprocess_image("", source_image=image_bgr)
+    if det_img is None:
+        det_img = image_bgr
+    oh, ow = image_bgr.shape[:2]
+    dh, dw = det_img.shape[:2]
+    sx = ow / dw if dw else 1.0
+    sy = oh / dh if dh else 1.0
+    _log(f"检测用缩放图 {dw}x{dh}(原图 {ow}x{oh},还原比例 {sx:.3f}x{sy:.3f})")
+
+    results = model(det_img, device=get_best_device().type)
     boxes = results[0].boxes.xyxy.cpu().numpy()
     confs = results[0].boxes.conf.cpu().numpy()
     clss = results[0].boxes.cls.cpu().numpy()
     # 诊断:打印全部原始检测(类别+置信度),便于判断"漏鸟"是类别错/置信低/还是真没检出
-    # Diagnostic: dump every raw detection (class+conf) so we can tell whether a missed
-    # bird is a wrong class, a low-confidence box, or genuinely nothing detected.
+    # Diagnostic: dump every raw detection (class+conf).
     bird_cls = config.ai.BIRD_CLASS_ID
     raw = [(int(k), round(float(c), 3)) for k, c in zip(clss, confs)]
     _log(f"YOLO raw detections (cls,conf) = {raw if raw else '[]'} ; bird_class={bird_cls}")
     out: List[Tuple[Box, float]] = []
     for (x1, y1, x2, y2), c, k in zip(boxes, confs, clss):
         if int(k) == bird_cls:
-            out.append(((int(x1), int(y1), int(x2), int(y2)), float(c)))
-    _log(f"bird-class boxes (before {BIRD_CONF_THRESHOLD} filter) = "
+            # 框坐标从缩放图还原到全图 / scale box back to full-res coords
+            out.append(((int(x1 * sx), int(y1 * sy), int(x2 * sx), int(y2 * sy)), float(c)))
+    _log(f"bird-class boxes (full-res, before {BIRD_CONF_THRESHOLD} filter) = "
          f"{[(b, round(cf, 3)) for b, cf in out] if out else '[]'}")
     return out
 
