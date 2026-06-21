@@ -47,6 +47,62 @@ def test_canvas_set_image():
     assert c is not None
 
 
+def _make_result():
+    """构造一个含 3 个候选的 ok 结果(含原图哨兵)。"""
+    import numpy as np
+    from core.crop_advisor import (
+        BIRD_ONLY_LABEL,
+        ORIGINAL_LABEL,
+        CropAdviceResult,
+        CropSuggestion,
+    )
+
+    img = np.zeros((80, 120, 3), "uint8")
+    sugg = [
+        CropSuggestion("3:2", (10, 10, 100, 70), 0.88, img[10:70, 10:100].copy()),
+        CropSuggestion(ORIGINAL_LABEL, (0, 0, 120, 80), 0.80, img.copy()),
+        CropSuggestion(BIRD_ONLY_LABEL, (20, 20, 90, 60), 0.75, img[20:60, 20:90].copy()),
+    ]
+    return CropAdviceResult(suggestions=sugg, status="ok", bird_count=1)
+
+
+def test_candidates_populate_and_select():
+    """注入 ok 结果应渲染等量候选格,默认选中索引 0,原图候选选中后 box=None。"""
+    from ui.crop_studio import CropStudio
+
+    photo = {"filename": "c.NEF", "current_path": "/nonexist/c.NEF"}
+    w = CropStudio(photo, get_i18n())
+    w._worker.wait(5000)
+    _app.processEvents()
+
+    result = _make_result()
+    w._on_advice(result)
+    assert len(w._cells) == 3
+    assert w._selected_index == 0
+    assert w._current_box == (10, 10, 100, 70)  # 索引0非原图,记其框
+
+    w._select_candidate(1)  # 原图候选
+    assert w._current_box is None
+    assert w._analysis_size == (120, 80)
+    w.close()
+
+
+def test_advice_no_bird_shows_hint():
+    """no_bird 结果应显示提示文案、不建候选格。"""
+    from core.crop_advisor import CropAdviceResult
+    from ui.crop_studio import CropStudio
+
+    photo = {"filename": "d.NEF", "current_path": "/nonexist/d.NEF"}
+    w = CropStudio(photo, get_i18n())
+    w._worker.wait(5000)
+    _app.processEvents()
+
+    w._on_advice(CropAdviceResult(status="no_bird", bird_count=0))
+    assert len(w._cells) == 0
+    assert w._cand_hint.isVisibleTo(w) or w._cand_hint.text()
+    w.close()
+
+
 def test_resolve_prefers_temp_jpeg():
     """temp_jpeg_path 存在时应优先于 current/original。"""
     from ui.crop_studio import CropStudio

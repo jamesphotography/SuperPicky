@@ -1413,5 +1413,8 @@
     "no_decodable_image": "Cannot read this photo (possibly a RAW file). Use Crop Advice on photos that have a generated JPEG.",
     "original": "Original",
     "bird_only": "Bird only"
+  },
+  "crop_studio": {
+    "best": "Best"
   }
 }

@@ -28,6 +28,7 @@ from PySide6.QtGui import QColor, QImage, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
     QGraphicsDropShadowEffect,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -37,7 +38,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from core.crop_advisor import CropAdviceResult, advise_crops
+from core.crop_advisor import (
+    BIRD_ONLY_LABEL,
+    ORIGINAL_LABEL,
+    CropAdviceResult,
+    CropSuggestion,
+    advise_crops,
+)
 from ui.icon_utils import ICON_ACTIVE, ICON_IDLE, load_tinted_icon
 
 try:
@@ -72,6 +79,29 @@ def _bgr_to_qpixmap(bgr: np.ndarray, max_side: int = _CANVAS_SRC_MAX) -> QPixmap
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
     hh, ww = rgb.shape[:2]
     img = QImage(rgb.data, ww, hh, 3 * ww, QImage.Format_RGB888)
+    return QPixmap.fromImage(img.copy())
+
+
+def _letterbox_pixmap(bgr: np.ndarray, box_w: int, box_h: int) -> QPixmap:
+    """
+    把 BGR 图按真实比例缩放并居中放入 box_w×box_h 的画框(letterbox,上下/左右留黑边),
+    返回 QPixmap。用于右侧候选缩略图,使不同比例的候选都在等高格子内对齐。
+
+    Scale a BGR image to fit a box_w×box_h frame keeping aspect ratio, centered
+    with letterbox padding. Used for the right-panel candidate thumbnails so
+    candidates of differing ratios align inside equal-height cells.
+    """
+    h, w = bgr.shape[:2]
+    if w <= 0 or h <= 0:
+        return QPixmap(box_w, box_h)
+    scale = min(box_w / w, box_h / h)
+    nw, nh = max(1, int(w * scale)), max(1, int(h * scale))
+    resized = cv2.resize(bgr, (nw, nh), interpolation=cv2.INTER_AREA)
+    canvas = np.zeros((box_h, box_w, 3), np.uint8)  # 黑底 letterbox / black letterbox
+    ox, oy = (box_w - nw) // 2, (box_h - nh) // 2
+    canvas[oy:oy + nh, ox:ox + nw] = resized
+    rgb = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
+    img = QImage(rgb.data, box_w, box_h, 3 * box_w, QImage.Format_RGB888)
     return QPixmap.fromImage(img.copy())
 
 
@@ -295,6 +325,82 @@ class _Canvas(QWidget):
         self._zoom_bar.move(max(0, x), max(0, y))
 
 
+# ── 候选格 / Candidate cell ───────────────────────────────────────────────────
+
+# 候选缩略图画框等高(像素)/ Candidate thumbnail frame height (px).
+_CAND_THUMB_H: int = 68
+# 候选缩略图画框宽(双列布局下每格内图宽)/ Thumbnail frame width per column.
+_CAND_THUMB_W: int = 132
+
+
+class _CandCell(QFrame):
+    """
+    单个候选缩略图格:letterbox 居中缩略图 + 比例名/TOPIQ 文字 + 首位「最佳」角标。
+    点击发出 clicked(index)。选中时边框高亮。
+
+    One candidate thumbnail cell: a letterbox-centered preview + ratio/TOPIQ
+    caption + an optional "Best" badge on the top candidate. Emits clicked(index).
+    """
+
+    clicked: Signal = Signal(int)
+
+    def __init__(self, index: int, suggestion: CropSuggestion, caption: str,
+                 is_best: bool, best_text: str, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._index = index
+        self.setProperty("selected", "false")
+        self.setCursor(Qt.PointingHandCursor)
+        accent = _c("accent", "#00d4aa")
+        border = _c("border", "#2a2a2a")
+        card = _c("bg_elevated", "#1a1a1a")
+        self.setStyleSheet(
+            f"_CandCell {{ background: {card}; border: 2px solid {border}; border-radius: 8px; }}"
+            f'_CandCell[selected="true"] {{ border: 2px solid {accent}; }}'
+        )
+
+        v = QVBoxLayout(self)
+        v.setContentsMargins(5, 5, 5, 5)
+        v.setSpacing(3)
+
+        thumb = QLabel()
+        thumb.setAlignment(Qt.AlignCenter)
+        thumb.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        if suggestion.preview_bgr is not None:
+            thumb.setPixmap(_letterbox_pixmap(suggestion.preview_bgr, _CAND_THUMB_W, _CAND_THUMB_H))
+        thumb.setFixedHeight(_CAND_THUMB_H)
+        v.addWidget(thumb)
+
+        cap = QLabel(caption)
+        cap.setAlignment(Qt.AlignCenter)
+        cap.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        cap.setStyleSheet(
+            "border: none; background: transparent; font-size: 11px; "
+            f"font-weight: {'700' if is_best else '500'}; "
+            f"color: {accent if is_best else _c('text_secondary', '#a1a1a1')};"
+        )
+        v.addWidget(cap)
+
+        if is_best:
+            badge = QLabel(best_text, self)
+            badge.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            badge.setStyleSheet(
+                f"background: {accent}; color: #0a0a0a; font-size: 10px; font-weight: 700;"
+                " border-radius: 4px; padding: 1px 5px;"
+            )
+            badge.move(8, 8)
+            badge.adjustSize()
+
+    def set_selected(self, selected: bool) -> None:
+        """切换选中态边框高亮。"""
+        self.setProperty("selected", "true" if selected else "false")
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+    def mousePressEvent(self, event) -> None:  # type: ignore[override]
+        self.clicked.emit(self._index)
+        super().mousePressEvent(event)
+
+
 # ── 工作区主体 / Workspace widget ─────────────────────────────────────────────
 
 
@@ -326,6 +432,15 @@ class CropStudio(QWidget):
         # Currently selected crop box (full-res coords); None = full frame. For export.
         self._current_box = None
         self._mode: str = "crop"  # crop | manual | auto
+
+        # 候选状态 / Candidate state
+        self._suggestions: list[CropSuggestion] = []
+        self._cells: list[_CandCell] = []
+        self._selected_index: int = -1
+        # 分析图尺寸(box 坐标所在空间;供导出换算到原图全分辨率)/
+        # Analysis-image size (the coordinate space of candidate boxes); used by
+        # export to rescale to the full-res original.
+        self._analysis_size: Optional[tuple[int, int]] = None
 
         self._image_path: str = self._resolve_image_path(photo)
 
@@ -408,7 +523,7 @@ class CropStudio(QWidget):
         return tb
 
     def _build_candidate_panel(self) -> QWidget:
-        """右候选占位(Task 4 填充:letterbox 双列候选)。"""
+        """右候选面板:滚动区 + 双列网格 + 状态提示标签。"""
         panel = QFrame()
         panel.setObjectName("cropStudioCandidates")
         panel.setFixedWidth(320)
@@ -416,19 +531,122 @@ class CropStudio(QWidget):
             f"QFrame#cropStudioCandidates {{ background: {_c('bg_card', '#1f1f1f')};"
             f" border-left: 1px solid {_c('border', '#2a2a2a')}; }}"
         )
+        outer = QVBoxLayout(panel)
+        outer.setContentsMargins(10, 10, 10, 10)
+        outer.setSpacing(8)
+
+        # 状态提示(no_bird / too_many_birds / 计算中)/ status hint
+        self._cand_hint = QLabel(self._i18n.t("crop_advisor.computing"))
+        self._cand_hint.setWordWrap(True)
+        self._cand_hint.setAlignment(Qt.AlignCenter)
+        self._cand_hint.setStyleSheet(
+            f"color: {_c('text_secondary', '#a1a1a1')}; font-size: 12px; background: transparent;"
+        )
+        outer.addWidget(self._cand_hint)
+
+        self._cand_scroll = QScrollArea()
+        self._cand_scroll.setFrameShape(QFrame.NoFrame)
+        self._cand_scroll.setWidgetResizable(True)
+        self._cand_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._cand_scroll.setStyleSheet("background: transparent; border: none;")
+        self._cand_inner = QWidget()
+        self._cand_grid = QGridLayout(self._cand_inner)
+        self._cand_grid.setContentsMargins(0, 0, 0, 0)
+        self._cand_grid.setSpacing(8)
+        self._cand_grid.setAlignment(Qt.AlignTop)
+        self._cand_scroll.setWidget(self._cand_inner)
+        outer.addWidget(self._cand_scroll, 1)
         return panel
 
     # ── 后台结果回调 / Background result callback ─────────────────────────────
 
     def _on_advice(self, result: CropAdviceResult) -> None:
         """
-        后台 advise_crops 完成后在主线程回调。Task 4 在此填充右栏候选并选中最优;
-        本任务(骨架)仅记录结果占位。
+        后台 advise_crops 完成后在主线程回调:status=ok 时填充双列候选并选中最优,
+        画布显示该候选裁剪图;否则显示提示文案并在画布显示整图。
 
-        Called on the UI thread when advise_crops finishes. Task 4 populates the
-        candidate panel here; the skeleton just stores the result.
+        Called on the UI thread when advise_crops finishes. On status=ok, populate
+        the two-column candidates, select the best, and show its crop on the canvas;
+        otherwise show a hint and the full image.
         """
         self._advice_result = result
+        if result.status != "ok" or not result.suggestions:
+            key = ("crop_advisor.too_many_birds" if result.status == "too_many_birds"
+                   else "crop_advisor.no_bird")
+            self._cand_hint.setText(self._i18n.t(key))
+            self._cand_hint.show()
+            self._show_full_on_canvas()
+            return
+
+        self._cand_hint.hide()
+        self._suggestions = result.suggestions
+        self._capture_analysis_size(result.suggestions)
+        self._build_candidates()
+        self._select_candidate(0)
+
+    # ── 候选渲染与选择 / Candidate rendering & selection ──────────────────────
+
+    def _label_for(self, s: CropSuggestion) -> str:
+        """候选标签:哨兵显示本地化文案,其余显示比例字符串。"""
+        if s.ratio_label == ORIGINAL_LABEL:
+            return self._i18n.t("crop_advisor.original")
+        if s.ratio_label == BIRD_ONLY_LABEL:
+            return self._i18n.t("crop_advisor.bird_only")
+        return s.ratio_label
+
+    def _capture_analysis_size(self, suggestions: list) -> None:
+        """从「原图」候选的框(0,0,W,H)推断分析图尺寸,供导出坐标换算。"""
+        for s in suggestions:
+            if s.ratio_label == ORIGINAL_LABEL:
+                _x1, _y1, w, h = s.box
+                self._analysis_size = (int(w), int(h))
+                return
+        # 兜底:取所有候选框的最大外延 / fallback: max extent of all boxes
+        if suggestions:
+            w = max(s.box[2] for s in suggestions)
+            h = max(s.box[3] for s in suggestions)
+            self._analysis_size = (int(w), int(h))
+
+    def _build_candidates(self) -> None:
+        """清空并重建右侧双列候选格。"""
+        while self._cand_grid.count():
+            item = self._cand_grid.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._cells = []
+
+        best_text = self._i18n.t("crop_studio.best")
+        for idx, s in enumerate(self._suggestions):
+            cap = f"{self._label_for(s)} · {s.topiq_score:.2f}"
+            cell = _CandCell(idx, s, cap, is_best=(idx == 0), best_text=best_text)
+            cell.clicked.connect(self._select_candidate)
+            self._cand_grid.addWidget(cell, idx // 2, idx % 2)
+            self._cells.append(cell)
+
+    def _select_candidate(self, index: int) -> None:
+        """选中第 index 个候选:画布显示其裁剪图,记录全分辨率框(原图候选记 None)。"""
+        if not (0 <= index < len(self._suggestions)):
+            return
+        s = self._suggestions[index]
+        self._selected_index = index
+        if s.preview_bgr is not None:
+            self._canvas.set_image(s.preview_bgr)
+        # 原图候选 → 导出不裁剪(None);其余记其框(分析图坐标,导出时换算)
+        self._current_box = None if s.ratio_label == ORIGINAL_LABEL else s.box
+        self._highlight_cells()
+
+    def _highlight_cells(self) -> None:
+        """根据当前选中索引高亮对应候选格边框。"""
+        for i, cell in enumerate(self._cells):
+            cell.set_selected(i == self._selected_index)
+
+    def _show_full_on_canvas(self) -> None:
+        """在画布显示整图(无候选/无鸟时)。解码失败则保持空白。"""
+        from core.crop_advisor import _load_image_exif_aware
+        img = _load_image_exif_aware(self._image_path)
+        if img is not None:
+            self._canvas.set_image(img)
+            self._current_box = None
 
     # ── 关闭 / Close ──────────────────────────────────────────────────────────
 

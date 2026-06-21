@@ -1413,5 +1413,8 @@
     "no_decodable_image": "无法读取该照片(可能是 RAW 原始文件)。请对已生成 JPEG 的照片使用裁剪建议。",
     "original": "原图",
     "bird_only": "纯鸟图"
+  },
+  "crop_studio": {
+    "best": "最佳"
   }
 }
