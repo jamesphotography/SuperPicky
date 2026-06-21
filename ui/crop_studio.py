@@ -155,16 +155,19 @@ class _ExportWorker(QThread):
     done: Signal = Signal(bool, str)
 
     def __init__(self, src: str, box, out: str, exif_src: Optional[str], *,
-                 jpeg_quality: int = 95, out_size: Optional[tuple] = None) -> None:
+                 jpeg_quality: int = 95, out_size: Optional[tuple] = None,
+                 enhance_opts=None) -> None:
         super().__init__()
         self._src, self._box, self._out, self._exif_src = src, box, out, exif_src
         self._quality = jpeg_quality
         self._out_size = out_size
+        self._enhance_opts = enhance_opts
 
     def run(self) -> None:
         try:
             out = export_crop(self._src, self._box, self._out, exif_src=self._exif_src,
-                              jpeg_quality=self._quality, out_size=self._out_size)
+                              jpeg_quality=self._quality, out_size=self._out_size,
+                              enhance_opts=self._enhance_opts)
             self.done.emit(True, out)
         except Exception as e:  # noqa: BLE001 — 失败回传错误信息 / report error
             self.done.emit(False, str(e))
@@ -801,6 +804,11 @@ class CropStudio(QWidget):
         self._top_bar = self._build_top_bar()
         root.addWidget(self._top_bar)
 
+        # 自动修图微调条:默认隐藏,点左栏「智能修图」展开 / hidden enhance tune bar.
+        self._enhance_panel = self._build_enhance_panel()
+        self._enhance_panel.hide()
+        root.addWidget(self._enhance_panel)
+
         main_row = QHBoxLayout()
         main_row.setContentsMargins(0, 0, 0, 0)
         main_row.setSpacing(0)
@@ -987,6 +995,9 @@ class CropStudio(QWidget):
         self._btn_auto = self._tool_btn("image-plus.svg", self._i18n.t("crop_studio.tb_auto"),
                                         lambda: self._set_mode("auto"))
         v.addWidget(self._btn_auto)
+        self._btn_enhance = self._tool_btn("gem.svg", self._i18n.t("crop_studio.tb_enhance"),
+                                           self._toggle_enhance_panel)
+        v.addWidget(self._btn_enhance)
 
         v.addStretch(1)
 
@@ -1326,6 +1337,123 @@ class CropStudio(QWidget):
         except Exception:  # noqa: BLE001
             return (0, 0)
 
+    # ── 自动修图面板 / Auto-enhance panel ─────────────────────────────────────
+
+    def _build_enhance_panel(self) -> QWidget:
+        """
+        构建自动修图微调条:总开关 + 降噪滑块 + 调色开关/滑块 + 预览按钮。
+        Build the enhance tune bar: master toggle + denoise/color sliders + preview.
+        """
+        bar = QFrame()
+        bar.setObjectName("cropStudioEnhanceBar")
+        bar.setStyleSheet(
+            f"QFrame#cropStudioEnhanceBar {{ background: {_c('bg_elevated', '#1a1a1a')};"
+            f" border-bottom: 1px solid {_c('border', '#2a2a2a')}; }}"
+            f" QLabel {{ color: {_c('text_secondary', '#a1a1a1')}; font-size: 12px; }}"
+            f" QCheckBox {{ color: {_c('text_secondary', '#a1a1a1')}; font-size: 12px; }}"
+        )
+        h = QHBoxLayout(bar)
+        h.setContentsMargins(12, 6, 12, 6)
+        h.setSpacing(10)
+
+        i18n = self._i18n
+        # 总开关(默认开 = 一键默认出片) / master enable (default ON = one-click)
+        self._enhance_enable = QCheckBox(i18n.t("crop_studio.enhance"))
+        self._enhance_enable.setChecked(True)
+        h.addWidget(self._enhance_enable)
+
+        # 降噪 / denoise
+        h.addWidget(QLabel(i18n.t("crop_studio.denoise")))
+        self._denoise_slider = QSlider(Qt.Horizontal)
+        self._denoise_slider.setRange(0, 100)
+        self._denoise_slider.setValue(50)
+        self._denoise_slider.setFixedWidth(120)
+        h.addWidget(self._denoise_slider)
+
+        # 调色 / color
+        self._color_check = QCheckBox(i18n.t("crop_studio.color"))
+        self._color_check.setChecked(True)
+        h.addWidget(self._color_check)
+        self._color_slider = QSlider(Qt.Horizontal)
+        self._color_slider.setRange(0, 100)
+        self._color_slider.setValue(40)
+        self._color_slider.setFixedWidth(120)
+        h.addWidget(self._color_slider)
+
+        h.addStretch(1)
+        self._preview_btn = QPushButton(i18n.t("crop_studio.enhance_preview"))
+        self._preview_btn.setCursor(Qt.PointingHandCursor)
+        self._preview_btn.clicked.connect(self._show_enhance_preview)
+        h.addWidget(self._preview_btn)
+        return bar
+
+    def _toggle_enhance_panel(self) -> None:
+        """展开/收起修图微调条;展开即视为启用(一键默认)。"""
+        show = not self._enhance_panel.isVisible()
+        self._enhance_panel.setVisible(show)
+        if show:
+            self._enhance_enable.setChecked(True)
+
+    def _current_enhance_opts(self):
+        """
+        面板状态→EnhanceOptions;面板隐藏或总开关关时返回 None(不修图)。
+        Returns EnhanceOptions from panel state, or None when disabled.
+        """
+        if not getattr(self, "_enhance_panel", None) or not self._enhance_panel.isVisible():
+            return None
+        if not self._enhance_enable.isChecked():
+            return None
+        from core.enhance.options import EnhanceOptions  # noqa: PLC0415
+        return EnhanceOptions(
+            denoise_on=self._denoise_slider.value() > 0,
+            denoise_strength=self._denoise_slider.value() / 100.0,
+            color_on=bool(self._color_check.isChecked()),
+            color_strength=self._color_slider.value() / 100.0,
+        )
+
+    def _show_enhance_preview(self) -> None:
+        """
+        非破坏性预览:对分析图(降采样到 PREVIEW_LONG_EDGE)跑修图,弹 before/after 对话框。
+        不触碰主画布(避免清除裁剪框)。
+        Non-destructive before/after preview in a dialog; never touches the canvas.
+        """
+        opts = self._current_enhance_opts()
+        if opts is None:
+            return
+        self._ensure_analysis_bgr()
+        if self._analysis_bgr is None:
+            return
+        bgr = self._analysis_bgr
+        h, w = bgr.shape[:2]
+        scale = PREVIEW_LONG_EDGE / float(max(h, w))
+        if scale < 1.0:
+            bgr = cv2.resize(bgr, (max(1, int(w * scale)), max(1, int(h * scale))),
+                             interpolation=cv2.INTER_AREA)
+        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        self._preview_before_bgr = bgr
+        self._preview_btn.setEnabled(False)
+        self._preview_worker = _EnhanceWorker(rgb, opts)
+        self._preview_worker.done.connect(self._on_preview_done)
+        self._preview_worker.start()
+
+    def _on_preview_done(self, rgb_out) -> None:
+        """预览完成:RGB→BGR,弹出 before/after 对话框(非阻塞主画布)。"""
+        self._preview_btn.setEnabled(True)
+        try:
+            after_bgr = cv2.cvtColor(rgb_out, cv2.COLOR_RGB2BGR)
+        except Exception:  # noqa: BLE001 — 预览失败静默 / silently ignore preview failure
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle(self._i18n.t("crop_studio.enhance_preview"))
+        lay = QHBoxLayout(dlg)
+        before = QLabel()
+        before.setPixmap(_bgr_to_qpixmap(self._preview_before_bgr))
+        after = QLabel()
+        after.setPixmap(_bgr_to_qpixmap(after_bgr))
+        lay.addWidget(before)
+        lay.addWidget(after)
+        dlg.exec()
+
     def _on_export_clicked(self) -> None:
         """
         导出按钮:先弹「导出设置」(尺寸+质量),再弹保存对话框,后台 export_crop。
@@ -1358,6 +1486,7 @@ class CropStudio(QWidget):
         self._export_worker = _ExportWorker(
             self._image_path, self._current_box, out_path, exif_src,
             jpeg_quality=jpeg_quality, out_size=out_size,
+            enhance_opts=self._current_enhance_opts(),
         )
         self._export_worker.done.connect(self._on_export_done)
         self._export_worker.start()
