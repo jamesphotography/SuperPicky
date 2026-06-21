@@ -19,14 +19,27 @@ from PySide6.QtCore import Qt, Signal, QThread, QObject, Slot, QSize, QTimer, QP
 from PySide6.QtGui import QPixmap, QColor, QPainter, QPen, QFont, QBrush, QImage
 
 from ui.styles import COLORS, FONTS
+from ui.icon_utils import render_tinted_image, ICON_DANGER
+from tools.i18n import get_i18n
+
+
+def _display_name(photo: dict) -> str:
+    """卡片底部显示名:优先鸟种(跟随语言),无鸟种则用文件名。"""
+    is_en = get_i18n().current_lang.startswith("en")
+    if is_en:
+        species = photo.get("bird_species_en") or photo.get("bird_species_cn")
+    else:
+        species = photo.get("bird_species_cn") or photo.get("bird_species_en")
+    return species or photo.get("filename", "")
 
 
 # 对焦状态指示颜色（WORST 不显示圆点）
-_FOCUS_DOT_COLORS = {
-    "BEST":  QColor(COLORS['focus_best']),   # 绿 — 精焦
-    "GOOD":  QColor(COLORS['focus_good']),   # 琥珀 — 合焦
-    "BAD":   QColor(COLORS['focus_bad']),    # 近白灰 — 失焦
-    # WORST 不入表 → _draw_overlays 中 `if focus in _FOCUS_DOT_COLORS` 自动跳过
+# 对焦状态 → (图标 svg, 颜色)。精焦=scan-eye/合焦=fullscreen/失焦=scan。
+# WORST 脱焦不入表 → 渲染时 `if focus in _FOCUS_ICONS` 自动跳过。
+_FOCUS_ICONS = {
+    "BEST": ("scan-eye.svg",   COLORS['focus_best']),   # 绿   — 精焦
+    "GOOD": ("fullscreen.svg", COLORS['focus_good']),   # 黄绿 — 合焦
+    "BAD":  ("scan.svg",       COLORS['focus_bad']),    # 近白灰 — 失焦
 }
 
 # 评分标签颜色（2d：细化颜色）
@@ -49,6 +62,22 @@ def _photo_key(photo: dict):
     if source_dir:
         return (source_dir, filename)
     return filename
+
+
+def _overlay_key(photo: dict):
+    """
+    缩略图缓存键:身份键 + 影响右上/左下角标的状态(评分/精选/对焦/连拍)。
+    把这些烤进缓存的状态纳入键,使其变化(如重跑选鸟后 picked 变化)时缓存自动失效,
+    避免显示过期角标。身份键 _photo_key 不含可变状态,继续用于卡片/选择。
+    """
+    return (
+        _photo_key(photo),
+        photo.get("rating", 0),
+        1 if photo.get("picked") else 0,
+        photo.get("focus_status"),
+        photo.get("burst_position"),
+        photo.get("burst_total"),
+    )
 
 
 # ============================================================
@@ -86,10 +115,20 @@ def _draw_static_overlays(image: QImage, photo: dict):
     painter.setRenderHint(QPainter.Antialiasing)
 
     rating = photo.get("rating", 0)
+    picked = photo.get("picked")
     focus = photo.get("focus_status")
 
-    # 右上角：评分星标
-    if rating and rating > 0:
+    # 右上角：精选 → 皇冠(取代星级);否则 → 评分星标(文字 ★)
+    if picked:
+        crown_px = 15
+        crown_img = render_tinted_image("crown.svg", COLORS['star_gold'], size=crown_px, dpr=1.0)
+        rect_w, rect_h = crown_px + 10, 18
+        x = image.width() - rect_w - 4
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 170))
+        painter.drawRoundedRect(x, 4, rect_w, rect_h, 4, 4)
+        painter.drawImage(x + 5, 4 + (rect_h - crown_px) // 2, crown_img)
+    elif rating and rating > 0:
         if rating >= 4:
             stars = f"{rating}★"
         else:
@@ -108,33 +147,21 @@ def _draw_static_overlays(image: QImage, photo: dict):
         painter.setFont(font)
         painter.drawText(x, 4, rect_w, rect_h, Qt.AlignCenter, stars)
 
-    # 右下角：对焦状态圆点
-    if focus and focus in _FOCUS_DOT_COLORS:
-        dot_color = _FOCUS_DOT_COLORS[focus]
-        cx = image.width() - 10
-        cy = image.height() - 10
-        painter.setPen(QPen(QColor(255, 255, 255, 180), 1.5))
-        painter.setBrush(Qt.NoBrush)
-        painter.drawEllipse(cx - 6, cy - 6, 12, 12)
+    # 右下角：对焦状态图标（精焦=scan-eye / 合焦=fullscreen / 失焦=scan，染对应颜色）
+    if focus and focus in _FOCUS_ICONS:
+        svg, fcolor = _FOCUS_ICONS[focus]
+        fpx = 16
+        fx = image.width() - fpx - 5
+        fy = image.height() - fpx - 5
         painter.setPen(Qt.NoPen)
-        painter.setBrush(dot_color)
-        painter.drawEllipse(cx - 4, cy - 4, 8, 8)
+        painter.setBrush(QColor(0, 0, 0, 150))
+        painter.drawRoundedRect(fx - 3, fy - 3, fpx + 6, fpx + 6, 4, 4)
+        painter.drawImage(fx, fy, render_tinted_image(svg, fcolor, size=fpx, dpr=2.0))
 
-    # 左下角：burst 编号
-    burst_total = photo.get("burst_total")
-    burst_pos = photo.get("burst_position")
-    if burst_total is not None and burst_pos is not None:
-        burst_text = f"B{burst_total}/{burst_pos}"
-        bg = QColor(0, 0, 0, 160)
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(bg)
-        rect_w, rect_h = 38, 16
-        painter.drawRoundedRect(4, image.height() - rect_h - 4, rect_w, rect_h, 4, 4)
-        painter.setPen(QColor(220, 220, 220))
-        font = QFont()
-        font.setPixelSize(9)
-        painter.setFont(font)
-        painter.drawText(4, image.height() - rect_h - 4, rect_w, rect_h, Qt.AlignCenter, burst_text)
+    # 连拍角标改由 ThumbnailCard 动态层绘制（左下：折叠=堆叠图标+总数，
+    # 展开=序号/总数且锐度最高者序号标红），以支持点击折叠/展开与状态着色。
+    # Burst overlay is drawn in ThumbnailCard's dynamic layer (bottom-left) instead,
+    # to support click-to-toggle and per-state coloring.
 
     painter.end()
 
@@ -201,9 +228,10 @@ class _ThumbnailWorker(QThread):
                 
             photo, thumb_size = task
             photo_key = _photo_key(photo)
-            
-            # 先查缓存
-            cached = _thumb_cache.get(photo_key)
+            ckey = _overlay_key(photo)
+
+            # 先查缓存(键含角标状态,过期角标自动失效)
+            cached = _thumb_cache.get(ckey)
             if cached is not None:
                 self.manager.signals.thumbnail_ready.emit(photo_key, cached)
                 continue
@@ -222,7 +250,7 @@ class _ThumbnailWorker(QThread):
                     pixmap = pixmap.copy(x, y, thumb_size, thumb_size)
 
                 _draw_static_overlays(pixmap, photo)
-                _thumb_cache.put(photo_key, pixmap)
+                _thumb_cache.put(ckey, pixmap)
                 self.manager.signals.thumbnail_ready.emit(photo_key, pixmap)
             else:
                 self.manager.signals.thumbnail_ready.emit(photo_key, QImage())
@@ -336,6 +364,7 @@ class ThumbnailCard(QFrame):
         self.is_expanded_member = photo.get("is_expanded_burst_member", False)
         self.burst_position_index = photo.get("burst_position_index", 0)
         self.burst_total_count = photo.get("burst_total_count", 1)
+        self.is_burst_best = photo.get("is_burst_best", False)  # 展开态:锐度最高(封面)那张
 
         # Store rects for click detection
         self._badge_rect = QRect()
@@ -365,10 +394,11 @@ class ThumbnailCard(QFrame):
         self.img_label.setText("") 
         layout.addWidget(self.img_label)
 
-        # 文件名 label
-        fn = photo.get("filename", "")
+        # 卡片底部:默认显示鸟种(无则文件名);悬停整张卡显示文件名
+        fn = _display_name(photo)
         if self.is_burst_group and self.burst_count > 1:
             fn = f"{fn} ({self.burst_count})"
+        self.setToolTip(photo.get("filename", ""))
         self.name_label = QLabel(fn)
         self.name_label.setAlignment(Qt.AlignCenter)
         self.name_label.setStyleSheet(f"""
@@ -415,59 +445,75 @@ class ThumbnailCard(QFrame):
         w = overlay.width()
         h = overlay.height()
 
-        # Stacked effect for burst groups
+        # 连拍角标（统一在左下角一处；_badge_rect 兼作点击命中区，点击折叠/展开整组）
+        # Burst overlay lives in a single bottom-left spot; _badge_rect doubles as the
+        # click hit-area that toggles the group between collapsed and expanded.
+        self._badge_rect = QRect()
         if getattr(self, 'is_burst_group', False):
-            # Simulated card 1 (bottom right)
+            # 折叠态：右下堆叠卡片效果 + 左下「堆叠图标 + 总张数」（点击展开），不显示序号
             painter.setPen(QPen(QColor(255, 255, 255, 150), 1))
             painter.drawLine(w - 3, 6, w - 3, h - 3)
             painter.drawLine(6, h - 3, w - 3, h - 3)
-            
-            # Simulated card 2 (further bottom right)
             painter.setPen(QPen(QColor(255, 255, 255, 80), 1))
             painter.drawLine(w - 1, 9, w - 1, h - 1)
             painter.drawLine(9, h - 1, w - 1, h - 1)
-            
-            # Draw burst count badge in top-left
-            self._badge_rect = QRect(4, 4, 32, 16)
-            bg = QColor(0, 0, 0, 180)
-            painter.setPen(Qt.NoPen)
-            painter.setBrush(bg)
-            painter.drawRoundedRect(self._badge_rect, 4, 4)
-            painter.setPen(QColor(255, 255, 255))
+
+            icon_px = 14
             font = QFont()
             font.setPixelSize(10)
             font.setBold(True)
             painter.setFont(font)
-            painter.drawText(self._badge_rect, Qt.AlignCenter, str(self.burst_count))
-            
+            count_text = str(self.burst_count)
+            text_w = painter.fontMetrics().horizontalAdvance(count_text)
+            pad, gap, rect_h = 5, 3, 20
+            rect_w = pad + icon_px + gap + text_w + pad
+            bx, by = 4, h - rect_h - 4
+            self._badge_rect = QRect(bx, by, rect_w, rect_h)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(0, 0, 0, 180))
+            painter.drawRoundedRect(self._badge_rect, 4, 4)
+            icon_img = render_tinted_image("square-stack.svg", "#ffffff", size=icon_px, dpr=2.0)
+            painter.drawImage(bx + pad, by + (rect_h - icon_px) // 2, icon_img)
+            painter.setPen(QColor(255, 255, 255))
+            painter.drawText(bx + pad + icon_px + gap, by, text_w + pad, rect_h,
+                             Qt.AlignLeft | Qt.AlignVCenter, count_text)
+
         elif getattr(self, 'is_expanded_member', False):
-            # Draw a left colored border indicator to visually group them
+            # 展开态：左侧色条标识同组 + 左下「序号/总数」（点击折叠），锐度最高者序号标红
             painter.setPen(Qt.NoPen)
             painter.setBrush(QColor(COLORS['accent']))
             painter.drawRect(0, 0, 4, h)
-            
-            # Add collapse badge on the first item
-            if self.burst_position_index == 1:
-                self._badge_rect = QRect(8, 4, 40, 16)
-                bg = QColor(0, 0, 0, 180)
-                painter.setBrush(bg)
-                painter.drawRoundedRect(self._badge_rect, 4, 4)
-                painter.setPen(QColor(255, 255, 255))
-                font = QFont()
-                font.setPixelSize(10)
-                font.setBold(True)
-                painter.setFont(font)
-                painter.drawText(self._badge_rect, Qt.AlignCenter, f"< {self.burst_total_count} >")
-            else:
-                self._badge_rect = QRect()
+
+            pos_text = str(self.burst_position_index)
+            tail_text = f"/{self.burst_total_count}"
+            font = QFont()
+            font.setPixelSize(10)
+            font.setBold(True)
+            painter.setFont(font)
+            fm = painter.fontMetrics()
+            pos_w = fm.horizontalAdvance(pos_text)
+            tail_w = fm.horizontalAdvance(tail_text)
+            pad, rect_h = 6, 18
+            rect_w = pad + pos_w + tail_w + pad
+            bx, by = 4, h - rect_h - 4
+            self._badge_rect = QRect(bx, by, rect_w, rect_h)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(0, 0, 0, 170))
+            painter.drawRoundedRect(self._badge_rect, 4, 4)
+            # 序号：锐度最高(封面)那张标红，其余白色；「/总数」恒为浅灰
+            pos_color = QColor(ICON_DANGER) if getattr(self, 'is_burst_best', False) else QColor(255, 255, 255)
+            painter.setPen(pos_color)
+            painter.drawText(bx + pad, by, pos_w, rect_h, Qt.AlignLeft | Qt.AlignVCenter, pos_text)
+            painter.setPen(QColor(220, 220, 220))
+            painter.drawText(bx + pad + pos_w, by, tail_w, rect_h, Qt.AlignLeft | Qt.AlignVCenter, tail_text)
 
         # 1. 多选勾选标记
         if getattr(self, '_multi_selected_state', False):
             # 蓝色勾选圆圈
             painter.setPen(Qt.NoPen)
             painter.setBrush(QColor(59, 130, 246, 220))  # 蓝色
-            # Move checkbox if badge is present
-            cx = 40 if not self._badge_rect.isEmpty() else 4
+            # 连拍角标已移至左下，左上空出，多选勾选固定在左上
+            cx = 4
             painter.drawEllipse(cx, 4, 20, 20)
             painter.setPen(QPen(QColor(255, 255, 255, 255), 2.0))
             painter.setBrush(Qt.NoBrush)
@@ -614,7 +660,12 @@ class ThumbnailGrid(QScrollArea):
 
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.setStyleSheet(f"QScrollArea {{ background-color: {COLORS['bg_primary']}; border: none; }}")
+        self.setStyleSheet(
+            f"QScrollArea {{ background-color: {COLORS['bg_primary']}; border: none; }}"
+            # 悬停文件名提示:纯文字,无黑色背景框
+            f"QToolTip {{ color: {COLORS['text_primary']}; background-color: transparent;"
+            f" border: none; padding: 0px; font-size: 11px; }}"
+        )
         self.setFocusPolicy(Qt.StrongFocus)
 
         self._container = QWidget()
@@ -822,7 +873,7 @@ class ThumbnailGrid(QScrollArea):
             # 强制设置行最小高度
             self._grid.setRowMinimumHeight(row, self._thumb_size + 32)
 
-            cached = _thumb_cache.get(photo_key)
+            cached = _thumb_cache.get(_overlay_key(photo))
             if cached:
                 card.set_pixmap(cached)
 
@@ -832,6 +883,11 @@ class ThumbnailGrid(QScrollArea):
             self._batch_timer.stop()
             # 补一个尾部弹簧
             self._grid.setRowStretch(last_row + 1, 1)
+            # 尾部弹性列:让卡片靠左对齐(结果少时不被均分撑开/居中散开)
+            # 先清零所有列拉伸,避免列数变化时旧拉伸列残留导致错位
+            for _c in range(max(self._grid.columnCount(), col_count) + 1):
+                self._grid.setColumnStretch(_c, 0)
+            self._grid.setColumnStretch(col_count, 1)
             # 完成后移除 MinimumHeight 限制，让布局自由发挥
             self._container.setMinimumHeight(0)
 
@@ -888,7 +944,7 @@ class ThumbnailGrid(QScrollArea):
             image = _load_thumbnail_image(card.photo, self._thumb_size)
             if image and not image.isNull():
                 _draw_static_overlays(image, card.photo)
-                _thumb_cache.put(photo_key, image)
+                _thumb_cache.put(_overlay_key(card.photo), image)
                 card.set_pixmap(image)
             else:
                 card._draw_overlays()

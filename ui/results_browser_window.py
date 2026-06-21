@@ -23,8 +23,10 @@ from PySide6.QtWidgets import (
     QSlider, QComboBox, QMessageBox, QSizePolicy, QApplication,
     QStackedWidget, QMenu
 )
-from PySide6.QtCore import Qt, Signal, Slot, QProcess
+from PySide6.QtCore import Qt, Signal, Slot, QProcess, QSize
 from PySide6.QtGui import QAction, QKeyEvent, QIcon, QFont
+
+from ui.icon_utils import load_tinted_icon, ICON_IDLE
 
 from ui.styles import COLORS, GLOBAL_STYLE, FONTS
 from ui.filter_panel import FilterPanel
@@ -106,6 +108,29 @@ def _extract_burst_group_key(photo: dict) -> Optional[str]:
             if part.startswith("burst_"):
                 return f"{source_prefix}|{'/'.join(parts[:idx + 1])}"
     return None
+
+
+def _burst_sharpness(photo: dict) -> float:
+    """
+    连拍代表照片选取用的锐度值：优先 adj_sharpness，回退 head_sharp，缺失视为最低。
+    与 report.db 排序 COALESCE(adj_sharpness, head_sharp, -1e99) 保持一致。
+
+    Sharpness used to pick a burst's cover photo: prefer adj_sharpness, fall back to
+    head_sharp, treat missing as lowest — mirrors the DB's sharpness_desc ordering.
+    """
+    v = photo.get("adj_sharpness")
+    if v is None:
+        v = photo.get("head_sharp")
+    return float(v) if v is not None else float("-inf")
+
+
+def _burst_representative(photos: list) -> dict:
+    """
+    从同组连拍中选「锐度最高」的一张作为折叠封面代表。
+
+    Pick the sharpest photo in a burst group as the collapsed-cover representative.
+    """
+    return max(photos, key=_burst_sharpness)
 
 
 def _build_burst_update_map(photos: list) -> dict:
@@ -534,6 +559,8 @@ class ResultsBrowserWindow(QMainWindow):
         self._fullscreen.next_requested.connect(self._fullscreen_next)
         self._fullscreen.delete_requested.connect(self._on_delete_photo)
         self._fullscreen.context_menu_requested.connect(self._on_fullscreen_context_menu)
+        self._fullscreen.species_edit_requested.connect(self._on_species_edit_requested)
+        self._fullscreen.crop_advice_requested.connect(self._on_crop_advice_requested)
         self._fullscreen.burst_sequence_requested.connect(self._open_burst_sequence)
         self._stack.addWidget(self._fullscreen)   # index 1
 
@@ -549,6 +576,7 @@ class ResultsBrowserWindow(QMainWindow):
         self._detail_panel.next_requested.connect(self._next_photo)
         self._detail_panel.rating_change_requested.connect(self._on_rating_changed)
         self._detail_panel.species_edit_requested.connect(self._on_species_edit_requested)
+        self._detail_panel.crop_advice_requested.connect(self._on_crop_advice_requested)
         outer_h.addWidget(self._detail_panel, 0)
 
     def _build_toolbar(self) -> QWidget:
@@ -567,7 +595,9 @@ class ResultsBrowserWindow(QMainWindow):
         layout.setSpacing(12)
 
         # P2: 返回主界面按钮（最左侧）
-        back_btn = QPushButton(self.i18n.t("browser.back"))
+        back_btn = QPushButton("  " + self.i18n.t("browser.back"))
+        back_btn.setIcon(load_tinted_icon("birdhouse.svg", ICON_IDLE, 16))
+        back_btn.setIconSize(QSize(16, 16))
         back_btn.setObjectName("tertiary")
         back_btn.setFixedHeight(32)
         back_btn.setToolTip(self.i18n.t("browser.back_tooltip"))
@@ -632,17 +662,21 @@ class ResultsBrowserWindow(QMainWindow):
         self._compare_btn.clicked.connect(self._enter_comparison)
         layout.addWidget(self._compare_btn)
 
-        # 缩略图尺寸滑块
+        # 缩略图尺寸:标签 + 滑块绑成一组,紧贴显示
+        size_box = QHBoxLayout()
+        size_box.setContentsMargins(0, 0, 0, 0)
+        size_box.setSpacing(6)
         size_label = QLabel(self.i18n.t("browser.size_label"))
         size_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 10px; background: transparent;")
-        layout.addWidget(size_label)
+        size_box.addWidget(size_label)
 
         self._size_slider = QSlider(Qt.Horizontal)
         self._size_slider.setRange(80, 300)
         self._size_slider.setValue(160)
         self._size_slider.setFixedWidth(100)
         self._size_slider.valueChanged.connect(self._on_size_changed)
-        layout.addWidget(self._size_slider)
+        size_box.addWidget(self._size_slider)
+        layout.addLayout(size_box)
 
         return bar
 
@@ -861,7 +895,7 @@ class ResultsBrowserWindow(QMainWindow):
 
         best_burst_photos = {}
         for bid, photos in burst_map.items():
-            best_photo = max(photos, key=lambda x: (x.get("rating", 0), x.get("composite_score", 0.0)))
+            best_photo = _burst_representative(photos)  # 折叠封面=组内锐度最高的一张
             best_burst_photos[bid] = _photo_identity(best_photo)
 
         grouped_photos = []
@@ -891,6 +925,7 @@ class ResultsBrowserWindow(QMainWindow):
                         expanded_photo["burst_position_index"] = i
                         expanded_photo["burst_total_count"] = len(burst_photos)
                         expanded_photo["burst_id"] = bid
+                        expanded_photo["is_burst_best"] = (_photo_identity(bp) == best_burst_photos[bid])
                         grouped_photos.append(expanded_photo)
                 else:
                     # Collapsed: add only the representative photo
@@ -1235,6 +1270,42 @@ class ResultsBrowserWindow(QMainWindow):
         # 5. 后台执行文件移动（同时更新连拍组其他成员的 DB 鸟种字段及 current_path）
         # Background: move files and update burst group members' DB records.
         _trigger_species_change(base_dir, photo, new_cn, new_en, self._db, db_key)
+
+    def _on_crop_advice_requested(self, photo: dict):
+        """
+        打开裁剪建议弹窗（非破坏性预览）。
+        Open the crop advisor dialog (non-destructive preview).
+        """
+        from ui.crop_advisor_dialog import CropAdvisorDialog
+        # 复用详情面板的显示图解析：优先可解码的 temp JPEG，
+        # 避免把 RAW(current_path)喂给弹窗——cv2/PIL 解不了 RAW 会报 TIFF 错。
+        # Reuse the detail panel's display-path resolution: prefer the decodable
+        # temp JPEG, never feed a RAW file (cv2/PIL can't decode it).
+        rp = self._resolve_photo_paths(photo)
+        path = rp.get("temp_jpeg_path")
+        if not path or not os.path.exists(path):
+            path = rp.get("debug_crop_path")
+        if not path or not os.path.exists(path):
+            op = rp.get("original_path") or rp.get("current_path")
+            if op and os.path.exists(op) and os.path.splitext(op)[1].lower() in ('.jpg', '.jpeg'):
+                path = op
+            else:
+                path = None
+        print(
+            f"🪶 [CropAdvisor] 入口解析: temp_jpeg={rp.get('temp_jpeg_path')!r} "
+            f"debug_crop={rp.get('debug_crop_path')!r} current={rp.get('current_path')!r} "
+            f"original={rp.get('original_path')!r} → 选用={path!r}"
+        )
+        if not path or not os.path.exists(path):
+            from ui.custom_dialogs import StyledMessageBox
+            StyledMessageBox.warning(
+                self,
+                self.i18n.t("crop_advisor.title"),
+                self.i18n.t("crop_advisor.no_decodable_image"),
+            )
+            return
+        dialog = CropAdvisorDialog(image_path=path, parent=self)
+        dialog.exec()
 
     @Slot(list)
     def _on_multi_selection_changed(self, photos: list):
@@ -1668,6 +1739,8 @@ class ResultsBrowserWidget(QWidget):
         self._fullscreen.next_requested.connect(self._fullscreen_next)
         self._fullscreen.delete_requested.connect(self._on_delete_photo)
         self._fullscreen.context_menu_requested.connect(self._on_fullscreen_context_menu)
+        self._fullscreen.species_edit_requested.connect(self._on_species_edit_requested)
+        self._fullscreen.crop_advice_requested.connect(self._on_crop_advice_requested)
         self._stack.addWidget(self._fullscreen)
 
         # Page 2: 对比查看器（C5）
@@ -1682,6 +1755,7 @@ class ResultsBrowserWidget(QWidget):
         self._detail_panel.next_requested.connect(self._next_photo)
         self._detail_panel.rating_change_requested.connect(self._on_rating_changed)
         self._detail_panel.species_edit_requested.connect(self._on_species_edit_requested)
+        self._detail_panel.crop_advice_requested.connect(self._on_crop_advice_requested)
         outer_h.addWidget(self._detail_panel, 0)
 
         # 底部状态栏（简单 label）
@@ -1712,7 +1786,9 @@ class ResultsBrowserWidget(QWidget):
         layout.setContentsMargins(16, 8, 16, 8)
         layout.setSpacing(12)
 
-        back_btn = QPushButton(self.i18n.t("browser.back"))
+        back_btn = QPushButton("  " + self.i18n.t("browser.back"))
+        back_btn.setIcon(load_tinted_icon("birdhouse.svg", ICON_IDLE, 16))
+        back_btn.setIconSize(QSize(16, 16))
         back_btn.setObjectName("tertiary")
         back_btn.setFixedHeight(32)
         back_btn.setToolTip(self.i18n.t("browser.back_tooltip"))
@@ -2005,7 +2081,7 @@ class ResultsBrowserWidget(QWidget):
 
         best_burst_photos = {}
         for burst_id, photos in burst_map.items():
-            best_photo = max(photos, key=lambda x: (x.get("rating", 0), x.get("composite_score", 0.0)))
+            best_photo = _burst_representative(photos)  # 折叠封面=组内锐度最高的一张
             best_burst_photos[burst_id] = _photo_identity(best_photo)
 
         grouped_photos = []
@@ -2026,6 +2102,7 @@ class ResultsBrowserWidget(QWidget):
                     expanded_photo["is_expanded_burst_member"] = True
                     expanded_photo["burst_position_index"] = pos
                     expanded_photo["burst_total_count"] = len(burst_photos)
+                    expanded_photo["is_burst_best"] = (_photo_identity(burst_photo) == best_burst_photos[burst_id])
                     grouped_photos.append(expanded_photo)
             else:
                 best_identity = best_burst_photos[burst_id]
@@ -2224,6 +2301,42 @@ class ResultsBrowserWidget(QWidget):
         # 5. 后台执行文件移动（同时更新连拍组其他成员的 DB 鸟种字段及 current_path）
         # Background: move files and update burst group members' DB records.
         _trigger_species_change(base_dir, photo, new_cn, new_en, self._db, db_key)
+
+    def _on_crop_advice_requested(self, photo: dict):
+        """
+        打开裁剪建议弹窗（非破坏性预览）。
+        Open the crop advisor dialog (non-destructive preview).
+        """
+        from ui.crop_advisor_dialog import CropAdvisorDialog
+        # 复用详情面板的显示图解析：优先可解码的 temp JPEG，
+        # 避免把 RAW(current_path)喂给弹窗——cv2/PIL 解不了 RAW 会报 TIFF 错。
+        # Reuse the detail panel's display-path resolution: prefer the decodable
+        # temp JPEG, never feed a RAW file (cv2/PIL can't decode it).
+        rp = self._resolve_photo_paths(photo)
+        path = rp.get("temp_jpeg_path")
+        if not path or not os.path.exists(path):
+            path = rp.get("debug_crop_path")
+        if not path or not os.path.exists(path):
+            op = rp.get("original_path") or rp.get("current_path")
+            if op and os.path.exists(op) and os.path.splitext(op)[1].lower() in ('.jpg', '.jpeg'):
+                path = op
+            else:
+                path = None
+        print(
+            f"🪶 [CropAdvisor] 入口解析: temp_jpeg={rp.get('temp_jpeg_path')!r} "
+            f"debug_crop={rp.get('debug_crop_path')!r} current={rp.get('current_path')!r} "
+            f"original={rp.get('original_path')!r} → 选用={path!r}"
+        )
+        if not path or not os.path.exists(path):
+            from ui.custom_dialogs import StyledMessageBox
+            StyledMessageBox.warning(
+                self,
+                self.i18n.t("crop_advisor.title"),
+                self.i18n.t("crop_advisor.no_decodable_image"),
+            )
+            return
+        dialog = CropAdvisorDialog(image_path=path, parent=self)
+        dialog.exec()
 
     @Slot(list)
     def _on_multi_selection_changed(self, photos: list):

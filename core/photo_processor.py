@@ -2984,8 +2984,18 @@ class PhotoProcessor:
                 self._log(self.i18n.t("logs.picked_exif_success"))
             else:
                 self._log(self.i18n.t("logs.picked_exif_failed", failed=picked_stats['failed']), "warning")
-            
+
             self.stats['picked'] = len(picked_files) - picked_stats.get('failed', 0)
+
+            # 同步写入 report.db 的 picked 列(供结果浏览器筛选与皇冠角标读取)
+            # Persist picked flag into report.db so the browser can filter/draw the crown.
+            if getattr(self, "report_db", None):
+                for _fp in picked_files:
+                    _prefix = os.path.splitext(os.path.basename(_fp))[0]
+                    try:
+                        self.report_db.update_photo(_prefix, {"picked": 1})
+                    except Exception:
+                        pass
         else:
             self._log(self.i18n.t("logs.picked_no_intersection"))
             self.stats['picked'] = 0

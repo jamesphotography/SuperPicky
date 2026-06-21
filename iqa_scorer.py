@@ -71,6 +71,14 @@ class IQAScorer:
                 raise RuntimeError(f"TOPIQ 模型加载失败: {e}")
         return self._topiq_model
 
+    def preload(self) -> None:
+        """
+        预热:立即加载 TOPIQ 权重(供启动预加载调用),避免首次评分时才现加载。
+        Warm up: load TOPIQ weights now (called by startup preload) so the first
+        scoring call (e.g. crop advisor / bird selection) doesn't trigger a load.
+        """
+        self._load_topiq()
+
     def calculate_nima(self, image_path: str) -> Optional[float]:
         """
         计算美学评分 (使用 TOPIQ，保持接口名称兼容)

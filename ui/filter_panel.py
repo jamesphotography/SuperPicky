@@ -12,9 +12,27 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
     QPushButton, QCheckBox, QComboBox, QScrollArea, QFrame, QSizePolicy
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QSize
+from PySide6.QtGui import QIcon
 
 from ui.styles import COLORS, FONTS
+from ui.icon_utils import load_tinted_icon, stars_pixmap, checkbox_indicator_qss
+
+# 排序项图标:降序项(rarity/sharpness/aesthetic)用向下箭头,当前选中项用对勾
+_SORT_DESC_ICON = "arrow-down.svg"
+_SORT_SELECTED_ICON = "check.svg"
+
+# 用图标替代 emoji/文字的评分筹码。
+# Rating chips rendered as icons instead of emoji/text.
+# 单图标筹码:精选(🏆→皇冠)、无鸟(×→禁止圈)
+_ICON_CHIPS = {"picked": "crown.svg", "nobird": "circle-off.svg"}
+# 多星筹码:★★★/★★/★ → N 颗 SVG 金星
+_STAR_CHIPS = {"3": 3, "2": 2, "1": 1}
+# 所有需图标化的筹码集合
+_ICONIZED_CHIPS = set(_ICON_CHIPS) | set(_STAR_CHIPS)
+# 星图标单颗逻辑像素与间距
+_CHIP_STAR_SIZE = 13
+_CHIP_STAR_GAP = 1
 
 
 # 评分按钮配置 (mode_key, label, ratings_list)
@@ -24,8 +42,8 @@ _RATING_OPTIONS = [
     ("3",     "★★★", [3, 4, 5]),
     ("2",     "★★",  [2]),
     ("1",     "★",   [1]),
-    ("0",     "0",   [0]),          # 0星（有鸟但评分为0）
-    ("nobird", "×",  [-1]),         # 无鸟
+    # 未选用：0星(有鸟但0分) + 无鸟(-1) 合并为一个 ⊘ 筹码,避免 0 与无鸟混淆
+    ("nobird", "×",  [-1, 0]),
 ]
 # 默认勾选的评分按钮（V4.2.7：3星 + 2星，与摄影师常用「能用的片子」一致）
 # Default checked rating buttons (V4.2.7): 3★ + 2★ — matches the "keeper" pile
@@ -88,7 +106,7 @@ class FilterPanel(QWidget):
         from advanced_config import get_advanced_config
         self._adv_config = get_advanced_config()
 
-        self.setFixedWidth(220)
+        self.setFixedWidth(236)
         self.setStyleSheet(
             f"background-color: {COLORS['bg_elevated']};"
             f" border-right: 1px solid {COLORS['border_subtle']};"
@@ -146,7 +164,8 @@ class FilterPanel(QWidget):
                 min-height: 24px;
             }}
         """)
-        self.species_combo.currentIndexChanged.connect(self._emit_filters)
+        self.species_combo.currentIndexChanged.connect(self._on_species_changed)
+        self._refresh_species_icon()
         layout.addWidget(self.species_combo)
 
         layout.addWidget(self._divider())
@@ -208,6 +227,7 @@ class FilterPanel(QWidget):
         if idx >= 0:
             self._sort_combo.setCurrentIndex(idx)
         self._sort_combo.currentIndexChanged.connect(self._on_sort_changed)
+        self._refresh_sort_icons()
         layout.addWidget(self._sort_combo)
 
         layout.addStretch()
@@ -243,24 +263,51 @@ class FilterPanel(QWidget):
 
         self._rating_btns: dict = {}  # mode -> QPushButton
 
-        # 窄按钮 mode 集合（★★/★/0/×/🏆 都固定宽度，留空间给 ★★★）
-        _narrow = {"2": 30, "1": 24, "0": 24, "nobird": 24, "picked": 32}
+        # 窄按钮固定宽度(★★★ 用 Expanding,留出 3 颗星空间)
+        _narrow = {"2": 40, "1": 30, "nobird": 32, "picked": 32}
+        # 图标筹码 tooltip(图标无文字,用提示说明含义)
+        _is_zh = not getattr(self.i18n, 'current_lang', 'zh_CN').startswith('en')
+        _tips = {
+            "picked": "精选 Top 25%" if _is_zh else "Picked (Top 25%)",
+            "3": "三星" if _is_zh else "3 stars",
+            "2": "二星" if _is_zh else "2 stars",
+            "1": "一星" if _is_zh else "1 star",
+            "nobird": "未选用:0星 / 无鸟" if _is_zh else "Unrated: 0★ / no bird",
+        }
 
         for mode, label, ratings in _RATING_OPTIONS:
-            btn = QPushButton(label)
+            active = (mode in self._active_ratings)
+            if mode in _ICONIZED_CHIPS:
+                btn = QPushButton("")  # 图标筹码,无文字
+            else:
+                btn = QPushButton(label)
             btn.setFixedHeight(30)
+            if mode in _tips:
+                btn.setToolTip(_tips[mode])
             if mode in _narrow:
                 btn.setFixedWidth(_narrow[mode])
             else:
                 btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-            active = (mode in self._active_ratings)
             btn.setStyleSheet(self._rating_btn_style(active, mode))
+            if mode in _ICONIZED_CHIPS:
+                self._apply_chip_icon(btn, mode, active)
             _m = mode
             btn.clicked.connect(lambda _=None, m=_m: self._on_rating_btn(m))
             self._rating_btns[mode] = btn
             row.addWidget(btn)
 
         return w
+
+    def _apply_chip_icon(self, btn, mode: str, active: bool) -> None:
+        """给图标型筹码按激活态染色:激活=金,常态=灰。"""
+        color = COLORS['star_gold'] if active else COLORS['text_muted']
+        if mode in _STAR_CHIPS:
+            n = _STAR_CHIPS[mode]
+            btn.setIcon(QIcon(stars_pixmap(n, color, size=_CHIP_STAR_SIZE, gap=_CHIP_STAR_GAP)))
+            btn.setIconSize(QSize(n * _CHIP_STAR_SIZE + (n - 1) * _CHIP_STAR_GAP, _CHIP_STAR_SIZE))
+        else:
+            btn.setIcon(load_tinted_icon(_ICON_CHIPS[mode], color, 16))
+            btn.setIconSize(QSize(16, 16))
 
     def _rating_btn_style(self, active: bool, mode: str = "") -> str:
         # 精选按钮用金色高亮
@@ -292,7 +339,10 @@ class FilterPanel(QWidget):
         else:
             self._active_ratings.add(mode)
         for m, btn in self._rating_btns.items():
-            btn.setStyleSheet(self._rating_btn_style(m in self._active_ratings, m))
+            _active = m in self._active_ratings
+            btn.setStyleSheet(self._rating_btn_style(_active, m))
+            if m in _ICONIZED_CHIPS:
+                self._apply_chip_icon(btn, m, _active)
         self._emit_filters()
 
     # ------------------------------------------------------------------
@@ -316,23 +366,10 @@ class FilterPanel(QWidget):
             label = label_zh if _is_zh else mode
             cb = QCheckBox(label)
             cb.setChecked(mode in _defaults)
-            cb.setStyleSheet(f"""
-                QCheckBox {{
-                    color: {color};
-                    font-size: 12px;
-                    spacing: 4px;
-                }}
-                QCheckBox::indicator {{
-                    width: 14px; height: 14px;
-                    border-radius: 3px;
-                    border: 1px solid {COLORS['border']};
-                    background: transparent;
-                }}
-                QCheckBox::indicator:checked {{
-                    background-color: {color};
-                    border-color: {color};
-                }}
-            """)
+            cb.setStyleSheet(
+                f"QCheckBox {{ color: {color}; font-size: 12px; spacing: 6px; }}"
+                + checkbox_indicator_qss(15, COLORS['text_muted'], color)
+            )
             cb.stateChanged.connect(self._emit_filters)
             self._focus_checks[mode] = cb
             row.addWidget(cb)
@@ -361,7 +398,8 @@ class FilterPanel(QWidget):
             cb = QCheckBox(label_text)
             cb.setChecked(True)
             cb.setStyleSheet(
-                f"QCheckBox {{ color: {COLORS['text_secondary']}; font-size: 12px; }}"
+                f"QCheckBox {{ color: {COLORS['text_secondary']}; font-size: 12px; spacing: 6px; }}"
+                + checkbox_indicator_qss(15, COLORS['text_muted'], COLORS['accent'])
             )
             cb.stateChanged.connect(self._emit_filters)
             self._flight_cbs[value] = cb
@@ -415,6 +453,7 @@ class FilterPanel(QWidget):
         if idx >= 0:
             self.species_combo.setCurrentIndex(idx)
         self.species_combo.blockSignals(False)
+        self._refresh_species_icon()
 
     # ------------------------------------------------------------------
     #  筛选状态读取
@@ -467,7 +506,10 @@ class FilterPanel(QWidget):
         # 评分 → 默认 ★★★ + ★★
         self._active_ratings = set(_DEFAULT_RATINGS)
         for m, btn in self._rating_btns.items():
-            btn.setStyleSheet(self._rating_btn_style(m in _DEFAULT_RATINGS, m))
+            _active = m in _DEFAULT_RATINGS
+            btn.setStyleSheet(self._rating_btn_style(_active, m))
+            if m in _ICONIZED_CHIPS:
+                self._apply_chip_icon(btn, m, _active)
 
         # 对焦 → 默认全选
         _defaults = set(_DEFAULT_CHECKED_FOCUS)
@@ -486,6 +528,7 @@ class FilterPanel(QWidget):
         self.species_combo.blockSignals(True)
         self.species_combo.setCurrentIndex(0)
         self.species_combo.blockSignals(False)
+        self._refresh_species_icon()
 
         # 排序 → 恢复用户上次选择（不强制重置为锐度）
         self._sort_combo.blockSignals(True)
@@ -493,6 +536,7 @@ class FilterPanel(QWidget):
         idx = self._sort_combo.findData(saved_sort)
         self._sort_combo.setCurrentIndex(idx if idx >= 0 else 0)
         self._sort_combo.blockSignals(False)
+        self._refresh_sort_icons()
 
         self._emit_filters()
 
@@ -501,17 +545,45 @@ class FilterPanel(QWidget):
         self._active_ratings = set()
         for m, btn in self._rating_btns.items():
             btn.setStyleSheet(self._rating_btn_style(False, m))
+            if m in _ICONIZED_CHIPS:
+                self._apply_chip_icon(btn, m, False)
         self._emit_filters()
 
     # ------------------------------------------------------------------
     #  信号
     # ------------------------------------------------------------------
 
+    def _refresh_species_icon(self):
+        """鸟种下拉:当前选中项显示对勾(check),其余无图标。"""
+        cur = self.species_combo.currentIndex()
+        for i in range(self.species_combo.count()):
+            if i == cur:
+                self.species_combo.setItemIcon(i, load_tinted_icon(_SORT_SELECTED_ICON, COLORS['accent'], 14))
+            else:
+                self.species_combo.setItemIcon(i, QIcon())
+
+    def _on_species_changed(self, *_):
+        self._refresh_species_icon()
+        self._emit_filters()
+
+    def _refresh_sort_icons(self):
+        """排序项图标:当前选中项→对勾(check);其余降序项→向下箭头;文件名无图标。"""
+        cur = self._sort_combo.currentIndex()
+        for i in range(self._sort_combo.count()):
+            data = self._sort_combo.itemData(i)
+            if i == cur:
+                self._sort_combo.setItemIcon(i, load_tinted_icon(_SORT_SELECTED_ICON, COLORS['accent'], 14))
+            elif isinstance(data, str) and data.endswith("_desc"):
+                self._sort_combo.setItemIcon(i, load_tinted_icon(_SORT_DESC_ICON, COLORS['text_secondary'], 14))
+            else:
+                self._sort_combo.setItemIcon(i, QIcon())
+
     def _on_sort_changed(self, *_):
         sort_val = self._sort_combo.currentData()
         if sort_val:
             self._adv_config.set_browser_sort(sort_val)
             self._adv_config.save()
+        self._refresh_sort_icons()
         self._emit_filters()
 
     def _emit_filters(self, *_):
