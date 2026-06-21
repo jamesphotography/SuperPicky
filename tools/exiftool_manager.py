@@ -1133,6 +1133,36 @@ class ExifToolManager:
             print(f"❌ Error extracting binary: {e}")
             return None
 
+    def copy_exif(self, src_path: str, dst_path: str) -> bool:
+        """
+        用 -TagsFromFile 把 src 的 EXIF 复制到 dst(裁剪导出用)。
+        跳过会与裁剪结果冲突的尺寸/方向标签,避免导出图被错误旋转或标错尺寸。
+
+        Copy EXIF from src onto dst via -TagsFromFile (for crop export); skip
+        orientation/size tags that would conflict with the cropped output.
+
+        参数 / Parameters:
+            src_path (str): 原图路径。
+            dst_path (str): 导出图路径(将被写入 EXIF)。
+
+        返回 / Returns:
+            bool: 成功为 True,失败为 False(不抛异常)。
+        """
+        import subprocess
+        if not (os.path.exists(src_path) and os.path.exists(dst_path)):
+            return False
+        try:
+            subprocess.run(
+                [self.exiftool_path, "-overwrite_original", "-TagsFromFile", src_path,
+                 "-all:all", "-x", "Orientation", "-x", "ImageWidth", "-x", "ImageHeight",
+                 dst_path],
+                check=True, capture_output=True, cwd=self._exiftool_cwd,
+            )
+            return True
+        except Exception as e:
+            print(f"⚠️ copy_exif failed: {e}")
+            return False
+
     def reset_metadata(self, file_path: str) -> bool:
         """重置照片的评分和旗标 (V4.0.6: 使用常驻进程)"""
         if not os.path.exists(file_path):
