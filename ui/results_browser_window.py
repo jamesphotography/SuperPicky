@@ -1273,12 +1273,11 @@ class ResultsBrowserWindow(QMainWindow):
 
     def _on_crop_advice_requested(self, photo: dict):
         """
-        打开裁剪建议弹窗（非破坏性预览）。
-        Open the crop advisor dialog (non-destructive preview).
+        打开全屏「后期工作区」Crop Studio（非破坏性预览 + 裁剪导出）。
+        Open the fullscreen Crop Studio (non-destructive preview + crop export).
         """
-        from ui.crop_advisor_dialog import CropAdvisorDialog
         # 复用详情面板的显示图解析：优先可解码的 temp JPEG，
-        # 避免把 RAW(current_path)喂给弹窗——cv2/PIL 解不了 RAW 会报 TIFF 错。
+        # 避免把 RAW(current_path)喂给工作区——cv2/PIL 解不了 RAW 会报 TIFF 错。
         # Reuse the detail panel's display-path resolution: prefer the decodable
         # temp JPEG, never feed a RAW file (cv2/PIL can't decode it).
         rp = self._resolve_photo_paths(photo)
@@ -1292,7 +1291,7 @@ class ResultsBrowserWindow(QMainWindow):
             else:
                 path = None
         print(
-            f"🪶 [CropAdvisor] 入口解析: temp_jpeg={rp.get('temp_jpeg_path')!r} "
+            f"🪶 [CropStudio] 入口解析: temp_jpeg={rp.get('temp_jpeg_path')!r} "
             f"debug_crop={rp.get('debug_crop_path')!r} current={rp.get('current_path')!r} "
             f"original={rp.get('original_path')!r} → 选用={path!r}"
         )
@@ -1304,8 +1303,22 @@ class ResultsBrowserWindow(QMainWindow):
                 self.i18n.t("crop_advisor.no_decodable_image"),
             )
             return
-        dialog = CropAdvisorDialog(image_path=path, parent=self)
-        dialog.exec()
+
+        # 合并显示字段(鸟种/星级/罕见度/IUCN)与解析出的绝对路径；把可解码图注入
+        # temp_jpeg_path 使工作区按同一坐标系分析/导出。
+        # Merge display fields with resolved absolute paths; inject the decodable
+        # image as temp_jpeg_path so the studio analyzes/exports in one coord space.
+        studio_photo = dict(photo)
+        for k in ("original_path", "current_path"):
+            if rp.get(k):
+                studio_photo[k] = rp.get(k)
+        studio_photo["temp_jpeg_path"] = path
+
+        from ui.crop_studio import CropStudio
+        studio = CropStudio(studio_photo, self.i18n, parent=self)
+        studio.closed.connect(lambda: setattr(self, "_crop_studio", None))
+        self._crop_studio = studio  # 持有引用,避免被 GC / keep a reference
+        studio.showFullScreen()
 
     @Slot(list)
     def _on_multi_selection_changed(self, photos: list):
@@ -2304,12 +2317,11 @@ class ResultsBrowserWidget(QWidget):
 
     def _on_crop_advice_requested(self, photo: dict):
         """
-        打开裁剪建议弹窗（非破坏性预览）。
-        Open the crop advisor dialog (non-destructive preview).
+        打开全屏「后期工作区」Crop Studio（非破坏性预览 + 裁剪导出）。
+        Open the fullscreen Crop Studio (non-destructive preview + crop export).
         """
-        from ui.crop_advisor_dialog import CropAdvisorDialog
         # 复用详情面板的显示图解析：优先可解码的 temp JPEG，
-        # 避免把 RAW(current_path)喂给弹窗——cv2/PIL 解不了 RAW 会报 TIFF 错。
+        # 避免把 RAW(current_path)喂给工作区——cv2/PIL 解不了 RAW 会报 TIFF 错。
         # Reuse the detail panel's display-path resolution: prefer the decodable
         # temp JPEG, never feed a RAW file (cv2/PIL can't decode it).
         rp = self._resolve_photo_paths(photo)
@@ -2323,7 +2335,7 @@ class ResultsBrowserWidget(QWidget):
             else:
                 path = None
         print(
-            f"🪶 [CropAdvisor] 入口解析: temp_jpeg={rp.get('temp_jpeg_path')!r} "
+            f"🪶 [CropStudio] 入口解析: temp_jpeg={rp.get('temp_jpeg_path')!r} "
             f"debug_crop={rp.get('debug_crop_path')!r} current={rp.get('current_path')!r} "
             f"original={rp.get('original_path')!r} → 选用={path!r}"
         )
@@ -2335,8 +2347,22 @@ class ResultsBrowserWidget(QWidget):
                 self.i18n.t("crop_advisor.no_decodable_image"),
             )
             return
-        dialog = CropAdvisorDialog(image_path=path, parent=self)
-        dialog.exec()
+
+        # 合并显示字段(鸟种/星级/罕见度/IUCN)与解析出的绝对路径；把可解码图注入
+        # temp_jpeg_path 使工作区按同一坐标系分析/导出。
+        # Merge display fields with resolved absolute paths; inject the decodable
+        # image as temp_jpeg_path so the studio analyzes/exports in one coord space.
+        studio_photo = dict(photo)
+        for k in ("original_path", "current_path"):
+            if rp.get(k):
+                studio_photo[k] = rp.get(k)
+        studio_photo["temp_jpeg_path"] = path
+
+        from ui.crop_studio import CropStudio
+        studio = CropStudio(studio_photo, self.i18n, parent=self)
+        studio.closed.connect(lambda: setattr(self, "_crop_studio", None))
+        self._crop_studio = studio  # 持有引用,避免被 GC / keep a reference
+        studio.showFullScreen()
 
     @Slot(list)
     def _on_multi_selection_changed(self, photos: list):

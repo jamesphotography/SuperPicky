@@ -544,6 +544,10 @@ class CropStudio(QWidget):
 
     def __init__(self, photo: dict, i18n, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
+        # 即便有 parent 也作为独立顶层窗口,以便 showFullScreen() 全屏显示。
+        # Be a top-level window even with a parent, so showFullScreen() works.
+        self.setWindowFlag(Qt.Window, True)
+        self.setWindowTitle(i18n.t("crop_advisor.title"))
         self._photo: dict = photo
         self._i18n = i18n
 

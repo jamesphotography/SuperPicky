@@ -219,6 +219,47 @@ def test_export_uses_image_path_and_current_box(tmp_path):
     w.close()
 
 
+def test_browser_entry_opens_crop_studio(tmp_path, monkeypatch):
+    """浏览器「裁剪建议」入口改为构造 CropStudio 并 showFullScreen。"""
+    import cv2
+    import numpy as np
+    from ui import crop_studio as cs_mod
+    from ui.results_browser_window import ResultsBrowserWindow
+
+    src = str(tmp_path / "preview.jpg")
+    cv2.imwrite(src, np.zeros((40, 60, 3), "uint8"))
+
+    captured = {}
+
+    class _Sig:
+        def connect(self, *a, **k):
+            pass
+
+    class _FakeStudio:
+        def __init__(self, photo, i18n, parent=None):
+            captured["photo"] = photo
+            self.closed = _Sig()
+
+        def showFullScreen(self):
+            captured["fullscreen"] = True
+
+    monkeypatch.setattr(cs_mod, "CropStudio", _FakeStudio)
+
+    class _FakeBrowser:
+        i18n = get_i18n()
+
+        def _resolve_photo_paths(self, photo):
+            return {"temp_jpeg_path": src, "original_path": src, "current_path": src}
+
+    fake = _FakeBrowser()
+    photo = {"filename": "a.NEF", "bird_species_cn": "红头鸲鹟", "rating": 3}
+    ResultsBrowserWindow._on_crop_advice_requested(fake, photo)
+
+    assert captured.get("fullscreen") is True
+    assert captured["photo"]["temp_jpeg_path"] == src
+    assert captured["photo"]["bird_species_cn"] == "红头鸲鹟"
+
+
 def test_resolve_prefers_temp_jpeg():
     """temp_jpeg_path 存在时应优先于 current/original。"""
     from ui.crop_studio import CropStudio
