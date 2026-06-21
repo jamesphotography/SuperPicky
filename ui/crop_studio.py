@@ -23,7 +23,7 @@ from typing import Optional
 
 import cv2
 import numpy as np
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import QSize, Qt, QThread, Signal
 from PySide6.QtGui import QColor, QImage, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSlider,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -45,7 +46,15 @@ from core.crop_advisor import (
     CropSuggestion,
     advise_crops,
 )
-from ui.icon_utils import ICON_ACTIVE, ICON_IDLE, load_tinted_icon
+from core.rarity_tier import gbif_score_to_tier, tier_color, tier_icon, tier_name
+from ui.icon_utils import (
+    ICON_ACTIVE,
+    ICON_DANGER,
+    ICON_DISABLED,
+    ICON_IDLE,
+    load_tinted_icon,
+    stars_pixmap,
+)
 
 try:
     from ui.styles import COLORS
@@ -422,6 +431,8 @@ class CropStudio(QWidget):
 
     export_requested: Signal = Signal(dict)  # 导出请求(Task 7 接线)/ export wiring in Task 7
     closed: Signal = Signal()                # 返回 / 关闭信号
+    edit_species_requested: Signal = Signal(dict)  # 「鸟种」改名(由浏览器接线)
+    delete_requested: Signal = Signal(dict)        # 「删除」(由浏览器接线)
 
     def __init__(self, photo: dict, i18n, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -500,19 +511,113 @@ class CropStudio(QWidget):
 
     # ── 骨架占位构件(后续任务填充)/ Skeleton placeholders (filled later) ─────
 
+    def _is_zh(self) -> bool:
+        """当前是否中文界面。"""
+        return not str(getattr(self._i18n, "current_lang", "")).startswith("en")
+
     def _build_top_bar(self) -> QWidget:
-        """顶栏占位(Task 5 填充鸟种/文件名/星级/罕见度/IUCN/返回/导出)。"""
+        """顶栏:鸟种名 + 文件名(灰) + 星级 + 罕见度 pill + IUCN pill + 返回 + 导出。"""
+        p = self._photo
+        is_zh = self._is_zh()
         bar = QFrame()
         bar.setObjectName("cropStudioTopBar")
         bar.setFixedHeight(56)
         bar.setStyleSheet(
             f"QFrame#cropStudioTopBar {{ background: {_c('bg_elevated', '#1a1a1a')};"
             f" border-bottom: 1px solid {_c('border', '#2a2a2a')}; }}"
+            " QLabel { background: transparent; }"
         )
+        h = QHBoxLayout(bar)
+        h.setContentsMargins(18, 0, 14, 0)
+        h.setSpacing(12)
+
+        # 鸟种名 / Species name
+        if is_zh:
+            species = p.get("bird_species_cn") or p.get("bird_species_en") or "—"
+        else:
+            species = p.get("bird_species_en") or p.get("bird_species_cn") or "—"
+        sp_lbl = QLabel(species)
+        sp_lbl.setStyleSheet(
+            f"color: {_c('text_primary', '#fafafa')}; font-size: 16px; font-weight: 700;"
+        )
+        h.addWidget(sp_lbl)
+
+        # 文件名(灰)/ File name (gray)
+        from ui.detail_panel import _display_filename
+        fn_lbl = QLabel(_display_filename(p) or p.get("filename", ""))
+        fn_lbl.setObjectName("cropStudioFilename")
+        fn_lbl.setStyleSheet(f"color: {_c('text_tertiary', '#909090')}; font-size: 12px;")
+        h.addWidget(fn_lbl)
+
+        # 星级(SVG 金星;精选→皇冠)/ Rating stars (crown when picked)
+        rating = p.get("rating", 0)
+        star_lbl = QLabel()
+        if p.get("picked"):
+            star_lbl.setPixmap(load_tinted_icon("crown.svg", _c("star_gold", "#d4a800"), 18).pixmap(QSize(18, 18)))
+        elif isinstance(rating, int) and rating >= 1:
+            star_lbl.setPixmap(stars_pixmap(rating, _c("star_gold", "#d4a800"), size=16))
+        h.addWidget(star_lbl)
+        self._star_label = star_lbl  # 测试断言用
+
+        # 罕见度 pill / Rarity pill
+        gbif_r = p.get("gbif_rarity_100")
+        tidx = gbif_score_to_tier(gbif_r) if gbif_r is not None else None
+        if tidx is not None:
+            color = tier_color(tidx) or _c("text_secondary", "#a1a1a1")
+            pill = QLabel(f"{tier_icon(tidx)} {tier_name(tidx, is_zh=is_zh)}")
+            pill.setStyleSheet(self._pill_qss(color))
+            h.addWidget(pill)
+
+        # IUCN pill / IUCN status pill
+        iucn = p.get("iucn_category")
+        if iucn:
+            from ui.detail_panel import _format_iucn
+            text, color = _format_iucn(iucn, is_zh)
+            iucn_pill = QLabel(text)
+            iucn_pill.setStyleSheet(self._pill_qss(color))
+            h.addWidget(iucn_pill)
+
+        h.addStretch(1)
+
+        # 返回 / Back
+        back_btn = QPushButton("  " + self._i18n.t("crop_studio.back"))
+        back_btn.setIcon(load_tinted_icon("arrow-left.svg", ICON_IDLE, 16))
+        back_btn.setIconSize(QSize(16, 16))
+        back_btn.setCursor(Qt.PointingHandCursor)
+        back_btn.setStyleSheet(
+            f"QPushButton {{ color: {_c('text_secondary', '#a1a1a1')}; background: transparent;"
+            f" border: 1px solid {_c('border', '#2a2a2a')}; border-radius: 8px; padding: 7px 14px;"
+            " font-size: 13px; }"
+            f"QPushButton:hover {{ background: {_c('bg_card', '#1f1f1f')}; }}"
+        )
+        back_btn.clicked.connect(self.close)
+        h.addWidget(back_btn)
+
+        # 导出(金底)/ Export (gold)
+        export_btn = QPushButton("  " + self._i18n.t("crop_studio.export"))
+        export_btn.setIcon(load_tinted_icon("download.svg", "#0a0a0a", 16))
+        export_btn.setIconSize(QSize(16, 16))
+        export_btn.setCursor(Qt.PointingHandCursor)
+        gold = _c("star_gold", "#d4a800")
+        export_btn.setStyleSheet(
+            f"QPushButton {{ color: #0a0a0a; background: {gold}; border: none;"
+            " border-radius: 8px; padding: 7px 16px; font-size: 13px; font-weight: 700; }"
+            "QPushButton:hover { background: #e8c020; }"
+        )
+        export_btn.clicked.connect(self._on_export_clicked)
+        h.addWidget(export_btn)
+        self._export_btn = export_btn
         return bar
 
+    def _pill_qss(self, color: str) -> str:
+        """罕见度/IUCN 描边 pill 样式。"""
+        return (
+            f"color: {color}; border: 1px solid {color}; border-radius: 9px;"
+            " padding: 2px 9px; font-size: 11px; font-weight: 600;"
+        )
+
     def _build_toolbar(self) -> QWidget:
-        """左竖工具栏占位(Task 5 填充:裁剪/特写/鸟种/自动/删除)。"""
+        """左竖工具栏:图标 + 下方文字。裁剪/特写/鸟种/自动/删除(删除红、沉底)。"""
         tb = QFrame()
         tb.setObjectName("cropStudioToolbar")
         tb.setFixedWidth(72)
@@ -520,7 +625,51 @@ class CropStudio(QWidget):
             f"QFrame#cropStudioToolbar {{ background: {_c('bg_elevated', '#1a1a1a')};"
             f" border-right: 1px solid {_c('border', '#2a2a2a')}; }}"
         )
+        v = QVBoxLayout(tb)
+        v.setContentsMargins(6, 12, 6, 12)
+        v.setSpacing(6)
+
+        self._tool_buttons: dict[str, QToolButton] = {}
+        self._btn_crop = self._tool_btn("crop.svg", self._i18n.t("crop_studio.tb_crop"),
+                                        lambda: self._set_mode("manual"))
+        v.addWidget(self._btn_crop)
+        self._btn_closeup = self._tool_btn("bird.svg", self._i18n.t("crop_studio.tb_closeup"),
+                                           self._select_bird_only)
+        v.addWidget(self._btn_closeup)
+        self._btn_species = self._tool_btn("square-pen.svg", self._i18n.t("crop_studio.tb_species"),
+                                           lambda: self.edit_species_requested.emit(self._photo))
+        v.addWidget(self._btn_species)
+        self._btn_auto = self._tool_btn("image-plus.svg", self._i18n.t("crop_studio.tb_auto"),
+                                        lambda: self._set_mode("auto"))
+        v.addWidget(self._btn_auto)
+
+        v.addStretch(1)
+
+        self._btn_delete = self._tool_btn("trash-2.svg", self._i18n.t("crop_studio.tb_delete"),
+                                          lambda: self.delete_requested.emit(self._photo), danger=True)
+        v.addWidget(self._btn_delete)
         return tb
+
+    def _tool_btn(self, svg: str, text: str, on_click, *, danger: bool = False) -> QToolButton:
+        """构建一个「图标在上、文字在下」的竖排工具按钮。"""
+        btn = QToolButton()
+        btn.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+        btn.setIcon(load_tinted_icon(svg, ICON_DANGER if danger else ICON_IDLE, 22))
+        btn.setIconSize(QSize(22, 22))
+        btn.setText(text)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setProperty("svg", svg)
+        btn.setProperty("danger", "true" if danger else "false")
+        btn.setFixedSize(60, 52)
+        color = ICON_DANGER if danger else _c("text_secondary", "#a1a1a1")
+        btn.setStyleSheet(
+            f"QToolButton {{ color: {color}; background: transparent; border: none;"
+            " border-radius: 8px; font-size: 11px; }"
+            f"QToolButton:hover {{ background: {_c('bg_card', '#1f1f1f')}; }}"
+        )
+        if on_click is not None:
+            btn.clicked.connect(on_click)
+        return btn
 
     def _build_candidate_panel(self) -> QWidget:
         """右候选面板:滚动区 + 双列网格 + 状态提示标签。"""
@@ -647,6 +796,75 @@ class CropStudio(QWidget):
         if img is not None:
             self._canvas.set_image(img)
             self._current_box = None
+
+    def _select_bird_only(self) -> None:
+        """「特写」:切回裁剪模式并选中纯鸟图候选(若有)。"""
+        if self._mode != "crop":
+            self._set_mode("crop")
+        for i, s in enumerate(self._suggestions):
+            if s.ratio_label == BIRD_ONLY_LABEL:
+                self._select_candidate(i)
+                return
+
+    # ── 模式切换 / Mode switching ─────────────────────────────────────────────
+
+    def _set_mode(self, mode: str) -> None:
+        """
+        切换工作模式:
+          crop   — 裁剪(默认):大图=选中候选裁剪图,右栏=候选。
+          manual — 手动裁剪(Task 6 填充拖拽框):大图=整图,可拖拽框。
+          auto   — 自动后期(本期占位,仅标记模式)。
+        「裁剪」按钮在 manual 下高亮;再次点击回到 crop。
+        """
+        # 「裁剪」按钮作为 manual 的开关 / the Crop button toggles manual mode
+        if mode == "manual" and self._mode == "manual":
+            mode = "crop"
+        self._mode = mode
+        self._update_tool_active()
+
+        if mode == "crop":
+            if self._suggestions and 0 <= self._selected_index < len(self._suggestions):
+                self._select_candidate(self._selected_index)
+        elif mode == "manual":
+            # 手动模式显示整图(Task 6 叠加可拖拽裁剪框)
+            self._enter_manual_mode()
+        elif mode == "auto":
+            # 自动后期占位:本期不改画布,仅提示即将推出
+            self._cand_hint.setText(self._i18n.t("crop_studio.auto_coming_soon"))
+            self._cand_hint.show()
+
+    def _enter_manual_mode(self) -> None:
+        """进入手动裁剪模式:画布显示整图(Task 6 叠加拖拽框 + 实时 TOPIQ)。"""
+        self._show_full_on_canvas()
+
+    def _update_tool_active(self) -> None:
+        """根据当前模式高亮工具按钮(裁剪=manual,自动=auto)。"""
+        accent = _c("accent", "#00d4aa")
+        sub = _c("text_secondary", "#a1a1a1")
+        for btn, on in (
+            (getattr(self, "_btn_crop", None), self._mode == "manual"),
+            (getattr(self, "_btn_auto", None), self._mode == "auto"),
+        ):
+            if btn is None:
+                continue
+            svg = btn.property("svg")
+            btn.setIcon(load_tinted_icon(svg, ICON_ACTIVE if on else ICON_IDLE, 22))
+            color = accent if on else sub
+            btn.setStyleSheet(
+                f"QToolButton {{ color: {color}; background: transparent; border: none;"
+                " border-radius: 8px; font-size: 11px; }"
+                f"QToolButton:hover {{ background: {_c('bg_card', '#1f1f1f')}; }}"
+            )
+
+    # ── 导出(Task 7 实现文件对话框)/ Export (file dialog wired in Task 7) ────
+
+    def _on_export_clicked(self) -> None:
+        """导出按钮点击。Task 7 实现:选路径 → 后台 export_crop。当前转发为信号。"""
+        self.export_requested.emit({
+            "src": self._image_path,
+            "box": self._current_box,
+            "photo": self._photo,
+        })
 
     # ── 关闭 / Close ──────────────────────────────────────────────────────────
 

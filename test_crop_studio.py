@@ -103,6 +103,57 @@ def test_advice_no_bird_shows_hint():
     w.close()
 
 
+def test_top_bar_shows_filename_and_stars():
+    """顶栏含文件名文本,星级 pixmap 非空(rating>=1)。"""
+    from ui.crop_studio import CropStudio
+
+    photo = {
+        "filename": "Z9W1.NEF",
+        "current_path": "/nonexist/Z9W1.NEF",
+        "bird_species_cn": "红头鸲鹟",
+        "bird_species_en": "Red-headed robin",
+        "rating": 4,
+        "gbif_rarity_100": 60.0,
+        "iucn_category": "LC",
+    }
+    w = CropStudio(photo, get_i18n())
+    w._worker.wait(5000)
+    _app.processEvents()
+
+    # 文件名 label 文本
+    fn = w.findChild(type(w._star_label), "cropStudioFilename")
+    assert fn is not None and "Z9W1.NEF" in fn.text()
+    # 星级 pixmap 非空
+    pm = w._star_label.pixmap()
+    assert pm is not None and not pm.isNull()
+    w.close()
+
+
+def test_set_mode_toggles_and_emits():
+    """模式切换不崩;鸟种/删除按钮发出对应信号。"""
+    from ui.crop_studio import CropStudio
+
+    photo = {"filename": "e.NEF", "current_path": "/nonexist/e.NEF", "rating": 2}
+    w = CropStudio(photo, get_i18n())
+    w._worker.wait(5000)
+    _app.processEvents()
+
+    got = {}
+    w.edit_species_requested.connect(lambda p: got.setdefault("species", p))
+    w.delete_requested.connect(lambda p: got.setdefault("delete", p))
+    w._btn_species.click()
+    w._btn_delete.click()
+    assert "species" in got and "delete" in got
+
+    w._set_mode("manual")
+    assert w._mode == "manual"
+    w._set_mode("manual")  # 再次点击回到 crop
+    assert w._mode == "crop"
+    w._set_mode("auto")
+    assert w._mode == "auto"
+    w.close()
+
+
 def test_resolve_prefers_temp_jpeg():
     """temp_jpeg_path 存在时应优先于 current/original。"""
     from ui.crop_studio import CropStudio

@@ -1415,6 +1415,14 @@
     "bird_only": "纯鸟图"
   },
   "crop_studio": {
-    "best": "最佳"
+    "best": "最佳",
+    "tb_crop": "裁剪",
+    "tb_closeup": "特写",
+    "tb_species": "鸟种",
+    "tb_auto": "自动",
+    "tb_delete": "删除",
+    "back": "返回",
+    "export": "导出",
+    "auto_coming_soon": "自动后期功能即将推出"
   }
 }

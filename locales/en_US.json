@@ -1415,6 +1415,14 @@
     "bird_only": "Bird only"
   },
   "crop_studio": {
-    "best": "Best"
+    "best": "Best",
+    "tb_crop": "Crop",
+    "tb_closeup": "Close-up",
+    "tb_species": "Species",
+    "tb_auto": "Auto",
+    "tb_delete": "Delete",
+    "back": "Back",
+    "export": "Export",
+    "auto_coming_soon": "Auto adjustments coming soon"
   }
 }
