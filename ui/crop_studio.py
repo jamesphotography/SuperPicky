@@ -170,6 +170,43 @@ class _ExportWorker(QThread):
             self.done.emit(False, str(e))
 
 
+# ── 修图预览 / Enhance preview ────────────────────────────────────────────────
+
+PREVIEW_LONG_EDGE = 1280  # 预览降采样目标长边 / preview downscale long edge
+
+
+def _pipeline_enhance(img_rgb, opts, **kw):
+    """
+    间接调用 pipeline.enhance,便于测试替换 / indirection for testability.
+
+    懒导入,避免无修图时引入 torch/enhance 依赖。
+    Lazy import so non-enhance paths don't pull in torch/enhance.
+    """
+    from core.enhance.pipeline import enhance as _e  # noqa: PLC0415
+    return _e(img_rgb, opts, **kw)
+
+
+class _EnhanceWorker(QThread):
+    """
+    后台对预览图跑修图管线,完成回传修图后 RGB ndarray;失败回传原图。
+    Runs the enhance pipeline off the UI thread; emits the enhanced RGB ndarray
+    (or the original on failure, so the UI always gets a usable image).
+    """
+
+    done: Signal = Signal(object)
+
+    def __init__(self, img_rgb, opts) -> None:
+        super().__init__()
+        self._img, self._opts = img_rgb, opts
+
+    def run(self) -> None:
+        try:
+            out = _pipeline_enhance(self._img, self._opts)
+        except Exception:  # noqa: BLE001 — 预览失败回退原图 / fall back to original
+            out = self._img
+        self.done.emit(out)
+
+
 # ── 可框选图片标签 / Crop-drawing image label ─────────────────────────────────
 
 
