@@ -37,6 +37,7 @@ PHOTO_COLUMNS = [
     ("is_flying",     "INTEGER", 0),          # 0=no, 1=yes
     ("flight_conf",   "REAL", None),
     ("rating",        "INTEGER", 0),          # -1/0/1/2/3
+    ("picked",        "INTEGER", 0),          # 精选旗标:选鸟时 3★ 中美学∩锐度 top% 的交集(0/1)
     ("focus_status",  "TEXT", None),           # BEST/GOOD/BAD/WORST
     ("focus_x",       "REAL", None),
     ("focus_y",       "REAL", None),
@@ -650,18 +651,18 @@ class ReportDB:
             where_clauses.append(f"{species_col} = ?")
             params.append(species_val.strip())
 
+        # 精选(picked):直接用选鸟时写入的持久旗标列(3★ 中美学∩锐度 top% 的交集)。
+        # 旧目录(未重跑选鸟)该列全为 0,需重跑后才有结果。
+        if filters.get("picked_only", False):
+            where_clauses.append("picked = 1")
+
         where_sql = ""
         if where_clauses:
             where_sql = "WHERE " + " AND ".join(where_clauses)
 
         # Determine sort order
         sort_by = filters.get("sort_by") or "filename"
-        picked_only = filters.get("picked_only", False)
-
-        if picked_only:
-            # 精选模式：先全量取回，再 Python 层按 topiq+sharpness 确定 top 25%
-            order_sql = "ORDER BY filename ASC"
-        elif sort_by == "sharpness_desc":
+        if sort_by == "sharpness_desc":
             order_sql = "ORDER BY COALESCE(adj_sharpness, head_sharp, -1e99) DESC, filename ASC"
         elif sort_by == "aesthetic_desc":
             order_sql = "ORDER BY COALESCE(adj_topiq, nima_score, -1e99) DESC, filename ASC"
@@ -676,30 +677,6 @@ class ReportDB:
         with self._lock:
             cursor = self._conn.execute(sql, params)
             results = [dict(row) for row in cursor.fetchall()]
-
-            if picked_only and results:
-                # 按 topiq+sharpness 选出 top 25%（选片逻辑不变）
-                results.sort(key=lambda x: (
-                    x.get("adj_topiq") or x.get("nima_score") or -1e99,
-                    x.get("adj_sharpness") or x.get("head_sharp") or -1e99,
-                    x.get("filename") or ""
-                ), reverse=True)
-                num_to_keep = max(1, int(len(results) * 0.25))
-                results = results[:num_to_keep]
-
-                # 截取后按用户的 sort_by 重新排序展示
-                if sort_by == "sharpness_desc":
-                    results.sort(key=lambda x: (
-                        -(x.get("adj_sharpness") or x.get("head_sharp") or -1e99),
-                        x.get("filename", "")
-                    ))
-                elif sort_by == "aesthetic_desc":
-                    results.sort(key=lambda x: (
-                        -(x.get("adj_topiq") or x.get("nima_score") or -1e99),
-                        x.get("filename", "")
-                    ))
-                else:
-                    results.sort(key=lambda x: x.get("filename", ""))
 
         return results
 

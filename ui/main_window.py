@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QSystemTrayIcon, QApplication  # V4.0: 系统托盘图标
 )
-from PySide6.QtCore import Qt, Signal, QObject, Slot, QTimer, QPropertyAnimation, QEasingCurve, QMimeData, QThread, QStandardPaths
+from PySide6.QtCore import Qt, Signal, QObject, Slot, QTimer, QPropertyAnimation, QEasingCurve, QMimeData, QThread, QStandardPaths, QSize
 from PySide6.QtGui import QFont, QPixmap, QIcon, QAction, QTextCursor, QColor, QDragEnterEvent, QDropEvent
 
 from tools.i18n import get_i18n, set_primary_language
@@ -40,6 +40,7 @@ from ui.styles import (
     COLORS, FONTS, LOG_COLORS, PROGRESS_INFO_STYLE, PROGRESS_PERCENT_STYLE
 )
 from ui.custom_dialogs import StyledMessageBox
+from ui.icon_utils import load_tinted_icon, checkbox_indicator_qss, ICON_IDLE
 from ui.skill_level_dialog import SkillLevelDialog, SKILL_PRESETS, get_skill_level_thresholds
 from ui.welcome_onboarding_dialog import EnvironmentRepairDialog, WelcomeOnboardingDialog
 from core.initialization_manager import InitializationManager
@@ -1288,7 +1289,9 @@ class SuperPickyMainWindow(QMainWindow):
         self.dir_input.pathDropped.connect(self._on_path_dropped)     # V3.9: 拖放目录
         dir_layout.addWidget(self.dir_input, 1)
 
-        browse_btn = QPushButton(self.i18n.t("labels.browse"))
+        browse_btn = QPushButton("  " + self.i18n.t("labels.browse"))
+        browse_btn.setIcon(load_tinted_icon("folder.svg", ICON_IDLE, 16))
+        browse_btn.setIconSize(QSize(16, 16))
         browse_btn.setObjectName("browse")
         browse_btn.setMinimumWidth(100)
         browse_btn.clicked.connect(self._browse_directory)
@@ -1330,6 +1333,7 @@ class SuperPickyMainWindow(QMainWindow):
 
         self.flight_check = QCheckBox()
         self.flight_check.setChecked(self.config.flight_check)
+        self.flight_check.setStyleSheet(checkbox_indicator_qss(16, COLORS['text_muted'], COLORS['accent']))
         flight_layout.addWidget(self.flight_check)
 
         header_layout.addLayout(flight_layout)
@@ -1344,6 +1348,7 @@ class SuperPickyMainWindow(QMainWindow):
         
         self.burst_check = QCheckBox()
         self.burst_check.setChecked(self.config.burst_check)
+        self.burst_check.setStyleSheet(checkbox_indicator_qss(16, COLORS['text_muted'], COLORS['accent']))
         burst_layout.addWidget(self.burst_check)
         
         header_layout.addLayout(burst_layout)
@@ -1361,6 +1366,7 @@ class SuperPickyMainWindow(QMainWindow):
         birdid_layout.addWidget(birdid_label)
         
         self.birdid_check = QCheckBox()
+        self.birdid_check.setStyleSheet(checkbox_indicator_qss(16, COLORS['text_muted'], COLORS['accent']))
         # 从保存的设置中读取状态
         birdid_saved_state = False
         try:
@@ -1556,7 +1562,10 @@ class SuperPickyMainWindow(QMainWindow):
         btn_layout.addStretch()
 
         # 查看选鸟结果按钮（主按钮，默认隐藏）
-        self.view_results_btn = QPushButton(self.i18n.t("labels.view_results_arrow"))
+        self.view_results_btn = QPushButton(self.i18n.t("labels.view_results_arrow") + "  ")
+        self.view_results_btn.setIcon(load_tinted_icon("arrow-right.svg", ICON_IDLE, 16))
+        self.view_results_btn.setIconSize(QSize(16, 16))
+        self.view_results_btn.setLayoutDirection(Qt.RightToLeft)  # 箭头置于文字右侧
         self.view_results_btn.setMinimumWidth(160)
         self.view_results_btn.setMinimumHeight(40)
         self.view_results_btn.clicked.connect(self._open_results_smart)
@@ -2308,24 +2317,15 @@ class SuperPickyMainWindow(QMainWindow):
             if reply != StyledMessageBox.Yes:
                 return
 
-        # V4.3.0: 无 manifest（旧版/跨版本/鸟种优先新结构）时，询问是否「高级重置」——
-        # 按目录名识别 SuperPicky 生成的鸟种/评分/其他鸟类/burst 目录并把文件递归摊平回根。
-        # 有 manifest 则照旧（manifest 精确复原）。仅手动重置时询问。
-        # No manifest → offer advanced reset (name-based flatten); with manifest, keep
-        # the existing manifest-driven restore. Only prompt on manual reset.
-        advanced_flatten = False
-        if not skip_confirm:
-            manifest_path = os.path.join(self.directory_path, ".superpicky_manifest.json")
-            if not os.path.exists(manifest_path):
-                adv_reply = StyledMessageBox.question(
-                    self,
-                    self.i18n.t("messages.adv_reset_title"),
-                    self.i18n.t("messages.adv_reset_body"),
-                    yes_text=self.i18n.t("labels.yes"),
-                    no_text=self.i18n.t("labels.no")
-                )
-                advanced_flatten = (adv_reply == StyledMessageBox.Yes)
-
+        # V4.3.1: 「按目录名摊平」从「无 manifest 才询问」改为 reset 末尾无条件自动兜底
+        # （见 run_reset 内的 force_flatten_directory 调用）。manifest 可能不完整
+        # （如连拍成员从未入库），仅靠 manifest 恢复会把残留在 鸟种/星级/burst_ 子目录
+        # 里的文件永久遗漏；force_flatten 幂等安全（同名不覆盖、只动 SuperPicky 目录、
+        # 不碰用户目录），因此始终执行即可，无需再询问用户。
+        # V4.3.1: name-based flatten is now an unconditional safety net at the end of
+        # run_reset (no longer gated on "no manifest"), because manifests can be
+        # incomplete (e.g. burst members never recorded) and manifest-only restore
+        # would otherwise strand files in species/rating/burst_ subdirs.
         self.log_text.clear()
         self.reset_btn.setEnabled(False)
         self.start_btn.setEnabled(False)
@@ -2344,7 +2344,6 @@ class SuperPickyMainWindow(QMainWindow):
         complete_signal = self.reset_complete_signal
         error_signal = self.reset_error_signal
         _skip_exif_reset = skip_exif_reset  # 传递给线程
-        _advanced_flatten = advanced_flatten  # 高级重置标志，传递给线程
 
         def run_reset():
             restore_stats = {'restored': 0, 'failed': 0}
@@ -2384,14 +2383,6 @@ class SuperPickyMainWindow(QMainWindow):
                                         dirs=vid_total['dirs_removed']))
                 except Exception as _ve:
                     emit_log(i18n.t("logs.video_restore_failed", error=_ve))
-
-                # V4.3.0: 高级重置——无 manifest 时按目录名识别 SuperPicky 目录并摊平。
-                # 先摊平到根，随后的 reset() 再统一删 .superpicky/XMP/日志 + 重置 EXIF。
-                # Advanced reset: name-based flatten first; the reset() below then wipes
-                # .superpicky/XMP/logs and resets EXIF on the flattened root files.
-                if _advanced_flatten:
-                    from tools.find_bird_util import force_flatten_directory
-                    force_flatten_directory(directory_path, log_callback=emit_log, i18n=i18n)
 
                 # Batch mode: reset processed subdirectories first (deepest first)
                 from core.recursive_scanner import is_processed
@@ -2499,6 +2490,19 @@ class SuperPickyMainWindow(QMainWindow):
                 total_restored = restored_count + fallback_restored
                 if total_restored == 0:
                     emit_log(i18n.t("logs.no_files_to_restore"))
+
+                # V4.3.1: 无条件「按目录名摊平」兜底——把仍残留在 鸟种/星级/burst_
+                # 子目录里的文件递归移回根目录。manifest 可能不完整（连拍成员未入库等），
+                # 仅靠上面的 manifest/根目录评分扫描会遗漏鸟种优先布局下的深层文件。
+                # force_flatten 幂等安全（同名不覆盖、只动 SuperPicky 目录、不碰用户目录），
+                # 无残留时 moved=0，因此始终执行无副作用。
+                # V4.3.1: unconditional name-based flatten safety net — recursively move
+                # any files still stranded in species/rating/burst_ subdirs back to root.
+                try:
+                    from tools.find_bird_util import force_flatten_directory
+                    force_flatten_directory(directory_path, log_callback=emit_log, i18n=i18n)
+                except Exception as _fe:
+                    emit_log(f"⚠️ flatten fallback failed: {_fe}")
 
                 # V4.0.4: 根据模式决定是否重置EXIF
                 if _skip_exif_reset:
