@@ -18,6 +18,17 @@ import cv2
 Box = Tuple[int, int, int, int]
 
 
+def _enhance(img_rgb, opts, **kw):
+    """
+    间接调用 pipeline.enhance,便于测试替换 / indirection for testability.
+
+    懒导入,避免在不修图的导出路径上引入 torch/enhance 依赖。
+    Lazy import so the no-enhance export path doesn't pull in torch/enhance.
+    """
+    from core.enhance.pipeline import enhance as _e  # noqa: PLC0415
+    return _e(img_rgb, opts, **kw)
+
+
 def default_out_path(src_path: str, suffix: str = "_crop") -> str:
     """
     由原图路径推导导出路径,输出恒为 .jpg。
@@ -34,6 +45,7 @@ def export_crop(src_path: str, box: Optional[Box], out_path: str, *,
                 jpeg_quality: int = 95, copy_exif: bool = True,
                 exif_src: Optional[str] = None,
                 out_size: Optional[Tuple[int, int]] = None,
+                enhance_opts: Optional["object"] = None,
                 _image_loader: Optional[Callable[[str], "object"]] = None) -> str:
     """
     读取源图(可解码的 JPEG/预览),按 box 裁剪后写 JPEG;box=None 表示导出整图副本。
@@ -50,6 +62,7 @@ def export_crop(src_path: str, box: Optional[Box], out_path: str, *,
         exif_src (Optional[str]): EXIF 来源文件;None 时用 src_path。
                                   ExifTool 可从 RAW 读元数据,故可传原始 RAW 以保全元数据。
         out_size (Optional[Tuple[int,int]]): 目标 (宽,高);None=保持裁剪原始尺寸。
+        enhance_opts (Optional[EnhanceOptions]): 修图选项;None=不修图(行为同现状)。
         _image_loader (Callable): 可注入的解码函数(测试用);默认 EXIF-aware loader。
 
     返回 / Returns:
@@ -76,6 +89,13 @@ def export_crop(src_path: str, box: Optional[Box], out_path: str, *,
         y1 = max(0, min(int(y1), h - 1))
         y2 = max(y1 + 1, min(int(y2), h))
         img = img[y1:y2, x1:x2]
+
+    # 自动修图(裁剪后、导出前):cv2 为 BGR,pipeline 约定 RGB,故来回转换。
+    # Auto-enhance after crop, before write: cv2 is BGR, pipeline expects RGB.
+    if enhance_opts is not None:
+        rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        rgb = _enhance(rgb, enhance_opts)
+        img = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
 
     # 可选重采样到目标尺寸(下采样用 INTER_AREA,上采样用 INTER_CUBIC)
     # Optional resample to a target size (INTER_AREA for shrink, INTER_CUBIC for enlarge).
