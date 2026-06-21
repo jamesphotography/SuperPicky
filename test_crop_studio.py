@@ -33,6 +33,20 @@ def test_crop_studio_constructs():
     w.close()
 
 
+def test_canvas_set_image():
+    """_Canvas 显示图像并 fit/actual_size 不崩。"""
+    import numpy as np
+    from ui.crop_studio import _Canvas
+
+    c = _Canvas()
+    c.set_image(np.zeros((60, 100, 3), "uint8"))
+    c.fit()
+    c.actual_size()
+    c.zoom_in()
+    c.zoom_out()
+    assert c is not None
+
+
 def test_resolve_prefers_temp_jpeg():
     """temp_jpeg_path 存在时应优先于 current/original。"""
     from ui.crop_studio import CropStudio

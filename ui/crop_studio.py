@@ -21,15 +21,24 @@ from __future__ import annotations
 import os
 from typing import Optional
 
+import cv2
+import numpy as np
 from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtGui import QColor, QImage, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
+    QGraphicsDropShadowEffect,
     QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QScrollArea,
+    QSlider,
     QVBoxLayout,
     QWidget,
 )
 
 from core.crop_advisor import CropAdviceResult, advise_crops
+from ui.icon_utils import ICON_ACTIVE, ICON_IDLE, load_tinted_icon
 
 try:
     from ui.styles import COLORS
@@ -44,6 +53,26 @@ CANVAS_BG: str = "#808080"
 def _c(key: str, fallback: str) -> str:
     """读取主题色,缺失则用兜底值 / Read a theme color with a fallback."""
     return COLORS.get(key, fallback)
+
+
+# 画布源像素图最大边(限制内存;1:1 仍能呈现足够细节)/
+# Max side of the canvas source pixmap (bounds memory; still detailed enough for 1:1).
+_CANVAS_SRC_MAX: int = 6000
+
+
+def _bgr_to_qpixmap(bgr: np.ndarray, max_side: int = _CANVAS_SRC_MAX) -> QPixmap:
+    """
+    BGR ndarray → QPixmap,长边超过 max_side 时按比例缩小。
+    Convert a BGR ndarray to QPixmap, downscaling if the longest side exceeds max_side.
+    """
+    h, w = bgr.shape[:2]
+    scale = min(1.0, max_side / max(h, w)) if max(h, w) else 1.0
+    if scale < 1.0:
+        bgr = cv2.resize(bgr, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+    rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+    hh, ww = rgb.shape[:2]
+    img = QImage(rgb.data, ww, hh, 3 * ww, QImage.Format_RGB888)
+    return QPixmap.fromImage(img.copy())
 
 
 # ── 后台候选加载线程 / Background advice worker ───────────────────────────────
@@ -70,6 +99,200 @@ class _AdviceWorker(QThread):
         except Exception:  # noqa: BLE001 — 线程内不崩 / never crash the thread
             result = CropAdviceResult(status="no_bird", bird_count=0)
         self.done.emit(result)
+
+
+# ── 看图画布 / Image canvas ───────────────────────────────────────────────────
+
+
+class _Canvas(QWidget):
+    """
+    深灰看图画布:图片居中、fit-to-window、可缩放(滑块/按钮)、白边 + 投影「裱框」感,
+    底部浮动 zoom 工具条(− / 滑块 / + / 百分比 / 适应 / 1:1 / 看原图)。
+
+    Neutral-gray viewing canvas: image centered, fit-to-window, zoomable
+    (slider/buttons), framed with a 2px white border + drop shadow, plus a
+    floating bottom zoom bar (− / slider / + / percent / fit / 1:1 / peek).
+    缩放因子 self._zoom 以「源像素图实际像素」为基准:1.0 = 100%(1:1)。
+    """
+
+    zoom_changed: Signal = Signal(float)   # 当前缩放因子(0.68 表示 68%)
+    peek_changed: Signal = Signal(bool)    # 按住「看原图」(True=按下)
+
+    PCT_MIN: int = 10
+    PCT_MAX: int = 400
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._src: Optional[QPixmap] = None  # 源像素图(当前显示图的全尺寸)
+        self._zoom: float = 1.0              # 缩放因子(相对源像素图实际像素)
+
+        # ── 可滚动图片视口(支持 1:1 超出时滚动)/ Scrollable image viewport ──
+        self._scroll = QScrollArea(self)
+        self._scroll.setFrameShape(QFrame.NoFrame)
+        self._scroll.setWidgetResizable(False)
+        self._scroll.setAlignment(Qt.AlignCenter)
+        self._scroll.setStyleSheet(
+            f"QScrollArea {{ background: {CANVAS_BG}; border: none; }}"
+            f" QScrollArea > QWidget > QWidget {{ background: {CANVAS_BG}; }}"
+        )
+
+        self._img = QLabel()
+        self._img.setAlignment(Qt.AlignCenter)
+        self._img.setStyleSheet("border: 2px solid #ffffff; background: transparent;")
+        shadow = QGraphicsDropShadowEffect(self._img)
+        shadow.setBlurRadius(40)
+        shadow.setOffset(0, 12)
+        shadow.setColor(QColor(0, 0, 0, 160))
+        self._img.setGraphicsEffect(shadow)
+        self._scroll.setWidget(self._img)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._scroll)
+
+        self._zoom_bar = self._build_zoom_bar()
+        self._zoom_bar.setParent(self)
+        self._zoom_bar.raise_()
+        self._zoom_bar.hide()  # 有图后再显示 / shown once an image is set
+
+    # ── 浮动 zoom 工具条 / Floating zoom bar ──────────────────────────────────
+
+    def _build_zoom_bar(self) -> QWidget:
+        """构建底部浮动 zoom 工具条。"""
+        bar = QFrame()
+        bar.setObjectName("zoomBar")
+        bar.setStyleSheet(
+            "QFrame#zoomBar { background: rgba(20,20,20,230); border-radius: 18px; }"
+            "QPushButton { background: transparent; border: none; padding: 4px; }"
+            "QLabel { color: #e8e8ea; font-size: 12px; background: transparent; }"
+        )
+        h = QHBoxLayout(bar)
+        h.setContentsMargins(12, 6, 12, 6)
+        h.setSpacing(8)
+
+        self._btn_minus = self._icon_button("minus.svg", self.zoom_out)
+        h.addWidget(self._btn_minus)
+
+        self._slider = QSlider(Qt.Horizontal)
+        self._slider.setFixedWidth(160)
+        self._slider.setRange(self.PCT_MIN, self.PCT_MAX)
+        self._slider.setValue(100)
+        self._slider.valueChanged.connect(self._on_slider)
+        h.addWidget(self._slider)
+
+        self._btn_plus = self._icon_button("plus.svg", self.zoom_in)
+        h.addWidget(self._btn_plus)
+
+        self._pct_lbl = QLabel("100%")
+        self._pct_lbl.setFixedWidth(44)
+        self._pct_lbl.setAlignment(Qt.AlignCenter)
+        h.addWidget(self._pct_lbl)
+
+        self._btn_fit = self._icon_button("fullscreen.svg", self.fit)
+        h.addWidget(self._btn_fit)
+
+        self._btn_one = QPushButton("1:1")
+        self._btn_one.setStyleSheet("color: #e8e8ea; font-size: 12px; background: transparent; border: none;")
+        self._btn_one.setCursor(Qt.PointingHandCursor)
+        self._btn_one.clicked.connect(self.actual_size)
+        h.addWidget(self._btn_one)
+
+        self._btn_eye = self._icon_button("eye.svg", None)
+        self._btn_eye.pressed.connect(lambda: self.peek_changed.emit(True))
+        self._btn_eye.released.connect(lambda: self.peek_changed.emit(False))
+        h.addWidget(self._btn_eye)
+
+        bar.adjustSize()
+        return bar
+
+    def _icon_button(self, svg: str, on_click) -> QPushButton:
+        """构建一个染色 SVG 图标按钮。"""
+        btn = QPushButton()
+        btn.setIcon(load_tinted_icon(svg, ICON_IDLE, 18))
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setFixedSize(28, 28)
+        if on_click is not None:
+            btn.clicked.connect(on_click)
+        return btn
+
+    # ── 图像与缩放 / Image & zoom ─────────────────────────────────────────────
+
+    def set_image(self, bgr: np.ndarray) -> None:
+        """设置画布显示的图像(BGR),并 fit-to-window。"""
+        self._src = _bgr_to_qpixmap(bgr)
+        self._zoom_bar.show()
+        self.fit()
+
+    def _apply(self) -> None:
+        """按当前缩放因子渲染源图到内部 QLabel。"""
+        if self._src is None or self._src.isNull():
+            return
+        w = max(1, int(round(self._src.width() * self._zoom)))
+        h = max(1, int(round(self._src.height() * self._zoom)))
+        scaled = self._src.scaled(w, h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self._img.setPixmap(scaled)
+        self._img.adjustSize()
+        self._sync_controls()
+
+    def _sync_controls(self) -> None:
+        """同步滑块/百分比显示(屏蔽信号防回环)。"""
+        pct = int(round(self._zoom * 100))
+        self._pct_lbl.setText(f"{pct}%")
+        blocked = self._slider.blockSignals(True)
+        self._slider.setValue(max(self.PCT_MIN, min(self.PCT_MAX, pct)))
+        self._slider.blockSignals(blocked)
+
+    def set_zoom(self, factor: float) -> None:
+        """设置绝对缩放因子(1.0 = 1:1),夹到 [PCT_MIN, PCT_MAX]。"""
+        factor = max(self.PCT_MIN / 100.0, min(self.PCT_MAX / 100.0, float(factor)))
+        self._zoom = factor
+        self._apply()
+        self.zoom_changed.emit(self._zoom)
+
+    def fit(self) -> None:
+        """适应窗口:按视口尺寸等比缩放(可放大至上限,可缩小)。"""
+        if self._src is None or self._src.isNull():
+            return
+        vp = self._scroll.viewport().size()
+        sw, sh = self._src.width(), self._src.height()
+        if sw <= 0 or sh <= 0 or vp.width() <= 0 or vp.height() <= 0:
+            self.set_zoom(1.0)
+            return
+        # 留一点边距,避免贴边 / leave a small margin so it doesn't touch edges
+        factor = min((vp.width() - 24) / sw, (vp.height() - 24) / sh)
+        self.set_zoom(max(self.PCT_MIN / 100.0, factor))
+
+    def actual_size(self) -> None:
+        """1:1 实际像素。"""
+        self.set_zoom(1.0)
+
+    def zoom_in(self) -> None:
+        """放大一档(×1.25)。"""
+        self.set_zoom(self._zoom * 1.25)
+
+    def zoom_out(self) -> None:
+        """缩小一档(×0.8)。"""
+        self.set_zoom(self._zoom * 0.8)
+
+    def _on_slider(self, value: int) -> None:
+        """滑块拖动 → 设置缩放。"""
+        self.set_zoom(value / 100.0)
+
+    # ── 浮动条定位 / Floating bar positioning ─────────────────────────────────
+
+    def resizeEvent(self, event) -> None:  # type: ignore[override]
+        """重定位浮动 zoom 工具条到底部居中。"""
+        super().resizeEvent(event)
+        self._reposition_zoom_bar()
+
+    def _reposition_zoom_bar(self) -> None:
+        """把 zoom 工具条放到画布底部居中。"""
+        bw = self._zoom_bar.sizeHint().width()
+        bh = self._zoom_bar.sizeHint().height()
+        self._zoom_bar.resize(bw, bh)
+        x = (self.width() - bw) // 2
+        y = self.height() - bh - 18
+        self._zoom_bar.move(max(0, x), max(0, y))
 
 
 # ── 工作区主体 / Workspace widget ─────────────────────────────────────────────
@@ -123,8 +346,8 @@ class CropStudio(QWidget):
         self._toolbar = self._build_toolbar()
         main_row.addWidget(self._toolbar)
 
-        self._canvas_host = self._build_canvas_host()
-        main_row.addWidget(self._canvas_host, 1)
+        self._canvas = _Canvas()
+        main_row.addWidget(self._canvas, 1)
 
         self._cand_panel = self._build_candidate_panel()
         main_row.addWidget(self._cand_panel)
@@ -183,15 +406,6 @@ class CropStudio(QWidget):
             f" border-right: 1px solid {_c('border', '#2a2a2a')}; }}"
         )
         return tb
-
-    def _build_canvas_host(self) -> QWidget:
-        """中画布占位(Task 3 替换为 _Canvas:深灰 fit/zoom/投影)。"""
-        host = QFrame()
-        host.setObjectName("cropStudioCanvas")
-        host.setStyleSheet(
-            f"QFrame#cropStudioCanvas {{ background: {CANVAS_BG}; }}"
-        )
-        return host
 
     def _build_candidate_panel(self) -> QWidget:
         """右候选占位(Task 4 填充:letterbox 双列候选)。"""
