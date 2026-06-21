@@ -40,9 +40,17 @@ from ui.styles import (
     COLORS, FONTS, LOG_COLORS, PROGRESS_INFO_STYLE, PROGRESS_PERCENT_STYLE
 )
 from ui.custom_dialogs import StyledMessageBox
-from ui.icon_utils import load_tinted_icon, checkbox_indicator_qss, ICON_IDLE
+from ui.icon_utils import load_tinted_icon, checkbox_indicator_qss, tinted_png_path, ICON_IDLE
 from ui.skill_level_dialog import SkillLevelDialog, SKILL_PRESETS, get_skill_level_thresholds
 from ui.welcome_onboarding_dialog import EnvironmentRepairDialog, WelcomeOnboardingDialog
+
+import re as _re
+# 运行日志去 emoji:覆盖 emoji 主区 / Dingbats / 杂项符号,
+# 但保留文本符号 ★☆(2605/2606)、箭头 →、分隔线 ━、乘号 ×。
+_LOG_EMOJI_RE = _re.compile(
+    "[\U0001F000-\U0001FAFF\U00002700-\U000027BF\U00002B00-\U00002BFF"
+    "\u2600-\u2604\u2607-\u26FF\uFE0F]+"
+)
 from core.initialization_manager import InitializationManager
 
 
@@ -85,7 +93,7 @@ class WorkerSignals(QObject):
     log = Signal(str, str)  # message, tag
     finished = Signal(dict)
     error = Signal(str)
-    crop_preview = Signal(object, object)  # V4.2: 发送裁剪预览图像 (numpy array BGR) + focus_status str
+    crop_preview = Signal(object, object, object)  # 裁剪预览图(numpy BGR) + focus_status + rating(星级)
     update_check_done = Signal(bool, object)  # V4.2: 更新检测完成 (has_update, update_info)
 
 
@@ -439,8 +447,8 @@ class WorkerThread(threading.Thread):
             self.signals.progress.emit(int(value))
 
         # V4.2: 裁剪预览回调
-        def crop_preview_callback(debug_img, focus_status=None):
-            self.signals.crop_preview.emit(debug_img, focus_status)
+        def crop_preview_callback(debug_img, focus_status=None, rating=None):
+            self.signals.crop_preview.emit(debug_img, focus_status, rating)
 
         callbacks = ProcessingCallbacks(
             log=log_callback,
@@ -2032,20 +2040,32 @@ class SuperPickyMainWindow(QMainWindow):
             )
             return
 
-        # 确认弹窗 - 动态构建消息
+        # 确认弹窗 - 动态构建消息(HTML:emoji 换 SVG 图标,QLabel 自动按富文本渲染)
+        import html as _html
+        from ui.styles import COLORS as _C
+        _green = _C.get("focus_best", "#00cc44")
+        _accent = _C.get("accent", "#00d4aa")
+        _sec = _C.get("text_secondary", "#a1a1a1")
+
+        def _ico(svg, color, size=14):
+            p = tinted_png_path(svg, color, size)
+            return f'<img src="{p}" width="{size}" height="{size}" style="vertical-align:middle"> '
+
+        def _esc(s):
+            return _html.escape(str(s), quote=False)
+
         extra_notes = []
         if self.flight_check.isChecked():
-            extra_notes.append(self.i18n.t("dialogs.note_flight"))
+            extra_notes.append(_ico("bird.svg", _green) + _esc(self.i18n.t("dialogs.note_flight")))
         if self.birdid_check.isChecked():
-            extra_notes.append(self.i18n.t("dialogs.note_birdid"))
-            # 显示当前国家/区域设置
+            extra_notes.append(_ico("eye.svg", _accent) + _esc(self.i18n.t("dialogs.note_birdid")))
+            # 显示当前国家/区域设置(去掉 🌍,纯文字缩进)
             if hasattr(self, 'birdid_dock') and self.birdid_dock:
                 country_display = self.birdid_dock.country_combo.currentText()
                 region_display = self.birdid_dock.region_combo.currentText()
-                # 构建显示文本
-                location_info = f"  🌍 {country_display}"
+                location_info = f"&nbsp;&nbsp;&nbsp;&nbsp;{_esc(country_display)}"
                 if region_display and region_display != self.i18n.t("birdid.region_entire_country"):
-                    location_info += f" - {region_display}"
+                    location_info += f" - {_esc(region_display)}"
                 extra_notes.append(location_info)
             # V4.3: 检查是否选择了国家，如果是 Auto Detect GPS 则提示
             if hasattr(self, 'birdid_dock') and self.birdid_dock:
@@ -2064,14 +2084,17 @@ class SuperPickyMainWindow(QMainWindow):
                         self.birdid_dock.country_combo.showPopup()
                         return  # 等用户选择后再开始
         if self.burst_check.isChecked():
-            extra_notes.append(self.i18n.t("dialogs.note_burst"))
-        
+            extra_notes.append(_ico("square-stack.svg", _sec) + _esc(self.i18n.t("dialogs.note_burst")))
+
         notes_block = ""
         if extra_notes:
-            notes_block = "\n" + "\n".join(extra_notes) + "\n"
+            notes_block = "<br>" + "<br>".join(extra_notes) + "<br>"
 
-        base_msg = self.i18n.t("dialogs.file_organization_msg", extra_notes=notes_block)
-        
+        # 正文转富文本:escape + 换行→<br>,再把哨兵替换为已是 HTML 的附注块
+        _sentinel = "@@EXTRA_NOTES@@"
+        _raw = self.i18n.t("dialogs.file_organization_msg", extra_notes=_sentinel)
+        base_msg = _esc(_raw).replace("\n", "<br>").replace(_sentinel, notes_block)
+
         reply = StyledMessageBox.question(
             self,
             self.i18n.t("dialogs.file_organization_title"),
@@ -2249,12 +2272,9 @@ class SuperPickyMainWindow(QMainWindow):
         self._update_status_banner("done", counts)
         self._update_action_buttons("has_results")
 
-        # 显示报告（不清空之前的日志）
-        report = self._format_statistics_report(stats)
-        self._log(report)
-
-        # 显示 Lightroom 指南
-        self._show_lightroom_guide()
+        # 显示报告（不清空之前的日志；HTML 渲染,评级/飞版/精焦用 SVG）
+        self._show_statistics_report(stats)
+        # Lightroom 指南已停用（用户群体太少）：保留 _show_lightroom_guide 方法备用
 
         # V4.2: 通知 BirdIDDock 显示完成信息（传入 stats 替代 debug_dir）
         if hasattr(self, 'birdid_dock') and self.birdid_dock:
@@ -2486,10 +2506,6 @@ class SuperPickyMainWindow(QMainWindow):
                 
                 if fallback_restored > 0:
                     emit_log(i18n.t("logs.restored_files", count=fallback_restored))
-                
-                total_restored = restored_count + fallback_restored
-                if total_restored == 0:
-                    emit_log(i18n.t("logs.no_files_to_restore"))
 
                 # V4.3.1: 无条件「按目录名摊平」兜底——把仍残留在 鸟种/星级/burst_
                 # 子目录里的文件递归移回根目录。manifest 可能不完整（连拍成员未入库等），
@@ -2498,11 +2514,20 @@ class SuperPickyMainWindow(QMainWindow):
                 # 无残留时 moved=0，因此始终执行无副作用。
                 # V4.3.1: unconditional name-based flatten safety net — recursively move
                 # any files still stranded in species/rating/burst_ subdirs back to root.
+                flatten_moved = 0
                 try:
                     from tools.find_bird_util import force_flatten_directory
-                    force_flatten_directory(directory_path, log_callback=emit_log, i18n=i18n)
+                    _fstats = force_flatten_directory(directory_path, log_callback=emit_log, i18n=i18n)
+                    flatten_moved = int(_fstats.get("moved", 0)) if _fstats else 0
                 except Exception as _fe:
                     emit_log(f"⚠️ flatten fallback failed: {_fe}")
+
+                # 恢复总数 = manifest 恢复 + 评分目录兜底 + 按目录名摊平兜底（合并显示,避免数字与实际不符）
+                total_restored = restored_count + fallback_restored + flatten_moved
+                if total_restored == 0:
+                    emit_log(i18n.t("logs.no_files_to_restore"))
+                else:
+                    emit_log(i18n.t("logs.restored_files", count=total_restored))
 
                 # V4.0.4: 根据模式决定是否重置EXIF
                 if _skip_exif_reset:
@@ -2842,6 +2867,9 @@ class SuperPickyMainWindow(QMainWindow):
 
         print(message)
 
+        # 运行日志统一去除 emoji(横幅与「预加载完成」绿勾另行用 SVG 图标)
+        message = _LOG_EMOJI_RE.sub("", message)
+
         cursor = self.log_text.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
 
@@ -2850,7 +2878,7 @@ class SuperPickyMainWindow(QMainWindow):
             color = LOG_COLORS['error']
         elif tag == "warning":
             color = LOG_COLORS['warning']
-        elif tag == "success":
+        elif tag in ("success", "success_check"):
             color = LOG_COLORS['success']
         elif tag == "info":
             color = LOG_COLORS['info']
@@ -2861,53 +2889,135 @@ class SuperPickyMainWindow(QMainWindow):
         timestamp = datetime.now().strftime("%H:%M:%S")
         time_color = LOG_COLORS['time']
 
-        # V3.9: 格式化消息（转义 HTML 特殊字符，防止 < > & 被解释为 HTML）
+        # success_check:仅「所有模型预加载完成」用绿勾 SVG(唯一保留的状态标记)
+        icon_html = ""
+        if tag == "success_check":
+            _p = tinted_png_path("check.svg", LOG_COLORS['success'], 14)
+            icon_html = f'<img src="{_p}" width="14" height="14" style="vertical-align:middle"> '
+
+        # V3.9: 转义 HTML 特殊字符（防止 < > & 被解释为 HTML）
         import html
-        html_message = html.escape(message).replace('\n', '<br>')
+
+        # 构造正文 HTML：photo_good/species 做行内分段染色（只染关键信息那段）
+        if tag == "photo_good":
+            # 3星逐张：文件名之后（第一个 |）染绿，序号/文件名保持灰
+            _d, _g = LOG_COLORS['default'], LOG_COLORS['photo_good']
+            _parts = message.split("|", 1)
+            if len(_parts) == 2:
+                body_html = (f'<span style="color: {_d};">{html.escape(_parts[0])}</span>'
+                             f'<span style="color: {_g};">|{html.escape(_parts[1])}</span>')
+            else:
+                body_html = f'<span style="color: {_g};">{html.escape(message)}</span>'
+        elif tag == "species":
+            # Bird ID：鸟名之后（第一个 :）染红，前缀保持灰
+            _d, _r = LOG_COLORS['default'], LOG_COLORS['species']
+            _parts = message.split(":", 1)
+            if len(_parts) == 2:
+                body_html = (f'<span style="color: {_d};">{html.escape(_parts[0])}:</span>'
+                             f'<span style="color: {_r};">{html.escape(_parts[1])}</span>')
+            else:
+                body_html = f'<span style="color: {_r};">{html.escape(message)}</span>'
+        else:
+            _m = html.escape(message).replace('\n', '<br>')
+            body_html = f'<span style="color: {color};">{_m}</span>'
 
         # 对于简短消息添加时间戳
         if len(message) < 100 and '\n' not in message:
             cursor.insertHtml(
                 f'<span style="color: {time_color};">{timestamp}</span> '
-                f'<span style="color: {color};">{html_message}</span><br>'
+                f'{icon_html}{body_html}<br>'
             )
         else:
-            cursor.insertHtml(f'<span style="color: {color};">{html_message}</span><br>')
+            cursor.insertHtml(f'{icon_html}{body_html}<br>')
 
         self.log_text.setTextCursor(cursor)
         self.log_text.ensureCursorVisible()
 
     def _show_initial_help(self):
-        """显示初始帮助信息"""
-        t = self.i18n.t
+        """显示初始帮助信息(HTML:图标左对齐、同行图标与文字垂直居中)"""
+        import html as _html
         from constants import APP_VERSION
-        help_text = f"""━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  {t("help.welcome_title", version=APP_VERSION)}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-{t("help.usage_steps_title")}
-  1. {t("help.step1")}
-  2. {t("help.step2")}
-  3. {t("help.step3")}
-  4. {t("help.step4")}
-
-{t("help.rating_rules_title")}
-  {t("help.rule_3_star")}
-    {t("help.rule_picked", percentage=self.config.picked_top_percentage)}
-  {t("help.rule_2_star")}
-  {t("help.rule_1_star")}
-  {t("help.rule_0_star")}
-  {t("help.rule_flying")}
-  {t("help.rule_focus")}
-  {t("help.rule_exposure")}
-  {t("help.burst_info")}
-
-{t("help.ready")}"""
-        self._log(help_text)
-
-    def _format_statistics_report(self, stats):
-        """格式化统计报告"""
+        from ui.icon_utils import tinted_png_path
+        from ui.styles import COLORS
         t = self.i18n.t
+
+        gold = COLORS.get("star_gold", "#ffcc00")
+        green = COLORS.get("focus_best", "#00cc44")   # 飞版绿
+        red = "#ff5555"                                # 精焦红
+        muted = COLORS.get("text_muted", "#8a8a8a")
+        sec = COLORS.get("text_secondary", "#a1a1a1")
+        pri = COLORS.get("text_primary", "#e0e0e0")
+        accent = COLORS.get("accent", "#00d4aa")
+
+        def ico(svg, color, size=14):
+            p = tinted_png_path(svg, color, size)
+            return f'<img src="{p}" width="{size}" height="{size}" style="vertical-align:middle"> '
+
+        def esc(s):
+            return _html.escape(str(s))
+
+        line = "━" * 30
+        pct = self.config.picked_top_percentage
+
+        # 居中:分隔线 + 欢迎语 + 分隔线
+        center_top = (
+            f'<div align="center" style="color:{sec}">{line}<br>'
+            f'<span style="color:{accent};font-weight:bold">'
+            f'{esc(t("help.welcome_title", version=APP_VERSION))}</span>'
+            f'<br>{line}</div>'
+        )
+
+        # 左对齐:使用步骤 + 评分规则(同一 div 内 <br> 分行,行距正常)
+        rows = [f'<span style="color:{pri};font-weight:bold">{esc(t("help.usage_steps_title"))}</span>']
+        for i, key in enumerate(("step1", "step2", "step3", "step4"), 1):
+            rows.append(f'<span style="color:{sec}">&nbsp;&nbsp;{i}. {esc(t("help." + key))}</span>')
+        rows.append('')
+        rows.append(f'<span style="color:{pri};font-weight:bold">{esc(t("help.rating_rules_title"))}</span>')
+        rules = [
+            (ico("star.svg", gold) * 3, esc(t("help.rule_3_star"))),
+            ('&nbsp;&nbsp;&nbsp;&nbsp;' + ico("crown.svg", gold),
+             esc(t("help.rule_picked", percentage=pct))),
+            (ico("star.svg", gold) * 2, esc(t("help.rule_2_star"))),
+            (ico("star.svg", gold), esc(t("help.rule_1_star"))),
+            (ico("circle-off.svg", muted), esc(t("help.rule_0_star"))),
+            (ico("bird.svg", green), esc(t("help.rule_flying"))),
+            (ico("scan-eye.svg", red), esc(t("help.rule_focus"))),
+            (ico("square-stack.svg", sec), esc(t("help.burst_info"))),
+        ]
+        for ic, txt in rules:
+            rows.append(f'<span style="color:{sec}">&nbsp;&nbsp;{ic}{txt}</span>')
+        left_block = '<div align="left">' + '<br>'.join(rows) + '</div>'
+
+        center_bottom = f'<div align="left" style="color:{accent}">{esc(t("help.ready"))}</div>'
+
+        cursor = self.log_text.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.insertHtml(center_top + '<div>&nbsp;</div>' + left_block
+                          + '<div>&nbsp;</div>' + center_bottom + '<br>')
+        self.log_text.setTextCursor(cursor)
+        self.log_text.ensureCursorVisible()
+
+    def _show_statistics_report(self, stats):
+        """统计报告(HTML 渲染:评级用星/冠 SVG、飞版/精焦用对应 SVG、鸟种红色)"""
+        import html as _html
+        from ui.icon_utils import tinted_png_path
+        from ui.styles import COLORS
+        t = self.i18n.t
+
+        gold = COLORS.get("star_gold", "#ffcc00")
+        green = COLORS.get("focus_best", "#00cc44")   # 飞版绿
+        red = "#ff5555"                                # 精焦红 / 鸟种红
+        muted = COLORS.get("text_muted", "#8a8a8a")
+        sec = COLORS.get("text_secondary", "#a1a1a1")
+        accent = COLORS.get("accent", "#00d4aa")
+
+        def ico(svg, color, size=14):
+            p = tinted_png_path(svg, color, size)
+            return f'<img src="{p}" width="{size}" height="{size}" style="vertical-align:middle"> '
+
+        def esc(s):
+            return _html.escape(str(s))
+
         total = stats.get('total', 0)
         star_3 = stats.get('star_3', 0)
         star_2 = stats.get('star_2', 0)
@@ -2918,58 +3028,71 @@ class SuperPickyMainWindow(QMainWindow):
         avg_time = stats.get('avg_time', 0)
         picked = stats.get('picked', 0)
         flying = stats.get('flying', 0)
-
+        focus_precise = stats.get('focus_precise', 0)
         bird_total = star_3 + star_2 + star_1 + star_0
 
-        report = "\n" + "━" * 50 + "\n"
-        report += f"  {t('report.title')}\n"
-        report += "━" * 50 + "\n\n"
+        line = "━" * 30
+        head = (
+            f'<div align="center" style="color:{sec}">{line}<br>'
+            f'<span style="color:{accent};font-weight:bold">{esc(t("report.title"))}</span>'
+            f'<br>{line}</div>'
+        )
 
-        report += t("report.total_photos", total=total) + "\n"
-        report += t("report.total_time", time_sec=total_time, time_min=total_time/60) + "\n"
-        report += t("report.avg_time", avg=avg_time) + "\n\n"
-
+        rows = [
+            f'<span style="color:{sec}">{esc(t("report.total_photos", total=total))}</span>',
+            f'<span style="color:{sec}">{esc(t("report.total_time", time_sec=total_time, time_min=total_time/60))}</span>',
+            f'<span style="color:{sec}">{esc(t("report.avg_time", avg=avg_time))}</span>',
+            '',
+        ]
         if total > 0:
-            report += f"  ⭐⭐⭐  {star_3:>4}  ({star_3/total*100:>5.1f}%)\n"
+            def pct(n):
+                return f"{n/total*100:.1f}%"
+            rows.append(f'<span style="color:{sec}">{ico("star.svg", gold)*3}{star_3} ({pct(star_3)})</span>')
             if picked > 0 and star_3 > 0:
-                report += f"    └─ 🏆  {picked} ({picked/star_3*100:.0f}%)\n"
-            report += f"  ⭐⭐    {star_2:>4}  ({star_2/total*100:>5.1f}%)\n"
-            report += f"  ⭐      {star_1:>4}  ({star_1/total*100:>5.1f}%)\n"
+                rows.append(f'<span style="color:{sec}">&nbsp;&nbsp;&nbsp;&nbsp;└─ {ico("crown.svg", gold)}{picked} ({picked/star_3*100:.0f}%)</span>')
+            rows.append(f'<span style="color:{sec}">{ico("star.svg", gold)*2}{star_2} ({pct(star_2)})</span>')
+            rows.append(f'<span style="color:{sec}">{ico("star.svg", gold)}{star_1} ({pct(star_1)})</span>')
             if star_0 > 0:
-                report += f"  0⭐     {star_0:>4}  ({star_0/total*100:>5.1f}%)\n"
-            report += f"  ❌      {no_bird:>4}  ({no_bird/total*100:>5.1f}%)\n\n"
-            report += t("report.bird_total", count=bird_total, percent=bird_total/total*100) + "\n"
-
+                rows.append(f'<span style="color:{sec}">{ico("star.svg", muted)}{star_0} ({pct(star_0)})</span>')
+            rows.append(f'<span style="color:{sec}">{ico("circle-off.svg", muted)}{esc(t("browser.focus_no_bird"))} {no_bird} ({pct(no_bird)})</span>')
+            rows.append('')
+            rows.append(f'<span style="color:{sec}">{esc(t("report.bird_total", count=bird_total, percent=bird_total/total*100))}</span>')
             if flying > 0:
-                report += f"{t('help.rule_flying')}: {flying}\n"
-            
-            # V4.2: 精焦统计（红色标签）
-            focus_precise = stats.get('focus_precise', 0)
+                rows.append(f'<span style="color:{sec}">{ico("bird.svg", green)}{esc(t("help.rule_flying"))}: {flying}</span>')
             if focus_precise > 0:
-                report += f"{t('help.rule_focus')}: {focus_precise}\n"
-            
-            # V4.2: 识别鸟种统计 (language-aware)
+                rows.append(f'<span style="color:{sec}">{ico("scan-eye.svg", red)}{esc(t("help.rule_focus"))}: {focus_precise}</span>')
+
+            # 识别鸟种(红色文字, language-aware)
             bird_species = stats.get('bird_species', [])
             if bird_species:
-                # Pick the correct language name based on current locale
+                from core.rarity_tier import tier_name_color
                 is_chinese = self.i18n.current_lang.startswith('zh')
-                species_names = []
+                parts = []  # 逐种按罕见度着色:常见默认/能见橙/少见以上红
                 for sp in bird_species:
                     if isinstance(sp, dict):
                         name = sp.get('cn_name', '') if is_chinese else sp.get('en_name', '')
-                        # Fallback to the other language if preferred is empty
                         if not name:
                             name = sp.get('en_name', '') if is_chinese else sp.get('cn_name', '')
-                        if name:
-                            species_names.append(name)
+                        tier = sp.get('gbif_tier')
                     else:
-                        # Legacy support: if it's still a string (old format)
-                        species_names.append(str(sp))
-                if species_names:
-                    report += "\n" + t("logs.bird_species_identified", count=len(species_names), species=', '.join(species_names))
+                        name, tier = str(sp), None
+                    if name:
+                        c = tier_name_color(tier, default=sec)
+                        parts.append(f'<span style="color:{c}">{esc(name)}</span>')
+                if parts:
+                    rows.append('')
+                    _sentinel = "@@SPLIST@@"
+                    _line = esc(t("logs.bird_species_identified", count=len(parts), species=_sentinel))
+                    rows.append(f'<span style="color:{sec}">{_line.replace(_sentinel, ", ".join(parts))}</span>')
 
-        report += "\n" + "━" * 50
-        return report
+        body = '<div align="left">' + '<br>'.join(rows) + '</div>'
+        tail = f'<div align="center" style="color:{sec}">{line}</div>'
+
+        cursor = self.log_text.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.insertHtml(head + '<div>&nbsp;</div>' + body + tail + '<br>')
+        self.log_text.setTextCursor(cursor)
+        self.log_text.ensureCursorVisible()
 
     def _show_lightroom_guide(self):
         """显示 Lightroom 指南"""
@@ -3172,7 +3295,7 @@ class SuperPickyMainWindow(QMainWindow):
                 pass
 
             if not fail_items:
-                self.log_signal.emit(self.i18n.t("preload.preload_complete"), "success")
+                self.log_signal.emit(self.i18n.t("preload.preload_complete"), "success_check")
             else:
                 failed_str = ", ".join(name for name, _ in fail_items)
                 self.log_signal.emit(

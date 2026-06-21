@@ -1150,7 +1150,7 @@ class PhotoProcessor:
                     is_zh = not self.i18n.current_lang.startswith('en')
                     tier_suffix = f"  {tier_icon(tier_idx)} {tier_name(tier_idx, is_zh=is_zh)}"
 
-                self._log(f"  🐦 Bird ID [{source_display}]: {bird_log} ({birdid_confidence:.0f}%){tier_suffix}")
+                self._log(f"  🐦 Bird ID [{source_display}]: {bird_log} ({birdid_confidence:.0f}%){tier_suffix}", "species")
 
                 species_entry = {'cn_name': cn_name, 'en_name': en_name}
                 if tier_idx is not None:
@@ -2341,7 +2341,7 @@ class PhotoProcessor:
                     )
                     # V4.2: 发送裁剪预览到 UI（同时传对焦状态供 dock 显示）
                     if debug_img is not None and self.callbacks.crop_preview:
-                        self.callbacks.crop_preview(debug_img, focus_status_en)
+                        self.callbacks.crop_preview(debug_img, focus_status_en, rating_value)
                 except Exception as e:
                     print(f"  ⚠️ debug_crop 保存失败 [{filename}]: {e}")  # 调试图生成失败不影响主流程
                 add_photo_stage('debug_viz', (time.time() - debug_start) * 1000)
@@ -2771,8 +2771,10 @@ class PhotoProcessor:
         else:
             time_text = f"{time_ms:.0f}ms"
         
-        # 输出简化格式（对焦状态已在reason中显示）
-        self._log(f"[{index:03d}/{total}] {filename} | {star_text} ({reason_short}) {flight_tag}| {time_text}")
+        # 输出简化格式（只显示文件名,去掉目录前缀；3星行文件名之后染绿）
+        display_name = os.path.basename(filename)
+        level = "photo_good" if rating >= 3 else "default"
+        self._log(f"[{index:03d}/{total}] {display_name} | {star_text} ({reason_short}) {flight_tag}| {time_text}", level)
     
     def _save_debug_crop(
         self,

@@ -23,6 +23,7 @@ from PySide6.QtCore import Qt, Signal, QThread, QTimer
 from PySide6.QtGui import QPixmap, QDragEnterEvent, QDropEvent, QFont
 
 from ui.styles import COLORS, FONTS
+from ui.icon_utils import stars_pixmap, tinted_png_path
 from config import (
     get_app_config_dir,
     get_install_scoped_resource_path,
@@ -1409,7 +1410,7 @@ class BirdIDDockWidget(QDockWidget):
         'WORST': COLORS['focus_worst'],
     }
 
-    def update_crop_preview(self, debug_img, focus_status=None):
+    def update_crop_preview(self, debug_img, focus_status=None, rating=None):
         try:
             import cv2
             from PySide6.QtGui import QImage
@@ -1438,6 +1439,22 @@ class BirdIDDockWidget(QDockWidget):
         self.placeholder_frame.hide()
         self.results_frame.show()
 
+        # 星级(rating)显示在对焦之上：≥1 星用金色星标,0/无鸟用文字
+        if rating is not None:
+            if rating >= 1:
+                rating_label = QLabel()
+                rating_label.setAlignment(ALIGN_CENTER)
+                rating_label.setPixmap(stars_pixmap(rating, COLORS.get('star_gold', '#d4a800'), size=20))
+                self.results_layout.addWidget(rating_label)
+            else:
+                txt = self.i18n.t("browser.focus_no_bird") if rating < 0 else "0★"
+                rating_label = QLabel(txt)
+                rating_label.setAlignment(ALIGN_CENTER)
+                rating_label.setStyleSheet(
+                    f"color: {COLORS['text_muted']}; font-size: 15px; font-weight: 600; padding: 6px;"
+                )
+                self.results_layout.addWidget(rating_label)
+
         if focus_status and focus_status in self._FOCUS_STATUS_I18N:
             i18n_key = self._FOCUS_STATUS_I18N[focus_status]
             raw_text = self.i18n.t(i18n_key)
@@ -1455,7 +1472,8 @@ class BirdIDDockWidget(QDockWidget):
                 border-radius: 8px;
             """)
             self.results_layout.addWidget(focus_label)
-            self.results_layout.addStretch()
+
+        self.results_layout.addStretch()
 
     def show_completion_message(self, stats: dict):
         self.preview_label.hide()
@@ -1479,38 +1497,64 @@ class BirdIDDockWidget(QDockWidget):
         def pct(n):
             return f"{n/total*100:.1f}%" if total > 0 else "—"
 
-        lines = [self.i18n.t("birdid.stats_complete").format(total=total, time_min=total_time/60), ""]
+        # 完成信息改 HTML+SVG:星级金星 / 无鸟 circle-off / 飞版绿 bird / 精焦红 scan-eye / 鸟种红
+        import html as _h
+        gold = COLORS.get('star_gold', '#d4a800')
+        green = COLORS.get('focus_best', '#00cc44')
+        red = '#ff5555'
+        muted = COLORS['text_muted']
+        sec = COLORS['text_secondary']
+
+        def _ico(svg, color, size=14):
+            p = tinted_png_path(svg, color, size)
+            return f'<img src="{p}" width="{size}" height="{size}" style="vertical-align:middle"> '
+
+        def _esc(s):
+            return _h.escape(str(s))
+
+        rows = [
+            f'<div style="color:{sec};font-weight:600">'
+            f'{_esc(self.i18n.t("birdid.stats_complete").format(total=total, time_min=total_time/60))}</div>',
+            '<div>&nbsp;</div>',
+        ]
         if total > 0:
-            lines.append(f"⭐⭐⭐  {star_3:>4}  ({pct(star_3)})")
-            lines.append(f"⭐⭐    {star_2:>4}  ({pct(star_2)})")
-            lines.append(f"⭐      {star_1:>4}  ({pct(star_1)})")
-            lines.append(f"0⭐     {star_0:>4}  ({pct(star_0)})")
-            lines.append(f"❌      {no_bird:>4}  ({pct(no_bird)})")
+            rows.append(f'<div style="color:{sec}">{_ico("star.svg", gold)*3} {star_3} ({pct(star_3)})</div>')
+            rows.append(f'<div style="color:{sec}">{_ico("star.svg", gold)*2} {star_2} ({pct(star_2)})</div>')
+            rows.append(f'<div style="color:{sec}">{_ico("star.svg", gold)} {star_1} ({pct(star_1)})</div>')
+            rows.append(f'<div style="color:{sec}">{_ico("star.svg", muted)} {star_0} ({pct(star_0)})</div>')
+            rows.append(f'<div style="color:{sec}">{_ico("circle-off.svg", muted)} {no_bird} ({pct(no_bird)})</div>')
 
         if flying > 0 or focus_precise > 0:
-            lines.append("")
+            rows.append('<div>&nbsp;</div>')
             if flying > 0:
-                lines.append(self.i18n.t("birdid.stats_flying").format(count=flying))
+                rows.append(f'<div style="color:{sec}">{_ico("bird.svg", green)}'
+                            f'{_esc(self.i18n.t("birdid.stats_flying").format(count=flying))}</div>')
             if focus_precise > 0:
-                lines.append(self.i18n.t("birdid.stats_focus_precise").format(count=focus_precise))
+                rows.append(f'<div style="color:{sec}">{_ico("scan-eye.svg", red)}'
+                            f'{_esc(self.i18n.t("birdid.stats_focus_precise").format(count=focus_precise))}</div>')
 
         if bird_species:
+            from core.rarity_tier import tier_name_color
             is_chinese = self.i18n.current_lang.startswith('zh')
-            names = []
+            parts = []  # 逐种按罕见度着色:常见默认/能见橙/少见以上红
             for sp in bird_species:
                 if isinstance(sp, dict):
                     name = sp.get('cn_name', '') if is_chinese else sp.get('en_name', '')
                     if not name:
                         name = sp.get('en_name', '') or sp.get('cn_name', '')
+                    tier = sp.get('gbif_tier')
                 else:
-                    name = str(sp)
+                    name, tier = str(sp), None
                 if name:
-                    names.append(name)
-            if names:
-                lines.append("")
-                lines.append(self.i18n.t("birdid.stats_species").format(count=len(names), names=', '.join(names)))
+                    c = tier_name_color(tier, default=sec)
+                    parts.append(f'<span style="color:{c}">{_esc(name)}</span>')
+            if parts:
+                rows.append('<div>&nbsp;</div>')
+                _sentinel = "@@SPLIST@@"
+                _line = _esc(self.i18n.t("birdid.stats_species").format(count=len(parts), names=_sentinel))
+                rows.append(f'<div style="color:{sec};font-weight:600">{_line.replace(_sentinel, ", ".join(parts))}</div>')
 
-        info_label = QLabel('\n'.join(lines))
+        info_label = QLabel(''.join(rows))
         info_label.setStyleSheet(f"""
             color: {COLORS['text_secondary']};
             font-size: 12px;
