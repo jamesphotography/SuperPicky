@@ -291,10 +291,23 @@ def cmd_reset(args):
     if fallback_restored > 0:
         print(f"  ✅ 额外恢复了 {fallback_restored} 个残留文件到根目录")
     
-    total_restored = restored + fallback_restored
+    # V4.3.1: 按目录名摊平兜底——manifest/根目录评分扫描会漏掉「鸟种优先」布局下
+    # 鸟种/星级/burst_ 子目录里的深层文件;与 UI reset 保持一致。force_flatten 幂等安全
+    # （同名不覆盖、只动 SuperPicky 目录、不碰用户目录）。
+    flatten_moved = 0
+    try:
+        from tools.find_bird_util import force_flatten_directory
+        _fstats = force_flatten_directory(args.directory)
+        flatten_moved = int(_fstats.get("moved", 0)) if _fstats else 0
+    except Exception as _fe:
+        print(f"  ⚠️ 摊平兜底失败 / flatten fallback failed: {_fe}")
+
+    total_restored = restored + fallback_restored + flatten_moved
     if total_restored == 0:
         print("  ℹ️  无需恢复文件")
-    
+    else:
+        print(f"  ✅ 共恢复 {total_restored} 个文件")
+
     print("\n📝 步骤2: 清理并重置 EXIF 元数据...")
     i18n = get_i18n('zh_CN')
     success = reset(args.directory, i18n=i18n)
