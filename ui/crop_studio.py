@@ -46,6 +46,7 @@ from core.crop_advisor import (
     CropSuggestion,
     advise_crops,
 )
+from core.crop_export import default_out_path, export_crop
 from core.rarity_tier import gbif_score_to_tier, tier_color, tier_icon, tier_name
 from ui.icon_utils import (
     ICON_ACTIVE,
@@ -138,6 +139,26 @@ class _AdviceWorker(QThread):
         except Exception:  # noqa: BLE001 — 线程内不崩 / never crash the thread
             result = CropAdviceResult(status="no_bird", bird_count=0)
         self.done.emit(result)
+
+
+class _ExportWorker(QThread):
+    """
+    后台线程执行裁剪导出(export_crop),完成后通过 done 信号回传 (ok, out_or_err)。
+    Runs export_crop off the UI thread; emits (ok: bool, out_path_or_error: str).
+    """
+
+    done: Signal = Signal(bool, str)
+
+    def __init__(self, src: str, box, out: str, exif_src: Optional[str]) -> None:
+        super().__init__()
+        self._src, self._box, self._out, self._exif_src = src, box, out, exif_src
+
+    def run(self) -> None:
+        try:
+            out = export_crop(self._src, self._box, self._out, exif_src=self._exif_src)
+            self.done.emit(True, out)
+        except Exception as e:  # noqa: BLE001 — 失败回传错误信息 / report error
+            self.done.emit(False, str(e))
 
 
 # ── 可框选图片标签 / Crop-drawing image label ─────────────────────────────────
@@ -1058,15 +1079,43 @@ class CropStudio(QWidget):
                 f"QToolButton:hover {{ background: {_c('bg_card', '#1f1f1f')}; }}"
             )
 
-    # ── 导出(Task 7 实现文件对话框)/ Export (file dialog wired in Task 7) ────
+    # ── 导出 / Export ─────────────────────────────────────────────────────────
 
     def _on_export_clicked(self) -> None:
-        """导出按钮点击。Task 7 实现:选路径 → 后台 export_crop。当前转发为信号。"""
-        self.export_requested.emit({
-            "src": self._image_path,
-            "box": self._current_box,
-            "photo": self._photo,
-        })
+        """
+        导出按钮:弹保存对话框(默认 <原名>_crop.jpg),后台 export_crop。
+        像素来源用分析/预览图(与候选/手动框同坐标系,无需缩放、可解码);
+        EXIF 从原始文件复制以保全元数据;命名/默认目录用原图路径。
+        """
+        from PySide6.QtWidgets import QFileDialog
+
+        name_src = (self._photo.get("original_path") or self._photo.get("current_path")
+                    or self._image_path)
+        default = default_out_path(name_src)
+        out, _ = QFileDialog.getSaveFileName(
+            self, self._i18n.t("crop_studio.export"), default, "JPEG (*.jpg)"
+        )
+        if not out:
+            return
+        self._do_export(out)
+
+    def _do_export(self, out_path: str) -> None:
+        """启动后台导出(供按钮与测试调用)。"""
+        exif_src = self._photo.get("original_path") or self._photo.get("current_path")
+        self._export_btn.setEnabled(False)
+        self._export_worker = _ExportWorker(self._image_path, self._current_box, out_path, exif_src)
+        self._export_worker.done.connect(self._on_export_done)
+        self._export_worker.start()
+
+    def _on_export_done(self, ok: bool, out_or_err: str) -> None:
+        """导出完成回调:更新提示并恢复按钮;成功时发出 export_requested。"""
+        self._export_btn.setEnabled(True)
+        if ok:
+            self._cand_hint.setText(f"{self._i18n.t('crop_studio.export_done')}\n{out_or_err}")
+            self.export_requested.emit({"out": out_or_err, "photo": self._photo})
+        else:
+            self._cand_hint.setText(f"{self._i18n.t('crop_studio.export_failed')}: {out_or_err}")
+        self._cand_hint.show()
 
     # ── 关闭 / Close ──────────────────────────────────────────────────────────
 
@@ -1075,5 +1124,8 @@ class CropStudio(QWidget):
         if self._worker.isRunning():
             self._worker.quit()
             self._worker.wait(2000)
+        ew = getattr(self, "_export_worker", None)
+        if ew is not None and ew.isRunning():
+            ew.wait(8000)  # 导出不可中断,等其完成 / export is atomic, wait it out
         self.closed.emit()
         super().closeEvent(event)

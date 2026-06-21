@@ -49,3 +49,27 @@ def test_export_crop_clamps_out_of_bounds_box():
     export_crop(src, (150, 80, 9999, 9999), out, copy_exif=False)
     got = cv2.imread(out)
     assert got.shape[1] == 50 and got.shape[0] == 40
+
+
+def test_export_crop_exif_src_overrides_copy_source():
+    """exif_src 指定时,EXIF 复制应从该文件而非 src_path 读取。"""
+    calls = {}
+
+    class _FakeMgr:
+        def copy_exif(self, exif_from, dst):
+            calls["from"] = exif_from
+            calls["dst"] = dst
+            return True
+
+    import tools.exiftool_manager as em
+    orig = em.get_exiftool_manager
+    em.get_exiftool_manager = lambda: _FakeMgr()
+    try:
+        d = tempfile.mkdtemp()
+        src = os.path.join(d, "preview.png")
+        _make_img(src, 100, 100)
+        out = os.path.join(d, "out.jpg")
+        export_crop(src, None, out, copy_exif=True, exif_src="/orig/RAW.NEF")
+        assert calls["from"] == "/orig/RAW.NEF" and calls["dst"] == out
+    finally:
+        em.get_exiftool_manager = orig

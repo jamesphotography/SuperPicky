@@ -1424,6 +1424,8 @@
     "back": "Back",
     "export": "Export",
     "auto_coming_soon": "Auto adjustments coming soon",
-    "save_as_candidate": "Save as candidate"
+    "save_as_candidate": "Save as candidate",
+    "export_done": "Export complete",
+    "export_failed": "Export failed"
   }
 }

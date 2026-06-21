@@ -1424,6 +1424,8 @@
     "back": "返回",
     "export": "导出",
     "auto_coming_soon": "自动后期功能即将推出",
-    "save_as_candidate": "存为候选"
+    "save_as_candidate": "存为候选",
+    "export_done": "导出成功",
+    "export_failed": "导出失败"
   }
 }

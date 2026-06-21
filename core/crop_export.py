@@ -32,25 +32,29 @@ def default_out_path(src_path: str, suffix: str = "_crop") -> str:
 
 def export_crop(src_path: str, box: Optional[Box], out_path: str, *,
                 jpeg_quality: int = 95, copy_exif: bool = True,
+                exif_src: Optional[str] = None,
                 _image_loader: Optional[Callable[[str], "object"]] = None) -> str:
     """
-    读取全分辨率原图,按 box 裁剪后写 JPEG;box=None 表示导出整图副本。
-    copy_exif=True 时用 ExifTool 把原图 EXIF 复制到导出图(失败不影响主流程)。
-    返回写出的 out_path;原图无法解码时抛 ValueError。
+    读取源图(可解码的 JPEG/预览),按 box 裁剪后写 JPEG;box=None 表示导出整图副本。
+    copy_exif=True 时用 ExifTool 把 EXIF 复制到导出图(失败不影响主流程);EXIF 来源默认
+    为 src_path,可用 exif_src 指定为另一文件(如从原始 RAW 复制完整元数据,而像素取自
+    可解码的预览)。返回写出的 out_path;源图无法解码时抛 ValueError。
 
     参数 / Parameters:
-        src_path (str): 原图路径(RAW/JPEG/HEIF)。
-        box (Optional[Box]): (x1, y1, x2, y2) 全分辨率像素坐标;None=不裁剪。
+        src_path (str): 像素来源路径(须可被 loader 解码,如 JPEG / 嵌入预览)。
+        box (Optional[Box]): (x1, y1, x2, y2) 像素坐标(src_path 坐标系);None=不裁剪。
         out_path (str): 导出文件路径(JPEG)。
         jpeg_quality (int): JPEG 质量 0-100。
-        copy_exif (bool): 是否复制原图 EXIF 到导出图。
+        copy_exif (bool): 是否复制 EXIF 到导出图。
+        exif_src (Optional[str]): EXIF 来源文件;None 时用 src_path。
+                                  ExifTool 可从 RAW 读元数据,故可传原始 RAW 以保全元数据。
         _image_loader (Callable): 可注入的解码函数(测试用);默认 EXIF-aware loader。
 
     返回 / Returns:
         str: out_path。
 
     异常 / Raises:
-        ValueError: 原图无法解码。
+        ValueError: 源图无法解码。
     """
     loader = _image_loader
     if loader is None:
@@ -79,7 +83,7 @@ def export_crop(src_path: str, box: Optional[Box], out_path: str, *,
     if copy_exif:
         try:
             from tools.exiftool_manager import get_exiftool_manager
-            get_exiftool_manager().copy_exif(src_path, out_path)
+            get_exiftool_manager().copy_exif(exif_src or src_path, out_path)
         except Exception:
             pass  # EXIF 复制失败不影响导出主流程
 

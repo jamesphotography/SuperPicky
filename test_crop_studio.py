@@ -190,6 +190,35 @@ def test_manual_crop_maps_and_saves():
     w.close()
 
 
+def test_export_uses_image_path_and_current_box(tmp_path):
+    """导出:以分析图为像素源、self._current_box 为框,真实写出裁剪 JPEG。"""
+    import cv2
+    import numpy as np
+    from ui.crop_studio import CropStudio
+
+    src = str(tmp_path / "preview.png")
+    img = np.zeros((120, 200, 3), "uint8")
+    img[:] = (40, 80, 160)
+    cv2.imwrite(src, img)
+
+    photo = {"filename": "x.NEF", "current_path": src, "original_path": src}
+    w = CropStudio(photo, get_i18n())
+    w._worker.wait(5000)
+    _app.processEvents()
+
+    assert w._image_path == src  # 像素源 = 可解码预览
+    w._current_box = (50, 30, 150, 90)  # 100x60
+    out = str(tmp_path / "x_crop.jpg")
+    w._do_export(out)
+    w._export_worker.wait(8000)
+    _app.processEvents()
+
+    assert os.path.exists(out)
+    got = cv2.imread(out)
+    assert got.shape[1] == 100 and got.shape[0] == 60
+    w.close()
+
+
 def test_resolve_prefers_temp_jpeg():
     """temp_jpeg_path 存在时应优先于 current/original。"""
     from ui.crop_studio import CropStudio
