@@ -260,6 +260,42 @@ def test_browser_entry_opens_crop_studio(tmp_path, monkeypatch):
     assert captured["photo"]["bird_species_cn"] == "红头鸲鹟"
 
 
+def test_export_dialog_aspect_lock_and_values():
+    """导出对话框:锁定比例时改宽联动高;尺寸=原始时 out_size 返回 None。"""
+    from ui.crop_studio import _ExportDialog
+
+    dlg = _ExportDialog(get_i18n(), 200, 100)  # aspect 2:1
+    # 默认等于原始 → 不重采样
+    out_size, q = dlg.values()
+    assert out_size is None and q == 95
+    # 锁定下改宽 100 → 高应联动到 50
+    dlg._w_spin.setValue(100)
+    assert dlg._h_spin.value() == 50
+    out_size, _ = dlg.values()
+    assert out_size == (100, 50)
+    # 解锁后改宽不联动高
+    dlg._lock.setChecked(False)
+    dlg._w_spin.setValue(120)
+    assert dlg._h_spin.value() == 50
+    dlg.deleteLater()
+    _app.processEvents()
+
+
+def test_canvas_zoom_focal_and_pan_setup():
+    """带焦点的缩放不崩;画布启用平移引用与光标刷新。"""
+    import numpy as np
+    from PySide6.QtCore import QPoint
+    from ui.crop_studio import _Canvas
+
+    c = _Canvas()
+    c.resize(400, 300)
+    c.set_image(np.zeros((200, 300, 3), "uint8"))
+    c.set_zoom(3.0, focal=QPoint(50, 40))  # 向某点放大
+    assert c._img._scroll_ref is c._scroll  # 平移引用已接
+    c.set_zoom(1.0)  # 居中缩放
+    assert c is not None
+
+
 def test_resolve_prefers_temp_jpeg():
     """temp_jpeg_path 存在时应优先于 current/original。"""
     from ui.crop_studio import CropStudio

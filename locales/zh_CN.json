@@ -1426,6 +1426,12 @@
     "auto_coming_soon": "自动后期功能即将推出",
     "save_as_candidate": "存为候选",
     "export_done": "导出成功",
-    "export_failed": "导出失败"
+    "export_failed": "导出失败",
+    "export_settings": "导出设置",
+    "crop_size": "裁剪尺寸",
+    "width": "宽度",
+    "height": "高度",
+    "quality": "JPEG 质量",
+    "lock_ratio": "锁定比例"
   }
 }

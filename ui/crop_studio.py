@@ -26,6 +26,10 @@ import numpy as np
 from PySide6.QtCore import QPoint, QRect, QSize, Qt, QThread, Signal
 from PySide6.QtGui import QColor, QImage, QMouseEvent, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
+    QCheckBox,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
     QFrame,
     QGraphicsDropShadowEffect,
     QGridLayout,
@@ -34,6 +38,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSlider,
+    QSpinBox,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -149,13 +154,17 @@ class _ExportWorker(QThread):
 
     done: Signal = Signal(bool, str)
 
-    def __init__(self, src: str, box, out: str, exif_src: Optional[str]) -> None:
+    def __init__(self, src: str, box, out: str, exif_src: Optional[str], *,
+                 jpeg_quality: int = 95, out_size: Optional[tuple] = None) -> None:
         super().__init__()
         self._src, self._box, self._out, self._exif_src = src, box, out, exif_src
+        self._quality = jpeg_quality
+        self._out_size = out_size
 
     def run(self) -> None:
         try:
-            out = export_crop(self._src, self._box, self._out, exif_src=self._exif_src)
+            out = export_crop(self._src, self._box, self._out, exif_src=self._exif_src,
+                              jpeg_quality=self._quality, out_size=self._out_size)
             self.done.emit(True, out)
         except Exception as e:  # noqa: BLE001 — 失败回传错误信息 / report error
             self.done.emit(False, str(e))
@@ -182,6 +191,21 @@ class _CropLabel(QLabel):
         self._drag_start: Optional[QPoint] = None
         self._drag_end: Optional[QPoint] = None
         self._drawing: bool = False
+        # 平移(hand)状态;非手动模式下拖拽=移动画面 / pan state (hand tool)
+        self._scroll_ref: Optional[QScrollArea] = None
+        self._panning: bool = False
+        self._pan_origin: Optional[QPoint] = None
+        self._pan_h0: int = 0
+        self._pan_v0: int = 0
+
+    def refresh_cursor(self) -> None:
+        """按模式设置光标:手动=十字;否则=可抓取的手型。"""
+        if self.pixmap() is None or self.pixmap().isNull():
+            self.unsetCursor()
+        elif self.drawing_enabled:
+            self.setCursor(Qt.CrossCursor)
+        else:
+            self.setCursor(Qt.OpenHandCursor)
 
     def pixmap_rect(self) -> QRect:
         """当前像素图在标签内的矩形(扣除 2px 白边,居中)。"""
@@ -200,17 +224,29 @@ class _CropLabel(QLabel):
         self.update()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
-        if self.drawing_enabled and event.button() == Qt.LeftButton:
-            self._drag_start = event.position().toPoint()
-            self._drag_end = None
-            self._drawing = True
-            self.update()
+        if event.button() == Qt.LeftButton:
+            if self.drawing_enabled:
+                self._drag_start = event.position().toPoint()
+                self._drag_end = None
+                self._drawing = True
+                self.update()
+            elif self._scroll_ref is not None:
+                # 非手动模式:开始平移(抓取画面)/ start panning (grab the image)
+                self._panning = True
+                self._pan_origin = event.globalPosition().toPoint()
+                self._pan_h0 = self._scroll_ref.horizontalScrollBar().value()
+                self._pan_v0 = self._scroll_ref.verticalScrollBar().value()
+                self.setCursor(Qt.ClosedHandCursor)
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         if self.drawing_enabled and self._drawing and (event.buttons() & Qt.LeftButton):
             self._drag_end = event.position().toPoint()
             self.update()
+        elif self._panning and (event.buttons() & Qt.LeftButton) and self._scroll_ref is not None:
+            delta = event.globalPosition().toPoint() - self._pan_origin
+            self._scroll_ref.horizontalScrollBar().setValue(self._pan_h0 - delta.x())
+            self._scroll_ref.verticalScrollBar().setValue(self._pan_v0 - delta.y())
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
@@ -222,6 +258,9 @@ class _CropLabel(QLabel):
                 rect = QRect(self._drag_start, self._drag_end).normalized()
                 if rect.width() > 4 and rect.height() > 4:
                     self.crop_drawn.emit(rect)
+        elif self._panning and event.button() == Qt.LeftButton:
+            self._panning = False
+            self.setCursor(Qt.OpenHandCursor)
         super().mouseReleaseEvent(event)
 
     def paintEvent(self, event) -> None:  # type: ignore[override]
@@ -280,6 +319,7 @@ class _Canvas(QWidget):
         shadow.setColor(QColor(0, 0, 0, 160))
         self._img.setGraphicsEffect(shadow)
         self._scroll.setWidget(self._img)
+        self._img._scroll_ref = self._scroll  # 供 hand 平移用 / for pan
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -358,12 +398,14 @@ class _Canvas(QWidget):
         self._img.clear_rubber_band()  # 换图后旧框坐标失效 / old rect invalid on new image
         self._zoom_bar.show()
         self.fit()
+        self._img.refresh_cursor()
 
     def set_manual_enabled(self, enabled: bool) -> None:
-        """开关手动框选(显示可拖拽红框)。"""
+        """开关手动框选(显示可拖拽红框);手动=十字光标,否则=手型平移。"""
         self._img.drawing_enabled = enabled
         if not enabled:
             self._img.clear_rubber_band()
+        self._img.refresh_cursor()
 
     def displayed_pixmap_rect(self) -> QRect:
         """当前显示像素图在内部 label 内的矩形(供手动坐标映射)。"""
@@ -389,11 +431,38 @@ class _Canvas(QWidget):
         self._slider.setValue(max(self.PCT_MIN, min(self.PCT_MAX, pct)))
         self._slider.blockSignals(blocked)
 
-    def set_zoom(self, factor: float) -> None:
-        """设置绝对缩放因子(1.0 = 1:1),夹到 [PCT_MIN, PCT_MAX]。"""
+    def set_zoom(self, factor: float, focal: Optional[QPoint] = None) -> None:
+        """
+        设置绝对缩放因子(1.0 = 1:1),夹到 [PCT_MIN, PCT_MAX]。
+        focal 为视口坐标的锚点:缩放后该点下的图像内容保持不动(用于「向光标缩放」);
+        None 时以视口中心为锚点(居中缩放)。
+        """
         factor = max(self.PCT_MIN / 100.0, min(self.PCT_MAX / 100.0, float(factor)))
+        if self._src is None or self._src.isNull():
+            self._zoom = factor
+            self._apply()
+            self.zoom_changed.emit(self._zoom)
+            return
+
+        vp = self._scroll.viewport()
+        hbar, vbar = self._scroll.horizontalScrollBar(), self._scroll.verticalScrollBar()
+        if focal is None:
+            focal = QPoint(vp.width() // 2, vp.height() // 2)
+
+        # 缩放前:求 focal 下的图像内容点在 label 内的归一化位置 / content fraction under focal
+        old_lw, old_lh = max(1, self._img.width()), max(1, self._img.height())
+        ox = -hbar.value() if old_lw > vp.width() else (vp.width() - old_lw) // 2
+        oy = -vbar.value() if old_lh > vp.height() else (vp.height() - old_lh) // 2
+        fx = (focal.x() - ox) / old_lw
+        fy = (focal.y() - oy) / old_lh
+
         self._zoom = factor
-        self._apply()
+        self._apply()  # 重排 label 尺寸 / resizes the label
+
+        # 缩放后:调滚动条让同一内容点仍落在 focal 处 / keep that content point under focal
+        new_lw, new_lh = max(1, self._img.width()), max(1, self._img.height())
+        hbar.setValue(int(round(fx * new_lw - focal.x())))
+        vbar.setValue(int(round(fy * new_lh - focal.y())))
         self.zoom_changed.emit(self._zoom)
 
     def fit(self) -> None:
@@ -426,6 +495,18 @@ class _Canvas(QWidget):
         self.set_zoom(value / 100.0)
 
     # ── 浮动条定位 / Floating bar positioning ─────────────────────────────────
+
+    def wheelEvent(self, event) -> None:  # type: ignore[override]
+        """滚轮缩放,以光标位置为锚点(向光标缩放)。"""
+        if self._src is None or self._src.isNull():
+            super().wheelEvent(event)
+            return
+        delta = event.angleDelta().y()
+        if delta == 0:
+            return
+        step = 1.15 if delta > 0 else 1.0 / 1.15
+        self.set_zoom(self._zoom * step, focal=event.position().toPoint())
+        event.accept()
 
     def resizeEvent(self, event) -> None:  # type: ignore[override]
         """重定位浮动 zoom 工具条到底部居中。"""
@@ -516,6 +597,107 @@ class _CandCell(QFrame):
     def mousePressEvent(self, event) -> None:  # type: ignore[override]
         self.clicked.emit(self._index)
         super().mousePressEvent(event)
+
+
+# ── 导出设置对话框 / Export settings dialog ───────────────────────────────────
+
+
+class _ExportDialog(QDialog):
+    """
+    导出设置:目标尺寸(宽/高,可锁定比例)+ JPEG 质量。类似 PS 的「图像大小 + 存储质量」。
+    Export settings: output size (width/height, aspect-lockable) + JPEG quality.
+    """
+
+    def __init__(self, i18n, native_w: int, native_h: int, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._i18n = i18n
+        self._native_w = max(1, int(native_w))
+        self._native_h = max(1, int(native_h))
+        self._aspect = self._native_w / self._native_h
+        self._syncing = False  # 防止宽高联动递归 / guard against width/height feedback
+
+        self.setWindowTitle(i18n.t("crop_studio.export_settings"))
+        self.setStyleSheet(self._build_qss())
+
+        form = QFormLayout(self)
+        form.setContentsMargins(20, 18, 20, 16)
+        form.setSpacing(12)
+
+        info = QLabel(f"{i18n.t('crop_studio.crop_size')}: {self._native_w} × {self._native_h}")
+        info.setObjectName("infoLbl")
+        form.addRow(info)
+
+        self._w_spin = QSpinBox()
+        self._w_spin.setRange(1, 200000)
+        self._w_spin.setValue(self._native_w)
+        self._w_spin.setSuffix(" px")
+        self._w_spin.valueChanged.connect(self._on_width_changed)
+        form.addRow(i18n.t("crop_studio.width"), self._w_spin)
+
+        self._h_spin = QSpinBox()
+        self._h_spin.setRange(1, 200000)
+        self._h_spin.setValue(self._native_h)
+        self._h_spin.setSuffix(" px")
+        self._h_spin.valueChanged.connect(self._on_height_changed)
+        form.addRow(i18n.t("crop_studio.height"), self._h_spin)
+
+        self._lock = QCheckBox(i18n.t("crop_studio.lock_ratio"))
+        self._lock.setChecked(True)
+        form.addRow("", self._lock)
+
+        qrow = QHBoxLayout()
+        self._q_slider = QSlider(Qt.Horizontal)
+        self._q_slider.setRange(1, 100)
+        self._q_slider.setValue(95)
+        self._q_lbl = QLabel("95")
+        self._q_lbl.setFixedWidth(32)
+        self._q_slider.valueChanged.connect(lambda v: self._q_lbl.setText(str(v)))
+        qrow.addWidget(self._q_slider)
+        qrow.addWidget(self._q_lbl)
+        form.addRow(i18n.t("crop_studio.quality"), qrow)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+
+    def _build_qss(self) -> str:
+        bg = _c("bg_elevated", "#1a1a1a")
+        text = _c("text_primary", "#fafafa")
+        card = _c("bg_input", "#262626")
+        border = _c("border", "#2a2a2a")
+        accent = _c("accent", "#00d4aa")
+        return (
+            f"QDialog {{ background: {bg}; }}"
+            f" QLabel {{ color: {text}; font-size: 13px; background: transparent; }}"
+            f" QLabel#infoLbl {{ color: {_c('text_secondary', '#a1a1a1')}; font-size: 12px; }}"
+            f" QSpinBox {{ background: {card}; color: {text}; border: 1px solid {border};"
+            f" border-radius: 6px; padding: 4px 8px; }}"
+            f" QCheckBox {{ color: {_c('text_secondary', '#a1a1a1')}; font-size: 12px; }}"
+            f" QPushButton {{ color: {text}; background: {card}; border: 1px solid {border};"
+            f" border-radius: 7px; padding: 6px 16px; }}"
+            f" QPushButton:hover {{ border-color: {accent}; }}"
+        )
+
+    def _on_width_changed(self, w: int) -> None:
+        if self._syncing or not self._lock.isChecked():
+            return
+        self._syncing = True
+        self._h_spin.setValue(max(1, round(w / self._aspect)))
+        self._syncing = False
+
+    def _on_height_changed(self, h: int) -> None:
+        if self._syncing or not self._lock.isChecked():
+            return
+        self._syncing = True
+        self._w_spin.setValue(max(1, round(h * self._aspect)))
+        self._syncing = False
+
+    def values(self) -> tuple:
+        """返回 (out_size 或 None, jpeg_quality)。尺寸等于原始时返回 None(不重采样)。"""
+        w, h = self._w_spin.value(), self._h_spin.value()
+        out_size = None if (w == self._native_w and h == self._native_h) else (w, h)
+        return out_size, self._q_slider.value()
 
 
 # ── 工作区主体 / Workspace widget ─────────────────────────────────────────────
@@ -677,22 +859,25 @@ class CropStudio(QWidget):
         h.addWidget(star_lbl)
         self._star_label = star_lbl  # 测试断言用
 
-        # 罕见度 pill / Rarity pill
+        # 罕见度 pill:仅「少见及以上」(tier≥2)加描边框强调,常见/能见用纯文字。
+        # Rarity: box only uncommon-and-rarer (tier>=2); common/occasional are plain text.
         gbif_r = p.get("gbif_rarity_100")
         tidx = gbif_score_to_tier(gbif_r) if gbif_r is not None else None
         if tidx is not None:
             color = tier_color(tidx) or _c("text_secondary", "#a1a1a1")
             pill = QLabel(f"{tier_icon(tidx)} {tier_name(tidx, is_zh=is_zh)}")
-            pill.setStyleSheet(self._pill_qss(color))
+            pill.setStyleSheet(self._pill_qss(color, boxed=tidx >= 2))
             h.addWidget(pill)
 
-        # IUCN pill / IUCN status pill
+        # IUCN pill:仅「受威胁」级(VU/EN/CR/EW/EX)加描边框,无危/近危等用纯文字。
+        # IUCN: box only threatened categories; LC/NT/etc. are plain colored text.
         iucn = p.get("iucn_category")
         if iucn:
             from ui.detail_panel import _format_iucn
             text, color = _format_iucn(iucn, is_zh)
+            threatened = str(iucn).upper() in {"VU", "EN", "CR", "EW", "EX"}
             iucn_pill = QLabel(text)
-            iucn_pill.setStyleSheet(self._pill_qss(color))
+            iucn_pill.setStyleSheet(self._pill_qss(color, boxed=threatened))
             h.addWidget(iucn_pill)
 
         h.addStretch(1)
@@ -727,11 +912,16 @@ class CropStudio(QWidget):
         self._export_btn = export_btn
         return bar
 
-    def _pill_qss(self, color: str) -> str:
-        """罕见度/IUCN 描边 pill 样式。"""
+    def _pill_qss(self, color: str, boxed: bool = True) -> str:
+        """罕见度/IUCN 标签样式。boxed=True 带描边框强调;否则纯彩色文字(无框)。"""
+        if boxed:
+            return (
+                f"color: {color}; border: 1px solid {color}; border-radius: 9px;"
+                " padding: 2px 9px; font-size: 11px; font-weight: 600;"
+            )
         return (
-            f"color: {color}; border: 1px solid {color}; border-radius: 9px;"
-            " padding: 2px 9px; font-size: 11px; font-weight: 600;"
+            f"color: {color}; border: none; background: transparent;"
+            " padding: 2px 4px; font-size: 12px; font-weight: 600;"
         )
 
     def _build_toolbar(self) -> QWidget:
@@ -1085,13 +1275,33 @@ class CropStudio(QWidget):
 
     # ── 导出 / Export ─────────────────────────────────────────────────────────
 
+    def _native_crop_size(self) -> tuple:
+        """当前裁剪在源图(self._image_path)像素空间的原始尺寸 (宽,高)。"""
+        if self._current_box is not None:
+            x1, y1, x2, y2 = self._current_box
+            return (max(1, x2 - x1), max(1, y2 - y1))
+        if self._analysis_size is not None:
+            return self._analysis_size
+        try:  # 兜底:读源图尺寸(JPEG 头) / fallback: read source dims
+            from PIL import Image
+            with Image.open(self._image_path) as im:
+                return im.size
+        except Exception:  # noqa: BLE001
+            return (0, 0)
+
     def _on_export_clicked(self) -> None:
         """
-        导出按钮:弹保存对话框(默认 <原名>_crop.jpg),后台 export_crop。
+        导出按钮:先弹「导出设置」(尺寸+质量),再弹保存对话框,后台 export_crop。
         像素来源用分析/预览图(与候选/手动框同坐标系,无需缩放、可解码);
         EXIF 从原始文件复制以保全元数据;命名/默认目录用原图路径。
         """
         from PySide6.QtWidgets import QFileDialog
+
+        nw, nh = self._native_crop_size()
+        dlg = _ExportDialog(self._i18n, nw, nh, parent=self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        out_size, quality = dlg.values()
 
         name_src = (self._photo.get("original_path") or self._photo.get("current_path")
                     or self._image_path)
@@ -1101,13 +1311,17 @@ class CropStudio(QWidget):
         )
         if not out:
             return
-        self._do_export(out)
+        self._do_export(out, jpeg_quality=quality, out_size=out_size)
 
-    def _do_export(self, out_path: str) -> None:
+    def _do_export(self, out_path: str, *, jpeg_quality: int = 95,
+                   out_size: Optional[tuple] = None) -> None:
         """启动后台导出(供按钮与测试调用)。"""
         exif_src = self._photo.get("original_path") or self._photo.get("current_path")
         self._export_btn.setEnabled(False)
-        self._export_worker = _ExportWorker(self._image_path, self._current_box, out_path, exif_src)
+        self._export_worker = _ExportWorker(
+            self._image_path, self._current_box, out_path, exif_src,
+            jpeg_quality=jpeg_quality, out_size=out_size,
+        )
         self._export_worker.done.connect(self._on_export_done)
         self._export_worker.start()
 

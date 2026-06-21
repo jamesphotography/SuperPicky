@@ -33,6 +33,7 @@ def default_out_path(src_path: str, suffix: str = "_crop") -> str:
 def export_crop(src_path: str, box: Optional[Box], out_path: str, *,
                 jpeg_quality: int = 95, copy_exif: bool = True,
                 exif_src: Optional[str] = None,
+                out_size: Optional[Tuple[int, int]] = None,
                 _image_loader: Optional[Callable[[str], "object"]] = None) -> str:
     """
     读取源图(可解码的 JPEG/预览),按 box 裁剪后写 JPEG;box=None 表示导出整图副本。
@@ -48,6 +49,7 @@ def export_crop(src_path: str, box: Optional[Box], out_path: str, *,
         copy_exif (bool): 是否复制 EXIF 到导出图。
         exif_src (Optional[str]): EXIF 来源文件;None 时用 src_path。
                                   ExifTool 可从 RAW 读元数据,故可传原始 RAW 以保全元数据。
+        out_size (Optional[Tuple[int,int]]): 目标 (宽,高);None=保持裁剪原始尺寸。
         _image_loader (Callable): 可注入的解码函数(测试用);默认 EXIF-aware loader。
 
     返回 / Returns:
@@ -74,6 +76,15 @@ def export_crop(src_path: str, box: Optional[Box], out_path: str, *,
         y1 = max(0, min(int(y1), h - 1))
         y2 = max(y1 + 1, min(int(y2), h))
         img = img[y1:y2, x1:x2]
+
+    # 可选重采样到目标尺寸(下采样用 INTER_AREA,上采样用 INTER_CUBIC)
+    # Optional resample to a target size (INTER_AREA for shrink, INTER_CUBIC for enlarge).
+    if out_size is not None:
+        tw, th = int(out_size[0]), int(out_size[1])
+        if tw > 0 and th > 0:
+            ch, cw = img.shape[:2]
+            interp = cv2.INTER_AREA if (tw * th) < (cw * ch) else cv2.INTER_CUBIC
+            img = cv2.resize(img, (tw, th), interpolation=interp)
 
     out_dir = os.path.dirname(out_path)
     if out_dir:

@@ -51,6 +51,18 @@ def test_export_crop_clamps_out_of_bounds_box():
     assert got.shape[1] == 50 and got.shape[0] == 40
 
 
+def test_export_crop_out_size_resamples():
+    """out_size 指定时,导出图应重采样到目标尺寸。"""
+    d = tempfile.mkdtemp()
+    src = os.path.join(d, "a.png")
+    _make_img(src, 200, 120)
+    out = os.path.join(d, "resized.jpg")
+    # 裁剪 100x60 → 重采样到 50x30
+    export_crop(src, (50, 30, 150, 90), out, copy_exif=False, out_size=(50, 30))
+    got = cv2.imread(out)
+    assert got.shape[1] == 50 and got.shape[0] == 30
+
+
 def test_export_crop_exif_src_overrides_copy_source():
     """exif_src 指定时,EXIF 复制应从该文件而非 src_path 读取。"""
     calls = {}

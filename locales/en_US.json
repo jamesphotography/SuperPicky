@@ -1426,6 +1426,12 @@
     "auto_coming_soon": "Auto adjustments coming soon",
     "save_as_candidate": "Save as candidate",
     "export_done": "Export complete",
-    "export_failed": "Export failed"
+    "export_failed": "Export failed",
+    "export_settings": "Export Settings",
+    "crop_size": "Crop size",
+    "width": "Width",
+    "height": "Height",
+    "quality": "JPEG quality",
+    "lock_ratio": "Lock ratio"
   }
 }
