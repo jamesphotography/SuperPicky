@@ -16,7 +16,7 @@ from PySide6.QtCore import Qt, Signal, QSize, QThread, Slot, QTimer
 from PySide6.QtGui import QPixmap, QFont, QGuiApplication, QImage
 
 from ui.styles import COLORS, FONTS
-from ui.icon_utils import load_tinted_icon, stars_pixmap, ICON_IDLE, ICON_ACTIVE
+from ui.icon_utils import load_tinted_icon, stars_pixmap, tinted_png_path, ICON_IDLE, ICON_ACTIVE
 from core.rarity_tier import gbif_score_to_tier, tier_name, tier_icon, tier_color
 
 
@@ -54,6 +54,16 @@ _FOCUS_COLORS = {
     "GOOD":  COLORS['focus_good'],    # 琥珀 — 合焦
     "BAD":   COLORS['focus_bad'],     # 近白灰 — 失焦
     "WORST": COLORS['focus_worst'],   # 灰 — 脱焦
+}
+
+# 对焦状态 → i18n 标签 key（中文：精焦/合焦/失焦/脱焦）与图标 svg
+_FOCUS_STATE_KEY = {
+    "BEST": "focus_state_best", "GOOD": "focus_state_good",
+    "BAD": "focus_state_bad", "WORST": "focus_state_worst",
+}
+_FOCUS_ICON = {
+    "BEST": "scan-eye.svg", "GOOD": "fullscreen.svg",
+    "BAD": "scan.svg", "WORST": "scan.svg",
 }
 
 # IUCN 红色名录等级 → (中文全名, 英文全名, 官方色)
@@ -602,7 +612,9 @@ class DetailPanel(QWidget):
         rating = p.get("rating", 0)
 
         focus = p.get("focus_status")
-        if not focus and _is_no_bird_photo(p):
+        if focus in _FOCUS_STATE_KEY:
+            focus = self.i18n.t(f"browser.{_FOCUS_STATE_KEY[focus]}")  # 英文枚举→中文标签
+        elif not focus and _is_no_bird_photo(p):
             focus = self.i18n.t("browser.focus_no_bird")
         focus = focus or "—"
         sharp = p.get("adj_sharpness")
@@ -842,19 +854,26 @@ class DetailPanel(QWidget):
                 f"color: {COLORS['text_primary']}; font-size: 12px; background: transparent;"
             )
 
-        # 对焦
-        focus = p.get("focus_status")
-        if not focus and _is_no_bird_photo(p):
-            focus = self.i18n.t("browser.focus_no_bird")
-        focus = focus or _unknown
-        self._val_focus.setText(focus)
-        color = _FOCUS_COLORS.get(focus, COLORS['text_primary'])
-        self._val_focus.setStyleSheet(f"color: {color}; font-size: 12px; background: transparent;")
+        # 对焦：中文标签 + 对应图标(svg 染对应颜色)，强化识别记忆
+        focus_raw = p.get("focus_status")
+        if focus_raw in _FOCUS_STATE_KEY:
+            color = _FOCUS_COLORS.get(focus_raw, COLORS['text_primary'])
+            label = self.i18n.t(f"browser.{_FOCUS_STATE_KEY[focus_raw]}")
+            png = tinted_png_path(_FOCUS_ICON[focus_raw], color, size=14)
+            self._val_focus.setText(f'<img src="{png}" width="14" height="14"> {label}')
+            self._val_focus.setStyleSheet(f"color: {color}; font-size: 12px; background: transparent;")
+        else:
+            if not focus_raw and _is_no_bird_photo(p):
+                txt = self.i18n.t("browser.focus_no_bird")
+            else:
+                txt = _unknown
+            self._val_focus.setText(txt)
+            self._val_focus.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 12px; background: transparent;")
 
         # 锐度（颜色跟随对焦状态）
         sharp = p.get("adj_sharpness")
         self._val_sharpness.setText(f"{sharp:.1f}" if sharp is not None else _unknown)
-        sharp_color = _FOCUS_COLORS.get(focus, COLORS['text_primary'])
+        sharp_color = _FOCUS_COLORS.get(focus_raw, COLORS['text_primary'])
         self._val_sharpness.setStyleSheet(
             f"color: {sharp_color}; font-size: 13px; font-weight: 600; background: transparent;"
         )

@@ -110,6 +110,29 @@ def _extract_burst_group_key(photo: dict) -> Optional[str]:
     return None
 
 
+def _burst_sharpness(photo: dict) -> float:
+    """
+    连拍代表照片选取用的锐度值：优先 adj_sharpness，回退 head_sharp，缺失视为最低。
+    与 report.db 排序 COALESCE(adj_sharpness, head_sharp, -1e99) 保持一致。
+
+    Sharpness used to pick a burst's cover photo: prefer adj_sharpness, fall back to
+    head_sharp, treat missing as lowest — mirrors the DB's sharpness_desc ordering.
+    """
+    v = photo.get("adj_sharpness")
+    if v is None:
+        v = photo.get("head_sharp")
+    return float(v) if v is not None else float("-inf")
+
+
+def _burst_representative(photos: list) -> dict:
+    """
+    从同组连拍中选「锐度最高」的一张作为折叠封面代表。
+
+    Pick the sharpest photo in a burst group as the collapsed-cover representative.
+    """
+    return max(photos, key=_burst_sharpness)
+
+
 def _build_burst_update_map(photos: list) -> dict:
     grouped = {}
     for photo in photos:
@@ -872,7 +895,7 @@ class ResultsBrowserWindow(QMainWindow):
 
         best_burst_photos = {}
         for bid, photos in burst_map.items():
-            best_photo = max(photos, key=lambda x: (x.get("rating", 0), x.get("composite_score", 0.0)))
+            best_photo = _burst_representative(photos)  # 折叠封面=组内锐度最高的一张
             best_burst_photos[bid] = _photo_identity(best_photo)
 
         grouped_photos = []
@@ -902,6 +925,7 @@ class ResultsBrowserWindow(QMainWindow):
                         expanded_photo["burst_position_index"] = i
                         expanded_photo["burst_total_count"] = len(burst_photos)
                         expanded_photo["burst_id"] = bid
+                        expanded_photo["is_burst_best"] = (_photo_identity(bp) == best_burst_photos[bid])
                         grouped_photos.append(expanded_photo)
                 else:
                     # Collapsed: add only the representative photo
@@ -2057,7 +2081,7 @@ class ResultsBrowserWidget(QWidget):
 
         best_burst_photos = {}
         for burst_id, photos in burst_map.items():
-            best_photo = max(photos, key=lambda x: (x.get("rating", 0), x.get("composite_score", 0.0)))
+            best_photo = _burst_representative(photos)  # 折叠封面=组内锐度最高的一张
             best_burst_photos[burst_id] = _photo_identity(best_photo)
 
         grouped_photos = []
@@ -2078,6 +2102,7 @@ class ResultsBrowserWidget(QWidget):
                     expanded_photo["is_expanded_burst_member"] = True
                     expanded_photo["burst_position_index"] = pos
                     expanded_photo["burst_total_count"] = len(burst_photos)
+                    expanded_photo["is_burst_best"] = (_photo_identity(burst_photo) == best_burst_photos[burst_id])
                     grouped_photos.append(expanded_photo)
             else:
                 best_identity = best_burst_photos[burst_id]
