@@ -232,6 +232,30 @@ MODELS_TO_DOWNLOAD = [
         "required": True,
         "sha256": None,
     },
+    {
+        # SVDLUT 空间感知调色权重(自动修图) / SVDLUT color weight (auto-enhance)。
+        "resource_id": "color_model",
+        "category": "Enhance",
+        "repo_id": "jamesphotography/SuperPicky-models",
+        "filename": "svdlut.pth",
+        "dest_dir": "models",
+        "packaged_dest_dir": "models",
+        "feature_tags": ["enhance"],
+        "required": False,
+        "sha256": None,
+    },
+    {
+        # SCUNet 盲降噪权重(自动修图) / SCUNet denoise weight (auto-enhance)。
+        "resource_id": "denoise_model",
+        "category": "Enhance",
+        "repo_id": "jamesphotography/SuperPicky-models",
+        "filename": "scunet_color_real.pth",
+        "dest_dir": "models",
+        "packaged_dest_dir": "models",
+        "feature_tags": ["enhance"],
+        "required": False,
+        "sha256": None,
+    },
 ]
 
 OPTIONAL_LOCAL_RESOURCES = [
