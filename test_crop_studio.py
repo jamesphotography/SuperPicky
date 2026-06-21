@@ -154,6 +154,42 @@ def test_set_mode_toggles_and_emits():
     w.close()
 
 
+def test_manual_crop_maps_and_saves():
+    """手动模式:框选映射到分析图坐标、记为当前框,并可存为候选。"""
+    import numpy as np
+    from PySide6.QtCore import QRect
+    from ui.crop_studio import CropStudio
+
+    photo = {"filename": "m.NEF", "current_path": "/nonexist/m.NEF"}
+    w = CropStudio(photo, get_i18n())
+    w._worker.wait(5000)
+    _app.processEvents()
+
+    # 注入分析图与离线打分函数,避免触发真实 TOPIQ 模型
+    w._analysis_bgr = np.zeros((80, 120, 3), "uint8")
+    w._analysis_size = (120, 80)
+    w._topiq_fn = lambda crop: 0.5
+    w._set_mode("manual")
+    assert w._mode == "manual"
+
+    pr = w._canvas.displayed_pixmap_rect()
+    assert not pr.isEmpty()
+    # 在像素图矩形内框选左上 1/2 区域
+    label_rect = QRect(pr.left(), pr.top(), pr.width() // 2, pr.height() // 2)
+    w._on_manual_crop(label_rect)
+    assert w._current_box is not None
+    bx1, by1, bx2, by2 = w._current_box
+    assert 0 <= bx1 < bx2 <= 120 and 0 <= by1 < by2 <= 80
+    assert w._manual_save_btn.isEnabled()
+
+    before = len(w._suggestions)
+    w._save_manual_as_candidate()
+    assert len(w._suggestions) == before + 1
+    assert w._mode == "crop"
+    assert w._selected_index == len(w._suggestions) - 1
+    w.close()
+
+
 def test_resolve_prefers_temp_jpeg():
     """temp_jpeg_path 存在时应优先于 current/original。"""
     from ui.crop_studio import CropStudio

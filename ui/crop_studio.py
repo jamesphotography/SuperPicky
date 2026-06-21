@@ -23,8 +23,8 @@ from typing import Optional
 
 import cv2
 import numpy as np
-from PySide6.QtCore import QSize, Qt, QThread, Signal
-from PySide6.QtGui import QColor, QImage, QPixmap
+from PySide6.QtCore import QPoint, QRect, QSize, Qt, QThread, Signal
+from PySide6.QtGui import QColor, QImage, QMouseEvent, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
     QGraphicsDropShadowEffect,
@@ -140,6 +140,79 @@ class _AdviceWorker(QThread):
         self.done.emit(result)
 
 
+# ── 可框选图片标签 / Crop-drawing image label ─────────────────────────────────
+
+
+class _CropLabel(QLabel):
+    """
+    承载缩放后像素图的 QLabel,手动模式下支持鼠标拖拽绘制裁剪矩形(红虚线),
+    松手发出 crop_drawn(label 内矩形)。移植自 crop_advisor_dialog._PreviewLabel。
+
+    QLabel holding the zoomed pixmap; in manual mode supports drag-to-draw a crop
+    rectangle (red dashed) and emits crop_drawn (label-local rect) on release.
+    Ported from crop_advisor_dialog._PreviewLabel.
+    """
+
+    crop_drawn: Signal = Signal(QRect)
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.drawing_enabled: bool = False
+        self._drag_start: Optional[QPoint] = None
+        self._drag_end: Optional[QPoint] = None
+        self._drawing: bool = False
+
+    def pixmap_rect(self) -> QRect:
+        """当前像素图在标签内的矩形(扣除 2px 白边,居中)。"""
+        pm = self.pixmap()
+        if pm is None or pm.isNull():
+            return QRect()
+        pw, ph = pm.width(), pm.height()
+        ox = (self.width() - pw) // 2
+        oy = (self.height() - ph) // 2
+        return QRect(ox, oy, pw, ph)
+
+    def clear_rubber_band(self) -> None:
+        """清除已绘橡皮筋。"""
+        self._drag_start = self._drag_end = None
+        self._drawing = False
+        self.update()
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if self.drawing_enabled and event.button() == Qt.LeftButton:
+            self._drag_start = event.position().toPoint()
+            self._drag_end = None
+            self._drawing = True
+            self.update()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if self.drawing_enabled and self._drawing and (event.buttons() & Qt.LeftButton):
+            self._drag_end = event.position().toPoint()
+            self.update()
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if self.drawing_enabled and event.button() == Qt.LeftButton and self._drawing:
+            self._drag_end = event.position().toPoint()
+            self._drawing = False
+            self.update()
+            if self._drag_start is not None and self._drag_end is not None:
+                rect = QRect(self._drag_start, self._drag_end).normalized()
+                if rect.width() > 4 and rect.height() > 4:
+                    self.crop_drawn.emit(rect)
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event) -> None:  # type: ignore[override]
+        super().paintEvent(event)
+        if self.drawing_enabled and self._drag_start is not None and self._drag_end is not None:
+            rect = QRect(self._drag_start, self._drag_end).normalized()
+            painter = QPainter(self)
+            painter.setPen(QPen(Qt.red, 2, Qt.DashLine))
+            painter.drawRect(rect)
+            painter.end()
+
+
 # ── 看图画布 / Image canvas ───────────────────────────────────────────────────
 
 
@@ -156,6 +229,7 @@ class _Canvas(QWidget):
 
     zoom_changed: Signal = Signal(float)   # 当前缩放因子(0.68 表示 68%)
     peek_changed: Signal = Signal(bool)    # 按住「看原图」(True=按下)
+    manual_crop: Signal = Signal(QRect)    # 手动框选(label 内矩形)
 
     PCT_MIN: int = 10
     PCT_MAX: int = 400
@@ -175,9 +249,10 @@ class _Canvas(QWidget):
             f" QScrollArea > QWidget > QWidget {{ background: {CANVAS_BG}; }}"
         )
 
-        self._img = QLabel()
+        self._img = _CropLabel()
         self._img.setAlignment(Qt.AlignCenter)
         self._img.setStyleSheet("border: 2px solid #ffffff; background: transparent;")
+        self._img.crop_drawn.connect(self.manual_crop)  # 转发手动框选 / forward manual rect
         shadow = QGraphicsDropShadowEffect(self._img)
         shadow.setBlurRadius(40)
         shadow.setOffset(0, 12)
@@ -259,8 +334,19 @@ class _Canvas(QWidget):
     def set_image(self, bgr: np.ndarray) -> None:
         """设置画布显示的图像(BGR),并 fit-to-window。"""
         self._src = _bgr_to_qpixmap(bgr)
+        self._img.clear_rubber_band()  # 换图后旧框坐标失效 / old rect invalid on new image
         self._zoom_bar.show()
         self.fit()
+
+    def set_manual_enabled(self, enabled: bool) -> None:
+        """开关手动框选(显示可拖拽红框)。"""
+        self._img.drawing_enabled = enabled
+        if not enabled:
+            self._img.clear_rubber_band()
+
+    def displayed_pixmap_rect(self) -> QRect:
+        """当前显示像素图在内部 label 内的矩形(供手动坐标映射)。"""
+        return self._img.pixmap_rect()
 
     def _apply(self) -> None:
         """按当前缩放因子渲染源图到内部 QLabel。"""
@@ -271,6 +357,7 @@ class _Canvas(QWidget):
         scaled = self._src.scaled(w, h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         self._img.setPixmap(scaled)
         self._img.adjustSize()
+        self._img.clear_rubber_band()  # 缩放后旧框坐标失效 / old rect invalid after rescale
         self._sync_controls()
 
     def _sync_controls(self) -> None:
@@ -453,6 +540,11 @@ class CropStudio(QWidget):
         # export to rescale to the full-res original.
         self._analysis_size: Optional[tuple[int, int]] = None
 
+        # 手动裁剪状态 / Manual crop state
+        self._analysis_bgr: Optional[np.ndarray] = None  # 懒加载的分析图(打分/映射用)
+        self._manual_box: Optional[tuple] = None         # 最近一次手动框(分析图坐标)
+        self._topiq_fn = None                            # 可注入打分函数(测试用)
+
         self._image_path: str = self._resolve_image_path(photo)
 
         self.setStyleSheet(f"QWidget {{ background: {_c('bg_primary', '#111111')}; }}")
@@ -473,6 +565,7 @@ class CropStudio(QWidget):
         main_row.addWidget(self._toolbar)
 
         self._canvas = _Canvas()
+        self._canvas.manual_crop.connect(self._on_manual_crop)
         main_row.addWidget(self._canvas, 1)
 
         self._cand_panel = self._build_candidate_panel()
@@ -693,6 +786,21 @@ class CropStudio(QWidget):
         )
         outer.addWidget(self._cand_hint)
 
+        # 手动模式「存为候选」按钮(默认隐藏)/ Manual "save as candidate" (hidden by default)
+        self._manual_save_btn = QPushButton(self._i18n.t("crop_studio.save_as_candidate"))
+        self._manual_save_btn.setCursor(Qt.PointingHandCursor)
+        self._manual_save_btn.setStyleSheet(
+            f"QPushButton {{ color: {_c('accent', '#00d4aa')}; background: transparent;"
+            f" border: 1px solid {_c('accent', '#00d4aa')}; border-radius: 8px; padding: 7px;"
+            " font-size: 12px; font-weight: 600; }"
+            f"QPushButton:hover {{ background: {_c('accent_dim', 'rgba(0,212,170,0.15)')}; }}"
+            f"QPushButton:disabled {{ color: {ICON_DISABLED}; border-color: #242424; }}"
+        )
+        self._manual_save_btn.setEnabled(False)
+        self._manual_save_btn.clicked.connect(self._save_manual_as_candidate)
+        self._manual_save_btn.hide()
+        outer.addWidget(self._manual_save_btn)
+
         self._cand_scroll = QScrollArea()
         self._cand_scroll.setFrameShape(QFrame.NoFrame)
         self._cand_scroll.setWidgetResizable(True)
@@ -823,19 +931,113 @@ class CropStudio(QWidget):
         self._update_tool_active()
 
         if mode == "crop":
-            if self._suggestions and 0 <= self._selected_index < len(self._suggestions):
-                self._select_candidate(self._selected_index)
+            self._canvas.set_manual_enabled(False)
+            self._manual_save_btn.hide()
+            if self._suggestions:
+                self._cand_hint.hide()
+                if 0 <= self._selected_index < len(self._suggestions):
+                    self._select_candidate(self._selected_index)
         elif mode == "manual":
-            # 手动模式显示整图(Task 6 叠加可拖拽裁剪框)
             self._enter_manual_mode()
         elif mode == "auto":
             # 自动后期占位:本期不改画布,仅提示即将推出
+            self._canvas.set_manual_enabled(False)
+            self._manual_save_btn.hide()
             self._cand_hint.setText(self._i18n.t("crop_studio.auto_coming_soon"))
             self._cand_hint.show()
 
     def _enter_manual_mode(self) -> None:
-        """进入手动裁剪模式:画布显示整图(Task 6 叠加拖拽框 + 实时 TOPIQ)。"""
-        self._show_full_on_canvas()
+        """进入手动裁剪:画布显示整图 + 启用拖拽框 + 懒加载分析图供打分。"""
+        self._ensure_analysis_bgr()
+        if self._analysis_bgr is not None:
+            self._canvas.set_image(self._analysis_bgr)
+            self._current_box = None
+        self._canvas.set_manual_enabled(True)
+        self._cand_hint.setText(self._i18n.t("crop_advisor.manual_mode"))
+        self._cand_hint.show()
+        self._manual_save_btn.setEnabled(False)  # 画框后才可存 / enabled once a box is drawn
+        self._manual_save_btn.show()
+
+    def _ensure_analysis_bgr(self) -> None:
+        """懒加载分析图(EXIF 感知);失败保持 None。"""
+        if self._analysis_bgr is None:
+            from core.crop_advisor import _load_image_exif_aware
+            self._analysis_bgr = _load_image_exif_aware(self._image_path)
+            if self._analysis_bgr is not None:
+                h, w = self._analysis_bgr.shape[:2]
+                self._analysis_size = (int(w), int(h))
+
+    # ── 手动框选 → 原图坐标 + 实时 TOPIQ / Manual rect → coords + live TOPIQ ────
+
+    def _on_manual_crop(self, label_rect: QRect) -> None:
+        """
+        手动拖拽释放:把 label 内矩形映射回分析图坐标,打分并记为当前导出框。
+        映射:label 内像素图矩形 ↔ 分析图,按比例换算(zoom/降采样已并入像素图尺寸)。
+        """
+        if self._mode != "manual" or self._analysis_bgr is None:
+            return
+        pix_rect = self._canvas.displayed_pixmap_rect()
+        if pix_rect.isEmpty():
+            return
+        clipped = label_rect.intersected(pix_rect)
+        if clipped.isEmpty():
+            return
+
+        ah, aw = self._analysis_bgr.shape[:2]
+        sx = aw / pix_rect.width()
+        sy = ah / pix_rect.height()
+        # QRect.right()/bottom() 为包含端点,+1 转 exclusive
+        x1 = int((clipped.left() - pix_rect.left()) * sx)
+        y1 = int((clipped.top() - pix_rect.top()) * sy)
+        x2 = int((clipped.right() + 1 - pix_rect.left()) * sx)
+        y2 = int((clipped.bottom() + 1 - pix_rect.top()) * sy)
+        x1, x2 = max(0, min(x1, x2)), min(aw, max(x1, x2))
+        y1, y2 = max(0, min(y1, y2)), min(ah, max(y1, y2))
+        if x2 <= x1 or y2 <= y1:
+            return
+
+        box = (x1, y1, x2, y2)
+        self._manual_box = box
+        self._current_box = box  # 手动框直接作为导出框(分析图坐标)
+        self._manual_save_btn.setEnabled(True)
+
+        from core.crop_advisor import score_manual_crop
+        try:
+            score = score_manual_crop(self._analysis_bgr, box, self._topiq_fn)
+        except Exception:  # noqa: BLE001 — 打分失败不影响框选 / scoring failure is non-fatal
+            score = None
+        label = self._i18n.t("crop_advisor.manual_score")
+        self._cand_hint.setText(f"{label}: {score:.2f}" if score is not None else f"{label}: —")
+
+    def _save_manual_as_candidate(self) -> None:
+        """把最近手动框存为候选并选中(裁剪图取自分析图)。"""
+        if self._manual_box is None or self._analysis_bgr is None:
+            return
+        x1, y1, x2, y2 = self._manual_box
+        crop = self._analysis_bgr[y1:y2, x1:x2]
+        if crop.size == 0:
+            return
+        from core.crop_advisor import score_manual_crop
+        try:
+            score = score_manual_crop(self._analysis_bgr, self._manual_box, self._topiq_fn)
+        except Exception:  # noqa: BLE001
+            score = None
+        sugg = CropSuggestion(
+            ratio_label=f"{x2 - x1}:{y2 - y1}",
+            box=self._manual_box,
+            topiq_score=float(score) if score is not None else 0.0,
+            preview_bgr=crop.copy(),
+        )
+        self._suggestions.append(sugg)
+        new_index = len(self._suggestions) - 1
+        # 回到裁剪模式并选中新候选 / back to crop mode, select the new candidate
+        self._mode = "crop"
+        self._update_tool_active()
+        self._canvas.set_manual_enabled(False)
+        self._manual_save_btn.hide()
+        self._cand_hint.hide()
+        self._build_candidates()
+        self._select_candidate(new_index)
 
     def _update_tool_active(self) -> None:
         """根据当前模式高亮工具按钮(裁剪=manual,自动=auto)。"""

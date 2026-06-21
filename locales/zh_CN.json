@@ -1423,6 +1423,7 @@
     "tb_delete": "删除",
     "back": "返回",
     "export": "导出",
-    "auto_coming_soon": "自动后期功能即将推出"
+    "auto_coming_soon": "自动后期功能即将推出",
+    "save_as_candidate": "存为候选"
   }
 }
