@@ -24,9 +24,13 @@ def _bilerp(plane: torch.Tensor, gx: torch.Tensor, gy: torch.Tensor) -> torch.Te
     在 (N,Hp,Wp) 的平面上,对每像素按 (gx→W 轴, gy→H 轴) 做双线性采样。
     gx, gy ∈ [0,1],形状 (N,H,W);返回 (N,H,W)。
     """
-    grid = torch.stack([gx * 2.0 - 1.0, gy * 2.0 - 1.0], dim=-1)  # (N,H,W,2)
+    # 坐标本就在 [0,1](图像值/空间坐标),clamp 到 [-1,1] 后用 padding="zeros"
+    # 等价于 border(永不越界),且 MPS 支持(MPS 不支持 grid_sample 的 border padding)。
+    # Coords are in [0,1]; clamp to [-1,1] so zeros-padding == border (never OOB),
+    # and zeros padding is supported on MPS (border is not).
+    grid = torch.stack([gx * 2.0 - 1.0, gy * 2.0 - 1.0], dim=-1).clamp(-1.0, 1.0)
     out = F.grid_sample(plane.unsqueeze(1), grid, mode="bilinear",
-                        align_corners=True, padding_mode="border")
+                        align_corners=True, padding_mode="zeros")
     return out[:, 0]
 
 
