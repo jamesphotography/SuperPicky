@@ -271,6 +271,14 @@ class SVDLUTNet(nn.Module):
             n_vertices=17, n_feats=n_feats, n_ranks=8, ch_per_grid=2)
 
     def forward(self, img):
-        # Task 3(P2)接入纯 torch 切片;此前抛错 → pipeline 优雅降级跳过调色。
-        raise NotImplementedError(
-            "SVDLUT slicing 待 P2 接入 / pure-torch slicing not wired yet")
+        """img: (N,3,H,W) RGB[0,1] → 调色后 (N,3,H,W),已 ReLU。"""
+        from core.enhance.nets.svdlut_slicing import (  # noqa: PLC0415
+            bilateral_slice_lut_transform)
+        feat = self.backbone(img)
+        g3d_lut, _ = self.gen_2d_lut(feat)
+        lut_w, lut_b = self.gen_2d_lut_weight_bias(feat)
+        grid, _ = self.gen_2d_bilateral(feat)
+        grid_w, grid_b = self.gen_2d_grid_weight_bias(feat)
+        out = bilateral_slice_lut_transform(
+            grid, img, grid_w, grid_b, g3d_lut, lut_w, lut_b)
+        return torch.relu(out)
