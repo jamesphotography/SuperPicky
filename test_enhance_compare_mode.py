@@ -43,7 +43,7 @@ def test_enter_compare_mode_updates_after(monkeypatch):
              "current_path": _SAMPLE, "original_path": _SAMPLE}
     w = crop_studio.CropStudio(photo, get_i18n())
 
-    w._enter_enhance_mode()
+    w._enter_compare_mode("denoise")
     # 进入对比模式:激活、切到对比视图、选项为降噪-only
     assert w._enhance_active is True
     assert w._center_stack.currentWidget() is w._compare_view
@@ -59,7 +59,7 @@ def test_enter_compare_mode_updates_after(monkeypatch):
     assert w._compare_view._after is not None
 
     # 退出对比模式:回裁剪页,但降噪已启用 → 导出仍生效(选项不变 None)
-    w._exit_enhance_mode()
+    w._exit_compare_mode()
     assert w._enhance_active is False
     assert w._center_stack.currentWidget() is w._canvas
     assert w._current_enhance_opts() is not None  # 完成后导出仍降噪 / persists

@@ -1178,6 +1178,9 @@ class CropStudio(QWidget):
         self._btn_enhance = self._tool_btn("gem.svg", self._i18n.t("crop_studio.tb_enhance"),
                                            self._toggle_enhance_mode)
         v.addWidget(self._btn_enhance)
+        self._btn_color = self._tool_btn("aperture.svg", self._i18n.t("crop_studio.color"),
+                                         self._toggle_color_mode)
+        v.addWidget(self._btn_color)
 
         v.addStretch(1)
 
@@ -1537,22 +1540,38 @@ class CropStudio(QWidget):
         h.setSpacing(10)
 
         i18n = self._i18n
-        # 降噪强度滑块:10% 一档(range 0..10,value*10 为百分比) / 10%-step slider
-        h.addWidget(QLabel(i18n.t("crop_studio.denoise")))
-        self._denoise_slider = QSlider(Qt.Horizontal)
-        self._denoise_slider.setRange(0, 10)
-        self._denoise_slider.setValue(7)  # 70% 默认 / default 70%
-        self._denoise_slider.setSingleStep(1)
-        self._denoise_slider.setPageStep(1)
-        self._denoise_slider.setTickPosition(QSlider.TicksBelow)
-        self._denoise_slider.setTickInterval(1)
-        self._denoise_slider.setFixedWidth(220)
-        self._denoise_slider.valueChanged.connect(self._request_preview)
+
+        def _slider(default: int) -> QSlider:
+            s = QSlider(Qt.Horizontal)
+            s.setRange(0, 10)            # 10% 一档 / 10%-step
+            s.setValue(default)
+            s.setSingleStep(1)
+            s.setPageStep(1)
+            s.setTickPosition(QSlider.TicksBelow)
+            s.setTickInterval(1)
+            s.setFixedWidth(200)
+            s.valueChanged.connect(self._request_preview)
+            return s
+
+        # 降噪组 / denoise group
+        self._denoise_label = QLabel(i18n.t("crop_studio.denoise"))
+        h.addWidget(self._denoise_label)
+        self._denoise_slider = _slider(7)   # 70% 默认
         h.addWidget(self._denoise_slider)
         self._denoise_val_lbl = QLabel("70%")
         self._denoise_slider.valueChanged.connect(
             lambda v: self._denoise_val_lbl.setText(f"{v * 10}%"))
         h.addWidget(self._denoise_val_lbl)
+
+        # 调色组(默认隐藏,进调色模式才显示) / color group (shown only in color mode)
+        self._color_label = QLabel(i18n.t("crop_studio.color"))
+        h.addWidget(self._color_label)
+        self._color_slider = _slider(4)     # 40% 默认 / conservative
+        h.addWidget(self._color_slider)
+        self._color_val_lbl = QLabel("40%")
+        self._color_slider.valueChanged.connect(
+            lambda v: self._color_val_lbl.setText(f"{v * 10}%"))
+        h.addWidget(self._color_val_lbl)
 
         # 状态:处理中 / 已更新(含平均像素差) / status: working / updated (with mean diff)
         self._enhance_status_lbl = QLabel("")
@@ -1572,39 +1591,59 @@ class CropStudio(QWidget):
         h.addWidget(self._zoom_100_btn)
         self._enhance_done_btn = QPushButton(i18n.t("crop_studio.enhance_done"))
         self._enhance_done_btn.setCursor(Qt.PointingHandCursor)
-        self._enhance_done_btn.clicked.connect(self._exit_enhance_mode)
+        self._enhance_done_btn.clicked.connect(self._exit_compare_mode)
         h.addWidget(self._enhance_done_btn)
         return bar
 
+    def _set_strip_for_kind(self, kind: str) -> None:
+        """按对比类型显隐微调条控件:降噪模式只显降噪;调色模式显降噪+调色。"""
+        is_color = (kind == "color")
+        for wdg in (self._color_label, self._color_slider, self._color_val_lbl):
+            wdg.setVisible(is_color)
+
     def _toggle_enhance_mode(self) -> None:
         """点左栏「修图」进入/退出降噪左右对比模式。"""
-        if getattr(self, "_enhance_active", False):
-            self._exit_enhance_mode()
+        if getattr(self, "_enhance_active", False) and getattr(self, "_compare_kind", "") == "denoise":
+            self._exit_compare_mode()
         else:
-            self._enter_enhance_mode()
+            self._enter_compare_mode("denoise")
 
-    def _enter_enhance_mode(self) -> None:
-        """进入对比模式:切到对比视图、显示降噪条,并立即出一帧降噪预览。"""
+    def _toggle_color_mode(self) -> None:
+        """点左栏「调色」进入/退出调色左右对比(after=降噪+调色)。"""
+        if getattr(self, "_enhance_active", False) and getattr(self, "_compare_kind", "") == "color":
+            self._exit_compare_mode()
+        else:
+            self._enter_compare_mode("color")
+
+    def _enter_compare_mode(self, kind: str) -> None:
+        """
+        进入对比模式(kind='denoise'|'color')。降噪:after=仅降噪;调色:after=降噪+调色。
+        切到对比视图、按类型显隐微调条,并立即出一帧预览。预览作用在用户选定的裁剪区。
+        """
         self._ensure_analysis_bgr()
         if self._analysis_bgr is None:
             return
+        self._compare_kind = kind
         self._enhance_active = True
-        self._enhance_engaged = True  # 已启用降噪:完成后导出仍应用 / persists for export
+        if kind == "denoise":
+            self._denoise_engaged = True   # 完成后导出仍应用 / persists for export
+        else:
+            self._color_engaged = True
+        self._set_strip_for_kind(kind)
         self._zoom_100_btn.setChecked(False)   # 默认适应 / default to fit
         self._compare_view.set_zoom(fit=True)
-        # 预览作用在「用户选定的裁剪区」上(无裁剪框则整图)——与导出成品一致。
-        # Preview operates on the user's selected crop region (whole frame if none),
-        # matching exactly what export will produce.
         self._preview_before_bgr = self._current_crop_bgr()
-        # 初始 after=before,预览回来后再替换 / after starts equal to before
         self._compare_view.set_images(self._preview_before_bgr, self._preview_before_bgr)
         self._center_stack.setCurrentWidget(self._compare_view)
         self._enhance_panel.show()
         self._request_preview()
 
-    def _exit_enhance_mode(self) -> None:
-        """退出对比模式:切回裁剪画布、隐藏降噪条。"""
+    def _exit_compare_mode(self) -> None:
+        """退出对比模式:切回裁剪画布、隐藏微调条、停掉待触发的预览。"""
         self._enhance_active = False
+        timer = getattr(self, "_preview_timer", None)
+        if timer is not None:
+            timer.stop()
         self._enhance_panel.hide()
         self._center_stack.setCurrentWidget(self._canvas)
 
@@ -1638,28 +1677,45 @@ class CropStudio(QWidget):
             bgr = bgr[y1:y2, x1:x2]
         return self._downsample_for_preview(bgr)
 
+    def _enhance_state(self):
+        """返回 (降噪开, 降噪强度, 调色开, 调色强度);各自需「进过对应模式」且滑块>0。"""
+        d_on = getattr(self, "_denoise_engaged", False) and self._denoise_slider.value() > 0
+        c_on = getattr(self, "_color_engaged", False) and self._color_slider.value() > 0
+        return (d_on, self._denoise_slider.value() / 10.0,
+                c_on, self._color_slider.value() / 10.0)
+
     def _current_enhance_opts(self):
         """
-        当前修图选项(供导出)。两条路都支持:
-          - 不降噪导出:从未进入「修图」,或把降噪滑块拉到 0 → 返回 None。
-          - 降噪导出:进过「修图」且强度>0 → 返回降噪选项;即使点了「完成」回裁剪页仍生效。
-        本期仅降噪,调色恒关。
+        导出用修图选项 = 降噪 ∪ 调色(各自:进过对应模式且滑块>0 才计入);都没有则 None。
+        点「完成」回裁剪页后仍生效(engaged 持久)。强度 0 或未进入 = 不应用该步。
 
-        Returns denoise-only options for export. None when denoise was never engaged
-        or strength is 0 (export without denoise); otherwise persists after exiting
-        compare mode so "denoise then export" works from either view.
+        Export options = denoise ∪ color (each counts only if its mode was engaged and
+        its slider > 0); None if neither. Persists after exiting compare mode.
         """
-        if not getattr(self, "_enhance_engaged", False):
-            return None
-        if self._denoise_slider.value() <= 0:
+        d_on, d_s, c_on, c_s = self._enhance_state()
+        if not d_on and not c_on:
             return None
         from core.enhance.options import EnhanceOptions  # noqa: PLC0415
-        return EnhanceOptions(
-            denoise_on=True,
-            denoise_strength=self._denoise_slider.value() / 10.0,  # 0..10 → 0..1
-            color_on=False,      # 本期隐藏调色 / color hidden this phase
-            color_strength=0.0,
-        )
+        return EnhanceOptions(denoise_on=d_on, denoise_strength=d_s,
+                              color_on=c_on, color_strength=c_s)
+
+    def _preview_opts(self):
+        """
+        预览用选项:降噪模式 = 仅降噪;调色模式 = 降噪(若已启用)+ 调色。与导出成品一致。
+        Preview options: denoise mode = denoise only; color mode = denoise(if engaged)+color.
+        """
+        d_on, d_s, c_on, c_s = self._enhance_state()
+        from core.enhance.options import EnhanceOptions  # noqa: PLC0415
+        if getattr(self, "_compare_kind", "denoise") == "color":
+            if not d_on and not c_on:
+                return None
+            return EnhanceOptions(denoise_on=d_on, denoise_strength=d_s,
+                                  color_on=c_on, color_strength=c_s)
+        # 降噪模式:仅降噪 / denoise-only
+        if not d_on:
+            return None
+        return EnhanceOptions(denoise_on=True, denoise_strength=d_s,
+                              color_on=False, color_strength=0.0)
 
     def _set_enhance_status(self, text: str) -> None:
         """更新修图状态文字(处理中/已更新…);控件未建好时静默。"""
@@ -1688,9 +1744,9 @@ class CropStudio(QWidget):
             return
         if self._preview_before_bgr is None:
             return
-        opts = self._current_enhance_opts()
+        opts = self._preview_opts()
         if opts is None:
-            # 强度 0 = 不降噪:after 等于 before,差为 0 / strength 0: after == before
+            # 强度 0 = 不修图:after 等于 before,差为 0 / strength 0: after == before
             self._compare_view.set_after(self._preview_before_bgr)
             self._show_updated_status(self._preview_before_bgr)
             return
@@ -1776,7 +1832,10 @@ class CropStudio(QWidget):
     # ── 关闭 / Close ──────────────────────────────────────────────────────────
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
-        """关闭前等待后台线程退出,避免槽连接到已销毁对象。"""
+        """关闭前停掉待触发预览并等待后台线程退出,避免槽连接到已销毁对象。"""
+        timer = getattr(self, "_preview_timer", None)
+        if timer is not None:
+            timer.stop()
         if self._worker.isRunning():
             self._worker.quit()
             self._worker.wait(2000)
