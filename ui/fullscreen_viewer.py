@@ -714,6 +714,8 @@ class FullscreenViewer(QWidget):
     context_menu_requested = Signal(dict, object)   # (photo, QPoint全局坐标)
     species_edit_requested = Signal(dict)   # 左栏「编辑鸟种」→ 父窗口复用既有处理
     crop_advice_requested = Signal(dict)    # 左栏「裁剪建议」→ 父窗口复用既有处理
+    manual_crop_requested = Signal(dict)    # 左栏「手动裁剪」→ 打开工作区直接进手动裁剪
+    auto_retouch_requested = Signal(dict)   # 左栏「自动修图」→ 打开工作区直接进自动修图
 
     def __init__(self, i18n, parent=None):
         super().__init__(parent)
@@ -932,12 +934,12 @@ class FullscreenViewer(QWidget):
         self._crop_advice_btn = self._tool_btn("AI-Srop.svg", self.i18n.t("browser.crop_advice_btn"),
                                                self._on_crop_advice_clicked)
         v.addWidget(self._crop_advice_btn)
-        # 后续功能:暂灰禁用
+        # 手动裁剪 / 自动修图:打开工作区并直接进对应功能
         self._manual_crop_btn = self._tool_btn("crop.svg", self.i18n.t("crop_advisor.manual_mode"),
-                                               None, enabled=False)
+                                               self._on_manual_crop_clicked)
         v.addWidget(self._manual_crop_btn)
         self._auto_retouch_btn = self._tool_btn("image-plus.svg", self.i18n.t("fullscreen.tb_auto"),
-                                                None, enabled=False)
+                                                self._on_auto_retouch_clicked)
         v.addWidget(self._auto_retouch_btn)
 
         v.addStretch()
@@ -1058,6 +1060,16 @@ class FullscreenViewer(QWidget):
         """发出裁剪建议信号,由父窗口复用既有处理弹窗。"""
         if self._current_photo:
             self.crop_advice_requested.emit(self._current_photo)
+
+    def _on_manual_crop_clicked(self):
+        """「手动裁剪」→ 打开工作区并直接进手动裁剪模式。"""
+        if self._current_photo:
+            self.manual_crop_requested.emit(self._current_photo)
+
+    def _on_auto_retouch_clicked(self):
+        """「自动修图」→ 打开工作区并直接进自动修图(降噪+调色)对比。"""
+        if self._current_photo:
+            self.auto_retouch_requested.emit(self._current_photo)
 
     def _toggle_crop_view(self):
         """全图 ⇄ 特写(debug 裁切图)切换。特写图不存在时此按钮已禁用。"""

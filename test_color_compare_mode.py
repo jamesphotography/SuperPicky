@@ -48,3 +48,15 @@ def test_enhance_mode_carries_denoise_and_color(monkeypatch):
     w._color_slider.setValue(0)
     assert w._current_enhance_opts() is None
     w.close()
+
+
+@pytest.mark.skipif(not os.path.exists(_SAMPLE), reason="样片缺失")
+def test_apply_initial_action(monkeypatch):
+    """大图入口:apply_initial_action 跳到手动裁剪 / 自动修图。"""
+    w = _studio(monkeypatch)
+    w.apply_initial_action("manual")
+    assert getattr(w, "_mode", None) == "manual"
+    w.apply_initial_action("enhance")
+    assert w._enhance_active is True
+    assert w._center_stack.currentWidget() is w._compare_view
+    w.close()

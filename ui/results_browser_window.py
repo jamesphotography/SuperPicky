@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
     QSlider, QComboBox, QMessageBox, QSizePolicy, QApplication,
     QStackedWidget, QMenu
 )
-from PySide6.QtCore import Qt, Signal, Slot, QProcess, QSize
+from PySide6.QtCore import Qt, Signal, Slot, QProcess, QSize, QTimer
 from PySide6.QtGui import QAction, QKeyEvent, QIcon, QFont
 
 from ui.icon_utils import load_tinted_icon, ICON_IDLE
@@ -561,6 +561,10 @@ class ResultsBrowserWindow(QMainWindow):
         self._fullscreen.context_menu_requested.connect(self._on_fullscreen_context_menu)
         self._fullscreen.species_edit_requested.connect(self._on_species_edit_requested)
         self._fullscreen.crop_advice_requested.connect(self._on_crop_advice_requested)
+        self._fullscreen.manual_crop_requested.connect(
+            lambda p: self._open_studio_with_action(p, "manual"))
+        self._fullscreen.auto_retouch_requested.connect(
+            lambda p: self._open_studio_with_action(p, "enhance"))
         self._fullscreen.burst_sequence_requested.connect(self._open_burst_sequence)
         self._stack.addWidget(self._fullscreen)   # index 1
 
@@ -1270,6 +1274,16 @@ class ResultsBrowserWindow(QMainWindow):
         # 5. 后台执行文件移动（同时更新连拍组其他成员的 DB 鸟种字段及 current_path）
         # Background: move files and update burst group members' DB records.
         _trigger_species_change(base_dir, photo, new_cn, new_en, self._db, db_key)
+
+    def _open_studio_with_action(self, photo: dict, action: str):
+        """
+        打开 Crop Studio 后跳到指定功能(大图「手动裁剪」/「自动修图」入口)。
+        复用 _on_crop_advice_requested 打开工作区,再在已持有实例上应用初始动作。
+        """
+        self._on_crop_advice_requested(photo)
+        studio = getattr(self, "_crop_studio", None)
+        if studio is not None:
+            QTimer.singleShot(0, lambda: studio.apply_initial_action(action))
 
     def _on_crop_advice_requested(self, photo: dict):
         """
@@ -2314,6 +2328,16 @@ class ResultsBrowserWidget(QWidget):
         # 5. 后台执行文件移动（同时更新连拍组其他成员的 DB 鸟种字段及 current_path）
         # Background: move files and update burst group members' DB records.
         _trigger_species_change(base_dir, photo, new_cn, new_en, self._db, db_key)
+
+    def _open_studio_with_action(self, photo: dict, action: str):
+        """
+        打开 Crop Studio 后跳到指定功能(大图「手动裁剪」/「自动修图」入口)。
+        复用 _on_crop_advice_requested 打开工作区,再在已持有实例上应用初始动作。
+        """
+        self._on_crop_advice_requested(photo)
+        studio = getattr(self, "_crop_studio", None)
+        if studio is not None:
+            QTimer.singleShot(0, lambda: studio.apply_initial_action(action))
 
     def _on_crop_advice_requested(self, photo: dict):
         """

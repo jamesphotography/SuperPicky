@@ -1592,6 +1592,19 @@ class CropStudio(QWidget):
         h.addWidget(self._enhance_done_btn)
         return bar
 
+    def apply_initial_action(self, action: str) -> None:
+        """
+        打开工作区后跳到指定功能(供外部入口如大图「手动裁剪」「自动修图」调用)。
+        action: 'manual'=手动裁剪模式;'enhance'=自动修图对比。
+        """
+        try:
+            if action == "manual":
+                self._set_mode("manual")
+            elif action == "enhance" and not getattr(self, "_enhance_active", False):
+                self._enter_compare_mode()
+        except Exception:  # noqa: BLE001 — 入口跳转失败不影响工作区打开
+            pass
+
     def _toggle_enhance_mode(self) -> None:
         """点左栏「自动修图」进入/退出对比模式(降噪+调色一起)。"""
         if getattr(self, "_enhance_active", False):
