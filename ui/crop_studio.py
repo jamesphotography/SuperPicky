@@ -1178,9 +1178,6 @@ class CropStudio(QWidget):
         self._btn_enhance = self._tool_btn("gem.svg", self._i18n.t("crop_studio.tb_enhance"),
                                            self._toggle_enhance_mode)
         v.addWidget(self._btn_enhance)
-        self._btn_color = self._tool_btn("aperture.svg", self._i18n.t("crop_studio.color"),
-                                         self._toggle_color_mode)
-        v.addWidget(self._btn_color)
 
         v.addStretch(1)
 
@@ -1595,41 +1592,26 @@ class CropStudio(QWidget):
         h.addWidget(self._enhance_done_btn)
         return bar
 
-    def _set_strip_for_kind(self, kind: str) -> None:
-        """按对比类型显隐微调条控件:降噪模式只显降噪;调色模式显降噪+调色。"""
-        is_color = (kind == "color")
-        for wdg in (self._color_label, self._color_slider, self._color_val_lbl):
-            wdg.setVisible(is_color)
-
     def _toggle_enhance_mode(self) -> None:
-        """点左栏「修图」进入/退出降噪左右对比模式。"""
-        if getattr(self, "_enhance_active", False) and getattr(self, "_compare_kind", "") == "denoise":
+        """点左栏「自动修图」进入/退出对比模式(降噪+调色一起)。"""
+        if getattr(self, "_enhance_active", False):
             self._exit_compare_mode()
         else:
-            self._enter_compare_mode("denoise")
+            self._enter_compare_mode()
 
-    def _toggle_color_mode(self) -> None:
-        """点左栏「调色」进入/退出调色左右对比(after=降噪+调色)。"""
-        if getattr(self, "_enhance_active", False) and getattr(self, "_compare_kind", "") == "color":
-            self._exit_compare_mode()
-        else:
-            self._enter_compare_mode("color")
-
-    def _enter_compare_mode(self, kind: str) -> None:
+    def _enter_compare_mode(self) -> None:
         """
-        进入对比模式(kind='denoise'|'color')。降噪:after=仅降噪;调色:after=降噪+调色。
-        切到对比视图、按类型显隐微调条,并立即出一帧预览。预览作用在用户选定的裁剪区。
+        进入「自动修图」对比模式:降噪+调色两个滑块并排,after=降噪+调色(最终成品)。
+        切到对比视图、立即出一帧预览;预览作用在用户选定的裁剪区(无框则整图)。
+
+        Unified enhance compare: both denoise & color sliders; after = denoise+color.
         """
         self._ensure_analysis_bgr()
         if self._analysis_bgr is None:
             return
-        self._compare_kind = kind
         self._enhance_active = True
-        if kind == "denoise":
-            self._denoise_engaged = True   # 完成后导出仍应用 / persists for export
-        else:
-            self._color_engaged = True
-        self._set_strip_for_kind(kind)
+        self._denoise_engaged = True   # 两者皆启用,完成后导出仍应用 / both persist
+        self._color_engaged = True
         self._zoom_100_btn.setChecked(False)   # 默认适应 / default to fit
         self._compare_view.set_zoom(fit=True)
         self._preview_before_bgr = self._current_crop_bgr()
@@ -1700,22 +1682,8 @@ class CropStudio(QWidget):
                               color_on=c_on, color_strength=c_s)
 
     def _preview_opts(self):
-        """
-        预览用选项:降噪模式 = 仅降噪;调色模式 = 降噪(若已启用)+ 调色。与导出成品一致。
-        Preview options: denoise mode = denoise only; color mode = denoise(if engaged)+color.
-        """
-        d_on, d_s, c_on, c_s = self._enhance_state()
-        from core.enhance.options import EnhanceOptions  # noqa: PLC0415
-        if getattr(self, "_compare_kind", "denoise") == "color":
-            if not d_on and not c_on:
-                return None
-            return EnhanceOptions(denoise_on=d_on, denoise_strength=d_s,
-                                  color_on=c_on, color_strength=c_s)
-        # 降噪模式:仅降噪 / denoise-only
-        if not d_on:
-            return None
-        return EnhanceOptions(denoise_on=True, denoise_strength=d_s,
-                              color_on=False, color_strength=0.0)
+        """预览选项 = 导出选项(降噪+调色);与最终成品一致。/ preview == export opts."""
+        return self._current_enhance_opts()
 
     def _set_enhance_status(self, text: str) -> None:
         """更新修图状态文字(处理中/已更新…);控件未建好时静默。"""

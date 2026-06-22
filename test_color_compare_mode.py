@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""调色对比模式:独立入口 + 选项携带调色(P3b)。"""
+"""自动修图(降噪+调色 合一)对比模式:选项携带两者(P3b/简化)。"""
 import os
 
 import numpy as np
@@ -26,31 +26,25 @@ def _studio(monkeypatch):
 
 
 @pytest.mark.skipif(not os.path.exists(_SAMPLE), reason="样片缺失")
-def test_color_mode_carries_color_opts(monkeypatch):
+def test_enhance_mode_carries_denoise_and_color(monkeypatch):
     w = _studio(monkeypatch)
-    w._enter_compare_mode("color")
-    assert w._enhance_active is True and w._compare_kind == "color"
+    w._enter_compare_mode()
+    assert w._enhance_active is True
     assert w._center_stack.currentWidget() is w._compare_view
-    # 调色滑块可见 / color slider shown in color mode
+    # 降噪、调色两个滑块都在条上 / both sliders present
     assert w._color_slider.isVisibleTo(w._enhance_panel)
+    assert w._denoise_slider.isVisibleTo(w._enhance_panel)
     opts = w._current_enhance_opts()
-    assert opts is not None and opts.color_on is True
-    assert abs(opts.color_strength - 0.40) < 1e-6   # 默认 40%
-    # 退出后调色仍对导出生效(engaged 持久) / persists after exit
+    assert opts is not None and opts.denoise_on is True and opts.color_on is True
+    assert abs(opts.color_strength - 0.40) < 1e-6   # 调色默认 40%
+    # 预览选项 == 导出选项(都是降噪+调色) / preview == export
+    p = w._preview_opts()
+    assert p is not None and p.denoise_on and p.color_on
+    # 退出后仍对导出生效(engaged 持久) / persists after exit
     w._exit_compare_mode()
     assert w._current_enhance_opts() is not None
-    # 调色滑块拉 0 → 不调色;且未进降噪 → None
+    # 两个滑块都拉 0 → 不修图 / both 0 -> None
+    w._denoise_slider.setValue(0)
     w._color_slider.setValue(0)
     assert w._current_enhance_opts() is None
-    w.close()
-
-
-@pytest.mark.skipif(not os.path.exists(_SAMPLE), reason="样片缺失")
-def test_denoise_mode_excludes_color(monkeypatch):
-    """降噪模式预览只降噪(color_on=False),即便调色从未启用。"""
-    w = _studio(monkeypatch)
-    w._enter_compare_mode("denoise")
-    popts = w._preview_opts()
-    assert popts is not None and popts.color_on is False
-    assert not w._color_slider.isVisibleTo(w._enhance_panel)  # 降噪模式隐藏调色滑块
     w.close()

@@ -46,8 +46,8 @@ def main() -> int:
     studio = CropStudio(photo, get_i18n())
     studio.showFullScreen()
 
-    print("Crop Studio 已打开。左栏点「修图」看降噪对比、点「调色」看降噪+调色对比;")
-    print("进对比后拖中间竖线、点 100% 平移、移动滑块实时看变化;关闭退出。")
+    print("Crop Studio 已打开。左栏点「自动修图」进入对比(降噪+调色两个滑块);")
+    print("拖中间竖线、点 100% 平移、移动滑块实时看变化;关闭退出。")
     print(f"样片 / sample: {src}")
     return app.exec()
 

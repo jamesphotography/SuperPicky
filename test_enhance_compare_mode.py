@@ -43,13 +43,14 @@ def test_enter_compare_mode_updates_after(monkeypatch):
              "current_path": _SAMPLE, "original_path": _SAMPLE}
     w = crop_studio.CropStudio(photo, get_i18n())
 
-    w._enter_compare_mode("denoise")
-    # 进入对比模式:激活、切到对比视图、选项为降噪-only
+    w._enter_compare_mode()
+    # 进入「自动修图」对比:激活、切到对比视图、选项含降噪+调色
     assert w._enhance_active is True
     assert w._center_stack.currentWidget() is w._compare_view
     opts = w._current_enhance_opts()
-    assert opts is not None and opts.color_on is False
-    assert abs(opts.denoise_strength - 0.70) < 1e-6  # 默认 70 / default strength
+    assert opts is not None and opts.denoise_on is True and opts.color_on is True
+    assert abs(opts.denoise_strength - 0.70) < 1e-6  # 降噪默认 70
+    assert abs(opts.color_strength - 0.40) < 1e-6    # 调色默认 40
 
     # 防抖 400ms + 后台 worker → after 应被替换为常数 7
     _spin_until(lambda: w._compare_view._after is not None
@@ -64,8 +65,9 @@ def test_enter_compare_mode_updates_after(monkeypatch):
     assert w._center_stack.currentWidget() is w._canvas
     assert w._current_enhance_opts() is not None  # 完成后导出仍降噪 / persists
 
-    # 把降噪强度拉到 0 → 不降噪导出 / strength 0 means export without denoise
+    # 两个滑块都拉 0 → 不修图导出 / both sliders 0 means export unchanged
     w._denoise_slider.setValue(0)
+    w._color_slider.setValue(0)
     assert w._current_enhance_opts() is None
 
     w.close()  # 清理后台线程 / stop background threads
