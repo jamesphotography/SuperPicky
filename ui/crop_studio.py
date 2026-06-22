@@ -176,7 +176,8 @@ class _ExportWorker(QThread):
 
 # ── 修图预览 / Enhance preview ────────────────────────────────────────────────
 
-PREVIEW_LONG_EDGE = 1280  # 预览降采样目标长边 / preview downscale long edge
+PREVIEW_LONG_EDGE = 2048  # 预览降采样目标长边;放大到此分辨率以便 100% 看清降噪
+# preview downscale long edge; high enough that 1:1 zoom reveals real denoise.
 
 
 def _pipeline_enhance(img_rgb, opts, **kw):
@@ -746,24 +747,36 @@ class _ExportDialog(QDialog):
 
 class _BeforeAfterView(QWidget):
     """
-    左右对比控件:中间竖线可拖动,线左显示 before(原图),线右显示 after(降噪后)。
-    Draggable-divider before/after view: left of the handle shows 'before', right
-    shows 'after'. Drag the handle to reveal denoise differences on the same frame.
+    左右对比控件:中间竖线揭示 before(左)/after(右),支持 适应/100% 与平移。
+
+    交互 / Interaction:
+      - 鼠标悬停移动 → 分割线跟随光标 X 扫动(无需按下)。
+      - 100% 模式下按住拖动 → 平移(看 1:1 像素细节,判断降噪是否真起作用)。
+      - 适应(fit)模式:整图缩放铺满;100% 模式:原生像素 1:1 显示。
+
+    Divider follows the hovering cursor; in 100% mode drag to pan and inspect
+    true 1:1 pixels (so you can tell whether denoise actually worked).
     """
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._before: Optional[QPixmap] = None
         self._after: Optional[QPixmap] = None
-        self._split: float = 0.5  # 分割线位置 0..1 / divider position
+        self._split: float = 0.5      # 分割线位置 0..1 / divider position
+        self._fit: bool = True        # True=适应, False=100% / fit vs 1:1
+        self._off: QPoint = QPoint(0, 0)   # 100% 模式平移原点 / pan origin
+        self._last: QPoint = QPoint(0, 0)  # 拖动上一位置 / last drag pos
         self.setMinimumSize(200, 200)
+        self.setMouseTracking(True)   # 悬停即可扫动分割线 / hover sweeps divider
         self.setCursor(Qt.SplitHCursor)
         self.setStyleSheet("background: #111111;")
 
     def set_images(self, before_bgr, after_bgr) -> None:
-        """设置 before 与 after 两张图(BGR)。"""
+        """设置 before 与 after 两张图(BGR);保持当前缩放/平移。"""
         self._before = _bgr_to_qpixmap(before_bgr)
         self._after = _bgr_to_qpixmap(after_bgr)
+        if not self._fit:
+            self._recenter_100()
         self.update()
 
     def set_after(self, after_bgr) -> None:
@@ -776,21 +789,52 @@ class _BeforeAfterView(QWidget):
         self._before = self._after = None
         self.update()
 
-    def _target_rect(self) -> QRect:
-        """图像 fit 居中后的目标矩形(以 before 尺寸为基准)。"""
-        pm = self._before or self._after
+    def set_zoom(self, fit: bool) -> None:
+        """切换 适应/100%;切到 100% 时居中。"""
+        self._fit = fit
+        self.setCursor(Qt.SplitHCursor if fit else Qt.OpenHandCursor)
+        if not fit:
+            self._recenter_100()
+        self.update()
+
+    def _pixmap(self) -> Optional[QPixmap]:
+        return self._before or self._after
+
+    def _recenter_100(self) -> None:
+        """100% 模式把图居中。"""
+        pm = self._pixmap()
+        if pm is None or pm.isNull():
+            return
+        self._off = QPoint((self.width() - pm.width()) // 2,
+                           (self.height() - pm.height()) // 2)
+
+    def _clamp_off(self) -> None:
+        """约束平移,避免把图拖出视野。"""
+        pm = self._pixmap()
+        if pm is None or pm.isNull():
+            return
+        ww, wh, iw, ih = self.width(), self.height(), pm.width(), pm.height()
+        x = (ww - iw) // 2 if iw <= ww else min(0, max(ww - iw, self._off.x()))
+        y = (wh - ih) // 2 if ih <= wh else min(0, max(wh - ih, self._off.y()))
+        self._off = QPoint(x, y)
+
+    def _displayed_rect(self) -> QRect:
+        """图像在控件内的目标矩形(适应=缩放居中;100%=原生尺寸+平移)。"""
+        pm = self._pixmap()
         if pm is None or pm.isNull():
             return QRect()
-        ww, wh = max(1, self.width()), max(1, self.height())
-        iw, ih = pm.width(), pm.height()
-        scale = min(ww / iw, wh / ih)
-        dw, dh = max(1, int(iw * scale)), max(1, int(ih * scale))
-        return QRect((ww - dw) // 2, (wh - dh) // 2, dw, dh)
+        ww, wh, iw, ih = max(1, self.width()), max(1, self.height()), pm.width(), pm.height()
+        if self._fit:
+            scale = min(ww / iw, wh / ih)
+            dw, dh = max(1, int(iw * scale)), max(1, int(ih * scale))
+            return QRect((ww - dw) // 2, (wh - dh) // 2, dw, dh)
+        self._clamp_off()
+        return QRect(self._off, pm.size())  # 原生尺寸 1:1 / native size
 
     def paintEvent(self, event) -> None:  # type: ignore[override]
         p = QPainter(self)
         p.fillRect(self.rect(), QColor("#111111"))
-        rect = self._target_rect()
+        rect = self._displayed_rect()
         if rect.isEmpty():
             p.end()
             return
@@ -804,33 +848,44 @@ class _BeforeAfterView(QWidget):
                                 max(0, split_x - rect.left()), rect.height()))
             p.drawPixmap(rect, self._before, self._before.rect())
             p.restore()
-        # 分割线 + 圆形手柄 / divider line + round handle
+        # 分割线 + 圆形手柄(限定在控件可视高度) / divider line + handle
+        top = max(rect.top(), 0)
+        bot = min(rect.bottom(), self.height())
         pen = QPen(QColor("#ffffff"))
         pen.setWidth(2)
         p.setPen(pen)
-        p.drawLine(split_x, rect.top(), split_x, rect.bottom())
-        cy = rect.center().y()
+        p.drawLine(split_x, top, split_x, bot)
+        cy = (top + bot) // 2
         p.setBrush(QColor("#ffffff"))
         p.drawEllipse(QRect(split_x - 9, cy - 9, 18, 18))
         # 角标:左「原图」右「降噪」/ corner labels
         p.setPen(QPen(QColor("#ffffff")))
-        p.drawText(rect.left() + 8, rect.top() + 20, "Before")
-        p.drawText(rect.right() - 48, rect.top() + 20, "After")
+        p.drawText(8, 20, "Before")
+        p.drawText(self.width() - 48, 20, "After")
         p.end()
 
-    def _update_split(self, x: float) -> None:
-        rect = self._target_rect()
+    def _set_split_from_x(self, x: float) -> None:
+        rect = self._displayed_rect()
         if rect.isEmpty() or rect.width() <= 0:
             return
         self._split = min(max((x - rect.left()) / rect.width(), 0.0), 1.0)
         self.update()
 
     def mousePressEvent(self, e: QMouseEvent) -> None:  # type: ignore[override]
-        self._update_split(e.position().x())
+        # 仅记录拖动起点;按下不移动分割线 / record drag start, don't move divider.
+        self._last = e.position().toPoint()
 
     def mouseMoveEvent(self, e: QMouseEvent) -> None:  # type: ignore[override]
-        if e.buttons():
-            self._update_split(e.position().x())
+        if e.buttons() and not self._fit:
+            # 100% 拖动平移 / drag to pan in 1:1 mode
+            cur = e.position().toPoint()
+            self._off = self._off + (cur - self._last)
+            self._last = cur
+            self._clamp_off()
+            self.update()
+        elif not e.buttons():
+            # 悬停扫动分割线 / hover sweeps the divider
+            self._set_split_from_x(e.position().x())
 
 
 class CropStudio(QWidget):
@@ -1468,6 +1523,13 @@ class CropStudio(QWidget):
 
         h.addStretch(1)
         h.addWidget(QLabel(i18n.t("crop_studio.enhance_hint")))
+        # 100% / 适应 切换:看 1:1 像素以判断降噪是否真起作用 / 1:1 toggle for pixel-peeping
+        self._zoom_100_btn = QPushButton("100%")
+        self._zoom_100_btn.setCheckable(True)
+        self._zoom_100_btn.setCursor(Qt.PointingHandCursor)
+        self._zoom_100_btn.toggled.connect(
+            lambda on: self._compare_view.set_zoom(fit=not on))
+        h.addWidget(self._zoom_100_btn)
         self._enhance_done_btn = QPushButton(i18n.t("crop_studio.enhance_done"))
         self._enhance_done_btn.setCursor(Qt.PointingHandCursor)
         self._enhance_done_btn.clicked.connect(self._exit_enhance_mode)
@@ -1487,6 +1549,8 @@ class CropStudio(QWidget):
         if self._analysis_bgr is None:
             return
         self._enhance_active = True
+        self._zoom_100_btn.setChecked(False)   # 默认适应 / default to fit
+        self._compare_view.set_zoom(fit=True)
         self._preview_before_bgr = self._downsample_for_preview(self._analysis_bgr)
         # 初始 after=before,预览回来后再替换 / after starts equal to before
         self._compare_view.set_images(self._preview_before_bgr, self._preview_before_bgr)
