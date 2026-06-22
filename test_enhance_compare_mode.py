@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 pytest.importorskip("PySide6")
-from PySide6.QtCore import QEventLoop, QTimer  # noqa: E402
+from PySide6.QtCore import Qt, QEventLoop, QTimer  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from tools.i18n import get_i18n  # noqa: E402
@@ -90,6 +90,32 @@ def test_preview_uses_crop_region(monkeypatch):
     full = w._current_crop_bgr()
     assert full.shape[0] == 400 and full.shape[1] == 600
     w.close()
+
+
+def test_divider_moves_only_when_grabbed():
+    """分割线只在按住线附近时才进入拖动;远处按下不拖动线(适应模式不动)。"""
+    from PySide6.QtCore import QEvent, QPointF
+    from PySide6.QtGui import QMouseEvent
+
+    v = crop_studio._BeforeAfterView()
+    v.resize(400, 400)
+    v.set_images(np.zeros((400, 400, 3), np.uint8),
+                 np.full((400, 400, 3), 200, np.uint8))
+    v._split = 0.5  # 分割线在 x≈200 / divider at x≈200
+    assert abs(v._split_x() - 200) <= 2
+
+    def press(x):
+        e = QMouseEvent(QEvent.MouseButtonPress, QPointF(x, 200),
+                        Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+        v.mousePressEvent(e)
+
+    press(200)                     # 按在线上 → 拖动分割线
+    assert v._drag_mode == "divider"
+    v.mouseReleaseEvent(QMouseEvent(QEvent.MouseButtonRelease, QPointF(200, 200),
+                                    Qt.LeftButton, Qt.NoButton, Qt.NoModifier))
+
+    press(40)                      # 远离线,适应模式 → 不拖动(None)
+    assert v._drag_mode is None
 
 
 def _qpix_first_px(pm):

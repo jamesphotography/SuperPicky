@@ -766,9 +766,9 @@ class _BeforeAfterView(QWidget):
         self._fit: bool = True        # True=适应, False=100% / fit vs 1:1
         self._off: QPoint = QPoint(0, 0)   # 100% 模式平移原点 / pan origin
         self._last: QPoint = QPoint(0, 0)  # 拖动上一位置 / last drag pos
+        self._drag_mode: Optional[str] = None  # None / "divider" / "pan"
         self.setMinimumSize(200, 200)
-        self.setMouseTracking(True)   # 悬停即可扫动分割线 / hover sweeps divider
-        self.setCursor(Qt.SplitHCursor)
+        self.setMouseTracking(True)   # 仅用于光标提示,不移动分割线 / cursor hint only
         self.setStyleSheet("background: #111111;")
 
     def set_images(self, before_bgr, after_bgr) -> None:
@@ -864,6 +864,15 @@ class _BeforeAfterView(QWidget):
         p.drawText(self.width() - 48, 20, "After")
         p.end()
 
+    _GRAB_PX = 16  # 抓取分割线的像素阈值 / grab threshold around the divider
+
+    def _split_x(self) -> int:
+        """当前分割线在控件内的 x 像素 / divider x in widget pixels."""
+        rect = self._displayed_rect()
+        if rect.isEmpty():
+            return -1
+        return rect.left() + int(rect.width() * self._split)
+
     def _set_split_from_x(self, x: float) -> None:
         rect = self._displayed_rect()
         if rect.isEmpty() or rect.width() <= 0:
@@ -872,20 +881,40 @@ class _BeforeAfterView(QWidget):
         self.update()
 
     def mousePressEvent(self, e: QMouseEvent) -> None:  # type: ignore[override]
-        # 仅记录拖动起点;按下不移动分割线 / record drag start, don't move divider.
-        self._last = e.position().toPoint()
+        # 按在分割线附近 → 拖动线;否则(仅 100%)→ 平移。其余情况不动。
+        # On the divider → drag it; otherwise (100% only) → pan. Else nothing.
+        x = e.position().x()
+        if abs(x - self._split_x()) <= self._GRAB_PX:
+            self._drag_mode = "divider"
+            self.setCursor(Qt.SplitHCursor)
+        elif not self._fit:
+            self._drag_mode = "pan"
+            self._last = e.position().toPoint()
+            self.setCursor(Qt.ClosedHandCursor)
+        else:
+            self._drag_mode = None
 
     def mouseMoveEvent(self, e: QMouseEvent) -> None:  # type: ignore[override]
-        if e.buttons() and not self._fit:
-            # 100% 拖动平移 / drag to pan in 1:1 mode
+        if e.buttons() and self._drag_mode == "divider":
+            # 仅在按住线拖动时移动分割线 / move divider only while dragging it
+            self._set_split_from_x(e.position().x())
+        elif e.buttons() and self._drag_mode == "pan":
             cur = e.position().toPoint()
             self._off = self._off + (cur - self._last)
             self._last = cur
             self._clamp_off()
             self.update()
         elif not e.buttons():
-            # 悬停扫动分割线 / hover sweeps the divider
-            self._set_split_from_x(e.position().x())
+            # 悬停只更新光标提示,不移动任何东西 / cursor hint only, move nothing
+            near = abs(e.position().x() - self._split_x()) <= self._GRAB_PX
+            self.setCursor(Qt.SplitHCursor if near else
+                           (Qt.OpenHandCursor if not self._fit else Qt.ArrowCursor))
+
+    def mouseReleaseEvent(self, e: QMouseEvent) -> None:  # type: ignore[override]
+        self._drag_mode = None
+        near = abs(e.position().x() - self._split_x()) <= self._GRAB_PX
+        self.setCursor(Qt.SplitHCursor if near else
+                       (Qt.OpenHandCursor if not self._fit else Qt.ArrowCursor))
 
 
 class CropStudio(QWidget):
