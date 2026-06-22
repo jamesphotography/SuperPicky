@@ -45,13 +45,9 @@ def main() -> int:
     }
     studio = CropStudio(photo, get_i18n())
     studio.showFullScreen()
-    # 直接进入降噪左右对比模式,省一步点击 / jump straight into denoise compare mode.
-    try:
-        studio._toggle_enhance_mode()
-    except Exception:  # noqa: BLE001 — 演示便利项,失败不影响主流程
-        pass
 
-    print("Crop Studio 已打开,已进入降噪对比:拖中间竖线比对,移动滑块看变化;关闭退出。")
+    print("Crop Studio 已打开。左栏点「修图」看降噪对比、点「调色」看降噪+调色对比;")
+    print("进对比后拖中间竖线、点 100% 平移、移动滑块实时看变化;关闭退出。")
     print(f"样片 / sample: {src}")
     return app.exec()
 

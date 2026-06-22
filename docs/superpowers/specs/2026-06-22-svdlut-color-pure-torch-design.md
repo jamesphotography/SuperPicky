@@ -1,7 +1,14 @@
 # SVDLUT 调色（纯 PyTorch 重写）设计 / SVDLUT Color (pure-torch) Design
 
 - 日期 / Date: 2026-06-22
-- 状态 / Status: 设计 / Design
+- 状态 / Status: **已实施 / Implemented**（P0–P4 完成，纯 torch 与官方逐位一致，CPU/MPS 全通，已进 GUI）
+
+> **实施完成 2026-06-22**：61 测试绿。**纯 torch SVDLUT 与官方 CPU 算子真图调色平均像素差 0.000**
+> （切片算子对参考 max 2.4e-7；整网 PSNR≥50）。两个关键认知：① 官方内核 `x = x_/(width-1)` 为
+> **整数除法**（空间坐标恒 0、仅末列=1），必须复刻才对齐；② **MPS 不支持 grid_sample 的 border
+> padding** → 坐标 clamp+zeros 等价绕过。GUI：左栏「调色」独立入口，after=降噪+调色，复用降噪的
+> 对比/100%/状态/平均像素差框架。实现见 `core/enhance/nets/{svdlut_net,svdlut_slicing}.py`；
+> P0 参考工具见 `scripts/svdlut_reference/`（仅本机/CI，不进打包）。
 - 前置 / Depends on: 降噪+调色总设计 [[2026-06-22-auto-enhance-denoise-color-design]];
   本 spec 专攻"调色"那一步（pipeline 链路 `降噪 → 调色` 的后半段）。
 - 决策 / Decisions（用户已定）: 实现路线 **A=纯 PyTorch 重写**；调色权重 **FiveK sRGB**。
