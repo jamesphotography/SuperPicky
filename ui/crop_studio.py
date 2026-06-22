@@ -23,7 +23,7 @@ from typing import Optional
 
 import cv2
 import numpy as np
-from PySide6.QtCore import QPoint, QRect, QSize, Qt, QThread, Signal
+from PySide6.QtCore import QPoint, QRect, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QImage, QMouseEvent, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSlider,
     QSpinBox,
+    QStackedWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -743,6 +744,95 @@ class _ExportDialog(QDialog):
 # ── 工作区主体 / Workspace widget ─────────────────────────────────────────────
 
 
+class _BeforeAfterView(QWidget):
+    """
+    左右对比控件:中间竖线可拖动,线左显示 before(原图),线右显示 after(降噪后)。
+    Draggable-divider before/after view: left of the handle shows 'before', right
+    shows 'after'. Drag the handle to reveal denoise differences on the same frame.
+    """
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._before: Optional[QPixmap] = None
+        self._after: Optional[QPixmap] = None
+        self._split: float = 0.5  # 分割线位置 0..1 / divider position
+        self.setMinimumSize(200, 200)
+        self.setCursor(Qt.SplitHCursor)
+        self.setStyleSheet("background: #111111;")
+
+    def set_images(self, before_bgr, after_bgr) -> None:
+        """设置 before 与 after 两张图(BGR)。"""
+        self._before = _bgr_to_qpixmap(before_bgr)
+        self._after = _bgr_to_qpixmap(after_bgr)
+        self.update()
+
+    def set_after(self, after_bgr) -> None:
+        """仅更新 after(降噪结果),before 不变。"""
+        self._after = _bgr_to_qpixmap(after_bgr)
+        self.update()
+
+    def clear(self) -> None:
+        """清空两图。"""
+        self._before = self._after = None
+        self.update()
+
+    def _target_rect(self) -> QRect:
+        """图像 fit 居中后的目标矩形(以 before 尺寸为基准)。"""
+        pm = self._before or self._after
+        if pm is None or pm.isNull():
+            return QRect()
+        ww, wh = max(1, self.width()), max(1, self.height())
+        iw, ih = pm.width(), pm.height()
+        scale = min(ww / iw, wh / ih)
+        dw, dh = max(1, int(iw * scale)), max(1, int(ih * scale))
+        return QRect((ww - dw) // 2, (wh - dh) // 2, dw, dh)
+
+    def paintEvent(self, event) -> None:  # type: ignore[override]
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor("#111111"))
+        rect = self._target_rect()
+        if rect.isEmpty():
+            p.end()
+            return
+        # after 铺满图像区,before 仅画分割线左侧 / after full, before clipped left.
+        if self._after is not None:
+            p.drawPixmap(rect, self._after, self._after.rect())
+        split_x = rect.left() + int(rect.width() * self._split)
+        if self._before is not None:
+            p.save()
+            p.setClipRect(QRect(rect.left(), rect.top(),
+                                max(0, split_x - rect.left()), rect.height()))
+            p.drawPixmap(rect, self._before, self._before.rect())
+            p.restore()
+        # 分割线 + 圆形手柄 / divider line + round handle
+        pen = QPen(QColor("#ffffff"))
+        pen.setWidth(2)
+        p.setPen(pen)
+        p.drawLine(split_x, rect.top(), split_x, rect.bottom())
+        cy = rect.center().y()
+        p.setBrush(QColor("#ffffff"))
+        p.drawEllipse(QRect(split_x - 9, cy - 9, 18, 18))
+        # 角标:左「原图」右「降噪」/ corner labels
+        p.setPen(QPen(QColor("#ffffff")))
+        p.drawText(rect.left() + 8, rect.top() + 20, "Before")
+        p.drawText(rect.right() - 48, rect.top() + 20, "After")
+        p.end()
+
+    def _update_split(self, x: float) -> None:
+        rect = self._target_rect()
+        if rect.isEmpty() or rect.width() <= 0:
+            return
+        self._split = min(max((x - rect.left()) / rect.width(), 0.0), 1.0)
+        self.update()
+
+    def mousePressEvent(self, e: QMouseEvent) -> None:  # type: ignore[override]
+        self._update_split(e.position().x())
+
+    def mouseMoveEvent(self, e: QMouseEvent) -> None:  # type: ignore[override]
+        if e.buttons():
+            self._update_split(e.position().x())
+
+
 class CropStudio(QWidget):
     """
     全屏后期工作区。由结果浏览器在「裁剪建议」入口构造并 showFullScreen()。
@@ -816,9 +906,15 @@ class CropStudio(QWidget):
         self._toolbar = self._build_toolbar()
         main_row.addWidget(self._toolbar)
 
+        # 中央区:裁剪画布 与 降噪对比视图 用 QStackedWidget 切换。
+        # Center: a stack toggling between the crop canvas and the denoise compare view.
         self._canvas = _Canvas()
         self._canvas.manual_crop.connect(self._on_manual_crop)
-        main_row.addWidget(self._canvas, 1)
+        self._compare_view = _BeforeAfterView()
+        self._center_stack = QStackedWidget()
+        self._center_stack.addWidget(self._canvas)        # index 0 = 裁剪 / crop
+        self._center_stack.addWidget(self._compare_view)  # index 1 = 对比 / compare
+        main_row.addWidget(self._center_stack, 1)
 
         self._cand_panel = self._build_candidate_panel()
         main_row.addWidget(self._cand_panel)
@@ -996,7 +1092,7 @@ class CropStudio(QWidget):
                                         lambda: self._set_mode("auto"))
         v.addWidget(self._btn_auto)
         self._btn_enhance = self._tool_btn("gem.svg", self._i18n.t("crop_studio.tb_enhance"),
-                                           self._toggle_enhance_panel)
+                                           self._toggle_enhance_mode)
         v.addWidget(self._btn_enhance)
 
         v.addStretch(1)
@@ -1341,8 +1437,9 @@ class CropStudio(QWidget):
 
     def _build_enhance_panel(self) -> QWidget:
         """
-        构建自动修图微调条:总开关 + 降噪滑块 + 调色开关/滑块 + 预览按钮。
-        Build the enhance tune bar: master toggle + denoise/color sliders + preview.
+        构建降噪对比微调条(本期仅降噪,调色已隐藏):降噪滑块 + 提示 + 完成按钮。
+        Build the denoise compare strip (denoise-only this phase; color hidden):
+        a denoise slider + hint + a Done button.
         """
         bar = QFrame()
         bar.setObjectName("cropStudioEnhanceBar")
@@ -1350,109 +1447,119 @@ class CropStudio(QWidget):
             f"QFrame#cropStudioEnhanceBar {{ background: {_c('bg_elevated', '#1a1a1a')};"
             f" border-bottom: 1px solid {_c('border', '#2a2a2a')}; }}"
             f" QLabel {{ color: {_c('text_secondary', '#a1a1a1')}; font-size: 12px; }}"
-            f" QCheckBox {{ color: {_c('text_secondary', '#a1a1a1')}; font-size: 12px; }}"
         )
         h = QHBoxLayout(bar)
         h.setContentsMargins(12, 6, 12, 6)
         h.setSpacing(10)
 
         i18n = self._i18n
-        # 总开关(默认开 = 一键默认出片) / master enable (default ON = one-click)
-        self._enhance_enable = QCheckBox(i18n.t("crop_studio.enhance"))
-        self._enhance_enable.setChecked(True)
-        h.addWidget(self._enhance_enable)
-
-        # 降噪 / denoise
+        # 降噪强度滑块 / denoise strength slider
         h.addWidget(QLabel(i18n.t("crop_studio.denoise")))
         self._denoise_slider = QSlider(Qt.Horizontal)
         self._denoise_slider.setRange(0, 100)
         self._denoise_slider.setValue(50)
-        self._denoise_slider.setFixedWidth(120)
+        self._denoise_slider.setFixedWidth(220)
+        self._denoise_slider.valueChanged.connect(self._request_preview)
         h.addWidget(self._denoise_slider)
-
-        # 调色 / color
-        self._color_check = QCheckBox(i18n.t("crop_studio.color"))
-        self._color_check.setChecked(True)
-        h.addWidget(self._color_check)
-        self._color_slider = QSlider(Qt.Horizontal)
-        self._color_slider.setRange(0, 100)
-        self._color_slider.setValue(40)
-        self._color_slider.setFixedWidth(120)
-        h.addWidget(self._color_slider)
+        self._denoise_val_lbl = QLabel("50")
+        self._denoise_slider.valueChanged.connect(
+            lambda v: self._denoise_val_lbl.setText(str(v)))
+        h.addWidget(self._denoise_val_lbl)
 
         h.addStretch(1)
-        self._preview_btn = QPushButton(i18n.t("crop_studio.enhance_preview"))
-        self._preview_btn.setCursor(Qt.PointingHandCursor)
-        self._preview_btn.clicked.connect(self._show_enhance_preview)
-        h.addWidget(self._preview_btn)
+        h.addWidget(QLabel(i18n.t("crop_studio.enhance_hint")))
+        self._enhance_done_btn = QPushButton(i18n.t("crop_studio.enhance_done"))
+        self._enhance_done_btn.setCursor(Qt.PointingHandCursor)
+        self._enhance_done_btn.clicked.connect(self._exit_enhance_mode)
+        h.addWidget(self._enhance_done_btn)
         return bar
 
-    def _toggle_enhance_panel(self) -> None:
-        """展开/收起修图微调条;展开即视为启用(一键默认)。"""
-        show = not self._enhance_panel.isVisible()
-        self._enhance_panel.setVisible(show)
-        if show:
-            self._enhance_enable.setChecked(True)
+    def _toggle_enhance_mode(self) -> None:
+        """点左栏「修图」进入/退出降噪左右对比模式。"""
+        if getattr(self, "_enhance_active", False):
+            self._exit_enhance_mode()
+        else:
+            self._enter_enhance_mode()
+
+    def _enter_enhance_mode(self) -> None:
+        """进入对比模式:切到对比视图、显示降噪条,并立即出一帧降噪预览。"""
+        self._ensure_analysis_bgr()
+        if self._analysis_bgr is None:
+            return
+        self._enhance_active = True
+        self._preview_before_bgr = self._downsample_for_preview(self._analysis_bgr)
+        # 初始 after=before,预览回来后再替换 / after starts equal to before
+        self._compare_view.set_images(self._preview_before_bgr, self._preview_before_bgr)
+        self._center_stack.setCurrentWidget(self._compare_view)
+        self._enhance_panel.show()
+        self._request_preview()
+
+    def _exit_enhance_mode(self) -> None:
+        """退出对比模式:切回裁剪画布、隐藏降噪条。"""
+        self._enhance_active = False
+        self._enhance_panel.hide()
+        self._center_stack.setCurrentWidget(self._canvas)
+
+    def _downsample_for_preview(self, bgr):
+        """把图降采样到长边 ≤ PREVIEW_LONG_EDGE,供预览快速推理。"""
+        h, w = bgr.shape[:2]
+        scale = PREVIEW_LONG_EDGE / float(max(h, w))
+        if scale < 1.0:
+            return cv2.resize(bgr, (max(1, int(w * scale)), max(1, int(h * scale))),
+                              interpolation=cv2.INTER_AREA)
+        return bgr.copy()
 
     def _current_enhance_opts(self):
         """
-        面板状态→EnhanceOptions;面板隐藏或总开关关时返回 None(不修图)。
-        Returns EnhanceOptions from panel state, or None when disabled.
+        当前修图选项;未进入对比模式时返回 None(导出不修图)。本期仅降噪,调色恒关。
+        Returns denoise-only EnhanceOptions while in compare mode, else None.
         """
-        if not getattr(self, "_enhance_panel", None) or not self._enhance_panel.isVisible():
-            return None
-        if not self._enhance_enable.isChecked():
+        if not getattr(self, "_enhance_active", False):
             return None
         from core.enhance.options import EnhanceOptions  # noqa: PLC0415
         return EnhanceOptions(
             denoise_on=self._denoise_slider.value() > 0,
             denoise_strength=self._denoise_slider.value() / 100.0,
-            color_on=bool(self._color_check.isChecked()),
-            color_strength=self._color_slider.value() / 100.0,
+            color_on=False,      # 本期隐藏调色 / color hidden this phase
+            color_strength=0.0,
         )
 
-    def _show_enhance_preview(self) -> None:
-        """
-        非破坏性预览:对分析图(降采样到 PREVIEW_LONG_EDGE)跑修图,弹 before/after 对话框。
-        不触碰主画布(避免清除裁剪框)。
-        Non-destructive before/after preview in a dialog; never touches the canvas.
-        """
+    def _request_preview(self) -> None:
+        """滑块变动后防抖 400ms 触发后台预览(慢刷新,避免每格都跑)。"""
+        if not getattr(self, "_enhance_active", False):
+            return
+        if not hasattr(self, "_preview_timer"):
+            self._preview_timer = QTimer(self)
+            self._preview_timer.setSingleShot(True)
+            self._preview_timer.timeout.connect(self._run_preview_worker)
+        self._preview_timer.start(400)
+
+    def _run_preview_worker(self) -> None:
+        """对降采样 before 跑降噪;worker 忙时标记待跑,合并最新一次请求。"""
+        if not getattr(self, "_enhance_active", False):
+            return
+        worker = getattr(self, "_preview_worker", None)
+        if worker is not None and worker.isRunning():
+            self._preview_pending = True
+            return
         opts = self._current_enhance_opts()
-        if opts is None:
+        if opts is None or self._preview_before_bgr is None:
             return
-        self._ensure_analysis_bgr()
-        if self._analysis_bgr is None:
-            return
-        bgr = self._analysis_bgr
-        h, w = bgr.shape[:2]
-        scale = PREVIEW_LONG_EDGE / float(max(h, w))
-        if scale < 1.0:
-            bgr = cv2.resize(bgr, (max(1, int(w * scale)), max(1, int(h * scale))),
-                             interpolation=cv2.INTER_AREA)
-        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-        self._preview_before_bgr = bgr
-        self._preview_btn.setEnabled(False)
+        rgb = cv2.cvtColor(self._preview_before_bgr, cv2.COLOR_BGR2RGB)
         self._preview_worker = _EnhanceWorker(rgb, opts)
         self._preview_worker.done.connect(self._on_preview_done)
         self._preview_worker.start()
 
     def _on_preview_done(self, rgb_out) -> None:
-        """预览完成:RGB→BGR,弹出 before/after 对话框(非阻塞主画布)。"""
-        self._preview_btn.setEnabled(True)
+        """预览完成:更新对比视图的 after;若期间有新请求则再跑一次。"""
         try:
             after_bgr = cv2.cvtColor(rgb_out, cv2.COLOR_RGB2BGR)
-        except Exception:  # noqa: BLE001 — 预览失败静默 / silently ignore preview failure
-            return
-        dlg = QDialog(self)
-        dlg.setWindowTitle(self._i18n.t("crop_studio.enhance_preview"))
-        lay = QHBoxLayout(dlg)
-        before = QLabel()
-        before.setPixmap(_bgr_to_qpixmap(self._preview_before_bgr))
-        after = QLabel()
-        after.setPixmap(_bgr_to_qpixmap(after_bgr))
-        lay.addWidget(before)
-        lay.addWidget(after)
-        dlg.exec()
+            self._compare_view.set_after(after_bgr)
+        except Exception:  # noqa: BLE001 — 预览失败静默 / silently ignore
+            pass
+        if getattr(self, "_preview_pending", False):
+            self._preview_pending = False
+            self._run_preview_worker()
 
     def _on_export_clicked(self) -> None:
         """
@@ -1511,5 +1618,8 @@ class CropStudio(QWidget):
         ew = getattr(self, "_export_worker", None)
         if ew is not None and ew.isRunning():
             ew.wait(8000)  # 导出不可中断,等其完成 / export is atomic, wait it out
+        pw = getattr(self, "_preview_worker", None)
+        if pw is not None and pw.isRunning():
+            pw.wait(8000)  # 等预览推理结束 / wait out the preview inference
         self.closed.emit()
         super().closeEvent(event)

@@ -1426,6 +1426,8 @@
     "denoise": "降噪",
     "color": "调色",
     "enhance_preview": "预览效果",
+    "enhance_hint": "拖动中间竖线对比 原图 / 降噪",
+    "enhance_done": "完成",
     "back": "返回",
     "export": "导出",
     "auto_coming_soon": "自动后期功能即将推出",

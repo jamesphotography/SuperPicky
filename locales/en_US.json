@@ -1426,6 +1426,8 @@
     "denoise": "Denoise",
     "color": "Color",
     "enhance_preview": "Preview",
+    "enhance_hint": "Drag the divider to compare",
+    "enhance_done": "Done",
     "back": "Back",
     "export": "Export",
     "auto_coming_soon": "Auto adjustments coming soon",
