@@ -1,7 +1,13 @@
 # 自动修图（裁剪后 / 导出前）设计 — 降噪 + 调色
 
 - 日期 / Date: 2026-06-22
-- 状态 / Status: 已批准（设计阶段）/ Approved (design)
+- 状态 / Status: 已实施（降噪可用；调色受阻）/ Implemented (denoise working; color blocked)
+
+> **实施更新 2026-06-22**：8 任务全部落地，68 passed/2 skipped。**重大发现**：SVDLUT 官方前向依赖
+> **CUDA-only 自定义算子**（`bilateral2D_slicing_LUTTransform`，见上游 `cpp_ext_interface.py` +
+> `kernel_code/`），**无 CPU/MPS 实现**，违反本项目跨平台 + CPU/MPS 速度硬约束。SCUNet 为纯 PyTorch，
+> 已 vendor 并验证可用（17.95M 参数）。SVDLUT 调色暂以 stub + 管线优雅降级处理，需用户在三条路径间决策
+> （纯 torch 重写 / 换模型 / 仅交付降噪）。详见 `docs/superpowers/plans/` 同名计划的「实施记录」。
 - 范围 / Scope: 在 Crop Studio 全屏后期工作区中，对选中裁剪框在「裁剪之后、导出之前」执行自动修图（SCUNet 盲降噪 + SVDLUT 空间感知调色）。**本期不含 SwinIR 超分**。
 
 ## 1. 背景与动机 / Background

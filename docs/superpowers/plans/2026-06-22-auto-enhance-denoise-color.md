@@ -1107,3 +1107,48 @@ git commit -m "chore(enhance): 许可证核验+权重托管+真权重冒烟测�
 **Type 一致性：** `enhance(img_rgb, opts, *, denoise_fn, color_fn, device, progress_cb)`、`denoise(img, strength, device, *, progress_cb)`、`colorize(img, strength, device)`、`export_crop(..., enhance_opts=None)`、`_ExportWorker(..., enhance_opts=None)`、`_EnhanceWorker(img_rgb, opts)` 跨任务签名一致。
 
 **已知前置依赖：** Task 2/3 引用的 `.pth` 由 Task 8 托管；执行顺序上 Task 8 的「许可证核验」应在 Task 2/3 vendoring 前先做（若 SCUNet 许可证不合规需换方案）。建议实际执行序：先做 Task 8 Step 1 许可证核验 → Task 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 余下步骤。
+
+---
+
+## 实施记录 / Implementation Log (2026-06-22, 自主执行)
+
+**结果：8 任务全部落地，68 passed / 2 skipped / 0 失败**（排除预存的 `test_fp16_infer.py` collection 错误，与本次无关）。测试改用仓库根级 `test_enhance_*.py`（仓库无 `tests/` 目录且其被 .gitignore）。
+
+| Task | 状态 | commit |
+|---|---|---|
+| 1 pipeline+options | ✅ | 5309698b |
+| 2 SVDLUT 封装+清单 | ✅(封装) | c0ad359f |
+| 3 SCUNet 封装+tiling | ✅ | 8653c312 |
+| 4 export_crop 集成 | ✅ | 8dcb95b0 |
+| 5 _EnhanceWorker | ✅ | afc911f1 |
+| 6 UI 面板+预览+透传 | ✅ | 8dc631bd |
+| 7 打包清单 | ✅ | 0b132165 |
+| 8 vendor+许可证+降级 | ✅(见下) | 42699dcd |
+
+### 与原计划的偏差（均有据）
+
+1. **SVDLUT = CUDA-only,无法跨平台（重大阻塞）**：核实官方实现后发现 `SVDLUT.forward` 依赖编译的
+   CUDA 自定义算子 `bilateral2D_slicing_LUTTransform`（`cpp_ext_interface.py` + `kernel_code/*.cu`），
+   **无 CPU/MPS 路径**，与「跨 Windows+macOS/MPS + CPU/MPS 速度」硬约束冲突。故未 vendor 上游 `models.py`，
+   改为 `svdlut_net.py` stub（实例化抛 `NotImplementedError` 并在头部完整记录阻塞与三条出路）。
+   **SVDLUT 的 Apache-2.0 与 SCUNet 的 Apache-2.0 均已确认并落盘** → 许可证非阻塞，CUDA 才是。
+
+2. **管线优雅降级（新增,计划外）**：`pipeline._run_step` 对「模型不可用」类异常
+   （ImportError/FileNotFoundError/NotImplementedError/OSError）降级跳过该步并告警，真 bug 仍抛出。
+   保证「启用调色但 SVDLUT 未就绪」时导出不崩溃。真实路径已验证：两步均跳过、返回原图、零崩溃。
+
+3. **UI 预览改为非破坏性对话框（计划外,有据）**：`_Canvas.set_image` 会清除裁剪框 + 重置缩放，
+   故「滑块变动即刷新主画布」会破坏用户正在画的裁剪框。改为「预览效果」按钮 → before/after 对话框，
+   不触碰主画布。真·连续 on-canvas 实时预览需重构 `_Canvas` 为非破坏性叠加层（后续增量）。
+
+4. **latent bug 修复**：写真权重冒烟测试时发现 `get_install_scoped_resource_path(rel, packaged...)`
+   误用位置参数（应为关键字 `packaged_relative_path=`），封装运行时也会错；已统一修正。
+
+### 仍需用户处理（无法自主完成）
+
+- **A. SVDLUT 决策**（三选一）：①纯 PyTorch 用 `F.grid_sample` 重写 bilateral-grid slicing + 3D LUT
+  trilinear，并以官方 CUDA 内核输出 + 真权重逐位验证后采用；②换无自定义 CUDA 内核的纯 PyTorch 调色模型；
+  ③本期仅交付 SCUNet 降噪，调色后续。
+- **B. 上传权重到 HF**（`jamesphotography/SuperPicky-models`）：`scunet_color_real.pth`
+  （= 上游 `scunet_color_real_psnr.pth` 重命名）；SVDLUT 待 A 决策后再定。上传后真权重冒烟测试自动转绿。
+- **C. 真机验证**：装好 SCUNet 权重后，在 macOS(MPS)/Windows 上跑一次真实降噪导出，确认速度与画质达标。
