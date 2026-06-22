@@ -1551,7 +1551,10 @@ class CropStudio(QWidget):
         self._enhance_active = True
         self._zoom_100_btn.setChecked(False)   # 默认适应 / default to fit
         self._compare_view.set_zoom(fit=True)
-        self._preview_before_bgr = self._downsample_for_preview(self._analysis_bgr)
+        # 预览作用在「用户选定的裁剪区」上(无裁剪框则整图)——与导出成品一致。
+        # Preview operates on the user's selected crop region (whole frame if none),
+        # matching exactly what export will produce.
+        self._preview_before_bgr = self._current_crop_bgr()
         # 初始 after=before,预览回来后再替换 / after starts equal to before
         self._compare_view.set_images(self._preview_before_bgr, self._preview_before_bgr)
         self._center_stack.setCurrentWidget(self._compare_view)
@@ -1572,6 +1575,27 @@ class CropStudio(QWidget):
             return cv2.resize(bgr, (max(1, int(w * scale)), max(1, int(h * scale))),
                               interpolation=cv2.INTER_AREA)
         return bgr.copy()
+
+    def _current_crop_bgr(self):
+        """
+        取当前裁剪区(分析图坐标)的 BGR;无裁剪框时用整图。再降采样到 ≤ PREVIEW_LONG_EDGE。
+        裁剪区通常较小,故多为原生分辨率,100% 下可看清真实降噪。
+
+        Return the current crop region (analysis-image coords) as BGR; whole frame
+        if no box. Capped to PREVIEW_LONG_EDGE. Crops are usually small, so this is
+        often native resolution — 1:1 zoom shows the real denoise effect.
+        """
+        bgr = self._analysis_bgr
+        box = self._current_box
+        if box is not None:
+            h, w = bgr.shape[:2]
+            x1, y1, x2, y2 = box
+            x1 = max(0, min(int(x1), w - 1))
+            x2 = max(x1 + 1, min(int(x2), w))
+            y1 = max(0, min(int(y1), h - 1))
+            y2 = max(y1 + 1, min(int(y2), h))
+            bgr = bgr[y1:y2, x1:x2]
+        return self._downsample_for_preview(bgr)
 
     def _current_enhance_opts(self):
         """

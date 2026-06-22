@@ -67,6 +67,27 @@ def test_enter_compare_mode_updates_after(monkeypatch):
     w.close()  # 清理后台线程 / stop background threads
 
 
+@pytest.mark.skipif(not os.path.exists(_SAMPLE), reason="样片缺失 / sample missing")
+def test_preview_uses_crop_region(monkeypatch):
+    """预览源应是裁剪区(分析图坐标),而非整帧。"""
+    monkeypatch.setattr(
+        crop_studio, "advise_crops",
+        lambda p: crop_studio.CropAdviceResult(status="no_bird", bird_count=0))
+    photo = {"filename": "06.jpg", "temp_jpeg_path": _SAMPLE,
+             "current_path": _SAMPLE, "original_path": _SAMPLE}
+    w = crop_studio.CropStudio(photo, get_i18n())
+    # 注入已知尺寸分析图 + 裁剪框 / inject known analysis image + crop box
+    w._analysis_bgr = np.zeros((400, 600, 3), np.uint8)
+    w._current_box = (100, 50, 300, 250)  # 200x200 区域 / 200x200 region
+    crop = w._current_crop_bgr()
+    assert crop.shape[0] == 200 and crop.shape[1] == 200
+    # 无裁剪框 → 整图 / no box -> whole frame
+    w._current_box = None
+    full = w._current_crop_bgr()
+    assert full.shape[0] == 400 and full.shape[1] == 600
+    w.close()
+
+
 def _qpix_first_px(pm):
     """取 QPixmap 左上角像素 RGB,用于判断 after 是否已更新。"""
     img = pm.toImage()
