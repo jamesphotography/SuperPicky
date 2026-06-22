@@ -85,13 +85,16 @@ core/enhance/models/svdlut.py       # 现有封装无需大改:_load_model 载�
 - `svdlut.pth`（FiveK sRGB）已在 HF + 下载清单 + build fallback。net 重写后 state_dict 直接加载。
 - 零编译扩展，打包不变。
 
-## 7. 待澄清 / Open Questions（写实施计划前确认）
+## 7. 已定决策 / Resolved Decisions
 
-1. **预览组合**：调色预览是"仅调色 vs 原图"，还是"降噪+调色 vs 原图"（端到端）？
-   倾向后者（所见即导出），但需与降噪 UI 协调成一个统一"修图"对比。
-2. **UI 形态**：降噪与调色是两个独立开关/滑块并存于一个对比面板，还是分别进入？
-3. **backbone 类型**：FiveK sRGB 权重对应 `backbone_type='cnn'`（由 state_dict 键 `backbone.model.*`
-   推断）；构造参数（lut_n_vertices/ranks 等）须与权重匹配，P1 时据 state_dict 形状反推确认。
+1. **预览组合**：调色对比模式的 after = **降噪+调色 端到端成品**，before = 原图（所见即导出）。
+   即进入"调色"对比时按当前降噪强度先降噪、再调色，与原图对比。
+2. **UI 形态**：**降噪与调色分开入口**——左栏两个按钮，各自进入自己的 `_BeforeAfterView` 对比：
+   - 「修图/降噪」对比：after = 仅降噪，before = 原图（现状不变）。
+   - 「调色」对比：after = 降噪+调色，before = 原图。
+   导出选项 `_current_enhance_opts` 须同时携带降噪与调色状态（各自 0=短路）。
+3. **backbone 类型**：FiveK sRGB 对应 `backbone_type='cnn'`（state_dict 键 `backbone.model.*` 印证）；
+   构造参数（lut_n_vertices/ranks 等）P1 据 state_dict 形状反推确认。
 
 ## 8. 测试 / Testing
 
