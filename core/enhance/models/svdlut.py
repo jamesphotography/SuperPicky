@@ -24,7 +24,8 @@ _WEIGHT_REL = "models/svdlut.pth"
 def _weight_path() -> str:
     """返回权重绝对路径(兼容打包/开发) / absolute weight path."""
     return str(get_install_scoped_resource_path(
-        _WEIGHT_REL, get_packaged_model_relative_path(_WEIGHT_REL)))
+        _WEIGHT_REL,
+        packaged_relative_path=get_packaged_model_relative_path(_WEIGHT_REL)))
 
 
 def _load_model(device):

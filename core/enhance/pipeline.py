@@ -11,11 +11,29 @@ wrappers are lazily imported.
 """
 from __future__ import annotations
 
+import logging
 from typing import Callable, Optional
 
 import numpy as np
 
 from core.enhance.options import EnhanceOptions
+
+_log = logging.getLogger(__name__)
+
+# 「模型不可用」类异常:权重缺失 / 网络未就绪 → 优雅降级跳过该步,而非崩溃。
+# 真正的逻辑 bug(非这些类型)仍向上抛出,不被掩盖。
+# "Model unavailable" errors (missing weight / not-ready net) degrade gracefully;
+# genuine bugs (other exception types) still propagate.
+_UNAVAILABLE = (ImportError, FileNotFoundError, NotImplementedError, OSError)
+
+
+def _run_step(name: str, fn: Callable, img: np.ndarray, *args, **kw) -> np.ndarray:
+    """跑一个修图步骤;模型不可用时记录告警并返回原图(跳过该步)。"""
+    try:
+        return fn(img, *args, **kw)
+    except _UNAVAILABLE as exc:  # 模型缺失/未就绪 → 跳过 / skip on unavailable model
+        _log.warning("enhance 步骤 '%s' 跳过(模型不可用): %s", name, exc)
+        return img
 
 
 def enhance(
@@ -49,10 +67,11 @@ def enhance(
         fn = denoise_fn
         if fn is None:
             from core.enhance.models.scunet import denoise as fn  # noqa: PLC0415
-        out = fn(out, opts.denoise_strength, device, progress_cb=progress_cb)
+        out = _run_step("denoise", fn, out, opts.denoise_strength, device,
+                        progress_cb=progress_cb)
     if opts.color_on:
         fn = color_fn
         if fn is None:
             from core.enhance.models.svdlut import colorize as fn  # noqa: PLC0415
-        out = fn(out, opts.color_strength, device)
+        out = _run_step("color", fn, out, opts.color_strength, device)
     return out
