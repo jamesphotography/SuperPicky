@@ -49,7 +49,7 @@ def test_enter_compare_mode_updates_after(monkeypatch):
     assert w._center_stack.currentWidget() is w._compare_view
     opts = w._current_enhance_opts()
     assert opts is not None and opts.color_on is False
-    assert abs(opts.denoise_strength - 0.5) < 1e-6
+    assert abs(opts.denoise_strength - 0.70) < 1e-6  # 默认 70 / default strength
 
     # 防抖 400ms + 后台 worker → after 应被替换为常数 7
     _spin_until(lambda: w._compare_view._after is not None
@@ -58,10 +58,14 @@ def test_enter_compare_mode_updates_after(monkeypatch):
                     _qpix_first_px(w._compare_view._before)))
     assert w._compare_view._after is not None
 
-    # 退出对比模式:回裁剪页、选项变 None
+    # 退出对比模式:回裁剪页,但降噪已启用 → 导出仍生效(选项不变 None)
     w._exit_enhance_mode()
     assert w._enhance_active is False
     assert w._center_stack.currentWidget() is w._canvas
+    assert w._current_enhance_opts() is not None  # 完成后导出仍降噪 / persists
+
+    # 把降噪强度拉到 0 → 不降噪导出 / strength 0 means export without denoise
+    w._denoise_slider.setValue(0)
     assert w._current_enhance_opts() is None
 
     w.close()  # 清理后台线程 / stop background threads

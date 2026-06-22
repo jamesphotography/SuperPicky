@@ -1512,11 +1512,11 @@ class CropStudio(QWidget):
         h.addWidget(QLabel(i18n.t("crop_studio.denoise")))
         self._denoise_slider = QSlider(Qt.Horizontal)
         self._denoise_slider.setRange(0, 100)
-        self._denoise_slider.setValue(50)
+        self._denoise_slider.setValue(70)  # 更高默认,效果更易看出 / stronger default
         self._denoise_slider.setFixedWidth(220)
         self._denoise_slider.valueChanged.connect(self._request_preview)
         h.addWidget(self._denoise_slider)
-        self._denoise_val_lbl = QLabel("50")
+        self._denoise_val_lbl = QLabel("70")
         self._denoise_slider.valueChanged.connect(
             lambda v: self._denoise_val_lbl.setText(str(v)))
         h.addWidget(self._denoise_val_lbl)
@@ -1549,6 +1549,7 @@ class CropStudio(QWidget):
         if self._analysis_bgr is None:
             return
         self._enhance_active = True
+        self._enhance_engaged = True  # 已启用降噪:完成后导出仍应用 / persists for export
         self._zoom_100_btn.setChecked(False)   # 默认适应 / default to fit
         self._compare_view.set_zoom(fit=True)
         # 预览作用在「用户选定的裁剪区」上(无裁剪框则整图)——与导出成品一致。
@@ -1599,14 +1600,22 @@ class CropStudio(QWidget):
 
     def _current_enhance_opts(self):
         """
-        当前修图选项;未进入对比模式时返回 None(导出不修图)。本期仅降噪,调色恒关。
-        Returns denoise-only EnhanceOptions while in compare mode, else None.
+        当前修图选项(供导出)。两条路都支持:
+          - 不降噪导出:从未进入「修图」,或把降噪滑块拉到 0 → 返回 None。
+          - 降噪导出:进过「修图」且强度>0 → 返回降噪选项;即使点了「完成」回裁剪页仍生效。
+        本期仅降噪,调色恒关。
+
+        Returns denoise-only options for export. None when denoise was never engaged
+        or strength is 0 (export without denoise); otherwise persists after exiting
+        compare mode so "denoise then export" works from either view.
         """
-        if not getattr(self, "_enhance_active", False):
+        if not getattr(self, "_enhance_engaged", False):
+            return None
+        if self._denoise_slider.value() <= 0:
             return None
         from core.enhance.options import EnhanceOptions  # noqa: PLC0415
         return EnhanceOptions(
-            denoise_on=self._denoise_slider.value() > 0,
+            denoise_on=True,
             denoise_strength=self._denoise_slider.value() / 100.0,
             color_on=False,      # 本期隐藏调色 / color hidden this phase
             color_strength=0.0,
