@@ -1537,18 +1537,29 @@ class CropStudio(QWidget):
         h.setSpacing(10)
 
         i18n = self._i18n
-        # 降噪强度滑块 / denoise strength slider
+        # 降噪强度滑块:10% 一档(range 0..10,value*10 为百分比) / 10%-step slider
         h.addWidget(QLabel(i18n.t("crop_studio.denoise")))
         self._denoise_slider = QSlider(Qt.Horizontal)
-        self._denoise_slider.setRange(0, 100)
-        self._denoise_slider.setValue(70)  # 更高默认,效果更易看出 / stronger default
+        self._denoise_slider.setRange(0, 10)
+        self._denoise_slider.setValue(7)  # 70% 默认 / default 70%
+        self._denoise_slider.setSingleStep(1)
+        self._denoise_slider.setPageStep(1)
+        self._denoise_slider.setTickPosition(QSlider.TicksBelow)
+        self._denoise_slider.setTickInterval(1)
         self._denoise_slider.setFixedWidth(220)
         self._denoise_slider.valueChanged.connect(self._request_preview)
         h.addWidget(self._denoise_slider)
-        self._denoise_val_lbl = QLabel("70")
+        self._denoise_val_lbl = QLabel("70%")
         self._denoise_slider.valueChanged.connect(
-            lambda v: self._denoise_val_lbl.setText(str(v)))
+            lambda v: self._denoise_val_lbl.setText(f"{v * 10}%"))
         h.addWidget(self._denoise_val_lbl)
+
+        # 状态:处理中 / 已更新(含平均像素差) / status: working / updated (with mean diff)
+        self._enhance_status_lbl = QLabel("")
+        self._enhance_status_lbl.setStyleSheet(
+            f"color: {_c('text_secondary', '#a1a1a1')}; font-size: 12px;")
+        self._enhance_status_lbl.setFixedWidth(180)
+        h.addWidget(self._enhance_status_lbl)
 
         h.addStretch(1)
         h.addWidget(QLabel(i18n.t("crop_studio.enhance_hint")))
@@ -1645,15 +1656,22 @@ class CropStudio(QWidget):
         from core.enhance.options import EnhanceOptions  # noqa: PLC0415
         return EnhanceOptions(
             denoise_on=True,
-            denoise_strength=self._denoise_slider.value() / 100.0,
+            denoise_strength=self._denoise_slider.value() / 10.0,  # 0..10 → 0..1
             color_on=False,      # 本期隐藏调色 / color hidden this phase
             color_strength=0.0,
         )
+
+    def _set_enhance_status(self, text: str) -> None:
+        """更新修图状态文字(处理中/已更新…);控件未建好时静默。"""
+        lbl = getattr(self, "_enhance_status_lbl", None)
+        if lbl is not None:
+            lbl.setText(text)
 
     def _request_preview(self) -> None:
         """滑块变动后防抖 400ms 触发后台预览(慢刷新,避免每格都跑)。"""
         if not getattr(self, "_enhance_active", False):
             return
+        self._set_enhance_status(self._i18n.t("crop_studio.enhance_working"))
         if not hasattr(self, "_preview_timer"):
             self._preview_timer = QTimer(self)
             self._preview_timer.setSingleShot(True)
@@ -1668,19 +1686,40 @@ class CropStudio(QWidget):
         if worker is not None and worker.isRunning():
             self._preview_pending = True
             return
-        opts = self._current_enhance_opts()
-        if opts is None or self._preview_before_bgr is None:
+        if self._preview_before_bgr is None:
             return
+        opts = self._current_enhance_opts()
+        if opts is None:
+            # 强度 0 = 不降噪:after 等于 before,差为 0 / strength 0: after == before
+            self._compare_view.set_after(self._preview_before_bgr)
+            self._show_updated_status(self._preview_before_bgr)
+            return
+        self._set_enhance_status(self._i18n.t("crop_studio.enhance_working"))
         rgb = cv2.cvtColor(self._preview_before_bgr, cv2.COLOR_BGR2RGB)
         self._preview_worker = _EnhanceWorker(rgb, opts)
         self._preview_worker.done.connect(self._on_preview_done)
         self._preview_worker.start()
 
+    def _show_updated_status(self, after_bgr) -> None:
+        """计算 before↔after 平均像素差并显示「已更新 · 平均像素差 X.X」。"""
+        try:
+            before = self._preview_before_bgr
+            n = min(before.shape[0], after_bgr.shape[0])
+            m = min(before.shape[1], after_bgr.shape[1])
+            d = float(np.abs(before[:n, :m].astype(np.int16)
+                             - after_bgr[:n, :m].astype(np.int16)).mean())
+        except Exception:  # noqa: BLE001
+            d = 0.0
+        t = self._i18n.t
+        self._set_enhance_status(
+            f"{t('crop_studio.enhance_updated')} · {t('crop_studio.enhance_diff')} {d:.1f}")
+
     def _on_preview_done(self, rgb_out) -> None:
-        """预览完成:更新对比视图的 after;若期间有新请求则再跑一次。"""
+        """预览完成:更新对比视图的 after + 状态(平均像素差);有新请求则再跑。"""
         try:
             after_bgr = cv2.cvtColor(rgb_out, cv2.COLOR_RGB2BGR)
             self._compare_view.set_after(after_bgr)
+            self._show_updated_status(after_bgr)
         except Exception:  # noqa: BLE001 — 预览失败静默 / silently ignore
             pass
         if getattr(self, "_preview_pending", False):
