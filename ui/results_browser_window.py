@@ -561,8 +561,6 @@ class ResultsBrowserWindow(QMainWindow):
         self._fullscreen.context_menu_requested.connect(self._on_fullscreen_context_menu)
         self._fullscreen.species_edit_requested.connect(self._on_species_edit_requested)
         self._fullscreen.crop_advice_requested.connect(self._on_crop_advice_requested)
-        self._fullscreen.manual_crop_requested.connect(
-            lambda p: self._open_studio_with_action(p, "manual"))
         self._fullscreen.auto_retouch_requested.connect(
             lambda p: self._open_studio_with_action(p, "enhance"))
         self._fullscreen.burst_sequence_requested.connect(self._open_burst_sequence)

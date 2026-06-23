@@ -149,8 +149,6 @@ def test_set_mode_toggles_and_emits():
     assert w._mode == "manual"
     w._set_mode("manual")  # 再次点击回到 crop
     assert w._mode == "crop"
-    w._set_mode("auto")
-    assert w._mode == "auto"
     w.close()
 
 

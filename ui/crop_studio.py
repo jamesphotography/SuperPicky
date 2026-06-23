@@ -4,7 +4,7 @@ Crop Studio — 全屏「后期工作区」/ fullscreen post-processing workspac
 
 把旧的裁剪建议弹窗(CropAdvisorDialog)升级为专业看图体验:
 - 顶栏:鸟种名 / 文件名 / 星级 / 罕见度 / IUCN + 返回 / 导出。
-- 左竖工具栏:裁剪 / 特写 / 鸟种 / 自动 / 删除。
+- 左竖工具栏:裁剪 / 特写 / 鸟种 / 自动修图 / 删除。
 - 中画布:深灰背景 + fit-to-window + 投影 + 浮动 zoom 工具条。
 - 右候选:双列 letterbox 候选,点选切换画布预览。
 
@@ -1084,25 +1084,22 @@ class CropStudio(QWidget):
         h.addWidget(star_lbl)
         self._star_label = star_lbl  # 测试断言用
 
-        # 罕见度 pill:仅「少见及以上」(tier≥2)加描边框强调,常见/能见用纯文字。
-        # Rarity: box only uncommon-and-rarer (tier>=2); common/occasional are plain text.
+        # 罕见度 pill:纯彩色文字,不加描边框 / Rarity: plain colored text, no box.
         gbif_r = p.get("gbif_rarity_100")
         tidx = gbif_score_to_tier(gbif_r) if gbif_r is not None else None
         if tidx is not None:
             color = tier_color(tidx) or _c("text_secondary", "#a1a1a1")
             pill = QLabel(f"{tier_icon(tidx)} {tier_name(tidx, is_zh=is_zh)}")
-            pill.setStyleSheet(self._pill_qss(color, boxed=tidx >= 2))
+            pill.setStyleSheet(self._pill_qss(color, boxed=False))
             h.addWidget(pill)
 
-        # IUCN pill:仅「受威胁」级(VU/EN/CR/EW/EX)加描边框,无危/近危等用纯文字。
-        # IUCN: box only threatened categories; LC/NT/etc. are plain colored text.
+        # IUCN pill:纯彩色文字,不加描边框 / IUCN: plain colored text, no box.
         iucn = p.get("iucn_category")
         if iucn:
             from ui.detail_panel import _format_iucn
             text, color = _format_iucn(iucn, is_zh)
-            threatened = str(iucn).upper() in {"VU", "EN", "CR", "EW", "EX"}
             iucn_pill = QLabel(text)
-            iucn_pill.setStyleSheet(self._pill_qss(color, boxed=threatened))
+            iucn_pill.setStyleSheet(self._pill_qss(color, boxed=False))
             h.addWidget(iucn_pill)
 
         h.addStretch(1)
@@ -1150,7 +1147,7 @@ class CropStudio(QWidget):
         )
 
     def _build_toolbar(self) -> QWidget:
-        """左竖工具栏:图标 + 下方文字。裁剪/特写/鸟种/自动/删除(删除红、沉底)。"""
+        """左竖工具栏:图标 + 下方文字。裁剪/特写/鸟种/自动修图/删除(删除红、沉底)。"""
         tb = QFrame()
         tb.setObjectName("cropStudioToolbar")
         tb.setFixedWidth(72)
@@ -1172,9 +1169,6 @@ class CropStudio(QWidget):
         self._btn_species = self._tool_btn("square-pen.svg", self._i18n.t("crop_studio.tb_species"),
                                            lambda: self.edit_species_requested.emit(self._photo))
         v.addWidget(self._btn_species)
-        self._btn_auto = self._tool_btn("image-plus.svg", self._i18n.t("crop_studio.tb_auto"),
-                                        lambda: self._set_mode("auto"))
-        v.addWidget(self._btn_auto)
         self._btn_enhance = self._tool_btn("gem.svg", self._i18n.t("crop_studio.tb_enhance"),
                                            self._toggle_enhance_mode)
         v.addWidget(self._btn_enhance)
@@ -1364,7 +1358,6 @@ class CropStudio(QWidget):
         切换工作模式:
           crop   — 裁剪(默认):大图=选中候选裁剪图,右栏=候选。
           manual — 手动裁剪(Task 6 填充拖拽框):大图=整图,可拖拽框。
-          auto   — 自动后期(本期占位,仅标记模式)。
         「裁剪」按钮在 manual 下高亮;再次点击回到 crop。
         """
         # 「裁剪」按钮作为 manual 的开关 / the Crop button toggles manual mode
@@ -1382,12 +1375,6 @@ class CropStudio(QWidget):
                     self._select_candidate(self._selected_index)
         elif mode == "manual":
             self._enter_manual_mode()
-        elif mode == "auto":
-            # 自动后期占位:本期不改画布,仅提示即将推出
-            self._canvas.set_manual_enabled(False)
-            self._manual_save_btn.hide()
-            self._cand_hint.setText(self._i18n.t("crop_studio.auto_coming_soon"))
-            self._cand_hint.show()
 
     def _enter_manual_mode(self) -> None:
         """进入手动裁剪:画布显示整图 + 启用拖拽框 + 懒加载分析图供打分。"""
@@ -1483,12 +1470,11 @@ class CropStudio(QWidget):
         self._select_candidate(new_index)
 
     def _update_tool_active(self) -> None:
-        """根据当前模式高亮工具按钮(裁剪=manual,自动=auto)。"""
+        """根据当前模式高亮工具按钮(裁剪=manual)。"""
         accent = _c("accent", "#00d4aa")
         sub = _c("text_secondary", "#a1a1a1")
         for btn, on in (
             (getattr(self, "_btn_crop", None), self._mode == "manual"),
-            (getattr(self, "_btn_auto", None), self._mode == "auto"),
         ):
             if btn is None:
                 continue
@@ -1553,19 +1539,19 @@ class CropStudio(QWidget):
         # 降噪组 / denoise group
         self._denoise_label = QLabel(i18n.t("crop_studio.denoise"))
         h.addWidget(self._denoise_label)
-        self._denoise_slider = _slider(7)   # 70% 默认
+        self._denoise_slider = _slider(9)   # 90% 默认
         h.addWidget(self._denoise_slider)
-        self._denoise_val_lbl = QLabel("70%")
+        self._denoise_val_lbl = QLabel("90%")
         self._denoise_slider.valueChanged.connect(
             lambda v: self._denoise_val_lbl.setText(f"{v * 10}%"))
         h.addWidget(self._denoise_val_lbl)
 
-        # 调色组(默认隐藏,进调色模式才显示) / color group (shown only in color mode)
+        # 调色组(与降噪并排常显;自动修图 = 降噪+调色)/ color group shown alongside denoise
         self._color_label = QLabel(i18n.t("crop_studio.color"))
         h.addWidget(self._color_label)
-        self._color_slider = _slider(4)     # 40% 默认 / conservative
+        self._color_slider = _slider(8)     # 80% 默认
         h.addWidget(self._color_slider)
-        self._color_val_lbl = QLabel("40%")
+        self._color_val_lbl = QLabel("80%")
         self._color_slider.valueChanged.connect(
             lambda v: self._color_val_lbl.setText(f"{v * 10}%"))
         h.addWidget(self._color_val_lbl)
@@ -1579,15 +1565,35 @@ class CropStudio(QWidget):
 
         h.addStretch(1)
         h.addWidget(QLabel(i18n.t("crop_studio.enhance_hint")))
-        # 100% / 适应 切换:看 1:1 像素以判断降噪是否真起作用 / 1:1 toggle for pixel-peeping
-        self._zoom_100_btn = QPushButton("100%")
+
+        # 微调条按钮统一描边风格(与顶栏「返回」一致;checked 态用强调色高亮)。
+        # Strip buttons share an outlined style (matches top-bar Back; accent when checked).
+        strip_btn_qss = (
+            f"QPushButton {{ color: {_c('text_secondary', '#a1a1a1')}; background: transparent;"
+            f" border: 1px solid {_c('border', '#2a2a2a')}; border-radius: 8px;"
+            " padding: 6px 14px; font-size: 12px; }"
+            f"QPushButton:hover {{ background: {_c('bg_card', '#1f1f1f')}; }}"
+            f"QPushButton:checked {{ color: {_c('accent', '#00d4aa')};"
+            f" border-color: {_c('accent', '#00d4aa')}; }}"
+        )
+
+        # 100% / 适应 切换:看 1:1 像素以判断降噪/调色是否真起作用 / 1:1 pixel-peeping toggle
+        self._zoom_100_btn = QPushButton("  100%")
+        self._zoom_100_btn.setIcon(load_tinted_icon("scan-eye.svg", ICON_IDLE, 15))
+        self._zoom_100_btn.setIconSize(QSize(15, 15))
         self._zoom_100_btn.setCheckable(True)
         self._zoom_100_btn.setCursor(Qt.PointingHandCursor)
+        self._zoom_100_btn.setStyleSheet(strip_btn_qss)
         self._zoom_100_btn.toggled.connect(
             lambda on: self._compare_view.set_zoom(fit=not on))
         h.addWidget(self._zoom_100_btn)
-        self._enhance_done_btn = QPushButton(i18n.t("crop_studio.enhance_done"))
+
+        # 完成:退出对比模式 / Done: exit compare mode
+        self._enhance_done_btn = QPushButton("  " + i18n.t("crop_studio.enhance_done"))
+        self._enhance_done_btn.setIcon(load_tinted_icon("check.svg", ICON_IDLE, 15))
+        self._enhance_done_btn.setIconSize(QSize(15, 15))
         self._enhance_done_btn.setCursor(Qt.PointingHandCursor)
+        self._enhance_done_btn.setStyleSheet(strip_btn_qss)
         self._enhance_done_btn.clicked.connect(self._exit_compare_mode)
         h.addWidget(self._enhance_done_btn)
         return bar
