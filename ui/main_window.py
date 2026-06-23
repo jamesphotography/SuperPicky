@@ -1809,6 +1809,33 @@ class SuperPickyMainWindow(QMainWindow):
         except Exception as e:
             self._log(f"  ⚠️ 打开目录失败: {e}", "warning")
 
+    def _status_folder_icon_html(self, px: int = 14) -> str:
+        """
+        把 folder.svg 染成状态栏文字色,转成内联 base64 <img>,供富文本 QLabel
+        复用「浏览」按钮同款图标(替代旧的 📂 emoji)。结果缓存,避免重复渲染。
+
+        Render folder.svg (tinted to the banner text color) as an inline base64
+        <img> so the rich-text QLabel can reuse the Browse button's icon,
+        replacing the old 📂 emoji. Cached after first build.
+        """
+        cached = getattr(self, "_folder_icon_html_cache", None)
+        if cached:
+            return cached
+        import base64
+        from PySide6.QtCore import QBuffer, QByteArray
+        pix = load_tinted_icon("folder.svg", COLORS["text_secondary"], px).pixmap(px, px)
+        ba = QByteArray()
+        buf = QBuffer(ba)
+        buf.open(QBuffer.OpenModeFlag.WriteOnly)
+        pix.save(buf, "PNG")
+        buf.close()
+        b64 = bytes(ba.toBase64()).decode("ascii")
+        self._folder_icon_html_cache = (
+            f'<img src="data:image/png;base64,{b64}" '
+            f'width="{px}" height="{px}" style="vertical-align:middle;">'
+        )
+        return self._folder_icon_html_cache
+
     def _update_status_banner(self, state: str, data=None):
         """更新状态条显示。
 
@@ -1831,7 +1858,12 @@ class SuperPickyMainWindow(QMainWindow):
             """)
         elif state == "ready":
             dirname = os.path.basename(self.directory_path) if self.directory_path else ""
-            self._status_banner.setText(self.i18n.t("labels.dir_ready").format(dirname=dirname))
+            # 复用「浏览」按钮同款 folder.svg(内联染色 img)替代旧 📂 emoji;
+            # 富文本会折叠空格,故文案空格转 &nbsp; 保留原间距 / keep spacing in rich text
+            import html as _html
+            text = self.i18n.t("labels.dir_ready").format(
+                dirname=_html.escape(dirname)).replace(" ", "&nbsp;")
+            self._status_banner.setText(self._status_folder_icon_html() + "&nbsp;&nbsp;" + text)
             self._status_banner.setStyleSheet(f"""
                 QLabel {{
                     background-color: {COLORS['bg_card']};

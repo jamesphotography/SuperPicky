@@ -19,11 +19,11 @@ from PySide6.QtWidgets import (
     QStackedWidget, QApplication
 )
 import json
-from PySide6.QtCore import Qt, Signal, QThread, QTimer
+from PySide6.QtCore import Qt, Signal, QThread, QTimer, QSize
 from PySide6.QtGui import QPixmap, QDragEnterEvent, QDropEvent, QFont
 
 from ui.styles import COLORS, FONTS
-from ui.icon_utils import stars_pixmap, tinted_png_path
+from ui.icon_utils import stars_pixmap, tinted_png_path, load_tinted_icon, ICON_IDLE
 from config import (
     get_app_config_dir,
     get_install_scoped_resource_path,
@@ -481,7 +481,9 @@ class BirdIDDockWidget(QDockWidget):
         layout.addStretch()
 
         # 浮动按钮（靠右）- 用斜箭头表示状态
-        self._float_btn = QPushButton("↗")  # 初始停靠状态 → 可弹出
+        self._float_btn = QPushButton()  # 初始停靠状态 → 可弹出(move-up-right)
+        self._float_btn.setIcon(load_tinted_icon("move-up-right.svg", ICON_IDLE, 14))
+        self._float_btn.setIconSize(QSize(14, 14))
         self._float_btn.setFixedSize(24, 24)
         self._float_btn.setToolTip(self.i18n.t("birdid.float_panel"))
         self._float_btn.setStyleSheet(f"""
@@ -505,7 +507,9 @@ class BirdIDDockWidget(QDockWidget):
         self.topLevelChanged.connect(self._on_float_changed)
 
         # 关闭按钮（最右）
-        close_btn = QPushButton("✕")
+        close_btn = QPushButton()
+        close_btn.setIcon(load_tinted_icon("x.svg", ICON_IDLE, 14))
+        close_btn.setIconSize(QSize(14, 14))
         close_btn.setFixedSize(24, 24)
         close_btn.setToolTip(self.i18n.t("birdid.close_panel"))
         close_btn.setStyleSheet(f"""
@@ -535,10 +539,10 @@ class BirdIDDockWidget(QDockWidget):
         """浮动状态变化时更新按钮图标和 tooltip"""
         if hasattr(self, '_float_btn'):
             if floating:
-                self._float_btn.setText("↙")  # 浮动中 → 可归位
+                self._float_btn.setIcon(load_tinted_icon("move-down-left.svg", ICON_IDLE, 14))  # 浮动中 → 可归位
                 self._float_btn.setToolTip(self.i18n.t("birdid.dock_panel"))
             else:
-                self._float_btn.setText("↗")  # 停靠中 → 可弹出
+                self._float_btn.setIcon(load_tinted_icon("move-up-right.svg", ICON_IDLE, 14))  # 停靠中 → 可弹出
                 self._float_btn.setToolTip(self.i18n.t("birdid.float_panel"))
 
     def _load_regions_data(self) -> dict:
@@ -1191,7 +1195,9 @@ class BirdIDDockWidget(QDockWidget):
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(8)
 
-        self.btn_new = QPushButton(self.i18n.t("birdid.btn_select"))
+        self.btn_new = QPushButton("  " + self.i18n.t("birdid.btn_select"))
+        self.btn_new.setIcon(load_tinted_icon("image-plus.svg", ICON_IDLE, 16))
+        self.btn_new.setIconSize(QSize(16, 16))
         self.btn_new.setStyleSheet(f"""
             QPushButton {{
                 background-color: {COLORS['bg_card']};
@@ -1209,7 +1215,9 @@ class BirdIDDockWidget(QDockWidget):
         self.btn_new.clicked.connect(self.drop_area.selectFile)
         btn_layout.addWidget(self.btn_new)
 
-        self.btn_screenshot = QPushButton(self.i18n.t("birdid.btn_screenshot"))
+        self.btn_screenshot = QPushButton("  " + self.i18n.t("birdid.btn_screenshot"))
+        self.btn_screenshot.setIcon(load_tinted_icon("wallpaper.svg", ICON_IDLE, 16))
+        self.btn_screenshot.setIconSize(QSize(16, 16))
         self.btn_screenshot.setStyleSheet(f"""
             QPushButton {{
                 background-color: {COLORS['bg_card']};
@@ -1757,7 +1765,14 @@ class BirdIDDockWidget(QDockWidget):
         if hasattr(self, 'selected_index') and isinstance(self.identify_results, list):
             if 0 <= self.selected_index < len(self.identify_results):
                 selected = self.identify_results[self.selected_index]
-                self.status_label.setText(f"✓ {selected['cn_name']} ({selected['confidence']:.0f}%)")
+                # 勾号复用 check.svg(染成功色)富文本内联,替代旧的 ✓ 字符
+                import html as _html
+                check_img = (
+                    f'<img src="{tinted_png_path("check.svg", COLORS["success"], 12)}" '
+                    f'width="12" height="12" style="vertical-align:middle;">'
+                )
+                txt = _html.escape(f"{selected['cn_name']} ({selected['confidence']:.0f}%)")
+                self.status_label.setText(f"{check_img}&nbsp;{txt}")
                 self.status_label.setStyleSheet(f"font-size: 11px; color: {COLORS['success']};")
 
     def cleanup(self):

@@ -95,7 +95,7 @@
     "rating_inc_tooltip": "Increase Rating (+1★)",
     "support_format_hint": "Supports RAW / JPG · Drag folder or click to browse",
     "view_results_arrow": "View Results",
-    "dir_ready": "📂 {dirname}    Ready",
+    "dir_ready": "{dirname}    Ready",
     "reprocess": "Reprocess",
     "status_processing": "Processing... {filename}",
     "status_processing_idle": "Processing...",
