@@ -22,6 +22,15 @@
 
 **`birdid_dock_settings.json` 现有键(迁移来源):** `use_ebird, country_code, selected_country, region_code, selected_region`。
 
+**已核准的现网 API(权威,覆盖正文任何不一致;测试/代码以此为准):**
+- i18n 入口:`from tools.i18n import get_i18n`
+- 主窗口类:`ui.main_window.SuperPickyMainWindow`(构造 `SuperPickyMainWindow()` 无参,headless 可构造)
+- 识鸟面板类:`ui.birdid_dock.BirdIDDockWidget`(构造 `BirdIDDockWidget(parent=None)`)
+- 版本常量:`from constants import APP_VERSION`(当前 "4.3.1RC1")
+- 技能等级组件:`ui.skill_level_dialog.SkillLevelCard` / `SkillLevelSelector`;阈值换算 `core.skill_presets.SKILL_PRESETS` / `get_skill_level_thresholds`
+- 应用配置目录:`from config import get_app_config_dir`
+- headless 测试约定:`import os; os.environ.setdefault("QT_QPA_PLATFORM","offscreen")` 后 `QApplication.instance() or QApplication([])`(参考现有 `test_crop_studio.py`)
+
 ---
 
 ### Task 1: advanced_config 补识鸟字段 + 迁移 birdid_dock_settings.json
@@ -191,7 +200,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication
-from i18n import get_i18n  # 项目现有 i18n 入口
+from tools.i18n import get_i18n
 
 _app = QApplication.instance() or QApplication([])
 
@@ -363,7 +372,7 @@ Expected: FAIL(`AttributeError: _on_skill_preset_selected`)
 - [ ] **Step 3: 实现精选页**
 
 实现要点(在 `ui/settings_center.py` 新增方法并把 `_build_page` 的 `culling` 分支指向它):
-- 顶部技能等级:复用 `core.skill_presets.SKILL_PRESETS` 渲染单选(可复用 `ui.skill_level_dialog` 的卡片组件 `SkillCard`,若耦合过重则用 `QRadioButton` 行)。维护 `self._current_skill_key`。
+- 顶部技能等级:复用 `core.skill_presets.SKILL_PRESETS` 渲染单选(可复用 `ui.skill_level_dialog` 的 `SkillLevelCard`/`SkillLevelSelector`,若耦合过重则用 `QRadioButton` 行)。维护 `self._current_skill_key`。
 - 三个阈值滑块 + 两个检测开关 + 连拍 fps `QSpinBox`,初值读 `get_advanced_config()` 现值。
 - `self._suppress = False` 守卫:`_on_skill_preset_selected` 内置 True 再填值再置 False;阈值 `valueChanged` 接 `_on_cull_threshold_changed`,内部 `if self._suppress: return`,否则 `self._current_skill_key="custom"` 并刷新单选选中。
 - `get_skill_level_thresholds(level_key)` 返回含 `sharpness`/`aesthetics`(NIMA)键(见 `core/skill_presets.py`);AI 置信度若该档未定义则保持当前值。
@@ -523,7 +532,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ```python
 def test_about_page_shows_version():
     from ui.settings_center import SettingsCenter
-    from config import APP_VERSION  # 项目现有版本常量(若名不同按实际)
+    from constants import APP_VERSION
     w = SettingsCenter(get_i18n()); w.show_page("about")
     texts = [c.text() for c in w.findChildren(__import__("PySide6.QtWidgets", fromlist=["QLabel"]).QLabel)]
     assert any(str(APP_VERSION) in t for t in texts)
@@ -577,8 +586,8 @@ from PySide6.QtWidgets import QApplication
 _app = QApplication.instance() or QApplication([])
 
 def test_main_window_has_settings_entry_and_no_param_panel():
-    from ui.main_window import MainWindow  # 按实际构造签名
-    w = MainWindow()  # 若需参数,按现有测试/启动代码补
+    from ui.main_window import SuperPickyMainWindow
+    w = SuperPickyMainWindow()
     assert hasattr(w, "_open_settings_center")
     assert not hasattr(w, "sharp_slider")  # 参数面板已移除
     w.close()
@@ -661,10 +670,10 @@ from PySide6.QtWidgets import QApplication
 _app = QApplication.instance() or QApplication([])
 
 def test_birdid_dock_reads_region_from_config():
-    from ui.birdid_dock import BirdIDDock  # 按实际类名
+    from ui.birdid_dock import BirdIDDockWidget
     from advanced_config import get_advanced_config
     get_advanced_config().set_birdid_region(True, "AU", "澳大利亚", "AU-QLD", "昆士兰")
-    dock = BirdIDDock(get_i18n())  # 按实际构造
+    dock = BirdIDDockWidget()
     dock.reload_from_config()
     assert dock.settings.get("selected_country") == "澳大利亚"
     dock.close()
@@ -734,7 +743,7 @@ Expected: 全绿。
 
 Run:
 ```bash
-QT_QPA_PLATFORM=offscreen .venv/bin/python -c "from PySide6.QtWidgets import QApplication; from ui.main_window import MainWindow; app=QApplication([]); w=MainWindow(); w._open_settings_center(); print('OK')"
+QT_QPA_PLATFORM=offscreen .venv/bin/python -c "from PySide6.QtWidgets import QApplication; from ui.main_window import SuperPickyMainWindow; app=QApplication([]); w=SuperPickyMainWindow(); w._open_settings_center(); print('OK')"
 ```
 Expected: 打印 OK,无异常。
 
