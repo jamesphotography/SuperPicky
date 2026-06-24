@@ -422,3 +422,105 @@ def test_output_video_apps_pages_build():
         w.show_page(key)
     assert hasattr(w, "_apps_list")   # 外部应用列表存在 / External apps list exists
     w.close()
+
+
+# ── Final-review fixes 测试 / Final-review fix tests ─────────────────────────
+
+
+def test_culling_default_values_no_drift(monkeypatch):
+    """
+    C2 回归测试：用默认配置打开精选页，不改任何滑块直接 _save_culling()，
+    写回后 min_sharpness/min_nima 不能因滑块下限 clamp 而漂移。
+
+    C2 regression test: open culling page with default config, call
+    _save_culling() without touching any slider, and assert that
+    min_sharpness and min_nima have NOT drifted from their stored defaults.
+
+    修复前: setRange(200,600) 会将 setValue(100) clamp 到 200，
+    _save_culling 无条件回写 → 默认用户触发即把 100→200。
+    修复后: setRange(100,600) 使 setValue(100) 可以无损保留。
+
+    Before fix: setRange(200,600) clamped setValue(100) to 200;
+    _save_culling wrote back unconditionally → defaults silently drifted.
+    After fix: setRange(100,600) preserves setValue(100) faithfully.
+    """
+    import tempfile
+    import os
+    from advanced_config import AdvancedConfig
+    from ui.settings_center import SettingsCenter
+    from tools.i18n import get_i18n
+
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+        tmp_path = f.name
+    try:
+        # 使用纯默认配置 / Use pure default config
+        cfg = AdvancedConfig(config_file=tmp_path)
+        default_sharpness = AdvancedConfig.DEFAULT_CONFIG["min_sharpness"]   # 100
+        default_nima = AdvancedConfig.DEFAULT_CONFIG["min_nima"]             # 3.5
+
+        import advanced_config as _ac_mod
+        monkeypatch.setattr(_ac_mod, "get_advanced_config", lambda: cfg)
+
+        w = SettingsCenter(get_i18n())
+        w.show_page("culling")
+
+        # 不触碰任何滑块，直接保存 / Save without touching any slider
+        w._save_culling()
+
+        assert cfg.min_sharpness == default_sharpness, (
+            f"min_sharpness drifted: expected {default_sharpness}, got {cfg.min_sharpness}"
+        )
+        assert abs(cfg.min_nima - default_nima) < 0.01, (
+            f"min_nima drifted: expected {default_nima}, got {cfg.min_nima}"
+        )
+        w.close()
+    finally:
+        os.unlink(tmp_path)
+
+
+def test_custom_skill_writes_custom_fields(monkeypatch):
+    """
+    I1 回归测试：精选档为 custom 时，_save_culling 应同步写回 custom_sharpness
+    和 custom_aesthetics，确保 CLI 路径读到最新值而非陈旧缓存。
+
+    I1 regression test: when skill_level is "custom", _save_culling must
+    also persist custom_sharpness and custom_aesthetics so the CLI path
+    does not read stale cached values.
+    """
+    import tempfile
+    import os
+    from advanced_config import AdvancedConfig
+    from ui.settings_center import SettingsCenter
+    from tools.i18n import get_i18n
+
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+        tmp_path = f.name
+    try:
+        cfg = AdvancedConfig(config_file=tmp_path)
+        # 设置为自定义档 / Set to custom skill level
+        cfg.set_skill_level("custom")
+        cfg.save()
+
+        import advanced_config as _ac_mod
+        monkeypatch.setattr(_ac_mod, "get_advanced_config", lambda: cfg)
+
+        w = SettingsCenter(get_i18n())
+        w.show_page("culling")
+
+        # 强制档位为 custom，修改锐度到 450，NIMA 到 50 (=5.0) / Force custom, set sharpness=450, NIMA=50
+        w._current_skill_key = "custom"
+        w._cull_sharp.setValue(450)
+        w._cull_nima.setValue(50)   # 50/10 = 5.0，在 set_custom_aesthetics clamp 范围 4.0-7.0 内
+        w._save_culling()
+
+        assert cfg.custom_sharpness == 450, (
+            f"custom_sharpness not written back: expected 450, got {cfg.custom_sharpness}"
+        )
+        # custom_aesthetics 应等于 NIMA 滑块当前值 / 10 = 5.0
+        # custom_aesthetics should equal NIMA slider value / 10 = 5.0
+        assert abs(cfg.custom_aesthetics - 5.0) < 0.05, (
+            f"custom_aesthetics not written back: expected ~5.0, got {cfg.custom_aesthetics}"
+        )
+        w.close()
+    finally:
+        os.unlink(tmp_path)

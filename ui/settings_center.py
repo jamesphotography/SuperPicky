@@ -280,7 +280,7 @@ class SettingsCenter(QDialog):
         sharp_label.setStyleSheet(f"color:{COLORS['text_secondary']};font-size:12px;")
         sharp_label.setFixedWidth(160)
         self._cull_sharp = QSlider(Qt.Horizontal)
-        self._cull_sharp.setRange(200, 600)
+        self._cull_sharp.setRange(100, 600)
         self._cull_sharp.setValue(int(cfg.min_sharpness))
         self._cull_sharp_value_label = QLabel(str(self._cull_sharp.value()))
         self._cull_sharp_value_label.setFixedWidth(30)
@@ -303,7 +303,7 @@ class SettingsCenter(QDialog):
         nima_label.setStyleSheet(f"color:{COLORS['text_secondary']};font-size:12px;")
         nima_label.setFixedWidth(160)
         self._cull_nima = QSlider(Qt.Horizontal)
-        self._cull_nima.setRange(40, 70)
+        self._cull_nima.setRange(0, 70)
         self._cull_nima.setValue(int(round(cfg.min_nima * 10)))
         self._cull_nima_value_label = QLabel(f"{self._cull_nima.value() / 10:.1f}")
         self._cull_nima_value_label.setFixedWidth(30)
@@ -863,6 +863,11 @@ class SettingsCenter(QDialog):
         cfg.set_flight_check(self._cull_flight.isChecked())
         cfg.set_burst_check(self._cull_burst.isChecked())
         cfg.set_skill_level(self._current_skill_key)
+        # 当处于自定义档时同步写回 custom_* 字段，避免 CLI 路径读到陈旧值。
+        # When in custom mode, also persist custom_* fields so CLI path reads fresh values.
+        if self._current_skill_key == "custom":
+            cfg.set_custom_sharpness(self._cull_sharp.value())
+            cfg.set_custom_aesthetics(self._cull_nima.value() / 10.0)
         cfg.save()
 
     # ── 输出页 / Output page ──────────────────────────────────────────────────

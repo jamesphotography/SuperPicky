@@ -171,6 +171,8 @@ setup_error_logging()
 # Finish legacy data migration before later modules observe stale paths.
 migrate_old_data()
 migrate_legacy_ioc_settings()
+from advanced_config import get_advanced_config as _get_advanced_config
+_get_advanced_config().migrate_birdid_dock_settings()
 
 _memory_monitor = None
 if os.environ.get("SP_MEMORY_MONITOR") == "1":

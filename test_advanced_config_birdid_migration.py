@@ -1,3 +1,4 @@
+import inspect
 import json
 import os
 import tempfile
@@ -69,3 +70,29 @@ def test_migration_idempotent_even_when_country_is_default(tmp_path):
     c = AdvancedConfig(config_file=str(tmp_path / "advanced_config.json"))
     assert c.migrate_birdid_dock_settings(legacy_path=str(legacy)) is True
     assert c.migrate_birdid_dock_settings(legacy_path=str(legacy)) is False
+
+
+def test_c1_migration_wired_in_main_startup():
+    """
+    C1 回归测试：验证 main.py 的启动序列中确实调用了 migrate_birdid_dock_settings。
+
+    通过 inspect 读取 main.py 源码来断言，无需真正启动 QApplication。
+    这确保了迁移调用不会因重构而悄悄丢失。
+
+    C1 regression test: verify that main.py startup sequence actually calls
+    migrate_birdid_dock_settings.
+
+    Uses inspect to read main.py source — no need to launch QApplication.
+    Ensures the migration call cannot silently disappear during refactoring.
+    """
+    import importlib.util
+    import pathlib
+
+    # 读取 main.py 源码 / Read main.py source
+    main_path = pathlib.Path(__file__).parent / "main.py"
+    source = main_path.read_text(encoding="utf-8")
+
+    assert "migrate_birdid_dock_settings" in source, (
+        "C1 defect still present: migrate_birdid_dock_settings is NOT called in main.py. "
+        "Existing users will lose their birdid country/region on upgrade."
+    )
