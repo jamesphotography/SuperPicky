@@ -377,3 +377,21 @@ def test_birdid_non_top10_country_roundtrip(monkeypatch):
         w.close()
     finally:
         os.unlink(tmp_path)
+
+
+# ── Task 5: 输出/视频/外部应用页测试 / Output/Video/Apps page tests ──────────────
+
+
+def test_output_video_apps_pages_build():
+    """
+    验证输出、视频、外部应用三个设置页能正确构建，且关键属性存在。
+
+    Verify that the output, video, and apps settings pages build correctly
+    and that the key widget attributes are present.
+    """
+    from ui.settings_center import SettingsCenter
+    w = SettingsCenter(get_i18n())
+    for key in ("output", "video", "apps"):
+        w.show_page(key)
+    assert hasattr(w, "_apps_list")   # 外部应用列表存在 / External apps list exists
+    w.close()

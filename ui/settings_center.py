@@ -11,7 +11,10 @@ Tasks 3-6 will replace the placeholder pages with real content.
 """
 from __future__ import annotations
 
+import os
 import re
+import subprocess
+import sys
 from typing import Any, cast
 
 from PySide6.QtCore import Qt
@@ -21,6 +24,8 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QFileDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -155,6 +160,12 @@ class SettingsCenter(QDialog):
             return self._build_culling_page()
         if key == "birdid":
             return self._build_birdid_page()
+        if key == "output":
+            return self._build_output_page()
+        if key == "video":
+            return self._build_video_page()
+        if key == "apps":
+            return self._build_apps_page()
         return self._placeholder(self.i18n.t(_PAGE_TITLE_KEY[key]))
 
     def _build_culling_page(self) -> QWidget:
@@ -852,6 +863,686 @@ class SettingsCenter(QDialog):
         cfg.set_skill_level(self._current_skill_key)
         cfg.save()
 
+    # ── 输出页 / Output page ──────────────────────────────────────────────────
+
+    def _build_output_page(self) -> QWidget:
+        """
+        构建输出设置页，包含：分目录布局、元数据写入方式（XMP）、预览管理开关。
+
+        初值来自 advanced_config 的 folder_layout / arw_write_mode /
+        metadata_write_mode / keep_temp_files / completion_sound_enabled /
+        detail_metadata_for_rejected 字段；通过 _save_output() 写回。
+
+        Build the Output settings page.
+
+        Contains: folder layout, XMP metadata write mode, and preview management
+        toggles. Initial values come from advanced_config; written back via
+        _save_output().
+
+        返回 / Returns:
+            QWidget: 输出设置页 / Output settings page widget.
+        """
+        from advanced_config import get_advanced_config
+
+        cfg = get_advanced_config()
+
+        # ── 容器 + 滚动区 / Container + scroll area ───────────────────────────
+        page = QWidget()
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+
+        inner = QWidget()
+        lay = QVBoxLayout(inner)
+        lay.setContentsMargins(24, 20, 24, 20)
+        lay.setSpacing(16)
+
+        # ── 分目录布局 / Folder layout ────────────────────────────────────────
+        fl_title = QLabel(self.i18n.t("advanced_settings.folder_layout"))
+        fl_title.setStyleSheet(
+            f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
+        )
+        lay.addWidget(fl_title)
+
+        fl_row = QHBoxLayout()
+        fl_label = QLabel(self.i18n.t("advanced_settings.folder_layout_label"))
+        fl_label.setStyleSheet(
+            f"color:{COLORS['text_secondary']};font-size:12px;"
+        )
+        fl_label.setFixedWidth(160)
+
+        self._folder_layout_combo = QComboBox()
+        self._folder_layout_combo.addItem(
+            self.i18n.t("advanced_settings.folder_layout_rating_first"), "rating-first"
+        )
+        self._folder_layout_combo.addItem(
+            self.i18n.t("advanced_settings.folder_layout_species_first"), "species-first"
+        )
+        # 恢复已保存的布局选项 / Restore saved folder layout
+        fl_idx = self._folder_layout_combo.findData(cfg.folder_layout)
+        self._folder_layout_combo.setCurrentIndex(fl_idx if fl_idx >= 0 else 0)
+
+        fl_row.addWidget(fl_label)
+        fl_row.addWidget(self._folder_layout_combo)
+        fl_row.addStretch(1)
+        lay.addLayout(fl_row)
+
+        fl_hint = QLabel(self.i18n.t("advanced_settings.folder_layout_hint"))
+        fl_hint.setWordWrap(True)
+        fl_hint.setStyleSheet(
+            f"color:{COLORS['text_muted']};font-size:11px;margin-left:160px;"
+        )
+        lay.addWidget(fl_hint)
+
+        # ── 分隔线 / Divider ──────────────────────────────────────────────────
+        sep1 = QFrame()
+        sep1.setFixedHeight(1)
+        sep1.setStyleSheet(f"background-color:{COLORS['border_subtle']};")
+        lay.addWidget(sep1)
+
+        # ── XMP 写入方式区标题 / XMP write mode section title ─────────────────
+        xmp_title = QLabel(self.i18n.t("advanced_settings.xmp_write_mode"))
+        xmp_title.setStyleSheet(
+            f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
+        )
+        lay.addWidget(xmp_title)
+
+        # XMP 写入方式单选组 / XMP write mode radio group
+        self._xmp_button_group = QButtonGroup(self)
+
+        # 选项1: 嵌入写入 / Embedded
+        self._xmp_embedded = QRadioButton(
+            self.i18n.t("advanced_settings.write_embedded")
+        )
+        self._xmp_embedded.setStyleSheet(
+            f"color:{COLORS['text_secondary']};font-size:12px;"
+        )
+        self._xmp_button_group.addButton(self._xmp_embedded, 0)
+        lay.addWidget(self._xmp_embedded)
+
+        emb_hint = QLabel(self.i18n.t("advanced_settings.xmp_mode_embedded_hint"))
+        emb_hint.setStyleSheet(
+            f"color:{COLORS['text_muted']};font-size:11px;margin-left:24px;"
+        )
+        lay.addWidget(emb_hint)
+
+        # 选项2: 侧车文件 / Sidecar
+        self._xmp_sidecar = QRadioButton(
+            self.i18n.t("advanced_settings.write_sidecar")
+        )
+        self._xmp_sidecar.setStyleSheet(
+            f"color:{COLORS['text_secondary']};font-size:12px;"
+        )
+        self._xmp_button_group.addButton(self._xmp_sidecar, 1)
+        lay.addWidget(self._xmp_sidecar)
+
+        sidecar_hint = QLabel(self.i18n.t("advanced_settings.xmp_mode_sidecar_hint"))
+        sidecar_hint.setStyleSheet(
+            f"color:{COLORS['text_muted']};font-size:11px;margin-left:24px;"
+        )
+        lay.addWidget(sidecar_hint)
+
+        # 选项3: 不写入 / None
+        self._xmp_none = QRadioButton(
+            self.i18n.t("advanced_settings.write_none")
+        )
+        self._xmp_none.setStyleSheet(
+            f"color:{COLORS['text_secondary']};font-size:12px;"
+        )
+        self._xmp_button_group.addButton(self._xmp_none, 2)
+        lay.addWidget(self._xmp_none)
+
+        # 恢复已保存的 XMP 写入模式 / Restore saved XMP write mode
+        try:
+            global_mode = cfg.get_metadata_write_mode()
+        except Exception:
+            global_mode = "embedded"
+        if global_mode == "sidecar":
+            self._xmp_sidecar.setChecked(True)
+        elif global_mode == "none":
+            self._xmp_none.setChecked(True)
+        else:
+            self._xmp_embedded.setChecked(True)
+
+        # ── 分隔线 / Divider ──────────────────────────────────────────────────
+        sep2 = QFrame()
+        sep2.setFixedHeight(1)
+        sep2.setStyleSheet(f"background-color:{COLORS['border_subtle']};")
+        lay.addWidget(sep2)
+
+        # ── 预览管理区 / Preview management section ───────────────────────────
+        prev_title = QLabel(self.i18n.t("advanced_settings.preview_management"))
+        prev_title.setStyleSheet(
+            f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
+        )
+        lay.addWidget(prev_title)
+
+        # 保留预览图 / Keep preview files
+        self._keep_temp_files = QCheckBox(self.i18n.t("advanced_settings.keep_preview"))
+        self._keep_temp_files.setChecked(cfg.keep_temp_files)
+        self._keep_temp_files.setStyleSheet(
+            f"color:{COLORS['text_secondary']};font-size:12px;"
+        )
+        lay.addWidget(self._keep_temp_files)
+
+        keep_hint = QLabel(self.i18n.t("advanced_settings.keep_preview_hint"))
+        keep_hint.setStyleSheet(
+            f"color:{COLORS['text_muted']};font-size:11px;margin-left:24px;"
+        )
+        lay.addWidget(keep_hint)
+
+        # 完成提示音 / Completion sound
+        self._completion_sound = QCheckBox(
+            self.i18n.t("advanced_settings.completion_sound")
+        )
+        self._completion_sound.setChecked(cfg.completion_sound_enabled)
+        self._completion_sound.setStyleSheet(
+            f"color:{COLORS['text_secondary']};font-size:12px;"
+        )
+        lay.addWidget(self._completion_sound)
+
+        sound_hint = QLabel(self.i18n.t("advanced_settings.completion_sound_hint"))
+        sound_hint.setStyleSheet(
+            f"color:{COLORS['text_muted']};font-size:11px;margin-left:24px;"
+        )
+        lay.addWidget(sound_hint)
+
+        # 拒绝照片详情元数据 / Detail metadata for rejected photos
+        self._detail_meta_for_rejected = QCheckBox(
+            self.i18n.t("advanced_settings.detail_metadata_for_rejected")
+        )
+        self._detail_meta_for_rejected.setChecked(cfg.get_detail_metadata_for_rejected())
+        self._detail_meta_for_rejected.setStyleSheet(
+            f"color:{COLORS['text_secondary']};font-size:12px;"
+        )
+        lay.addWidget(self._detail_meta_for_rejected)
+
+        detail_hint = QLabel(self.i18n.t("advanced_settings.detail_metadata_hint"))
+        detail_hint.setWordWrap(True)
+        detail_hint.setStyleSheet(
+            f"color:{COLORS['text_muted']};font-size:11px;margin-left:24px;"
+        )
+        lay.addWidget(detail_hint)
+
+        lay.addStretch(1)
+
+        scroll.setWidget(inner)
+        page_lay = QVBoxLayout(page)
+        page_lay.setContentsMargins(0, 0, 0, 0)
+        page_lay.addWidget(scroll)
+        return page
+
+    def _save_output(self) -> None:
+        """
+        将输出页当前值写回 advanced_config 并保存。
+
+        依次调用:
+          set_folder_layout          — 分目录布局
+          set_metadata_write_mode    — XMP 元数据写入方式
+          set_keep_temp_files        — 保留预览图
+          set_completion_sound_enabled — 完成提示音
+          set_detail_metadata_for_rejected — 拒绝照片详情元数据
+
+        Write current output-page values back to advanced_config and save.
+
+        Calls in order:
+          set_folder_layout          — folder layout
+          set_metadata_write_mode    — XMP metadata write mode
+          set_keep_temp_files        — keep preview files
+          set_completion_sound_enabled — completion sound
+          set_detail_metadata_for_rejected — detail metadata for rejected
+        """
+        from advanced_config import get_advanced_config
+
+        cfg = get_advanced_config()
+
+        # 分目录布局 / Folder layout
+        cfg.set_folder_layout(self._folder_layout_combo.currentData())
+
+        # XMP 写入方式 / XMP metadata write mode
+        btn_id = self._xmp_button_group.checkedId()
+        mode_map = {0: "embedded", 1: "sidecar", 2: "none"}
+        cfg.set_metadata_write_mode(mode_map.get(btn_id, "embedded"))
+
+        # 预览管理 / Preview management
+        cfg.set_keep_temp_files(self._keep_temp_files.isChecked())
+        cfg.set_completion_sound_enabled(self._completion_sound.isChecked())
+        cfg.set_detail_metadata_for_rejected(self._detail_meta_for_rejected.isChecked())
+
+        cfg.save()
+
+    # ── 视频页 / Video page ───────────────────────────────────────────────────
+
+    def _build_video_page(self) -> QWidget:
+        """
+        构建视频处理设置页。
+
+        包含：主流程视频总开关、识别模式下拉、抽帧上限 SpinBox、
+        YOLO 置信度阈值 SpinBox、鸟种识别/飞行检测开关。
+
+        控件范围与 advanced_config 默认值对齐:
+          video_max_frames       : 30-240（存储整数，默认 60）
+          video_yolo_threshold   : 滑块 30-90 对应浮点 0.30-0.90（默认 0.5 → 50）
+          video_min_segment_frames: 1-10（默认 2，不公开在 UI 中）
+
+        Build the Video processing settings page.
+
+        Contains: main-flow video master toggle, recognition mode dropdown,
+        max frames SpinBox, YOLO threshold SpinBox, and species/flight
+        detection toggles.
+
+        Widget ranges are aligned with advanced_config defaults/clamps:
+          video_max_frames      : 30-240 (integer, default 60)
+          video_yolo_threshold  : slider 30-90 maps to float 0.30-0.90
+                                  (default 0.5 → 50)
+
+        返回 / Returns:
+            QWidget: 视频设置页 / Video settings page widget.
+        """
+        from advanced_config import get_advanced_config
+
+        cfg = get_advanced_config()
+        raw = cfg.config  # 直接访问 dict，这些字段无 property / Direct dict access
+
+        # ── 容器 + 滚动区 / Container + scroll area ───────────────────────────
+        page = QWidget()
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+
+        inner = QWidget()
+        lay = QVBoxLayout(inner)
+        lay.setContentsMargins(24, 20, 24, 20)
+        lay.setSpacing(16)
+
+        # ── 总开关区 / Master toggle section ─────────────────────────────────
+        master_title = QLabel(self.i18n.t("video_opts.enable_checkbox"))
+        master_title.setStyleSheet(
+            f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
+        )
+        lay.addWidget(master_title)
+
+        self._video_auto_check = QCheckBox(self.i18n.t("video_opts.enable_checkbox"))
+        self._video_auto_check.setChecked(bool(raw.get("video_auto_process_in_main", True)))
+        self._video_auto_check.setStyleSheet(
+            f"color:{COLORS['text_secondary']};font-size:12px;"
+        )
+        self._video_auto_check.setToolTip(self.i18n.t("video_opts.enable_tooltip"))
+        lay.addWidget(self._video_auto_check)
+
+        # ── 分隔线 / Divider ──────────────────────────────────────────────────
+        sep1 = QFrame()
+        sep1.setFixedHeight(1)
+        sep1.setStyleSheet(f"background-color:{COLORS['border_subtle']};")
+        lay.addWidget(sep1)
+
+        # ── 识别模式 / Recognition mode ───────────────────────────────────────
+        mode_title = QLabel(self.i18n.t("video_opts.mode_label"))
+        mode_title.setStyleSheet(
+            f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
+        )
+        lay.addWidget(mode_title)
+
+        mode_row = QHBoxLayout()
+        mode_label = QLabel(self.i18n.t("video_opts.mode_label"))
+        mode_label.setStyleSheet(
+            f"color:{COLORS['text_secondary']};font-size:12px;"
+        )
+        mode_label.setFixedWidth(160)
+
+        self._video_mode_combo = QComboBox()
+        self._video_mode_combo.addItem(self.i18n.t("video_opts.mode_fast"), "instant")
+        self._video_mode_combo.addItem(self.i18n.t("video_opts.mode_standard"), "fast")
+        self._video_mode_combo.addItem(self.i18n.t("video_opts.mode_full"), "full")
+        self._video_mode_combo.setToolTip(self.i18n.t("video_opts.mode_tooltip"))
+        # 恢复已保存值 / Restore saved value
+        vm_idx = self._video_mode_combo.findData(
+            raw.get("video_species_mode", "instant")
+        )
+        self._video_mode_combo.setCurrentIndex(vm_idx if vm_idx >= 0 else 0)
+
+        mode_row.addWidget(mode_label)
+        mode_row.addWidget(self._video_mode_combo)
+        mode_row.addStretch(1)
+        lay.addLayout(mode_row)
+
+        # ── 分隔线 / Divider ──────────────────────────────────────────────────
+        sep2 = QFrame()
+        sep2.setFixedHeight(1)
+        sep2.setStyleSheet(f"background-color:{COLORS['border_subtle']};")
+        lay.addWidget(sep2)
+
+        # ── 抽帧上限 / Max frames ─────────────────────────────────────────────
+        # 范围 30-240，与注释中 "范围 30-240，默认 60" 完全对齐
+        # Range 30-240, exactly matches the comment "range 30-240, default 60"
+        frames_title = QLabel(self.i18n.t("video_opts.max_frames"))
+        frames_title.setStyleSheet(
+            f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
+        )
+        lay.addWidget(frames_title)
+
+        frames_row = QHBoxLayout()
+        frames_label = QLabel(self.i18n.t("video_opts.max_frames"))
+        frames_label.setStyleSheet(
+            f"color:{COLORS['text_secondary']};font-size:12px;"
+        )
+        frames_label.setFixedWidth(160)
+
+        self._video_max_frames = QSpinBox()
+        # 30-240 与配置注释范围对齐 / 30-240 matches the config comment range
+        self._video_max_frames.setRange(30, 240)
+        self._video_max_frames.setSingleStep(10)
+        self._video_max_frames.setValue(int(raw.get("video_max_frames", 60)))
+        self._video_max_frames.setToolTip(self.i18n.t("video_opts.max_frames_tooltip"))
+
+        frames_row.addWidget(frames_label)
+        frames_row.addWidget(self._video_max_frames)
+        frames_row.addStretch(1)
+        lay.addLayout(frames_row)
+
+        frames_hint = QLabel(self.i18n.t("video_opts.max_frames_tooltip"))
+        frames_hint.setStyleSheet(
+            f"color:{COLORS['text_muted']};font-size:11px;margin-left:160px;"
+        )
+        frames_hint.setWordWrap(True)
+        lay.addWidget(frames_hint)
+
+        # ── 分隔线 / Divider ──────────────────────────────────────────────────
+        sep3 = QFrame()
+        sep3.setFixedHeight(1)
+        sep3.setStyleSheet(f"background-color:{COLORS['border_subtle']};")
+        lay.addWidget(sep3)
+
+        # ── YOLO 置信度阈值 / YOLO confidence threshold ───────────────────────
+        # 存储浮点 0.30-0.90，滑块以整数 30-90 表示（×100 转换）
+        # Stored as float 0.30-0.90; slider uses integer 30-90 (×100 conversion)
+        yolo_title = QLabel(self.i18n.t("video_opts.yolo_conf"))
+        yolo_title.setStyleSheet(
+            f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
+        )
+        lay.addWidget(yolo_title)
+
+        yolo_row = QHBoxLayout()
+        yolo_label = QLabel(self.i18n.t("video_opts.yolo_conf"))
+        yolo_label.setStyleSheet(
+            f"color:{COLORS['text_secondary']};font-size:12px;"
+        )
+        yolo_label.setFixedWidth(160)
+
+        self._yolo_threshold_spin = QSpinBox()
+        # 30-90 对应浮点 0.30-0.90，与 old dialog "min_val=30, max_val=90" 对齐
+        # 30-90 maps to float 0.30-0.90, matching old dialog "min_val=30, max_val=90"
+        self._yolo_threshold_spin.setRange(30, 90)
+        self._yolo_threshold_spin.setSingleStep(5)
+        self._yolo_threshold_spin.setSpecialValueText("")
+        # 存储值是 float 0.30-0.90，转为整数 30-90 / Convert stored float to int 30-90
+        stored_yolo = float(raw.get("video_yolo_threshold", 0.5))
+        self._yolo_threshold_spin.setValue(int(round(stored_yolo * 100)))
+        self._yolo_threshold_spin.setToolTip(self.i18n.t("video_opts.yolo_conf_tooltip"))
+
+        yolo_row.addWidget(yolo_label)
+        yolo_row.addWidget(self._yolo_threshold_spin)
+        yolo_row.addStretch(1)
+        lay.addLayout(yolo_row)
+
+        yolo_hint = QLabel(self.i18n.t("video_opts.yolo_conf_tooltip"))
+        yolo_hint.setStyleSheet(
+            f"color:{COLORS['text_muted']};font-size:11px;margin-left:160px;"
+        )
+        yolo_hint.setWordWrap(True)
+        lay.addWidget(yolo_hint)
+
+        # ── 分隔线 / Divider ──────────────────────────────────────────────────
+        sep4 = QFrame()
+        sep4.setFixedHeight(1)
+        sep4.setStyleSheet(f"background-color:{COLORS['border_subtle']};")
+        lay.addWidget(sep4)
+
+        # ── 识别开关区 / Detection toggles section ────────────────────────────
+        toggles_title = QLabel(self.i18n.t("settings.culling_detect_section"))
+        toggles_title.setStyleSheet(
+            f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
+        )
+        lay.addWidget(toggles_title)
+
+        # 鸟种识别开关 / Species ID toggle
+        self._video_species_id = QCheckBox(self.i18n.t("video_opts.birdid_checkbox"))
+        self._video_species_id.setChecked(bool(raw.get("video_enable_species_id", True)))
+        self._video_species_id.setStyleSheet(
+            f"color:{COLORS['text_secondary']};font-size:12px;"
+        )
+        self._video_species_id.setToolTip(self.i18n.t("video_opts.birdid_tooltip"))
+        lay.addWidget(self._video_species_id)
+
+        # 飞行检测开关 / Flight detection toggle
+        self._video_flight = QCheckBox(self.i18n.t("video_opts.flight_checkbox"))
+        self._video_flight.setChecked(bool(raw.get("video_enable_flight", True)))
+        self._video_flight.setStyleSheet(
+            f"color:{COLORS['text_secondary']};font-size:12px;"
+        )
+        self._video_flight.setToolTip(self.i18n.t("video_opts.flight_tooltip"))
+        lay.addWidget(self._video_flight)
+
+        lay.addStretch(1)
+
+        scroll.setWidget(inner)
+        page_lay = QVBoxLayout(page)
+        page_lay.setContentsMargins(0, 0, 0, 0)
+        page_lay.addWidget(scroll)
+        return page
+
+    def _save_video(self) -> None:
+        """
+        将视频页当前值写回 advanced_config 并保存。
+
+        直接写入 config dict（这些键无对应 property/setter），与 old dialog 保持一致。
+
+        Write current video-page values back to advanced_config and save.
+
+        Values are written directly to the config dict (no property/setter exists
+        for these keys), consistent with the old dialog implementation.
+        """
+        from advanced_config import get_advanced_config
+
+        cfg = get_advanced_config()
+        raw = cfg.config
+
+        raw["video_auto_process_in_main"] = self._video_auto_check.isChecked()
+        raw["video_species_mode"] = self._video_mode_combo.currentData()
+        raw["video_max_frames"] = int(self._video_max_frames.value())
+        # SpinBox 存的是 30-90 整数，转回浮点 0.30-0.90 再存储
+        # SpinBox stores int 30-90; convert back to float 0.30-0.90 before storing
+        raw["video_yolo_threshold"] = self._yolo_threshold_spin.value() / 100.0
+        raw["video_enable_species_id"] = self._video_species_id.isChecked()
+        raw["video_enable_flight"] = self._video_flight.isChecked()
+
+        cfg.save()
+
+    # ── 外部应用页 / External apps page ──────────────────────────────────────
+
+    def _build_apps_page(self) -> QWidget:
+        """
+        构建外部应用设置页，允许用户添加/删除右键菜单中的外部编辑器。
+
+        应用列表通过 get_external_apps() 读取，通过 set_external_apps() 写回。
+        添加应用时：macOS 优先使用 osascript 原生选择器，失败则 fallback 到
+        Qt 文件对话框；Windows 使用 Qt 文件对话框；其他平台同 Qt 对话框。
+
+        Build the External Apps settings page.
+
+        Allows users to add/remove external editors from the right-click menu.
+        The app list is read via get_external_apps() and written back via
+        set_external_apps(). On macOS, osascript native picker is tried first,
+        with Qt file dialog as fallback. On Windows, Qt dialog is used directly.
+
+        返回 / Returns:
+            QWidget: 外部应用设置页 / External apps settings page widget.
+        """
+        from advanced_config import get_advanced_config
+
+        cfg = get_advanced_config()
+        self._apps_data: list[dict] = list(cfg.get_external_apps())
+
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(24, 20, 24, 20)
+        lay.setSpacing(12)
+
+        # 说明文字 / Description text
+        hint = QLabel(self.i18n.t("advanced_settings.apps_hint"))
+        hint.setWordWrap(True)
+        hint.setStyleSheet(
+            f"color:{COLORS['text_secondary']};font-size:12px;"
+        )
+        lay.addWidget(hint)
+
+        # 应用列表 / App list
+        self._apps_list = QListWidget()
+        self._apps_list.setStyleSheet(
+            f"""
+            QListWidget {{
+                background-color: {COLORS['bg_card']};
+                border: 1px solid {COLORS['border_subtle']};
+                border-radius: 6px;
+                color: {COLORS['text_primary']};
+                font-size: 13px;
+            }}
+            QListWidget::item {{
+                padding: 8px 12px;
+                border-bottom: 1px solid {COLORS['border_subtle']};
+            }}
+            QListWidget::item:selected {{
+                background-color: {COLORS['accent_dim']};
+                color: {COLORS['accent']};
+            }}
+            """
+        )
+        self._apps_list.setMinimumHeight(180)
+        self._refresh_apps_list()
+        lay.addWidget(self._apps_list, 1)
+
+        # 按钮行 / Button row
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+
+        add_btn = QPushButton(self.i18n.t("advanced_settings.add_app"))
+        add_btn.setObjectName("secondary")
+        add_btn.setFixedHeight(34)
+        add_btn.clicked.connect(self._on_add_app)
+        btn_row.addWidget(add_btn)
+
+        remove_btn = QPushButton(self.i18n.t("advanced_settings.remove_app"))
+        remove_btn.setObjectName("secondary")
+        remove_btn.setFixedHeight(34)
+        remove_btn.clicked.connect(self._on_remove_app)
+        btn_row.addWidget(remove_btn)
+
+        btn_row.addStretch(1)
+        lay.addLayout(btn_row)
+
+        return page
+
+    def _refresh_apps_list(self) -> None:
+        """
+        用 _apps_data 重建 QListWidget 内容。
+
+        Rebuild the QListWidget contents from _apps_data.
+        """
+        self._apps_list.clear()
+        for app in self._apps_data:
+            name = app.get("name", "")
+            path = app.get("path", "")
+            item = QListWidgetItem(f"  {name}   —   {path}")
+            item.setToolTip(path)
+            self._apps_list.addItem(item)
+
+    def _on_add_app(self) -> None:
+        """
+        添加外部应用：macOS 优先 osascript，失败则 Qt 对话框；Windows 用 Qt 对话框。
+
+        Add an external app: macOS prefers osascript, falls back to Qt dialog;
+        Windows uses Qt file dialog.
+        """
+        path = ""
+
+        if sys.platform == "darwin":
+            # 尝试 macOS 原生应用选择器 / Try macOS native app picker
+            try:
+                result = subprocess.run(
+                    ["osascript", "-e", "POSIX path of (choose application)"],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if result.returncode == 0:
+                    path = result.stdout.strip().rstrip("/")
+            except Exception:
+                pass
+
+            # Fallback: osascript 不可用时用 Qt 对话框 / Fallback to Qt dialog
+            if not path:
+                path = QFileDialog.getExistingDirectory(
+                    self,
+                    self.i18n.t("advanced_settings.pick_app_title"),
+                    "/Applications",
+                    QFileDialog.Option.DontUseNativeDialog,
+                )
+                if path:
+                    path = path.rstrip("/")
+
+        elif sys.platform == "win32":
+            path, _ = QFileDialog.getOpenFileName(
+                self,
+                self.i18n.t("advanced_settings.pick_app_title"),
+                "C:\\Program Files",
+                "Executables (*.exe)",
+            )
+
+        else:
+            # 其他平台：Qt 文件对话框 / Other platforms: Qt file dialog
+            path, _ = QFileDialog.getOpenFileName(
+                self,
+                self.i18n.t("advanced_settings.pick_app_title"),
+            )
+
+        if not path:
+            return
+
+        # 从路径提取显示名（去掉 .app / .exe 后缀）/ Extract display name
+        basename = os.path.basename(path)
+        name = basename.replace(".app", "").replace(".exe", "")
+
+        # 去重（规范化路径比较）/ Deduplicate (normalize path for comparison)
+        norm = path.rstrip("/")
+        if any(a.get("path", "").rstrip("/") == norm for a in self._apps_data):
+            return
+
+        self._apps_data.append({"name": name, "path": norm})
+        self._refresh_apps_list()
+
+    def _on_remove_app(self) -> None:
+        """
+        删除列表中选中的应用条目。
+
+        Remove the currently selected app entry from the list.
+        """
+        row = self._apps_list.currentRow()
+        if 0 <= row < len(self._apps_data):
+            self._apps_data.pop(row)
+            self._refresh_apps_list()
+
+    def _save_apps(self) -> None:
+        """
+        将外部应用列表写回 advanced_config 并保存。
+
+        Write the external apps list back to advanced_config and save.
+        """
+        from advanced_config import get_advanced_config
+
+        cfg = get_advanced_config()
+        cfg.set_external_apps(self._apps_data)
+        cfg.save()
+
     def _placeholder(self, title: str) -> QWidget:
         """
         生成占位页(仅显示分页标题标签)。
@@ -906,4 +1597,13 @@ class SettingsCenter(QDialog):
         # 仅在识鸟页已构建时保存(即 _bid_auto 属性存在) / Save only if bird-ID page was built
         if hasattr(self, "_bid_auto"):
             self._save_birdid()
+        # 仅在输出页已构建时保存(即 _folder_layout_combo 属性存在) / Save only if output page was built
+        if hasattr(self, "_folder_layout_combo"):
+            self._save_output()
+        # 仅在视频页已构建时保存(即 _video_auto_check 属性存在) / Save only if video page was built
+        if hasattr(self, "_video_auto_check"):
+            self._save_video()
+        # 仅在外部应用页已构建时保存(即 _apps_list 属性存在) / Save only if apps page was built
+        if hasattr(self, "_apps_list"):
+            self._save_apps()
         self.accept()
