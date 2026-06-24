@@ -41,7 +41,7 @@ from ui.styles import (
 )
 from ui.custom_dialogs import StyledMessageBox
 from ui.icon_utils import load_tinted_icon, checkbox_indicator_qss, tinted_png_path, ICON_IDLE
-from ui.skill_level_dialog import SkillLevelDialog, SKILL_PRESETS, get_skill_level_thresholds
+from ui.skill_level_dialog import get_skill_level_thresholds
 from ui.welcome_onboarding_dialog import EnvironmentRepairDialog, WelcomeOnboardingDialog
 
 import re as _re
@@ -2572,12 +2572,6 @@ class SuperPickyMainWindow(QMainWindow):
                 msg = "界面语言已更改，重启应用后生效。"
             StyledMessageBox.information(self, title, msg)
 
-    @Slot()
-    def _show_about(self):
-        """显示关于对话框（保留为兼容入口，实际由设置中心 about 页处理）。
-        Show About dialog (compatibility stub; actual About is now inside SettingsCenter)."""
-        self._open_settings_center("about")
-
     def _open_settings_center(self, start_page: str = "culling") -> None:
         """打开设置中心弹窗，关闭后刷新依赖值（技能 chip、识鸟面板状态）。
 
@@ -3694,14 +3688,7 @@ class SuperPickyMainWindow(QMainWindow):
                 app.quit()
 
     # ========== V4.3: 摄影水平预设 ==========
-    
-    def _show_skill_level_dialog(self):
-        """菜单打开水平选择对话框"""
-        # 保留此手动入口：onboarding 只负责首启流程，后续用户仍可在设置菜单中单独调整摄影等级。
-        dialog = SkillLevelDialog(self.i18n, self)
-        dialog.level_selected.connect(self._on_skill_level_selected)
-        dialog.exec()
-    
+
     def _show_first_run_skill_level_dialog(
         self,
         *,
@@ -3862,17 +3849,6 @@ class SuperPickyMainWindow(QMainWindow):
         # 同步刷新主窗口的技能 chip 标签 / Refresh skill chip label on main window
         self._update_skill_level_label(level_key)
 
-    def _save_check_states(self):
-        """持久化飞鸟/连拍开关状态（参数面板已删除，此方法保留为空实现，
-        实际状态由设置中心写入 advanced_config）。
-
-        Task 7: parameter panel checkboxes removed; state is now saved by SettingsCenter.
-        This stub is kept to avoid AttributeError from any residual callsites.
-        """
-        # 实际状态已由设置中心保存到 advanced_config，此处不再需要写控件
-        # State is now persisted by SettingsCenter into advanced_config
-        pass
-    
     def _update_skill_level_label(self, level_key: str):
         """更新主界面的水平显示标签"""
         if hasattr(self, 'skill_level_label'):

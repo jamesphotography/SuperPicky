@@ -1158,12 +1158,6 @@ class SettingsCenter(QDialog):
         lay.setSpacing(16)
 
         # ── 总开关区 / Master toggle section ─────────────────────────────────
-        master_title = QLabel(self.i18n.t("video_opts.enable_checkbox"))
-        master_title.setStyleSheet(
-            f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
-        )
-        lay.addWidget(master_title)
-
         self._video_auto_check = QCheckBox(self.i18n.t("video_opts.enable_checkbox"))
         self._video_auto_check.setChecked(bool(raw.get("video_auto_process_in_main", True)))
         self._video_auto_check.setStyleSheet(
@@ -1179,12 +1173,6 @@ class SettingsCenter(QDialog):
         lay.addWidget(sep1)
 
         # ── 识别模式 / Recognition mode ───────────────────────────────────────
-        mode_title = QLabel(self.i18n.t("video_opts.mode_label"))
-        mode_title.setStyleSheet(
-            f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
-        )
-        lay.addWidget(mode_title)
-
         mode_row = QHBoxLayout()
         mode_label = QLabel(self.i18n.t("video_opts.mode_label"))
         mode_label.setStyleSheet(
@@ -1217,12 +1205,6 @@ class SettingsCenter(QDialog):
         # ── 抽帧上限 / Max frames ─────────────────────────────────────────────
         # 范围 30-240，与注释中 "范围 30-240，默认 60" 完全对齐
         # Range 30-240, exactly matches the comment "range 30-240, default 60"
-        frames_title = QLabel(self.i18n.t("video_opts.max_frames"))
-        frames_title.setStyleSheet(
-            f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
-        )
-        lay.addWidget(frames_title)
-
         frames_row = QHBoxLayout()
         frames_label = QLabel(self.i18n.t("video_opts.max_frames"))
         frames_label.setStyleSheet(
@@ -1258,12 +1240,6 @@ class SettingsCenter(QDialog):
         # ── YOLO 置信度阈值 / YOLO confidence threshold ───────────────────────
         # 存储浮点 0.30-0.90，滑块以整数 30-90 表示（×100 转换）
         # Stored as float 0.30-0.90; slider uses integer 30-90 (×100 conversion)
-        yolo_title = QLabel(self.i18n.t("video_opts.yolo_conf"))
-        yolo_title.setStyleSheet(
-            f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
-        )
-        lay.addWidget(yolo_title)
-
         yolo_row = QHBoxLayout()
         yolo_label = QLabel(self.i18n.t("video_opts.yolo_conf"))
         yolo_label.setStyleSheet(

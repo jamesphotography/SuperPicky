@@ -234,7 +234,7 @@ class ResultCard(QFrame):
         display_name = en_name if is_en else cn_name
 
         self.name_label = QLabel(display_name)
-        self.name_label.setToolTip(self.i18n.t("birdid.click_to_copy") if hasattr(self.i18n, 't') else "Click to copy")
+        self.name_label.setToolTip(self.i18n.t("birdid.click_to_copy"))
         self.name_label.setStyleSheet(f"""
             font-size: 13px;
             font-weight: 500;
@@ -573,13 +573,13 @@ class BirdIDDockWidget(QDockWidget):
             return
         country = self.settings.get("selected_country", "")
         region = self.settings.get("selected_region", "")
-        t_entire = self.i18n.t("birdid.region_entire_country") if hasattr(self.i18n, "t") else "Entire Country"
+        t_entire = self.i18n.t("birdid.region_entire_country")
         if country and region and region != t_entire:
             text = f"{country} · {region}"
         elif country:
             text = country
         else:
-            text = self.i18n.t("birdid.country_auto_gps") if hasattr(self.i18n, "t") else "Auto GPS"
+            text = self.i18n.t("birdid.country_auto_gps")
         self._location_label.setText(text)
 
     def _setup_ui(self):
@@ -619,10 +619,10 @@ class BirdIDDockWidget(QDockWidget):
         self._update_location_label()
         settings_row.addWidget(self._location_label, 1)
 
-        self._settings_btn = QPushButton(self.i18n.t("birdid.settings_link") if hasattr(self.i18n, 't') else "Settings")
+        self._settings_btn = QPushButton(self.i18n.t("birdid.settings_link"))
         self._settings_btn.setIcon(load_tinted_icon("gem.svg", ICON_IDLE, 13))
         self._settings_btn.setIconSize(QSize(13, 13))
-        self._settings_btn.setToolTip(self.i18n.t("birdid.settings_link_tooltip") if hasattr(self.i18n, 't') else "Open Settings")
+        self._settings_btn.setToolTip(self.i18n.t("birdid.settings_link_tooltip"))
         self._settings_btn.setCursor(POINTING_HAND_CURSOR)
         self._settings_btn.setStyleSheet(f"""
             QPushButton {{
@@ -845,19 +845,6 @@ class BirdIDDockWidget(QDockWidget):
         self.results_frame.hide()
 
         self._start_identify(file_path)
-
-    def _reidentify_if_needed(self):
-        if hasattr(self, 'current_image_path') and self.current_image_path:
-            if os.path.exists(self.current_image_path):
-                self.status_label.setText(self.i18n.t("birdid.re_identifying"))
-                self.status_label.setStyleSheet(f"font-size: 11px; color: {COLORS['accent']};")
-
-                self.clear_results()
-
-                self.progress.show()
-                self.results_frame.hide()
-
-                self._start_identify(self.current_image_path)
 
     def _start_identify(self, file_path: str):
         if hasattr(self, 'worker') and self.worker is not None:
