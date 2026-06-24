@@ -967,18 +967,28 @@ class SuperPickyMainWindow(QMainWindow):
         self._create_button_section(main_layout)
 
     def _setup_birdid_dock(self):
-        """设置识鸟停靠面板"""
+        """
+        设置识鸟停靠面板，并连接 open_settings_requested signal。
+        Set up the BirdID dock panel and connect the open_settings_requested signal.
+        """
         from .birdid_dock import BirdIDDockWidget
 
         self.birdid_dock = BirdIDDockWidget(self)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.birdid_dock)
-        
+
         # 设置 dock 初始宽度为最小值，让主区域更宽
+        # Set initial dock width to minimum so the main area is wider
         self.birdid_dock.setFixedWidth(280)
         # 延迟解除固定宽度限制，让用户可以调整
+        # Defer removal of fixed-width so the user can later resize
         QTimer.singleShot(100, lambda: self.birdid_dock.setFixedWidth(16777215))  # QWIDGETSIZE_MAX
 
+        # Task 8: "设置"链接 → 打开设置中心 birdid 页
+        # Task 8: "Settings" link → open Settings Center on the birdid page
+        self.birdid_dock.open_settings_requested.connect(self._open_settings_center)
+
         # 更新菜单动作的状态
+        # Update menu action state when dock visibility changes
         self.birdid_dock.visibilityChanged.connect(self._on_birdid_dock_visibility_changed)
 
     def _on_birdid_dock_visibility_changed(self, visible):
@@ -1896,30 +1906,31 @@ class SuperPickyMainWindow(QMainWindow):
             extra_notes.append(_ico("bird.svg", _green) + _esc(self.i18n.t("dialogs.note_flight")))
         if _adv_confirm.birdid_auto_identify:
             extra_notes.append(_ico("eye.svg", _accent) + _esc(self.i18n.t("dialogs.note_birdid")))
-            # 显示当前国家/区域设置(去掉 🌍,纯文字缩进)
-            if hasattr(self, 'birdid_dock') and self.birdid_dock:
-                country_display = self.birdid_dock.country_combo.currentText()
-                region_display = self.birdid_dock.region_combo.currentText()
+            # 显示当前国家/区域设置（从 advanced_config 读取，Task 8 后不再依赖 dock 内控件）
+            # Show current country/region from advanced_config (Task 8: no longer reads dock widgets)
+            country_display = _adv_confirm.birdid_selected_country or ""
+            region_display = _adv_confirm.birdid_selected_region or ""
+            if country_display:
                 location_info = f"&nbsp;&nbsp;&nbsp;&nbsp;{_esc(country_display)}"
                 if region_display and region_display != self.i18n.t("birdid.region_entire_country"):
                     location_info += f" - {_esc(region_display)}"
                 extra_notes.append(location_info)
             # V4.3: 检查是否选择了国家，如果是 Auto Detect GPS 则提示
-            if hasattr(self, 'birdid_dock') and self.birdid_dock:
-                country_display = self.birdid_dock.country_combo.currentText()
-                country_code = self.birdid_dock.country_list.get(country_display)
-                if country_code is None:  # "自动检测 (GPS)" 模式
-                    reply = StyledMessageBox.question(
-                        self,
-                        self.i18n.t("birdid.country_prompt_title"),
-                        self.i18n.t("birdid.country_prompt_message"),
-                        yes_text=self.i18n.t("labels.yes"),
-                        no_text=self.i18n.t("labels.no")
-                    )
-                    if reply == StyledMessageBox.Yes:
-                        # 用户选择现在选择国家
-                        self.birdid_dock.country_combo.showPopup()
-                        return  # 等用户选择后再开始
+            # V4.3: Prompt if country is still in Auto GPS mode
+            country_code = _adv_confirm.birdid_country_code
+            if country_code is None:  # "自动检测 (GPS)" 模式 / Auto GPS mode
+                reply = StyledMessageBox.question(
+                    self,
+                    self.i18n.t("birdid.country_prompt_title"),
+                    self.i18n.t("birdid.country_prompt_message"),
+                    yes_text=self.i18n.t("labels.yes"),
+                    no_text=self.i18n.t("labels.no")
+                )
+                if reply == StyledMessageBox.Yes:
+                    # 用户选择现在配置国家：打开设置中心 birdid 页
+                    # User chose to configure now: open Settings Center on birdid page
+                    self._open_settings_center("birdid")
+                    return  # 等用户配置后再开始 / Wait for user to configure
         if _adv_confirm.burst_check:
             extra_notes.append(_ico("square-stack.svg", _sec) + _esc(self.i18n.t("dialogs.note_burst")))
 
