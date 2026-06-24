@@ -242,3 +242,67 @@ def test_birdid_region_save(monkeypatch):
         w.close()
     finally:
         os.unlink(tmp_path)
+
+
+def test_birdid_subnational_region_restore(monkeypatch):
+    """
+    验证保存了子级地区（如 AU-ACT）后，重新打开设置页时地区下拉能正确恢复。
+
+    这是 C1 回归测试：_restore_birdid_country 原先在 _bid_applying=True 期间调用
+    _on_bid_country_changed，但后者因守卫提前返回，导致地区列表为空、保存的子级地区
+    无法恢复（始终显示"整个国家"）。修复后直接调用 _populate_bid_regions 绕开守卫。
+
+    Regression test for C1: after saving a sub-national region (e.g. AU-ACT),
+    re-opening the settings page must restore the region dropdown correctly.
+
+    Before the fix, _restore_birdid_country called _on_bid_country_changed while
+    _bid_applying=True; that method returned early due to the guard, so the region
+    list was never populated and the saved sub-region was lost (always showed
+    "Entire Country"). After the fix, _populate_bid_regions is called directly,
+    bypassing the guard.
+
+    参数 / Parameters:
+        monkeypatch: pytest fixture.
+    """
+    import tempfile
+    from advanced_config import AdvancedConfig
+    from ui.settings_center import SettingsCenter
+    from tools.i18n import get_i18n
+
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+        tmp_path = f.name
+    try:
+        # 预置：Australia 国家 + AU-ACT 地区
+        # Pre-set: Australia country + AU-ACT region
+        cfg = AdvancedConfig(config_file=tmp_path)
+        cfg.config["birdid_country_code"] = "AU"
+        cfg.config["birdid_selected_country"] = "澳大利亚"
+        cfg.config["birdid_region_code"] = "AU-ACT"
+        cfg.config["birdid_selected_region"] = "澳首都直辖区 (AU-ACT)"
+        cfg.save()
+
+        import advanced_config as _ac_mod
+        monkeypatch.setattr(_ac_mod, "get_advanced_config", lambda: cfg)
+
+        # 打开设置页：此时 _restore_birdid_country 应能正确填充地区并恢复子级地区
+        # Open settings page: _restore_birdid_country should populate and restore sub-region
+        w = SettingsCenter(get_i18n())
+        w.show_page("birdid")
+
+        # 地区下拉项数应 > 1（即除"整个国家"外还有子级地区）
+        # Region dropdown must have more than 1 item (sub-regions populated)
+        assert w._bid_region.count() > 1, (
+            f"Region dropdown was not populated (count={w._bid_region.count()}); "
+            "C1 guard bug may still be present."
+        )
+
+        # 当前选中的地区文字应包含 AU-ACT
+        # The currently selected region text should contain AU-ACT
+        current_region_text = w._bid_region.currentText()
+        assert "AU-ACT" in current_region_text, (
+            f"Expected saved region AU-ACT to be restored, got: '{current_region_text}'"
+        )
+
+        w.close()
+    finally:
+        os.unlink(tmp_path)

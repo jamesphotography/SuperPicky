@@ -11,7 +11,11 @@ Tasks 3-6 will replace the placeholder pages with real content.
 """
 from __future__ import annotations
 
+import re
+from typing import Any, cast
+
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QStandardItem
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -522,14 +526,11 @@ class SettingsCenter(QDialog):
         country_label.setFixedWidth(160)
 
         self._bid_country = QComboBox()
-        from PySide6.QtGui import QStandardItem
-
         for display_name, code in country_list.items():
             self._bid_country.addItem(display_name)
             if code in ("SEP1",):
                 # 禁用分隔符项 / Disable separator item
                 idx = self._bid_country.count() - 1
-                from typing import Any, cast
                 model = cast(Any, self._bid_country.model())
                 item: QStandardItem | None = model.item(idx)
                 if item is not None:
@@ -571,18 +572,61 @@ class SettingsCenter(QDialog):
         page_lay.addWidget(scroll)
         return page
 
+    def _populate_bid_regions(self, country_code: str | None) -> None:
+        """
+        根据国家代码填充地区下拉菜单，不受 _bid_applying 守卫的影响。
+
+        此方法是地区列表填充的核心实现，供 _on_bid_country_changed（用户交互路径）
+        和 _restore_birdid_country（初始化路径）共同调用，从而绕开
+        _on_bid_country_changed 中的 _bid_applying 守卫所带来的问题（C1 fix）。
+
+        Populate the region dropdown for the given country_code, bypassing the
+        _bid_applying guard.
+
+        This is the core implementation shared by _on_bid_country_changed (user
+        interaction path) and _restore_birdid_country (init path), so that
+        restoring a saved sub-national region is not blocked by the guard in
+        _on_bid_country_changed (C1 fix).
+
+        参数 / Parameters:
+            country_code (str | None): ISO 国家代码，或 None / "GLOBAL" 表示无子级地区。
+                                       ISO country code, or None / "GLOBAL" for no sub-regions.
+        """
+        self._bid_region.clear()
+        self._bid_region.addItem(self.i18n.t("birdid.region_entire_country"))
+
+        is_english = self.i18n.current_lang.startswith("en")
+
+        if country_code and country_code not in (None, "GLOBAL"):
+            for country_entry in self._bid_regions_data.get("countries", []):
+                if country_entry.get("code") == country_code:
+                    if country_entry.get("has_regions") and country_entry.get("regions"):
+                        for region_entry in country_entry["regions"]:
+                            rc = region_entry.get("code", "")
+                            if is_english:
+                                region_name = region_entry.get("name", rc)
+                            else:
+                                region_name = (
+                                    region_entry.get("name_cn")
+                                    or region_entry.get("name", rc)
+                                )
+                            self._bid_region.addItem(f"{region_name} ({rc})")
+                    break
+
     def _restore_birdid_country(self, cfg) -> None:
         """
         从配置恢复国家/地区下拉菜单的初始选中项。
 
         先尝试按保存的 country_code 匹配；若未匹配则按 selected_country 显示名匹配。
-        恢复国家后再调用 _on_bid_country_changed 填充地区列表，并恢复已保存的地区。
+        恢复国家后直接调用 _populate_bid_regions 填充地区列表（绕开 _bid_applying 守卫），
+        再恢复已保存的地区。
 
         Restore the initial selection of the country/region dropdowns from config.
 
         Tries to match by saved country_code first; falls back to selected_country
-        display name. After restoring the country, calls _on_bid_country_changed to
-        populate the region list, then restores the saved region.
+        display name. After restoring the country, calls _populate_bid_regions directly
+        (bypassing the _bid_applying guard) to fill the region list, then restores the
+        saved region.
 
         参数 / Parameters:
             cfg: advanced_config 实例 / AdvancedConfig instance.
@@ -605,8 +649,10 @@ class SettingsCenter(QDialog):
             if idx >= 0:
                 self._bid_country.setCurrentIndex(idx)
 
-        # 填充地区并恢复 / Populate regions, then restore saved region
-        self._on_bid_country_changed(self._bid_country.currentText())
+        # 直接填充地区（绕开 _bid_applying 守卫），再恢复已保存的地区选项
+        # Populate regions directly (bypass guard), then restore the saved region
+        current_code = self._bid_country_list.get(self._bid_country.currentText())
+        self._populate_bid_regions(current_code)
         saved_region = cfg.birdid_selected_region
         if saved_region:
             idx = self._bid_region.findText(saved_region)
@@ -617,7 +663,14 @@ class SettingsCenter(QDialog):
         """
         国家下拉切换时动态填充地区下拉菜单。
 
+        仅在用户主动切换国家时触发（由 currentTextChanged 信号连接）；
+        初始化/恢复路径请使用 _populate_bid_regions，以绕开 _bid_applying 守卫。
+
         Dynamically populate the region dropdown when the country selection changes.
+
+        Triggered only by user interaction (connected to currentTextChanged signal).
+        For the init/restore path use _populate_bid_regions directly to bypass the
+        _bid_applying guard.
 
         参数 / Parameters:
             country_display (str): 当前选中的国家显示名 / Currently selected country display name.
@@ -629,26 +682,7 @@ class SettingsCenter(QDialog):
         if country_code in ("SEP1",):
             return
 
-        self._bid_region.clear()
-        self._bid_region.addItem(self.i18n.t("birdid.region_entire_country"))
-
-        is_english = self.i18n.current_lang.startswith("en")
-
-        if country_code and country_code not in (None, "GLOBAL"):
-            for country_entry in self._bid_regions_data.get("countries", []):
-                if country_entry.get("code") == country_code:
-                    if country_entry.get("has_regions") and country_entry.get("regions"):
-                        for region_entry in country_entry["regions"]:
-                            region_code = region_entry.get("code", "")
-                            if is_english:
-                                region_name = region_entry.get("name", region_code)
-                            else:
-                                region_name = (
-                                    region_entry.get("name_cn")
-                                    or region_entry.get("name", region_code)
-                                )
-                            self._bid_region.addItem(f"{region_name} ({region_code})")
-                    break
+        self._populate_bid_regions(country_code)
 
     def _save_birdid(self) -> None:
         """
@@ -666,8 +700,6 @@ class SettingsCenter(QDialog):
           set_birdid_confidence   — confidence (30-95)
           set_birdid_region       — source / country code / region code and display names
         """
-        import re
-
         from advanced_config import get_advanced_config
 
         cfg = get_advanced_config()
@@ -675,8 +707,10 @@ class SettingsCenter(QDialog):
         # 自动识鸟开关 / Auto-identify toggle
         cfg.set_birdid_auto_identify(self._bid_auto.isChecked())
 
-        # 置信度 / Confidence
+        # 置信度(set_birdid_confidence 不内部 save，此处显式补调，确保值持久化)
+        # Confidence (set_birdid_confidence doesn't call save internally; call it explicitly here)
         cfg.set_birdid_confidence(self._bid_conf.value())
+        cfg.save()
 
         # 数据源 / Data source
         use_ebird: bool = self._bid_ebird.isChecked()
@@ -684,8 +718,10 @@ class SettingsCenter(QDialog):
         # 国家 / Country
         country_display = self._bid_country.currentText()
         country_code = self._bid_country_list.get(country_display)
-        # 把特殊伪代码归一化为 None / Normalize special pseudo-codes to None
-        if country_code in ("SEP1", "SEP2", "MORE", "GLOBAL"):
+        # 仅归一化分隔符伪代码为 None；"GLOBAL" 保留原样以便重新打开时能正确恢复选项
+        # Only normalize separator pseudo-codes to None; keep "GLOBAL" as-is so the
+        # dropdown can be correctly restored on re-open.
+        if country_code in ("SEP1", "SEP2", "MORE"):
             country_code = None
 
         # 地区 / Region
