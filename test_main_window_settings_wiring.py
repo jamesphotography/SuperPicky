@@ -35,35 +35,30 @@ def test_main_window_has_open_settings_center():
     w.close()
 
 
-def test_main_window_no_param_panel_widgets():
-    """参数面板控件（滑块/复选框）应被移除。
-    Parameter panel widgets (sliders/checkboxes) should be removed."""
+def test_main_window_quick_param_panel_present():
+    """首页保留「快速调整」面板:2 滑块 + 3 开关 + 刷新方法;滑块范围对齐设置中心精选页。
+    Home keeps the quick-adjust panel: 2 sliders + 3 toggles + refresh method;
+    slider ranges match the Settings Center culling page (no drift/truncation)."""
     from ui.main_window import SuperPickyMainWindow
     w = SuperPickyMainWindow()
 
-    # 旧参数面板控件，Task 7 完成后不应存在
-    # Old parameter panel widgets — must NOT exist after Task 7
-    deleted_widgets = [
-        "sharp_slider",
-        "nima_slider",
-        "flight_check",
-        "burst_check",
-        "birdid_check",
-    ]
-    for attr in deleted_widgets:
-        assert not hasattr(w, attr), (
-            f"Widget '{attr}' should have been removed with the parameter panel"
-        )
+    for attr in ("sharp_slider", "nima_slider", "flight_check", "burst_check", "birdid_check"):
+        assert hasattr(w, attr), f"quick-panel widget '{attr}' should exist on the home page"
+    assert hasattr(w, "_refresh_param_panel"), "_refresh_param_panel should exist for SSOT sync"
+
+    # 范围与设置中心精选页一致(锐度 100-600,美学 0-70)→ 避免两处不一致与默认值漂移
+    assert w.sharp_slider.minimum() == 100 and w.sharp_slider.maximum() == 600
+    assert w.nima_slider.minimum() == 0 and w.nima_slider.maximum() == 70
     w.close()
 
 
-def test_main_window_has_settings_entry_and_no_param_panel():
-    """组合测试: 有设置入口 + 无参数面板。
-    Combined test: has settings entry + no param panel."""
+def test_main_window_has_settings_entry_and_quick_panel():
+    """组合测试: 有设置入口 + 首页保留快速参数面板。
+    Combined test: has settings entry + home keeps the quick param panel."""
     from ui.main_window import SuperPickyMainWindow
     w = SuperPickyMainWindow()
     assert hasattr(w, "_open_settings_center")
-    assert not hasattr(w, "sharp_slider")   # 参数面板已移除
+    assert hasattr(w, "sharp_slider")   # 首页快速面板保留
     w.close()
 
 

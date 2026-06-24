@@ -900,10 +900,11 @@ class SuperPickyMainWindow(QMainWindow):
         self._create_directory_section(main_layout)
         main_layout.addSpacing(20)
 
-        # Task 7: 参数面板已移除，设置统一在设置中心里完成
-        # Task 7: parameter panel removed; all settings live inside SettingsCenter
-        # 仍需创建 skill_level_label（header chip），挂在 header 区域
-        # skill_level_label (chip) is created inside _create_header_section via _create_skill_chip
+        # 首页「快速调整」参数面板:2 滑块(锐度/美学)+ 3 开关(飞行/连拍/识鸟)。
+        # 这些控件是 advanced_config(单一事实源)的快捷编辑器,与设置中心双向同步。
+        # Home quick-adjust panel: 2 sliders + 3 toggles, two-way bound to advanced_config (SSOT).
+        self._create_parameters_section(main_layout)
+        main_layout.addSpacing(20)
 
         # 日志区域
         self._create_log_section(main_layout)
@@ -2593,6 +2594,8 @@ class SuperPickyMainWindow(QMainWindow):
         # 刷新技能 chip 标签，确保与 advanced_config 中当前值一致
         # Refresh the skill level chip so it reflects the current advanced_config value
         self._refresh_skill_chip()
+        # 刷新首页快速参数面板,与设置中心改动保持一致(SSOT 双向同步)
+        self._refresh_param_panel()
 
         # Task 8 guard: birdid_dock.reload_from_config 由 Task 8 提供
         # Task 8 guard: reload_from_config is provided by Task 8
@@ -2610,6 +2613,158 @@ class SuperPickyMainWindow(QMainWindow):
         """
         _cfg = get_advanced_config()
         self._update_skill_level_label(_cfg.skill_level)
+
+    def _create_parameters_section(self, parent_layout):
+        """
+        首页「快速调整」参数面板:锐度/美学两滑块 + 飞行/连拍/识鸟三开关。
+
+        所有控件双向绑定 advanced_config(单一事实源):初值从 config 读,改动写回 config;
+        范围与设置中心精选页一致(锐度 100-600,美学 0-70 即 0.0-7.0),避免两处不一致或截断。
+        手动改滑块视为自定义档(skill_level=custom 并同步 custom_*),与设置中心精选页协同一致。
+        初值在 connect 之前设置,故不会在构建时误触发回调。
+
+        Home quick-adjust panel: sharpness/aesthetics sliders + flight/burst/birdid toggles.
+        Two-way bound to advanced_config (SSOT); ranges match the Settings Center culling page.
+        Editing a slider marks the skill level as custom (consistent with the culling page).
+        """
+        cfg = self.config
+        params_frame = QFrame()
+        params_frame.setStyleSheet(
+            f"QFrame {{ background-color: {COLORS['bg_elevated']}; border-radius: 10px; }}")
+        params_layout = QVBoxLayout(params_frame)
+        params_layout.setContentsMargins(20, 16, 20, 16)
+        params_layout.setSpacing(16)
+
+        # 头部:标题 + 三开关 / Header: title + three toggles
+        header_layout = QHBoxLayout()
+        params_title = QLabel(self.i18n.t("labels.selection_params"))
+        params_title.setStyleSheet(
+            f"color: {COLORS['text_primary']}; font-size: 13px; font-weight: 500;")
+        header_layout.addWidget(params_title)
+        header_layout.addStretch()
+
+        def _toggle(label_text: str, checked: bool) -> QCheckBox:
+            box = QHBoxLayout()
+            box.setSpacing(10)
+            lbl = QLabel(label_text)
+            lbl.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
+            box.addWidget(lbl)
+            cb = QCheckBox()
+            cb.setChecked(checked)   # 设初值在 connect 之前 / set before connect
+            cb.setStyleSheet(checkbox_indicator_qss(16, COLORS['text_muted'], COLORS['accent']))
+            box.addWidget(cb)
+            header_layout.addLayout(box)
+            return cb
+
+        self.flight_check = _toggle(self.i18n.t("labels.flight_detection"), bool(cfg.flight_check))
+        self.burst_check = _toggle(self.i18n.t("labels.burst"), bool(cfg.burst_check))
+        self.birdid_check = _toggle(self.i18n.t("menu.birdid_label"), bool(cfg.birdid_auto_identify))
+        self.flight_check.stateChanged.connect(self._save_check_states)
+        self.burst_check.stateChanged.connect(self._save_check_states)
+        self.birdid_check.stateChanged.connect(self._on_birdid_check_changed)
+        params_layout.addLayout(header_layout)
+
+        # 滑块区:锐度 + 美学(范围对齐设置中心精选页)/ Sliders aligned with culling page
+        sliders_layout = QVBoxLayout()
+        sliders_layout.setSpacing(16)
+
+        sharp_layout = QHBoxLayout()
+        sharp_layout.setSpacing(16)
+        sharp_label = QLabel(self.i18n.t("labels.sharpness_short"))
+        sharp_label.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 13px; min-width: 80px;")
+        sharp_layout.addWidget(sharp_label)
+        self.sharp_slider = QSlider(Qt.Orientation.Horizontal)
+        self.sharp_slider.setRange(100, 600)
+        self.sharp_slider.setSingleStep(10)
+        self.sharp_slider.setPageStep(10)
+        self.sharp_slider.setValue(int(cfg.min_sharpness))   # 初值在 connect 之前
+        self.sharp_slider.valueChanged.connect(self._on_sharp_changed)
+        sharp_layout.addWidget(self.sharp_slider)
+        self.sharp_value = QLabel(str(int(cfg.min_sharpness)))
+        self.sharp_value.setStyleSheet(VALUE_STYLE)
+        self.sharp_value.setFixedWidth(50)
+        self.sharp_value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        sharp_layout.addWidget(self.sharp_value)
+        sliders_layout.addLayout(sharp_layout)
+
+        nima_layout = QHBoxLayout()
+        nima_layout.setSpacing(16)
+        nima_label = QLabel(self.i18n.t("labels.aesthetics"))
+        nima_label.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 13px; min-width: 80px;")
+        nima_layout.addWidget(nima_label)
+        self.nima_slider = QSlider(Qt.Orientation.Horizontal)
+        self.nima_slider.setRange(0, 70)
+        self.nima_slider.setValue(int(round(cfg.min_nima * 10)))   # 初值在 connect 之前
+        self.nima_slider.valueChanged.connect(self._on_nima_changed)
+        nima_layout.addWidget(self.nima_slider)
+        self.nima_value = QLabel(f"{cfg.min_nima:.1f}")
+        self.nima_value.setStyleSheet(VALUE_STYLE)
+        self.nima_value.setFixedWidth(50)
+        self.nima_value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        nima_layout.addWidget(self.nima_value)
+        sliders_layout.addLayout(nima_layout)
+
+        params_layout.addLayout(sliders_layout)
+        parent_layout.addWidget(params_frame)
+
+    def _on_sharp_changed(self, value):
+        """锐度滑块:更新显示 + 写 advanced_config(转自定义档,与设置中心协同)。"""
+        self.sharp_value.setText(str(value))
+        if getattr(self, "_params_loading", False):
+            return
+        self.config.set_min_sharpness(value)
+        self._mark_custom_skill()
+
+    def _on_nima_changed(self, value):
+        """美学滑块:更新显示(value/10=NIMA)+ 写 advanced_config(转自定义档)。"""
+        self.nima_value.setText(f"{value / 10.0:.1f}")
+        if getattr(self, "_params_loading", False):
+            return
+        self.config.set_min_nima(value / 10.0)
+        self._mark_custom_skill()
+
+    def _mark_custom_skill(self):
+        """手动改阈值 → 技能档转「自定义」并同步 custom_*,与设置中心精选页协同一致。"""
+        cfg = self.config
+        cfg.set_custom_sharpness(self.sharp_slider.value())
+        cfg.set_custom_aesthetics(self.nima_slider.value() / 10.0)
+        if cfg.skill_level != "custom":
+            cfg.set_skill_level("custom")
+        self._refresh_skill_chip()
+
+    def _save_check_states(self, *_):
+        """飞行/连拍开关 → 写 advanced_config。"""
+        if getattr(self, "_params_loading", False):
+            return
+        cfg = self.config
+        cfg.config["flight_check"] = bool(self.flight_check.isChecked())
+        cfg.config["burst_check"] = bool(self.burst_check.isChecked())
+        cfg.save()
+
+    def _on_birdid_check_changed(self, *_):
+        """识鸟开关 → 写 advanced_config.birdid_auto_identify。"""
+        if getattr(self, "_params_loading", False):
+            return
+        self.config.set_birdid_auto_identify(bool(self.birdid_check.isChecked()))
+
+    def _refresh_param_panel(self):
+        """设置中心关闭后,从 advanced_config 刷新首页参数控件,保持两处一致(loading 守卫避免回写)。"""
+        if not hasattr(self, "sharp_slider"):
+            return
+        cfg = self.config
+        self._params_loading = True
+        try:
+            self.sharp_slider.setValue(int(cfg.min_sharpness))
+            self.nima_slider.setValue(int(round(cfg.min_nima * 10)))
+            self.flight_check.setChecked(bool(cfg.flight_check))
+            self.burst_check.setChecked(bool(cfg.burst_check))
+            self.birdid_check.setChecked(bool(cfg.birdid_auto_identify))
+            self.sharp_value.setText(str(int(cfg.min_sharpness)))
+            self.nima_value.setText(f"{cfg.min_nima:.1f}")
+        finally:
+            self._params_loading = False
 
     @Slot()
     def _toggle_birdid_dock(self, checked):
