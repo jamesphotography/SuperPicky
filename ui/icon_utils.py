@@ -17,7 +17,7 @@ import sys
 import tempfile
 
 from PySide6.QtCore import Qt, QRectF
-from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPixmap
+from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
 from ui.styles import COLORS
@@ -67,6 +67,68 @@ def render_tinted_image(svg_name: str, color: str, size: int = 20, dpr: float = 
 def load_tinted_icon(svg_name: str, color: str, size: int = 20, dpr: float = 1.0) -> QIcon:
     """渲染并染色为 QIcon(运行时使用,需 QGuiApplication)。"""
     return QIcon(QPixmap.fromImage(render_tinted_image(svg_name, color, size, dpr)))
+
+
+_GLYPH_PIXMAP_CACHE: dict = {}
+
+
+def glyph_pixmap(glyph: str, color: str, size: int = 16, dpr: float = 2.0,
+                 fill_ratio: float = 0.80) -> QPixmap:
+    """
+    把单个字形渲染成固定 size 的方形 pixmap,并按其「实际墨水边界」缩放+居中,
+    使一组字形(如罕见度 ○◔◑◕●)视觉大小一致 —— 规避 Unicode 几何字符在各平台
+    字体下大小/基线不一的问题。墨水边界用像素扫描求得(比 tightBoundingRect 更
+    可靠,直接量渲染结果)。结果按 (字形,色,尺寸,dpr,比例) 缓存。
+
+    Render a single glyph into a fixed square pixmap, scaled & centered by its
+    actual ink bounding box (found by pixel scan) so a set of glyphs renders at a
+    consistent visual size across platform fonts. Cached.
+    """
+    key = (glyph, color, size, round(dpr, 2), fill_ratio)
+    cached = _GLYPH_PIXMAP_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    px = max(1, int(round(size * dpr)))
+    work = 48
+    tmp = QImage(work, work, QImage.Format_ARGB32_Premultiplied)
+    tmp.fill(Qt.transparent)
+    p = QPainter(tmp)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    p.setRenderHint(QPainter.TextAntialiasing, True)
+    f = QFont()
+    f.setPixelSize(int(work * 0.72))
+    p.setFont(f)
+    p.setPen(QColor(color))
+    p.drawText(QRectF(0, 0, work, work), int(Qt.AlignCenter), glyph)
+    p.end()
+
+    # 扫描非透明像素的实际边界 / scan ink bbox
+    minx, miny, maxx, maxy = work, work, -1, -1
+    for y in range(work):
+        for x in range(work):
+            if (tmp.pixel(x, y) >> 24) & 0xFF:
+                minx = x if x < minx else minx
+                maxx = x if x > maxx else maxx
+                miny = y if y < miny else miny
+                maxy = y if y > maxy else maxy
+
+    out = QImage(px, px, QImage.Format_ARGB32_Premultiplied)
+    out.fill(Qt.transparent)
+    if maxx >= minx and maxy >= miny:
+        gw, gh = maxx - minx + 1, maxy - miny + 1
+        scale = (px * fill_ratio) / max(gw, gh)
+        tw, th = gw * scale, gh * scale
+        p2 = QPainter(out)
+        p2.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        p2.drawImage(QRectF((px - tw) / 2.0, (px - th) / 2.0, tw, th),
+                     tmp, QRectF(minx, miny, gw, gh))
+        p2.end()
+
+    pm = QPixmap.fromImage(out)
+    pm.setDevicePixelRatio(dpr)
+    _GLYPH_PIXMAP_CACHE[key] = pm
+    return pm
 
 
 def stars_image(count: int, color: str, size: int = 16, gap: int = 2, dpr: float = 2.0) -> QImage:
