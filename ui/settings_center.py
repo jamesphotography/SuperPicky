@@ -13,12 +13,16 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QDialog,
     QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QScrollArea,
+    QSlider,
+    QSpinBox,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -106,7 +110,7 @@ class SettingsCenter(QDialog):
         footer = QHBoxLayout()
         footer.addStretch(1)
         done_btn = QPushButton(i18n.t("settings.done"))
-        done_btn.clicked.connect(self.accept)
+        done_btn.clicked.connect(self._on_done)
         footer.addWidget(done_btn)
         right.addLayout(footer)
 
@@ -135,10 +139,284 @@ class SettingsCenter(QDialog):
         返回 / Returns:
             QWidget: 内容页 widget / Content page widget.
         """
-        # 后续各 Task 在此插入各自分支,例如:
-        # if key == "culling":
-        #     return CullingPage(self.i18n)
+        if key == "culling":
+            return self._build_culling_page()
         return self._placeholder(self.i18n.t(_PAGE_TITLE_KEY[key]))
+
+    def _build_culling_page(self) -> QWidget:
+        """
+        构建精选(Culling)设置页。
+
+        包含:技能等级单选卡片行(含"自定义")、AI 置信度/锐度/美学三个阈值滑块、
+        飞鸟检测/连拍检测开关、连拍速度 QSpinBox。
+
+        技能等级 ↔ 阈值协同逻辑:
+          - 选技能等级预设 → `_on_skill_preset_selected` 置 `_suppress=True`、
+            填充对应阈值滑块、再置 False，避免回调回环。
+          - 手动拖动任一阈值 → `_on_cull_threshold_changed` 检查 `_suppress`，
+            若未抑制则将 `_current_skill_key` 切为 "custom" 并刷新卡片选中态。
+
+        Build the Culling settings page.
+
+        Contains: a row of skill-level cards (incl. "custom"), three threshold sliders
+        for AI confidence / sharpness / aesthetics, flight-detection and burst-detection
+        check-boxes, and a burst-fps QSpinBox.
+
+        Coordination logic:
+          - Selecting a skill preset → _on_skill_preset_selected sets _suppress=True,
+            fills sliders, then False — prevents re-entrant loop.
+          - Manually adjusting any threshold → _on_cull_threshold_changed checks _suppress;
+            if not suppressed, sets _current_skill_key="custom" and refreshes card state.
+
+        返回 / Returns:
+            QWidget: 精选设置页 / Culling settings page widget.
+        """
+        from advanced_config import get_advanced_config
+        from ui.skill_level_dialog import SkillLevelCard
+
+        cfg = get_advanced_config()
+
+        # 协同守卫初始化 / Guard init
+        self._suppress: bool = False
+        self._current_skill_key: str = cfg.skill_level
+
+        # ── 容器 + 滚动区 / Container + scroll area ───────────────────────────
+        page = QWidget()
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+
+        inner = QWidget()
+        lay = QVBoxLayout(inner)
+        lay.setContentsMargins(24, 20, 24, 20)
+        lay.setSpacing(16)
+
+        # ── 技能等级区 / Skill-level section ─────────────────────────────────
+        skill_title = QLabel(self.i18n.t("settings.culling_skill_section"))
+        skill_title.setStyleSheet(
+            f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
+        )
+        lay.addWidget(skill_title)
+
+        cards_row = QHBoxLayout()
+        cards_row.setSpacing(8)
+
+        self._skill_cards: dict[str, SkillLevelCard] = {}
+        for level_key in ["beginner", "intermediate", "master"]:
+            card = SkillLevelCard(level_key, self.i18n)
+            card.clicked.connect(self._on_skill_preset_selected)
+            self._skill_cards[level_key] = card
+            cards_row.addWidget(card)
+
+        # 自定义卡片(仅显示,不可点击) / Custom card (display-only)
+        custom_card = SkillLevelCard("custom", self.i18n, is_custom=True)
+        self._skill_cards["custom"] = custom_card
+        cards_row.addWidget(custom_card)
+        cards_row.addStretch(1)
+        lay.addLayout(cards_row)
+
+        # 刷新初始选中态 / Refresh initial selection
+        self._select_skill_radio(self._current_skill_key)
+
+        # ── 阈值区 / Threshold section ────────────────────────────────────────
+        thresh_title = QLabel(self.i18n.t("settings.culling_threshold_section"))
+        thresh_title.setStyleSheet(
+            f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
+        )
+        lay.addWidget(thresh_title)
+
+        # AI 置信度滑块 (0-100, 显示 ×100 整数; 对应 min_confidence 0..1)
+        # AI confidence slider (0-100 integer; maps to min_confidence 0..1)
+        ai_row = QHBoxLayout()
+        ai_label = QLabel(self.i18n.t("settings.culling_ai_label"))
+        ai_label.setStyleSheet(f"color:{COLORS['text_secondary']};font-size:12px;")
+        ai_label.setFixedWidth(160)
+        self._cull_ai = QSlider(Qt.Horizontal)
+        self._cull_ai.setRange(0, 100)
+        self._cull_ai.setValue(int(round(cfg.min_confidence * 100)))
+        self._cull_ai_value_label = QLabel(str(self._cull_ai.value()))
+        self._cull_ai_value_label.setFixedWidth(30)
+        self._cull_ai_value_label.setStyleSheet(f"color:{COLORS['text_tertiary']};font-size:11px;")
+        self._cull_ai.valueChanged.connect(
+            lambda v: self._cull_ai_value_label.setText(str(v))
+        )
+        self._cull_ai.valueChanged.connect(self._on_cull_threshold_changed)
+        ai_row.addWidget(ai_label)
+        ai_row.addWidget(self._cull_ai, 1)
+        ai_row.addWidget(self._cull_ai_value_label)
+        lay.addLayout(ai_row)
+
+        # 锐度滑块 (200-600, int; 对应 min_sharpness)
+        # Sharpness slider (200-600 integer; maps to min_sharpness)
+        sharp_row = QHBoxLayout()
+        sharp_label = QLabel(self.i18n.t("settings.culling_sharp_label"))
+        sharp_label.setStyleSheet(f"color:{COLORS['text_secondary']};font-size:12px;")
+        sharp_label.setFixedWidth(160)
+        self._cull_sharp = QSlider(Qt.Horizontal)
+        self._cull_sharp.setRange(200, 600)
+        self._cull_sharp.setValue(int(cfg.min_sharpness))
+        self._cull_sharp_value_label = QLabel(str(self._cull_sharp.value()))
+        self._cull_sharp_value_label.setFixedWidth(30)
+        self._cull_sharp_value_label.setStyleSheet(
+            f"color:{COLORS['text_tertiary']};font-size:11px;"
+        )
+        self._cull_sharp.valueChanged.connect(
+            lambda v: self._cull_sharp_value_label.setText(str(v))
+        )
+        self._cull_sharp.valueChanged.connect(self._on_cull_threshold_changed)
+        sharp_row.addWidget(sharp_label)
+        sharp_row.addWidget(self._cull_sharp, 1)
+        sharp_row.addWidget(self._cull_sharp_value_label)
+        lay.addLayout(sharp_row)
+
+        # 美学(NIMA)滑块 (0-100, 值/10 = NIMA; 对应 min_nima)
+        # Aesthetics (NIMA) slider (0-100; value/10 = NIMA float; maps to min_nima)
+        nima_row = QHBoxLayout()
+        nima_label = QLabel(self.i18n.t("settings.culling_nima_label"))
+        nima_label.setStyleSheet(f"color:{COLORS['text_secondary']};font-size:12px;")
+        nima_label.setFixedWidth(160)
+        self._cull_nima = QSlider(Qt.Horizontal)
+        self._cull_nima.setRange(0, 100)
+        self._cull_nima.setValue(int(round(cfg.min_nima * 10)))
+        self._cull_nima_value_label = QLabel(f"{self._cull_nima.value() / 10:.1f}")
+        self._cull_nima_value_label.setFixedWidth(30)
+        self._cull_nima_value_label.setStyleSheet(
+            f"color:{COLORS['text_tertiary']};font-size:11px;"
+        )
+        self._cull_nima.valueChanged.connect(
+            lambda v: self._cull_nima_value_label.setText(f"{v / 10:.1f}")
+        )
+        self._cull_nima.valueChanged.connect(self._on_cull_threshold_changed)
+        nima_row.addWidget(nima_label)
+        nima_row.addWidget(self._cull_nima, 1)
+        nima_row.addWidget(self._cull_nima_value_label)
+        lay.addLayout(nima_row)
+
+        # ── 检测开关区 / Detection section ───────────────────────────────────
+        detect_title = QLabel(self.i18n.t("settings.culling_detect_section"))
+        detect_title.setStyleSheet(
+            f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
+        )
+        lay.addWidget(detect_title)
+
+        # 飞鸟检测 / Flight detection
+        self._cull_flight = QCheckBox(self.i18n.t("settings.culling_flight_label"))
+        self._cull_flight.setChecked(cfg.flight_check)
+        self._cull_flight.setStyleSheet(f"color:{COLORS['text_secondary']};font-size:12px;")
+        lay.addWidget(self._cull_flight)
+
+        # 连拍检测 / Burst detection
+        self._cull_burst = QCheckBox(self.i18n.t("settings.culling_burst_label"))
+        self._cull_burst.setChecked(cfg.burst_check)
+        self._cull_burst.setStyleSheet(f"color:{COLORS['text_secondary']};font-size:12px;")
+        lay.addWidget(self._cull_burst)
+
+        # 连拍速度 / Burst FPS
+        fps_row = QHBoxLayout()
+        fps_label = QLabel(self.i18n.t("settings.culling_burst_fps_label"))
+        fps_label.setStyleSheet(f"color:{COLORS['text_secondary']};font-size:12px;")
+        fps_label.setFixedWidth(160)
+        self._cull_burst_fps = QSpinBox()
+        self._cull_burst_fps.setRange(4, 20)
+        self._cull_burst_fps.setValue(cfg.burst_fps)
+        fps_row.addWidget(fps_label)
+        fps_row.addWidget(self._cull_burst_fps)
+        fps_row.addStretch(1)
+        lay.addLayout(fps_row)
+
+        lay.addStretch(1)
+
+        scroll.setWidget(inner)
+        page_lay = QVBoxLayout(page)
+        page_lay.setContentsMargins(0, 0, 0, 0)
+        page_lay.addWidget(scroll)
+        return page
+
+    # ── 精选页协同逻辑 / Culling page coordination logic ──────────────────────
+
+    def _select_skill_radio(self, level_key: str) -> None:
+        """
+        刷新技能等级卡片的选中状态。
+
+        Refresh the selected state of skill-level cards.
+
+        参数 / Parameters:
+            level_key (str): 当前选中的档位 key / Currently selected level key.
+        """
+        for key, card in self._skill_cards.items():
+            card.set_selected(key == level_key)
+
+    def _on_skill_preset_selected(self, level_key: str) -> None:
+        """
+        技能等级预设被选中时的回调。
+
+        将 _suppress 置为 True,填充阈值滑块,再置 False,防止回环触发 _on_cull_threshold_changed。
+        "custom" 档只刷新卡片,不覆写滑块。
+
+        Callback when a skill-level preset card is clicked.
+
+        Sets _suppress=True, fills threshold sliders from the preset, then False,
+        preventing re-entrant calls to _on_cull_threshold_changed.
+        "custom" level only refreshes the card state without overwriting sliders.
+
+        参数 / Parameters:
+            level_key (str): 被选中的档位 key / Selected skill level key.
+        """
+        from core.skill_presets import get_skill_level_thresholds
+
+        self._current_skill_key = level_key
+        self._select_skill_radio(level_key)
+        if level_key == "custom":
+            return
+
+        # get_skill_level_thresholds 返回 Tuple[int, float]: (sharpness, aesthetics)
+        # get_skill_level_thresholds returns Tuple[int, float]: (sharpness, aesthetics)
+        th = get_skill_level_thresholds(level_key)
+        self._suppress = True
+        try:
+            self._cull_sharp.setValue(int(th[0]))
+            self._cull_nima.setValue(int(round(th[1] * 10)))
+        finally:
+            self._suppress = False
+
+    def _on_cull_threshold_changed(self, *_) -> None:
+        """
+        任一阈值滑块被用户拖动时的回调。
+
+        若 _suppress 为 True(由技能等级预设填充触发)则直接返回,避免回环。
+        否则将当前技能等级切换为"自定义",并刷新卡片选中态。
+
+        Callback fired when any threshold slider value changes.
+
+        If _suppress is True (triggered by preset fill), returns immediately to avoid
+        re-entry. Otherwise sets _current_skill_key="custom" and refreshes card state.
+        """
+        if getattr(self, "_suppress", False):
+            return
+        self._current_skill_key = "custom"
+        self._select_skill_radio("custom")
+
+    def _save_culling(self) -> None:
+        """
+        将精选页当前值写回 advanced_config 并保存。
+
+        此方法由 accept() 触发(连接到 done_btn.clicked)。
+
+        Write the current culling-page values back to advanced_config and save.
+
+        Called on accept (connected to the Done button click).
+        """
+        from advanced_config import get_advanced_config
+
+        cfg = get_advanced_config()
+        cfg.set_min_confidence(self._cull_ai.value() / 100.0)
+        cfg.set_min_sharpness(self._cull_sharp.value())
+        cfg.set_min_nima(self._cull_nima.value() / 10.0)
+        cfg.set_burst_fps(self._cull_burst_fps.value())
+        cfg.set_flight_check(self._cull_flight.isChecked())
+        cfg.set_burst_check(self._cull_burst.isChecked())
+        cfg.set_skill_level(self._current_skill_key)
+        cfg.save()
 
     def _placeholder(self, title: str) -> QWidget:
         """
@@ -176,3 +454,19 @@ class SettingsCenter(QDialog):
         """
         if key in PAGE_ORDER:
             self._nav.setCurrentRow(PAGE_ORDER.index(key))
+
+    def _on_done(self) -> None:
+        """
+        "完成"按钮点击回调:先保存各页面数据,再关闭对话框。
+
+        当前 Task 3 只保存精选页数据;后续 Task 4-6 在此追加各自的 _save_xxx 调用。
+
+        "Done" button click callback: save page data then close the dialog.
+
+        Task 3 only saves culling-page data; Tasks 4-6 will append their own
+        _save_xxx calls here.
+        """
+        # 仅在精选页已构建时保存(即 _cull_ai 属性存在) / Save only if culling page was built
+        if hasattr(self, "_cull_ai"):
+            self._save_culling()
+        self.accept()

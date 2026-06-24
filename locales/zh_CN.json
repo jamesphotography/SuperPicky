@@ -1450,6 +1450,15 @@
     "nav_output": "输出",
     "nav_video": "视频",
     "nav_apps": "外部应用",
-    "nav_about": "关于"
+    "nav_about": "关于",
+    "culling_skill_section": "摄影水平",
+    "culling_threshold_section": "筛选阈值",
+    "culling_ai_label": "AI 置信度",
+    "culling_sharp_label": "锐度阈值",
+    "culling_nima_label": "美学阈值（NIMA）",
+    "culling_detect_section": "检测开关",
+    "culling_flight_label": "飞鸟检测",
+    "culling_burst_label": "连拍检测",
+    "culling_burst_fps_label": "连拍速度 (张/秒)"
   }
 }
