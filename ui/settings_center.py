@@ -82,6 +82,11 @@ class SettingsCenter(QDialog):
         self.setWindowTitle(i18n.t("settings.window_title"))
         self.resize(760, 560)
 
+        # Fix D: 提前初始化协同守卫,避免 late-init 依赖
+        # Fix D: Early-init coordination guards to eliminate late-init dependencies
+        self._suppress: bool = False
+        self._current_skill_key: str = "custom"
+
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
@@ -225,14 +230,14 @@ class SettingsCenter(QDialog):
         )
         lay.addWidget(thresh_title)
 
-        # AI 置信度滑块 (0-100, 显示 ×100 整数; 对应 min_confidence 0..1)
-        # AI confidence slider (0-100 integer; maps to min_confidence 0..1)
+        # AI 置信度滑块 (30-70, 显示 ×100 整数; 对应 min_confidence 0.3..0.7)
+        # AI confidence slider (30-70 integer; maps to min_confidence 0.3..0.7)
         ai_row = QHBoxLayout()
         ai_label = QLabel(self.i18n.t("settings.culling_ai_label"))
         ai_label.setStyleSheet(f"color:{COLORS['text_secondary']};font-size:12px;")
         ai_label.setFixedWidth(160)
         self._cull_ai = QSlider(Qt.Horizontal)
-        self._cull_ai.setRange(0, 100)
+        self._cull_ai.setRange(30, 70)
         self._cull_ai.setValue(int(round(cfg.min_confidence * 100)))
         self._cull_ai_value_label = QLabel(str(self._cull_ai.value()))
         self._cull_ai_value_label.setFixedWidth(30)
@@ -269,14 +274,14 @@ class SettingsCenter(QDialog):
         sharp_row.addWidget(self._cull_sharp_value_label)
         lay.addLayout(sharp_row)
 
-        # 美学(NIMA)滑块 (0-100, 值/10 = NIMA; 对应 min_nima)
-        # Aesthetics (NIMA) slider (0-100; value/10 = NIMA float; maps to min_nima)
+        # 美学(NIMA)滑块 (40-70, 值/10 = NIMA; 对应 min_nima 4.0..7.0)
+        # Aesthetics (NIMA) slider (40-70; value/10 = NIMA float; maps to min_nima 4.0..7.0)
         nima_row = QHBoxLayout()
         nima_label = QLabel(self.i18n.t("settings.culling_nima_label"))
         nima_label.setStyleSheet(f"color:{COLORS['text_secondary']};font-size:12px;")
         nima_label.setFixedWidth(160)
         self._cull_nima = QSlider(Qt.Horizontal)
-        self._cull_nima.setRange(0, 100)
+        self._cull_nima.setRange(40, 70)
         self._cull_nima.setValue(int(round(cfg.min_nima * 10)))
         self._cull_nima_value_label = QLabel(f"{self._cull_nima.value() / 10:.1f}")
         self._cull_nima_value_label.setFixedWidth(30)

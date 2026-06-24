@@ -59,9 +59,62 @@ def test_skill_preset_fills_thresholds_and_manual_edit_switches_custom():
     th = get_skill_level_thresholds("master")  # returns (sharpness: int, aesthetics: float)
     w._on_skill_preset_selected("master")
     assert w._cull_sharp.value() == int(th[0])
+    # Fix C: 补断言 NIMA 滑块也被填充 / Also assert NIMA slider was filled
+    assert w._cull_nima.value() == int(round(th[1] * 10))  # 5.5 → 55
 
     # 手动改阈值 → 档位切到自定义 / Manual change → switches to custom
     w._cull_sharp.setValue(w._cull_sharp.value() + 30)
     assert w._current_skill_key == "custom"
 
     w.close()
+
+
+def test_save_roundtrip_no_truncation():
+    """
+    验证保存往返无截断:锐度/NIMA/AI 置信度在上限值时写入 advanced_config 后读回完整。
+
+    Verify save roundtrip without truncation: sharpness/NIMA/AI confidence at
+    ceiling values survive a write-read cycle through advanced_config without clamp loss.
+    """
+    import tempfile, os
+    from advanced_config import AdvancedConfig
+    from ui.settings_center import SettingsCenter
+    from tools.i18n import get_i18n
+
+    # 使用临时配置文件隔离,避免污染真实用户配置
+    # Use a temporary config file to isolate from real user config
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+        tmp_path = f.name
+    try:
+        cfg = AdvancedConfig(config_file=tmp_path)
+        # 预填入非默认值,确保 settings center 初始化不越界
+        cfg.config["min_sharpness"] = 400
+        cfg.config["min_nima"] = 5.0
+        cfg.config["min_confidence"] = 0.5
+
+        w = SettingsCenter(get_i18n())
+        w.show_page("culling")
+
+        # 手动拨到上限值 / Set sliders to ceiling values
+        w._cull_sharp.setValue(600)   # max sharpness
+        w._cull_nima.setValue(70)     # max NIMA: 70/10 = 7.0
+        w._cull_ai.setValue(70)       # max confidence: 70/100 = 0.7
+
+        # 调用内部保存方法写回临时 cfg 实例
+        # Patch the global cfg used by _save_culling to our temp instance
+        import advanced_config as _ac_mod
+        _orig = _ac_mod.get_advanced_config
+        _ac_mod.get_advanced_config = lambda: cfg
+        try:
+            w._save_culling()
+        finally:
+            _ac_mod.get_advanced_config = _orig
+
+        # 断言无截断 / Assert no truncation
+        assert cfg.min_sharpness == 600, f"Expected 600, got {cfg.min_sharpness}"
+        assert cfg.min_nima == 7.0, f"Expected 7.0, got {cfg.min_nima}"
+        assert cfg.min_confidence == 0.7, f"Expected 0.7, got {cfg.min_confidence}"
+
+        w.close()
+    finally:
+        os.unlink(tmp_path)
