@@ -163,6 +163,7 @@ class AdvancedConfig:
         "birdid_selected_country": "自动检测 (GPS)",
         "birdid_region_code": None,
         "birdid_selected_region": "整个国家",
+        "birdid_dock_settings_migrated": False,
     }
 
     def __init__(self, config_file=None):
@@ -787,7 +788,7 @@ class AdvancedConfig:
 
     def migrate_birdid_dock_settings(self, legacy_path: str = None) -> bool:
         """
-        一次性把旧 birdid_dock_settings.json 搬入 advanced_config。幂等;旧文件保留。
+        一次性把旧 birdid_dock_settings.json 搬入 advanced_config。幂等(哨兵字段);旧文件保留。
 
         参数:
         legacy_path (str, optional): 旧配置文件路径。如果为 None，使用默认应用配置目录下的文件
@@ -795,7 +796,7 @@ class AdvancedConfig:
         返回:
         bool: 若成功迁移返回 True，若已迁移或文件不存在或读取失败返回 False
 
-        Migrate legacy birdid_dock_settings.json to advanced_config. Idempotent; legacy file is kept.
+        Migrate legacy birdid_dock_settings.json to advanced_config. Idempotent (sentinel field); legacy file is kept.
 
         Parameters:
         legacy_path (str, optional): Path to legacy config file. If None, uses default app config directory.
@@ -805,23 +806,27 @@ class AdvancedConfig:
         """
         from config import get_app_config_dir
 
+        # 哨兵检查:已迁移过则直接返回 False / Sentinel check: skip if already migrated
+        if self.config.get("birdid_dock_settings_migrated", False):
+            return False
+
         if legacy_path is None:
             legacy_path = os.path.join(
                 str(get_app_config_dir()), "birdid_dock_settings.json"
             )
 
-        # 已迁移过(country 非默认)则跳过 / skip if already customized
-        if self.config.get("birdid_selected_country", "自动检测 (GPS)") != "自动检测 (GPS)":
-            return False
-
         if not os.path.exists(legacy_path):
+            # 全新用户无旧文件:标记已处理,避免每次启动重复探测
+            # New user has no legacy file: mark as processed to avoid repeated detection on startup
+            self.config["birdid_dock_settings_migrated"] = True
+            self.save()
             return False
 
         try:
             with open(legacy_path, "r", encoding="utf-8") as f:
                 old = json.load(f)
         except Exception:
-            return False
+            return False  # 读失败不置位,下次重试 / Don't set flag on read failure; retry next time
 
         self.config["birdid_use_ebird"] = bool(old.get("use_ebird", True))
         self.config["birdid_country_code"] = old.get("country_code")
@@ -830,6 +835,7 @@ class AdvancedConfig:
         )
         self.config["birdid_region_code"] = old.get("region_code")
         self.config["birdid_selected_region"] = old.get("selected_region", "整个国家")
+        self.config["birdid_dock_settings_migrated"] = True
         self.save()
         return True
 

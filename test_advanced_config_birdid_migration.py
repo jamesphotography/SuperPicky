@@ -16,6 +16,9 @@ def test_defaults_present():
         assert c.birdid_auto_identify is False
         assert c.birdid_use_ebird is True
         assert c.birdid_selected_country == "自动检测 (GPS)"
+        assert c.birdid_country_code is None
+        assert c.birdid_region_code is None
+        assert c.birdid_selected_region == "整个国家"
 
 
 def test_migration_moves_legacy_chinese_region(tmp_path):
@@ -40,6 +43,29 @@ def test_migration_moves_legacy_chinese_region(tmp_path):
     assert c.birdid_selected_country == "澳大利亚"
     assert c.birdid_region_code == "AU-QLD"
     assert c.birdid_use_ebird is False
+    assert c.birdid_selected_region == "昆士兰"
+    assert c.birdid_country_code == "AU"
     # Idempotent: second migration should not overwrite
     assert c.migrate_birdid_dock_settings(legacy_path=str(legacy)) is False
     assert c.birdid_selected_country == "澳大利亚"
+
+
+def test_migration_idempotent_even_when_country_is_default(tmp_path):
+    """Test idempotency when legacy file has default country value."""
+    legacy = tmp_path / "birdid_dock_settings.json"
+    legacy.write_text(
+        json.dumps(
+            {
+                "use_ebird": True,
+                "country_code": None,
+                "selected_country": "自动检测 (GPS)",
+                "region_code": None,
+                "selected_region": "整个国家",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    c = AdvancedConfig(config_file=str(tmp_path / "advanced_config.json"))
+    assert c.migrate_birdid_dock_settings(legacy_path=str(legacy)) is True
+    assert c.migrate_birdid_dock_settings(legacy_path=str(legacy)) is False
