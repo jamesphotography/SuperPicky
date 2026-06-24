@@ -850,18 +850,14 @@ class SuperPickyMainWindow(QMainWindow):
         self._recent_menu = menubar.addMenu(self.i18n.t("menu.recent_dirs"))
         self._refresh_recent_menu()
 
-        # 设置菜单
+        # 设置菜单 — Task 7: 合并为单一「设置」入口，所有配置页在设置中心内完成
+        # Settings menu — Task 7: collapsed into a single "Settings" entry; all config inside SettingsCenter
         settings_menu = menubar.addMenu(self.i18n.t("menu.settings_menu"))
-        
-        # 参数设置
+
+        # 单一设置入口 → 打开设置中心 / Single settings entry → open SettingsCenter
         settings_action = QAction(self.i18n.t("menu.settings"), self)
-        settings_action.triggered.connect(self._show_advanced_settings)
+        settings_action.triggered.connect(lambda: self._open_settings_center("culling"))
         settings_menu.addAction(settings_action)
-        
-        # V4.3: 摄影水平设置
-        skill_level_action = QAction(self.i18n.t("skill_level.section_title") + "...", self)
-        skill_level_action.triggered.connect(self._show_skill_level_dialog)
-        settings_menu.addAction(skill_level_action)
 
         update_action = QAction(self.i18n.t("menu.check_update"), self)
         update_action.triggered.connect(self._show_update_center)
@@ -870,34 +866,35 @@ class SuperPickyMainWindow(QMainWindow):
         repair_action = QAction(self.i18n.t("menu.environment_repair"), self)
         repair_action.triggered.connect(self._show_environment_repair_dialog)
         settings_menu.addAction(repair_action)
-        
+
         settings_menu.addSeparator()
-        
+
         # 界面语言子菜单
         lang_menu = settings_menu.addMenu(self.i18n.t("menu.language"))
-        
+
         # 简体中文
         zh_action = QAction(self.i18n.t("menu.lang_zh"), self)
         zh_action.setCheckable(True)
         zh_action.setChecked(self.config.language == "zh_CN")
         zh_action.triggered.connect(lambda: self._change_language("zh_CN"))
         lang_menu.addAction(zh_action)
-        
+
         # English
         en_action = QAction(self.i18n.t("menu.lang_en"), self)
         en_action.setCheckable(True)
         en_action.setChecked(self.config.language == "en")
         en_action.triggered.connect(lambda: self._change_language("en"))
         lang_menu.addAction(en_action)
-        
+
         self.lang_actions = {"zh_CN": zh_action, "en": en_action}
 
-        # 帮助菜单
+        # 帮助菜单 — 关于已移入设置中心 / Help menu — About is now inside SettingsCenter
         help_menu = menubar.addMenu(self.i18n.t("menu.help"))
-        
-        # 关于
+
+        # 关于入口保留：用 _open_settings_center("about") 打开设置中心内的关于页
+        # About entry retained: opens the About page inside SettingsCenter
         about_action = QAction(self.i18n.t("menu.about"), self)
-        about_action.triggered.connect(self._show_about)
+        about_action.triggered.connect(lambda: self._open_settings_center("about"))
         help_menu.addAction(about_action)
 
     def _refresh_recent_menu(self):
@@ -949,9 +946,10 @@ class SuperPickyMainWindow(QMainWindow):
         self._create_directory_section(main_layout)
         main_layout.addSpacing(20)
 
-        # 参数设置
-        self._create_parameters_section(main_layout)
-        main_layout.addSpacing(20)
+        # Task 7: 参数面板已移除，设置统一在设置中心里完成
+        # Task 7: parameter panel removed; all settings live inside SettingsCenter
+        # 仍需创建 skill_level_label（header chip），挂在 header 区域
+        # skill_level_label (chip) is created inside _create_header_section via _create_skill_chip
 
         # 日志区域
         self._create_log_section(main_layout)
@@ -1170,33 +1168,6 @@ class SuperPickyMainWindow(QMainWindow):
         # 退出应用
         QApplication.quit()
     
-    def _on_birdid_check_changed(self, state):
-        """识鸟开关状态变化 - 同步到 BirdID Dock 设置"""
-        import json
-        try:
-            settings_dir = str(get_app_config_dir())
-            os.makedirs(settings_dir, exist_ok=True)
-            settings_path = os.path.join(settings_dir, 'birdid_dock_settings.json')
-            
-            # 读取现有设置
-            settings = {}
-            if os.path.exists(settings_path):
-                with open(settings_path, 'r', encoding='utf-8') as f:
-                    settings = json.load(f)
-            
-            # 更新 auto_identify
-            settings['auto_identify'] = (state == 2)  # Qt.Checked = 2
-            
-            # 保存设置
-            with open(settings_path, 'w', encoding='utf-8') as f:
-                json.dump(settings, f, ensure_ascii=False, indent=2)
-            
-            # 同步到 BirdID Dock（如果存在）
-            if hasattr(self, 'birdid_dock') and self.birdid_dock:
-                self.birdid_dock.auto_identify_checkbox.setChecked(state == 2)
-        except Exception as e:
-            print(f"同步识鸟设置失败: {e}")
-
     def _create_header_section(self, parent_layout):
         """创建头部区域 - 品牌展示"""
         header = QFrame()
@@ -1280,6 +1251,20 @@ class SuperPickyMainWindow(QMainWindow):
         version_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom)
         header_layout.addWidget(version_label)
 
+        # Task 7: 技能水平 chip — 只读展示，点击后打开设置中心（culling 页）
+        # Task 7: skill level chip — read-only display; click opens SettingsCenter (culling page)
+        self.skill_level_label = QLabel("")
+        self.skill_level_label.setStyleSheet(f"""
+            color: {COLORS['accent']};
+            font-size: 11px;
+            padding: 2px 6px;
+            background-color: {COLORS['accent']}15;
+            border-radius: 4px;
+        """)
+        self.skill_level_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.skill_level_label.mousePressEvent = lambda _ev: self._open_settings_center("culling")
+        header_layout.addSpacing(8)
+        header_layout.addWidget(self.skill_level_label)
 
         parent_layout.addWidget(header)
 
@@ -1306,167 +1291,6 @@ class SuperPickyMainWindow(QMainWindow):
         dir_layout.addWidget(browse_btn)
 
         parent_layout.addLayout(dir_layout)
-
-    def _create_parameters_section(self, parent_layout):
-        """创建参数设置区域"""
-        # 参数卡片容器
-        params_frame = QFrame()
-        params_frame.setStyleSheet(f"""
-            QFrame {{
-                background-color: {COLORS['bg_elevated']};
-                border-radius: 10px;
-            }}
-        """)
-
-        params_layout = QVBoxLayout(params_frame)
-        params_layout.setContentsMargins(20, 16, 20, 16)
-        params_layout.setSpacing(16)
-
-        # 头部: 标题 + 飞鸟检测开关
-        header_layout = QHBoxLayout()
-
-        params_title = QLabel(self.i18n.t("labels.selection_params"))
-        params_title.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 13px; font-weight: 500;")
-        header_layout.addWidget(params_title)
-
-        header_layout.addStretch()
-
-        # 飞鸟检测开关
-        flight_layout = QHBoxLayout()
-        flight_layout.setSpacing(10)
-
-        flight_label = QLabel(self.i18n.t("labels.flight_detection"))
-        flight_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
-        flight_layout.addWidget(flight_label)
-
-        self.flight_check = QCheckBox()
-        self.flight_check.setChecked(self.config.flight_check)
-        self.flight_check.setStyleSheet(checkbox_indicator_qss(16, COLORS['text_muted'], COLORS['accent']))
-        flight_layout.addWidget(self.flight_check)
-
-        header_layout.addLayout(flight_layout)
-        
-        # V4.0: 连拍检测开关
-        burst_layout = QHBoxLayout()
-        burst_layout.setSpacing(10)
-        
-        burst_label = QLabel(self.i18n.t("labels.burst"))
-        burst_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
-        burst_layout.addWidget(burst_label)
-        
-        self.burst_check = QCheckBox()
-        self.burst_check.setChecked(self.config.burst_check)
-        self.burst_check.setStyleSheet(checkbox_indicator_qss(16, COLORS['text_muted'], COLORS['accent']))
-        burst_layout.addWidget(self.burst_check)
-        
-        header_layout.addLayout(burst_layout)
-
-        # 持久化复选框状态
-        self.flight_check.stateChanged.connect(self._save_check_states)
-        self.burst_check.stateChanged.connect(self._save_check_states)
-        
-        # V4.2: 自动识鸟开关
-        birdid_layout = QHBoxLayout()
-        birdid_layout.setSpacing(10)
-        
-        birdid_label = QLabel(self.i18n.t("menu.birdid_label"))
-        birdid_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
-        birdid_layout.addWidget(birdid_label)
-        
-        self.birdid_check = QCheckBox()
-        self.birdid_check.setStyleSheet(checkbox_indicator_qss(16, COLORS['text_muted'], COLORS['accent']))
-        # 从保存的设置中读取状态
-        birdid_saved_state = False
-        try:
-            import json
-            settings_dir = str(get_app_config_dir())
-            settings_path = os.path.join(settings_dir, 'birdid_dock_settings.json')
-            if os.path.exists(settings_path):
-                with open(settings_path, 'r', encoding='utf-8') as f:
-                    birdid_settings = json.load(f)
-                    birdid_saved_state = birdid_settings.get('auto_identify', False)
-        except Exception:
-            pass
-        self.birdid_check.setChecked(birdid_saved_state)
-        self.birdid_check.stateChanged.connect(self._on_birdid_check_changed)
-        birdid_layout.addWidget(self.birdid_check)
-        
-        header_layout.addLayout(birdid_layout)
-        
-        # V4.3: 摄影水平显示标签
-        skill_level_layout = QHBoxLayout()
-        skill_level_layout.setSpacing(4)
-        
-        self.skill_level_label = QLabel("")
-        self.skill_level_label.setStyleSheet(f"""
-            color: {COLORS['accent']};
-            font-size: 11px;
-            padding: 2px 6px;
-            background-color: {COLORS['accent']}15;
-            border-radius: 4px;
-        """)
-        skill_level_layout.addWidget(self.skill_level_label)
-        
-        header_layout.addLayout(skill_level_layout)
-        
-        params_layout.addLayout(header_layout)
-
-        # 隐藏变量（从高级配置读取，避免硬编码）
-        self.ai_confidence = int(self.config.min_confidence * 100)  # V4.2: 读取用户设置的检测敏感度
-        self.norm_mode = "log_compression"
-
-        # 滑块区域
-        sliders_layout = QVBoxLayout()
-        sliders_layout.setSpacing(16)
-
-        # 锐度阈值
-        sharp_layout = QHBoxLayout()
-        sharp_layout.setSpacing(16)
-
-        sharp_label = QLabel(self.i18n.t("labels.sharpness_short"))
-        sharp_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 13px; min-width: 80px;")
-        sharp_layout.addWidget(sharp_label)
-
-        self.sharp_slider = QSlider(Qt.Orientation.Horizontal)
-        self.sharp_slider.setRange(200, 600)  # 新范围 200-600
-        self.sharp_slider.setValue(400)  # 新默认值
-        self.sharp_slider.setSingleStep(10)  # V4.0: 更精细的调节（键盘方向键）
-        self.sharp_slider.setPageStep(10)    # V4.0: 点击滑块轨道的步进值
-        self.sharp_slider.valueChanged.connect(self._on_sharp_changed)
-        sharp_layout.addWidget(self.sharp_slider)
-
-        self.sharp_value = QLabel("400")  # 新默认值
-        self.sharp_value.setStyleSheet(VALUE_STYLE)
-        self.sharp_value.setFixedWidth(50)
-        self.sharp_value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        sharp_layout.addWidget(self.sharp_value)
-
-        sliders_layout.addLayout(sharp_layout)
-
-        # 美学阈值
-        nima_layout = QHBoxLayout()
-        nima_layout.setSpacing(16)
-
-        nima_label = QLabel(self.i18n.t("labels.aesthetics"))
-        nima_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 13px; min-width: 80px;")
-        nima_layout.addWidget(nima_label)
-
-        self.nima_slider = QSlider(Qt.Orientation.Horizontal)
-        self.nima_slider.setRange(40, 70)  # 新范围 4.0-7.0
-        self.nima_slider.setValue(50)  # 默认值 5.0
-        self.nima_slider.valueChanged.connect(self._on_nima_changed)
-        nima_layout.addWidget(self.nima_slider)
-
-        self.nima_value = QLabel("5.0")  # 默认值
-        self.nima_value.setStyleSheet(VALUE_STYLE)
-        self.nima_value.setFixedWidth(50)
-        self.nima_value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        nima_layout.addWidget(self.nima_value)
-
-        sliders_layout.addLayout(nima_layout)
-
-        params_layout.addLayout(sliders_layout)
-        parent_layout.addWidget(params_frame)
 
     def _create_log_section(self, parent_layout):
         """创建日志区域"""
@@ -1590,28 +1414,6 @@ class SuperPickyMainWindow(QMainWindow):
         parent_layout.addLayout(btn_layout)
 
     # ========== 槽函数 ==========
-
-    @Slot()
-    def _on_sharp_changed(self):
-        """锐度滑块变化"""
-        value = self.sharp_slider.value()
-        rounded = round(value / 10) * 10  # V4.0: 改为 10 步进
-        self.sharp_slider.blockSignals(True)
-        self.sharp_slider.setValue(rounded)
-        self.sharp_slider.blockSignals(False)
-        self.sharp_value.setText(str(rounded))
-        
-        # V4.3: 检测是否为自选模式（手动调整滑块）
-        self._check_custom_mode()
-
-    @Slot()
-    def _on_nima_changed(self):
-        """NIMA 滑块变化"""
-        value = self.nima_slider.value() / 10.0
-        self.nima_value.setText(f"{value:.1f}")
-        
-        # V4.3: 检测是否为自选模式（手动调整滑块）
-        self._check_custom_mode()
 
     @Slot()
     def _on_path_entered(self):
@@ -2086,10 +1888,13 @@ class SuperPickyMainWindow(QMainWindow):
         def _esc(s):
             return _html.escape(str(s), quote=False)
 
+        # Task 7: 从 advanced_config 读取开关状态，不再读取已删除的参数面板控件
+        # Task 7: read switch states from advanced_config; old panel widgets removed
+        _adv_confirm = get_advanced_config()
         extra_notes = []
-        if self.flight_check.isChecked():
+        if _adv_confirm.flight_check:
             extra_notes.append(_ico("bird.svg", _green) + _esc(self.i18n.t("dialogs.note_flight")))
-        if self.birdid_check.isChecked():
+        if _adv_confirm.birdid_auto_identify:
             extra_notes.append(_ico("eye.svg", _accent) + _esc(self.i18n.t("dialogs.note_birdid")))
             # 显示当前国家/区域设置(去掉 🌍,纯文字缩进)
             if hasattr(self, 'birdid_dock') and self.birdid_dock:
@@ -2115,7 +1920,7 @@ class SuperPickyMainWindow(QMainWindow):
                         # 用户选择现在选择国家
                         self.birdid_dock.country_combo.showPopup()
                         return  # 等用户选择后再开始
-        if self.burst_check.isChecked():
+        if _adv_confirm.burst_check:
             extra_notes.append(_ico("square-stack.svg", _sec) + _esc(self.i18n.t("dialogs.note_burst")))
 
         notes_block = ""
@@ -2224,17 +2029,19 @@ class SuperPickyMainWindow(QMainWindow):
         self._update_status(self.i18n.t("labels.processing"), COLORS['warning'])
         self._log(self.i18n.t("logs.processing_start"))
 
-        # 准备 UI 设置
+        # Task 7: 准备 UI 设置 — 改从 advanced_config 读取，不再依赖已删除的参数面板控件
+        # Task 7: Prepare UI settings — read from advanced_config; old panel widgets removed
+        _adv = get_advanced_config()
         ui_settings = [
-            self.ai_confidence,
-            self.sharp_slider.value(),
-            self.nima_slider.value() / 10.0,
-            True,  # V4.0.5: 始终保存裁切，用于 debug_crop_path 持久化
-            self.norm_mode,
-            self.flight_check.isChecked(),
-            False,                            # 曝光检测已移除，固定为 False
-            self.burst_check.isChecked(),     # V4.0: 连拍检测开关
-            self.birdid_check.isChecked(),    # V4.2: 识鸟开关
+            int(_adv.min_confidence * 100),   # [0] AI 置信度 / AI confidence
+            int(_adv.min_sharpness),           # [1] 锐度阈值 / sharpness threshold
+            _adv.min_nima,                     # [2] NIMA 美学阈值 / NIMA aesthetics threshold
+            True,                              # [3] 始终保存裁切 / always save crop
+            "log_compression",                 # [4] 归一化模式 / normalization mode
+            bool(_adv.flight_check),           # [5] 飞鸟检测 / flight detection
+            False,                             # [6] 曝光检测已移除，固定 False / exposure removed
+            bool(_adv.burst_check),            # [7] 连拍检测 / burst detection
+            bool(_adv.birdid_auto_identify),   # [8] 识鸟开关 / bird ID auto-identify
         ]
 
         # 创建信号
@@ -2707,12 +2514,15 @@ class SuperPickyMainWindow(QMainWindow):
             )
             return
 
+        # Task 7: 从 advanced_config 读取阈值，不再读取已删除的滑块控件
+        # Task 7: read thresholds from advanced_config; old slider widgets removed
+        _adv_pad = get_advanced_config()
         from .post_adjustment_dialog import PostAdjustmentDialog
         dialog = PostAdjustmentDialog(
             self,
             self.directory_path,
-            current_sharpness=self.sharp_slider.value(),
-            current_nima=self.nima_slider.value() / 10.0,
+            current_sharpness=int(_adv_pad.min_sharpness),
+            current_nima=_adv_pad.min_nima,
             on_complete_callback=self._on_post_adjustment_complete,
             log_callback=self._log
         )
@@ -2777,25 +2587,6 @@ class SuperPickyMainWindow(QMainWindow):
         self._video_analyzer_window.raise_()
         self._video_analyzer_window.activateWindow()
 
-    def _show_advanced_settings(self):
-        """显示高级设置"""
-        from .advanced_settings_dialog import AdvancedSettingsDialog
-        dialog = AdvancedSettingsDialog(self)
-        result = dialog.exec()
-        
-        # V4.2: 如果用户保存了设置，更新主窗口的变量并显示新配置
-        if result:
-            # 重新加载配置
-            self.config = get_advanced_config()
-            # 更新 ai_confidence 变量
-            self.ai_confidence = int(self.config.min_confidence * 100)
-            # 在控制台显示更新后的设置
-            self._log(self.i18n.t("logs.settings_updated"))
-            self._log(self.i18n.t("logs.detection_sensitivity", v=self.ai_confidence))
-            self._log(self.i18n.t("logs.min_sharpness", v=self.config.min_sharpness))
-            self._log(self.i18n.t("logs.min_aesthetics", v=self.config.min_nima))
-            self._log(self.i18n.t("logs.birdid_confidence_log", v=self.config.birdid_confidence))
-
     def _change_language(self, lang_code):
         """切换界面语言"""
         from ui.custom_dialogs import StyledMessageBox
@@ -2818,10 +2609,48 @@ class SuperPickyMainWindow(QMainWindow):
 
     @Slot()
     def _show_about(self):
-        """显示关于对话框"""
-        from .about_dialog import AboutDialog
-        dialog = AboutDialog(self, self.i18n)
-        dialog.exec()
+        """显示关于对话框（保留为兼容入口，实际由设置中心 about 页处理）。
+        Show About dialog (compatibility stub; actual About is now inside SettingsCenter)."""
+        self._open_settings_center("about")
+
+    def _open_settings_center(self, start_page: str = "culling") -> None:
+        """打开设置中心弹窗，关闭后刷新依赖值（技能 chip、识鸟面板状态）。
+
+        Task 7: 统一设置入口。所有参数、水平、识鸟等配置都在设置中心内完成。
+        关闭后调用 _refresh_skill_chip 保证 header chip 与当前配置同步；
+        通过 Task 8 guard 调用 birdid_dock.reload_from_config()（Task 8 提供方法）。
+
+        Open the SettingsCenter dialog; refresh dependent values after it closes.
+        Task 7: Unified settings entry. All config lives inside SettingsCenter.
+        After close: refresh skill chip + call birdid_dock.reload_from_config (Task 8).
+
+        Parameters:
+            start_page (str): 设置中心初始显示页 key / Initial page key ("culling"/"about"/etc.)
+        """
+        from ui.settings_center import SettingsCenter
+        dlg = SettingsCenter(self.i18n, parent=self, start_page=start_page)
+        dlg.exec()
+
+        # 刷新技能 chip 标签，确保与 advanced_config 中当前值一致
+        # Refresh the skill level chip so it reflects the current advanced_config value
+        self._refresh_skill_chip()
+
+        # Task 8 guard: birdid_dock.reload_from_config 由 Task 8 提供
+        # Task 8 guard: reload_from_config is provided by Task 8
+        dock = getattr(self, "birdid_dock", None)
+        if dock is not None and hasattr(dock, "reload_from_config"):
+            dock.reload_from_config()
+
+    def _refresh_skill_chip(self) -> None:
+        """从 advanced_config 读取当前技能等级并刷新 header chip 标签。
+
+        供 _open_settings_center 关闭后调用，确保 chip 显示值与持久化配置一致。
+
+        Read current skill level from advanced_config and refresh the header chip label.
+        Called by _open_settings_center after the dialog closes.
+        """
+        _cfg = get_advanced_config()
+        self._update_skill_level_label(_cfg.skill_level)
 
     @Slot()
     def _toggle_birdid_dock(self, checked):
@@ -4045,64 +3874,39 @@ class SuperPickyMainWindow(QMainWindow):
         )
     
     def _apply_skill_level_thresholds(self, level_key: str):
-        """应用水平预设的阈值到滑块"""
-        sharpness, aesthetics = get_skill_level_thresholds(level_key, self.config)
-        
-        # 阻止信号防止触发 _check_custom_mode
-        self._applying_preset = True
-        
-        self.sharp_slider.blockSignals(True)
-        self.sharp_slider.setValue(int(sharpness))
-        self.sharp_slider.blockSignals(False)
-        self.sharp_value.setText(str(int(sharpness)))
-        
-        self.nima_slider.blockSignals(True)
-        self.nima_slider.setValue(int(aesthetics * 10))
-        self.nima_slider.blockSignals(False)
-        self.nima_value.setText(f"{aesthetics:.1f}")
-        
-        self._applying_preset = False
-        
-        # 更新水平显示标签
-        self._update_skill_level_label(level_key)
-    
-    def _save_check_states(self):
-        """持久化主界面复选框状态"""
-        self.config.set_flight_check(self.flight_check.isChecked())
-        self.config.set_burst_check(self.burst_check.isChecked())
-        self.config.save()
+        """应用水平预设的阈值到 advanced_config（参数面板已删除，不再写滑块）。
 
-    def _check_custom_mode(self):
-        """检查当前滑块值是否与任何预设匹配，如果不匹配则切换到自选模式"""
-        # 如果正在应用预设，跳过检查
-        if getattr(self, '_applying_preset', False):
-            return
-        
-        current_sharpness = self.sharp_slider.value()
-        current_aesthetics = self.nima_slider.value() / 10.0
-        
-        # 检查是否匹配某个预设
-        for level_key, preset in SKILL_PRESETS.items():
-            if (current_sharpness == preset["sharpness"] and 
-                abs(current_aesthetics - preset["aesthetics"]) < 0.05):
-                # 匹配预设
-                if self.config.skill_level != level_key:
-                    self.config.set_skill_level(level_key)
-                    self.config.save()
-                    self._update_skill_level_label(level_key)
-                return
-        
-        # 不匹配任何预设，切换到自选模式
-        # 不匹配任何预设，切换到自选模式
-        if self.config.skill_level != "custom":
-            self.config.set_skill_level("custom")
-            self._update_skill_level_label("custom")
-            print(f"🎛️ 已切换到自选模式")
-            
-        # 始终更新自选值并保存
-        self.config.set_custom_sharpness(current_sharpness)
-        self.config.set_custom_aesthetics(current_aesthetics)
-        self.config.save()
+        Task 7: 锐度/美学阈值持久化到 advanced_config 而非 UI 控件。
+        原来写 sharp_slider / nima_slider 的逻辑已移除。
+
+        Apply skill-level preset thresholds to advanced_config (parameter panel
+        removed; no more sliders to write to).
+
+        Parameters:
+            level_key (str): 技能等级键值 ("beginner"/"intermediate"/"master"/"custom")
+        """
+        sharpness, aesthetics = get_skill_level_thresholds(level_key, self.config)
+
+        # Task 7: 持久化到 advanced_config，供下次 _start_processing 读取
+        # Task 7: persist to advanced_config so next _start_processing picks it up
+        _cfg = get_advanced_config()
+        _cfg.set_min_sharpness(int(sharpness))
+        _cfg.set_min_nima(aesthetics)
+        _cfg.save()
+
+        # 同步刷新主窗口的技能 chip 标签 / Refresh skill chip label on main window
+        self._update_skill_level_label(level_key)
+
+    def _save_check_states(self):
+        """持久化飞鸟/连拍开关状态（参数面板已删除，此方法保留为空实现，
+        实际状态由设置中心写入 advanced_config）。
+
+        Task 7: parameter panel checkboxes removed; state is now saved by SettingsCenter.
+        This stub is kept to avoid AttributeError from any residual callsites.
+        """
+        # 实际状态已由设置中心保存到 advanced_config，此处不再需要写控件
+        # State is now persisted by SettingsCenter into advanced_config
+        pass
     
     def _update_skill_level_label(self, level_key: str):
         """更新主界面的水平显示标签"""
