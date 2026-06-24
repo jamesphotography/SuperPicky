@@ -634,15 +634,30 @@ class SettingsCenter(QDialog):
         saved_code = cfg.birdid_country_code
         saved_display = cfg.birdid_selected_country
 
+        # top-10 已在下拉中的国家代码集合，用于判断是否需要动态补入
+        # Set of country codes already in the dropdown (top-10), used to detect missing entries
+        existing_codes = set(self._bid_country_list.values()) - {None, "GLOBAL", "SEP1", "SEP2", "MORE"}
+
         matched = False
         if saved_code is not None:
-            for display_name, code in self._bid_country_list.items():
-                if code == saved_code:
-                    idx = self._bid_country.findText(display_name)
-                    if idx >= 0:
-                        self._bid_country.setCurrentIndex(idx)
-                        matched = True
-                    break
+            if saved_code not in ("GLOBAL",) and saved_code not in existing_codes:
+                # 非 top-10 国家：动态追加到下拉并选中，防止数据丢失
+                # Non-top-10 country: dynamically append to dropdown and select it to prevent data loss
+                extra_display = saved_display or saved_code
+                self._bid_country.addItem(extra_display)
+                self._bid_country_list[extra_display] = saved_code
+                idx = self._bid_country.findText(extra_display)
+                if idx >= 0:
+                    self._bid_country.setCurrentIndex(idx)
+                matched = True
+            else:
+                for display_name, code in self._bid_country_list.items():
+                    if code == saved_code:
+                        idx = self._bid_country.findText(display_name)
+                        if idx >= 0:
+                            self._bid_country.setCurrentIndex(idx)
+                            matched = True
+                        break
 
         if not matched:
             idx = self._bid_country.findText(saved_display)
@@ -723,6 +738,16 @@ class SettingsCenter(QDialog):
         # dropdown can be correctly restored on re-open.
         if country_code in ("SEP1", "SEP2", "MORE"):
             country_code = None
+
+        # 兜底守卫：若下拉解析到 None 而原存储值是真实国家代码（非 None/GLOBAL），
+        # 保留原值以防止非 top-10 国家被意外覆盖为 None。
+        # Fallback guard: if the dropdown resolves to None but the stored value is a real
+        # country code (non-None/GLOBAL), preserve the stored value to prevent silent data
+        # loss for non-top-10 countries.
+        if country_code is None:
+            stored_code = cfg.birdid_country_code
+            if stored_code and stored_code not in ("GLOBAL",):
+                country_code = stored_code
 
         # 地区 / Region
         region_display = self._bid_region.currentText()

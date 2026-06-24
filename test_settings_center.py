@@ -306,3 +306,74 @@ def test_birdid_subnational_region_restore(monkeypatch):
         w.close()
     finally:
         os.unlink(tmp_path)
+
+
+def test_birdid_non_top10_country_roundtrip(monkeypatch):
+    """
+    验证存储了非 top-10 国家（如 FR）后，打开识鸟页不会把 birdid_country_code 覆盖为 None。
+
+    复现路径:
+    1. 经 Dock"更多国家"将 birdid_country_code 存为 "FR"。
+    2. 打开 SettingsCenter 识鸟页：_restore_birdid_country 因 FR 不在下拉中匹配失败，
+       下拉停在 index 0（Auto GPS）。
+    3. 用户点 Done → _save_birdid 取到 country_code=None → set_birdid_region 把 FR 覆盖为 None。
+
+    修复后: _restore_birdid_country 动态追加 FR 到下拉并选中; _save_birdid 从下拉取到 FR;
+    set_birdid_region 保留 FR。兜底守卫作为第二层保护也可独立拦截。
+
+    Verify that a saved non-top-10 country (e.g. FR) is preserved after opening
+    the Bird-ID settings page and clicking Done.
+
+    Reproduction path:
+    1. birdid_country_code is stored as "FR" (e.g. via the Dock "More Countries" flow).
+    2. SettingsCenter Bird-ID page opens: _restore_birdid_country fails to match FR
+       (not in top-10 dropdown), dropdown stays at index 0 (Auto GPS).
+    3. User clicks Done → _save_birdid reads country_code=None →
+       set_birdid_region overwrites FR with None.
+
+    After fix: _restore_birdid_country dynamically appends FR and selects it;
+    _save_birdid reads FR from the dropdown; set_birdid_region keeps FR.
+    The fallback guard acts as a second layer of protection.
+
+    参数 / Parameters:
+        monkeypatch: pytest fixture.
+    """
+    import tempfile
+    from advanced_config import AdvancedConfig
+    from ui.settings_center import SettingsCenter
+    from tools.i18n import get_i18n
+
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+        tmp_path = f.name
+    try:
+        # 预置非 top-10 国家 FR（法国）
+        # Pre-set non-top-10 country FR (France)
+        cfg = AdvancedConfig(config_file=tmp_path)
+        cfg.set_birdid_region(True, "FR", "法国", None, "整个国家")
+
+        import advanced_config as _ac_mod
+        monkeypatch.setattr(_ac_mod, "get_advanced_config", lambda: cfg)
+
+        # 打开识鸟页并立即保存（模拟用户打开后点 Done 不做任何修改）
+        # Open Bird-ID page and immediately save (simulates user opening then clicking Done)
+        w = SettingsCenter(get_i18n())
+        w.show_page("birdid")
+
+        # 修复后下拉应显示 "法国"，当前项应为 FR
+        # After fix, dropdown should show "法国" and current item should be FR
+        current_text = w._bid_country.currentText()
+        assert current_text == "法国", (
+            f"Expected dropdown to show '法国' for FR, got: '{current_text}'"
+        )
+
+        w._save_birdid()
+
+        # 核心断言：birdid_country_code 不能被覆盖为 None
+        # Core assertion: birdid_country_code must not be overwritten to None
+        assert cfg.birdid_country_code == "FR", (
+            f"Expected birdid_country_code to remain 'FR', got: {cfg.birdid_country_code!r}"
+        )
+
+        w.close()
+    finally:
+        os.unlink(tmp_path)
