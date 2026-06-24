@@ -166,6 +166,8 @@ class SettingsCenter(QDialog):
             return self._build_video_page()
         if key == "apps":
             return self._build_apps_page()
+        if key == "about":
+            return self._build_about_page()
         return self._placeholder(self.i18n.t(_PAGE_TITLE_KEY[key]))
 
     def _build_culling_page(self) -> QWidget:
@@ -1542,6 +1544,158 @@ class SettingsCenter(QDialog):
         cfg = get_advanced_config()
         cfg.set_external_apps(self._apps_data)
         cfg.save()
+
+    # ── 关于页 / About page ───────────────────────────────────────────────────
+
+    def _build_about_page(self) -> QWidget:
+        """
+        构建关于页，展示应用名称、版本号、致谢和许可证信息（只读，无保存逻辑）。
+
+        内容从 about_dialog.py 迁移而来，使用现有 i18n 键（about.subtitle、
+        about.content、app.brand_name）。不删除原 about_dialog.py（由 Task 9 负责）。
+
+        Build the About page, displaying app name, version, acknowledgements,
+        and license info (read-only; no save logic required).
+
+        Content migrated from about_dialog.py, reusing existing i18n keys
+        (about.subtitle, about.content, app.brand_name).
+        The original about_dialog.py is NOT deleted here (Task 9 will handle that).
+
+        返回 / Returns:
+            QWidget: 关于内容页 / About content page widget.
+        """
+        from constants import APP_VERSION
+        from core.build_info import COMMIT_HASH
+
+        # 解析 commit hash：优先用打包时写入的 COMMIT_HASH，
+        # 其次尝试 git rev-parse，最终 fallback 到 "dev"。
+        # Resolve commit hash: prefer build-time COMMIT_HASH, then git, then "dev".
+        _commit = COMMIT_HASH or ""
+        if not _commit:
+            try:
+                _commit = subprocess.check_output(
+                    ["git", "rev-parse", "--short", "HEAD"],
+                    stderr=subprocess.DEVNULL,
+                ).strip().decode("utf-8")
+            except Exception:
+                _commit = "dev"
+
+        # ── 容器 + 滚动区 / Container + scroll area ───────────────────────────
+        page = QWidget()
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+
+        inner = QWidget()
+        lay = QVBoxLayout(inner)
+        lay.setContentsMargins(32, 28, 32, 24)
+        lay.setSpacing(0)
+
+        # ── 品牌头部 / Brand header ───────────────────────────────────────────
+        header = QFrame()
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(20)
+
+        # 应用图标 / App icon
+        icon_path = os.path.join(os.path.dirname(__file__), "..", "img", "icon.png")
+        if os.path.exists(icon_path):
+            from PySide6.QtGui import QPixmap
+
+            icon_container = QFrame()
+            icon_container.setFixedSize(64, 64)
+            icon_container.setStyleSheet(
+                f"""QFrame {{
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                        stop:0 {COLORS['accent']}, stop:1 {COLORS['accent_deep']});
+                    border-radius: 16px;
+                }}"""
+            )
+            icon_inner = QHBoxLayout(icon_container)
+            icon_inner.setContentsMargins(12, 12, 12, 12)
+
+            icon_label = QLabel()
+            pixmap = QPixmap(icon_path).scaled(
+                40, 40, Qt.KeepAspectRatio, Qt.SmoothTransformation
+            )
+            icon_label.setPixmap(pixmap)
+            icon_inner.addWidget(icon_label)
+            header_layout.addWidget(icon_container)
+
+        # 品牌文字列 / Brand text column
+        brand_layout = QVBoxLayout()
+        brand_layout.setSpacing(4)
+
+        app_name = self.i18n.t("app.brand_name") if self.i18n else "SuperPicky"
+        title_label = QLabel(app_name)
+        title_label.setStyleSheet(
+            f"color:{COLORS['text_primary']};font-size:22px;font-weight:600;letter-spacing:-0.5px;"
+        )
+        brand_layout.addWidget(title_label)
+
+        subtitle_text = (
+            self.i18n.t("about.subtitle") if self.i18n else "AI Bird Photo Culling Tool"
+        )
+        subtitle_label = QLabel(subtitle_text)
+        subtitle_label.setStyleSheet(
+            f"color:{COLORS['text_tertiary']};font-size:13px;"
+        )
+        brand_layout.addWidget(subtitle_label)
+
+        # 版本号标签（含 commit hash），测试断言依赖此 QLabel 含 APP_VERSION 文本
+        # Version label (with commit hash) — the test assertion depends on this QLabel
+        version_label = QLabel(f"v{APP_VERSION} ({_commit})")
+        version_label.setStyleSheet(
+            f"color:{COLORS['accent']};font-size:12px;"
+        )
+        brand_layout.addWidget(version_label)
+
+        header_layout.addLayout(brand_layout)
+        header_layout.addStretch()
+        lay.addWidget(header)
+
+        lay.addSpacing(24)
+
+        # ── 分隔线 / Divider ──────────────────────────────────────────────────
+        divider = QFrame()
+        divider.setFixedHeight(1)
+        divider.setStyleSheet(f"background-color:{COLORS['border_subtle']};")
+        lay.addWidget(divider)
+
+        lay.addSpacing(20)
+
+        # ── 致谢与许可证内容 / Acknowledgements & license content ────────────
+        content_text = (
+            self.i18n.t("about.content")
+            if self.i18n
+            else (
+                "James Yu\n"
+                'Australian-Chinese Professional Photographer, Author of "James\' Landscape Photography Notes" Trilogy\n\n'
+                "Model Training: Jordan Yu\n"
+                "Development Team: Xiaoping, Lyapunov, osk.sh, yblpoi, jcchan23\n\n"
+                "Open Source Models\n"
+                "YOLO11 - Bird Detection by Ultralytics\n"
+                "OSEA - Bird Classification by Sun Jiao\n"
+                "TOPIQ - Aesthetic Scoring by Chaofeng Chen et al.\n\n"
+                "License: GPL-3.0\n"
+                "© 2024-2025 James Yu"
+            )
+        )
+        content_label = QLabel(content_text)
+        content_label.setStyleSheet(
+            f"color:{COLORS['text_secondary']};font-size:13px;line-height:1.6;"
+        )
+        content_label.setWordWrap(True)
+        content_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        lay.addWidget(content_label, 1)
+
+        lay.addStretch(1)
+
+        scroll.setWidget(inner)
+        page_lay = QVBoxLayout(page)
+        page_lay.setContentsMargins(0, 0, 0, 0)
+        page_lay.addWidget(scroll)
+        return page
 
     def _placeholder(self, title: str) -> QWidget:
         """

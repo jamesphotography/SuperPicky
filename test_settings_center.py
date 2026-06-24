@@ -382,6 +382,33 @@ def test_birdid_non_top10_country_roundtrip(monkeypatch):
 # ── Task 5: 输出/视频/外部应用页测试 / Output/Video/Apps page tests ──────────────
 
 
+# ── Task 6: 关于页测试 / About page tests ────────────────────────────────────
+
+
+def test_about_page_shows_version():
+    """
+    验证关于页含有 APP_VERSION 版本号文本。
+
+    Verify the About page contains the APP_VERSION version string
+    in at least one QLabel.
+    """
+    from ui.settings_center import SettingsCenter
+    from constants import APP_VERSION
+    import PySide6.QtWidgets as _qw
+
+    w = SettingsCenter(get_i18n())
+    w.show_page("about")
+    texts = [c.text() for c in w.findChildren(_qw.QLabel)]
+    assert any(str(APP_VERSION) in t for t in texts), (
+        f"APP_VERSION '{APP_VERSION}' not found in any QLabel text. "
+        f"Found texts: {texts}"
+    )
+    w.close()
+
+
+# ── Task 5: 输出/视频/外部应用页测试 / Output/Video/Apps page tests ──────────────
+
+
 def test_output_video_apps_pages_build():
     """
     验证输出、视频、外部应用三个设置页能正确构建，且关键属性存在。
