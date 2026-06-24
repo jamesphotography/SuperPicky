@@ -118,3 +118,127 @@ def test_save_roundtrip_no_truncation():
         w.close()
     finally:
         os.unlink(tmp_path)
+
+
+# ── Task 4: 识鸟页测试 / Bird-ID page tests ────────────────────────────────────
+
+
+def test_birdid_page_reads_and_writes_config(monkeypatch):
+    """
+    验证识鸟页能读取 advanced_config 并正确写回自动识鸟开关。
+
+    Verify the Bird-ID settings page reads advanced_config and correctly
+    writes back the auto-identify toggle.
+    """
+    import tempfile
+    from advanced_config import AdvancedConfig
+    from ui.settings_center import SettingsCenter
+    from tools.i18n import get_i18n
+
+    # 使用临时配置文件隔离，避免污染真实用户配置
+    # Use a temporary config file to avoid polluting real user config
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+        tmp_path = f.name
+    try:
+        cfg = AdvancedConfig(config_file=tmp_path)
+        cfg.config["birdid_auto_identify"] = False
+        cfg.save()
+
+        # monkeypatch global get_advanced_config to return our temp instance
+        import advanced_config as _ac_mod
+        monkeypatch.setattr(_ac_mod, "get_advanced_config", lambda: cfg)
+
+        w = SettingsCenter(get_i18n())
+        w.show_page("birdid")
+        w._bid_auto.setChecked(True)
+        w._save_birdid()
+        assert cfg.birdid_auto_identify is True, (
+            f"Expected True, got {cfg.birdid_auto_identify}"
+        )
+        w.close()
+    finally:
+        os.unlink(tmp_path)
+
+
+def test_birdid_confidence_roundtrip(monkeypatch):
+    """
+    验证识鸟置信度滑块往返无截断：在 clamp 范围 30-95 内写入并读回。
+
+    Verify the Bird-ID confidence slider round-trips without truncation:
+    write and read back values within the clamp range 30-95.
+    """
+    import tempfile
+    from advanced_config import AdvancedConfig
+    from ui.settings_center import SettingsCenter
+    from tools.i18n import get_i18n
+
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+        tmp_path = f.name
+    try:
+        cfg = AdvancedConfig(config_file=tmp_path)
+        cfg.config["birdid_confidence"] = 50
+        cfg.save()
+
+        import advanced_config as _ac_mod
+        monkeypatch.setattr(_ac_mod, "get_advanced_config", lambda: cfg)
+
+        w = SettingsCenter(get_i18n())
+        w.show_page("birdid")
+
+        # 设置到上限 95，验证 clamp 不截断
+        # Set to ceiling 95, assert no clamp truncation
+        w._bid_conf.setValue(95)
+        w._save_birdid()
+        assert cfg.birdid_confidence == 95, (
+            f"Expected 95, got {cfg.birdid_confidence}"
+        )
+
+        # 设置到下限 30，验证 clamp 不截断
+        # Set to floor 30, assert no clamp truncation
+        w._bid_conf.setValue(30)
+        w._save_birdid()
+        assert cfg.birdid_confidence == 30, (
+            f"Expected 30, got {cfg.birdid_confidence}"
+        )
+
+        w.close()
+    finally:
+        os.unlink(tmp_path)
+
+
+def test_birdid_region_save(monkeypatch):
+    """
+    验证识鸟页 _save_birdid 调用 set_birdid_region 写回数据源选择。
+
+    Verify that _save_birdid calls set_birdid_region to persist the
+    data-source (eBird / GBIF) selection.
+    """
+    import tempfile
+    from advanced_config import AdvancedConfig
+    from ui.settings_center import SettingsCenter
+    from tools.i18n import get_i18n
+
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+        tmp_path = f.name
+    try:
+        cfg = AdvancedConfig(config_file=tmp_path)
+        cfg.config["birdid_use_ebird"] = True
+        cfg.save()
+
+        import advanced_config as _ac_mod
+        monkeypatch.setattr(_ac_mod, "get_advanced_config", lambda: cfg)
+
+        w = SettingsCenter(get_i18n())
+        w.show_page("birdid")
+
+        # 切换到 GBIF 并保存
+        # Switch to GBIF source and save
+        w._bid_gbif.setChecked(True)
+        w._save_birdid()
+        assert cfg.birdid_use_ebird is False, (
+            f"Expected False (GBIF selected), got {cfg.birdid_use_ebird}"
+        )
+
+        w.close()
+    finally:
+        os.unlink(tmp_path)

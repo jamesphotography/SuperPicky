@@ -1459,6 +1459,16 @@
     "culling_detect_section": "检测开关",
     "culling_flight_label": "飞鸟检测",
     "culling_burst_label": "连拍检测",
-    "culling_burst_fps_label": "连拍速度 (张/秒)"
+    "culling_burst_fps_label": "连拍速度 (张/秒)",
+    "birdid_section_auto": "自动识鸟",
+    "birdid_auto_label": "自动识别鸟种（2星及以上照片）",
+    "birdid_section_conf": "置信度阈值",
+    "birdid_conf_label": "识别置信度",
+    "birdid_section_source": "数据源",
+    "birdid_source_ebird": "eBird（推荐）",
+    "birdid_source_gbif": "GBIF",
+    "birdid_section_region": "国家 / 地区",
+    "birdid_country_label": "国家",
+    "birdid_region_label": "地区"
   }
 }
