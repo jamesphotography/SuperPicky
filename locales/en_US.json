@@ -1441,5 +1441,15 @@
     "height": "Height",
     "quality": "JPEG quality",
     "lock_ratio": "Lock ratio"
+  },
+  "settings": {
+    "window_title": "Settings",
+    "done": "Done",
+    "nav_culling": "Culling",
+    "nav_birdid": "Bird ID",
+    "nav_output": "Output",
+    "nav_video": "Video",
+    "nav_apps": "External Apps",
+    "nav_about": "About"
   }
 }

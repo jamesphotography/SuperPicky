@@ -1441,5 +1441,15 @@
     "height": "高度",
     "quality": "JPEG 质量",
     "lock_ratio": "锁定比例"
+  },
+  "settings": {
+    "window_title": "设置",
+    "done": "完成",
+    "nav_culling": "精选",
+    "nav_birdid": "识鸟",
+    "nav_output": "输出",
+    "nav_video": "视频",
+    "nav_apps": "外部应用",
+    "nav_about": "关于"
   }
 }
