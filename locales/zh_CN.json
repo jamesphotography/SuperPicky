@@ -915,6 +915,8 @@
     "country": "国家:",
     "region": "区域:",
     "results": "识别结果",
+    "settings_link": "设置",
+    "settings_link_tooltip": "打开识鸟设置",
     "btn_select": "选择图片",
     "btn_write_exif": "写入 EXIF",
     "toggle_dock": "浮动/停靠",

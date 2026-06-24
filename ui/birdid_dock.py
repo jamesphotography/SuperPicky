@@ -25,8 +25,6 @@ from PySide6.QtGui import QPixmap, QDragEnterEvent, QDropEvent
 
 from ui.styles import COLORS, FONTS
 from ui.icon_utils import stars_pixmap, tinted_png_path, load_tinted_icon, ICON_IDLE
-from core.region_data import load_regions_data
-
 from tools.i18n import get_i18n
 
 ALIGN_CENTER = Qt.AlignmentFlag.AlignCenter
@@ -649,6 +647,7 @@ class BirdIDDockWidget(QDockWidget):
 
         self.drop_area = DropArea()
         self.drop_area.fileDropped.connect(self.on_file_dropped)
+        identify_layout.addWidget(self.drop_area)
 
         self.preview_label = DropPreviewLabel()
         self.preview_label.setAlignment(ALIGN_CENTER)

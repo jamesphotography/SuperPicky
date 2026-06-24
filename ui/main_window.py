@@ -287,61 +287,15 @@ class WorkerThread(threading.Thread):
         from advanced_config import get_advanced_config
         birdid_confidence_threshold = get_advanced_config().birdid_confidence
 
-        # 从设置文件读取国家/区域配置
-        try:
-            import json
-            import re
-
-            birdid_settings_dir = str(get_app_config_dir())
-            birdid_settings_path = os.path.join(birdid_settings_dir, 'birdid_dock_settings.json')
-
-            if os.path.exists(birdid_settings_path):
-                with open(birdid_settings_path, 'r', encoding='utf-8') as f:
-                    birdid_settings = json.load(f)
-                    # 只从文件读取国家/区域配置，auto_identify 从 ui_settings 读取
-                    birdid_use_ebird = birdid_settings.get('use_ebird', True)
-                    
-                    # V4.0.4: 直接读取 country_code（新格式）
-                    birdid_country_code = birdid_settings.get('country_code')
-                    
-                    # 兼容旧格式：如果没有 country_code，尝试从 selected_country 解析
-                    if not birdid_country_code:
-                        selected_country = birdid_settings.get('selected_country', '自动检测 (GPS)')
-                        if selected_country and selected_country != '自动检测 (GPS)':
-                            # 尝试从 "澳大利亚 (AU)" 格式中提取代码
-                            match = re.search(r'\(([A-Z]{2,3})\)', selected_country)
-                            if match:
-                                birdid_country_code = match.group(1)
-                            else:
-                                # V4.0.4: 名称到代码的映射（兼容旧设置文件）
-                                country_name_to_code = {
-                                    '澳大利亚': 'AU', '中国': 'CN', '美国': 'US',
-                                    '日本': 'JP', '英国': 'GB', '新西兰': 'NZ',
-                                    '加拿大': 'CA', '印度': 'IN', '德国': 'DE',
-                                    '法国': 'FR', '巴西': 'BR', '南非': 'ZA',
-                                    '韩国': 'KR', '台湾': 'TW', '香港': 'HK',
-                                    '新加坡': 'SG', '马来西亚': 'MY', '泰国': 'TH',
-                                    '印度尼西亚': 'ID', '菲律宾': 'PH', '意大利': 'IT',
-                                    '西班牙': 'ES', '荷兰': 'NL', '哥斯达黎加': 'CR',
-                                }
-                                birdid_country_code = country_name_to_code.get(selected_country.strip())
-                    
-                    # V4.0.4: 直接读取 region_code（新格式）
-                    birdid_region_code = birdid_settings.get('region_code')
-                    
-                    # 兼容旧格式：如果没有 region_code，尝试从 selected_region 解析
-                    if not birdid_region_code:
-                        selected_region = birdid_settings.get('selected_region', '整个国家')
-                        if selected_region and selected_region != '整个国家':
-                            match = re.search(r'\(([A-Z]{2}-[A-Z0-9]+)\)', selected_region)
-                            if match:
-                                birdid_region_code = match.group(1)
-        except Exception as e:
-            # BirdID 设置读取失败不影响主流程
-            # 使用默认值
-            birdid_use_ebird = True
-            birdid_country_code = None
-            birdid_region_code = None
+        # Task8: 直接从统一设置中心（get_advanced_config）读取国家/区域配置，
+        # 避免依赖已废弃的 birdid_dock_settings.json（_save_settings 已删除）。
+        # Task8: Read country/region config directly from the unified Settings Center
+        # (get_advanced_config) to avoid relying on the deprecated birdid_dock_settings.json
+        # (whose writer _save_settings was removed in Task 8).
+        _adv_birdid = get_advanced_config()
+        birdid_use_ebird = _adv_birdid.birdid_use_ebird
+        birdid_country_code = _adv_birdid.birdid_country_code
+        birdid_region_code = _adv_birdid.birdid_region_code
 
         settings = ProcessingSettings(
             ai_confidence=self.ui_settings[0],

@@ -940,6 +940,8 @@
     "country": "Country:",
     "region": "Region:",
     "results": "Results",
+    "settings_link": "Settings",
+    "settings_link_tooltip": "Open Bird ID Settings",
     "btn_select": "Select Image",
     "btn_write_exif": "Write EXIF",
     "toggle_dock": "Float/Dock",
