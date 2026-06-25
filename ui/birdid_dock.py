@@ -4,21 +4,25 @@
 Bird-identification dock panel.
 
 可停靠在主窗口边缘，负责识鸟入口（拖放/截图）与结果展示。
-配置（国家/区域/开关）统一由「统一设置中心」管理，面板只负责运行时 UI。
+面板内置数据源（eBird）、国家、区域快速控件；配置通过 advanced_config 统一持久化。
 Dockable beside the main window and responsible for BirdID entry (drop/screenshot)
-and result display. Configuration (country/region/toggle) is managed exclusively by the
-Settings Center; this panel only handles runtime UI.
+and result display. Built-in data-source (eBird), country, and region quick controls
+are provided; settings are persisted via advanced_config.
 """
 
+import json
 import os
+import re
 import sys
-from typing import Optional
+from collections import OrderedDict
+from typing import Any, Optional, cast
 
 from PySide6.QtWidgets import (
     QDockWidget, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QFrame, QScrollArea, QFileDialog,
-    QProgressBar, QSizePolicy,
-    QStackedWidget, QApplication
+    QProgressBar, QSizePolicy, QComboBox, QCheckBox,
+    QStackedWidget, QApplication,
+    QDialog, QListWidget, QDialogButtonBox, QListWidgetItem, QLineEdit,
 )
 from PySide6.QtCore import Qt, Signal, QThread, QTimer, QSize
 from PySide6.QtGui import QPixmap, QDragEnterEvent, QDropEvent
@@ -385,11 +389,25 @@ class BirdIDDockWidget(QDockWidget):
         self.current_image_path = None
         self.identify_results = None
 
+        # 加载区域数据（来自 core.region_data，供国家/区域下拉使用）
+        # Load region data (from core.region_data) for country/region combos
+        from core.region_data import load_regions_data
+        self.regions_data: dict = load_regions_data()
+
+        # 构建国家列表（有序字典 display_name→code）
+        # Build country list (ordered dict display_name→code)
+        self.country_list: dict = self._build_country_list()
+
         # 从 advanced_config 加载运行时设置（国家/区域/开关）
         # Load runtime settings (country/region/toggles) from advanced_config
         self.settings = self._load_settings()
 
+        # 防止刷新时回写的守卫标志 / Guard flag to prevent writes during refresh
+        self._applying_settings: bool = False
+        self._updating_regions: bool = False
+
         self._setup_ui()
+        self._apply_settings()
 
     def _setup_title_bar(self):
         """创建自定义标题栏 - 标题靠左，按钮靠右"""
@@ -529,6 +547,87 @@ class BirdIDDockWidget(QDockWidget):
                 self._float_btn.setIcon(load_tinted_icon("move-up-right.svg", ICON_IDLE, 14))  # 停靠中 → 可弹出
                 self._float_btn.setToolTip(self.i18n.t("birdid.float_panel"))
 
+    # ------------------------------------------------------------------
+    # 国家/区域数据与下拉填充 / Country & region data + combo population
+    # ------------------------------------------------------------------
+
+    def _build_country_list(self) -> dict:
+        """
+        构建有序国家列表字典 {显示名 → 国家代码}。
+        顺序：自动GPS / 全球 / 分隔符 / Top10 / 分隔符 / 更多国家。
+        Build ordered country list dict {display_name → country_code}.
+        Order: Auto-GPS / Global / separator / Top10 / separator / More.
+
+        返回 / Returns:
+            OrderedDict: display_name(str) → code(str or None)
+        """
+        t = self.i18n.t
+        is_english = self.i18n.current_lang.startswith('en')
+
+        country_list: dict = OrderedDict()
+
+        country_list[t("birdid.country_auto_gps")] = None
+        country_list[t("birdid.country_global")] = "GLOBAL"
+        country_list["─" * 15] = "SEP1"
+
+        top10_codes = ['AU', 'BR', 'CN', 'GB', 'HK', 'ID', 'JP', 'MY', 'TW', 'US']
+        top10_i18n = {
+            'AU': 'birdid.country_au',
+            'BR': 'birdid.country_br',
+            'CN': 'birdid.country_cn',
+            'GB': 'birdid.country_gb',
+            'HK': 'birdid.country_hk',
+            'ID': 'birdid.country_id',
+            'JP': 'birdid.country_jp',
+            'MY': 'birdid.country_my',
+            'TW': 'birdid.country_tw',
+            'US': 'birdid.country_us',
+        }
+
+        # 建立 code→region 快速查找 / Quick lookup code→region
+        code_to_region: dict = {}
+        for region in self.regions_data.get('countries', []):
+            code_to_region[region.get('code')] = region
+
+        for code in top10_codes:
+            i18n_key = top10_i18n.get(code)
+            if i18n_key:
+                display_name = t(i18n_key)
+            else:
+                region = code_to_region.get(code, {})
+                if is_english:
+                    display_name = region.get('name', code)
+                else:
+                    display_name = region.get('name_cn') or region.get('name', code)
+            country_list[display_name] = code
+
+        country_list["─" * 15 + " "] = "SEP2"
+        country_list[t("birdid.country_more")] = "MORE"
+
+        return country_list
+
+    def _populate_country_combo(self) -> None:
+        """
+        填充国家下拉菜单并禁用分隔符项。
+        Populate the country combo box and disable separator entries.
+        """
+        from PySide6.QtGui import QStandardItem
+
+        self.country_combo.clear()
+        for display_name, code in self.country_list.items():
+            self.country_combo.addItem(display_name)
+            if code in ("SEP1", "SEP2"):
+                idx = self.country_combo.count() - 1
+                model = cast(Any, self.country_combo.model())
+                item = model.item(idx)
+                if item:
+                    item.setEnabled(False)
+                    item.setSelectable(False)
+
+    # ------------------------------------------------------------------
+    # 设置加载 / Settings loading
+    # ------------------------------------------------------------------
+
     def _load_settings(self) -> dict:
         """
         从 advanced_config 读取识鸟配置，组装运行时 settings dict。
@@ -554,20 +653,34 @@ class BirdIDDockWidget(QDockWidget):
 
     def reload_from_config(self) -> None:
         """
-        从 advanced_config 重新加载设置（设置中心关闭后由主窗口调用）。
-        Re-load settings from advanced_config (called by main window after
-        Settings Center closes).
+        从 advanced_config 重新加载设置并刷新面板上的国家/区域/数据源控件。
+        由主窗口在设置中心关闭后调用，实现双向同步。
+        Re-load settings from advanced_config and refresh country/region/datasource
+        widgets on the panel. Called by main window after Settings Center closes
+        to keep both UIs in sync.
         """
         self.settings = self._load_settings()
-        # 更新面板上的区域摘要标签
-        # Update the location summary label on the panel
-        if hasattr(self, "_location_label"):
-            self._update_location_label()
+        # 用守卫避免刷新控件时触发回写 advanced_config
+        # Guard prevents re-saving to advanced_config while refreshing widgets
+        self._applying_settings = True
+        try:
+            if hasattr(self, "ebird_checkbox"):
+                self.ebird_checkbox.setChecked(self.settings.get("use_ebird", True))
+            if hasattr(self, "country_combo") and hasattr(self, "region_combo"):
+                self._apply_settings()
+                return  # _apply_settings already resets _applying_settings via QTimer
+        finally:
+            # _apply_settings 通过 QTimer 延迟复位 _applying_settings，
+            # 仅在没有调用 _apply_settings 时才在这里复位。
+            # _apply_settings resets the flag via QTimer; only reset here if not called.
+            if not hasattr(self, "country_combo"):
+                self._applying_settings = False
 
     def _update_location_label(self) -> None:
         """
-        用当前 settings 中的国家/区域信息更新面板顶部的摘要标签。
-        Update the top-of-panel summary label with current country/region from settings.
+        （已保留用于向后兼容）用当前 settings 更新面板顶部的摘要标签（如存在）。
+        (Kept for backward compatibility) Update the top-of-panel summary label
+        with current settings if the label widget exists.
         """
         if not hasattr(self, "_location_label"):
             return
@@ -584,10 +697,9 @@ class BirdIDDockWidget(QDockWidget):
 
     def _setup_ui(self):
         """
-        构建识别面板 UI（仅保留运行时控件：拖放区、预览、结果、设置链接）。
-        Build the identify panel UI (runtime controls only: drop area, preview,
-        results, and settings link). Configuration widgets have been removed —
-        country/region/toggle are managed by the Settings Center.
+        构建识别面板 UI（含数据源/国家/区域快速控件、拖放区、预览、结果）。
+        Build the identify panel UI (data-source/country/region quick controls,
+        drop area, preview, results).
         """
         container = QWidget()
         container.setStyleSheet(f"background-color: {COLORS['bg_void']};")
@@ -604,47 +716,98 @@ class BirdIDDockWidget(QDockWidget):
         identify_layout.setContentsMargins(0, 0, 0, 0)
         identify_layout.setSpacing(12)
 
-        # 设置入口行：左侧显示当前区域，右侧「设置」按钮跳转设置中心
-        # Settings row: shows current region on the left, "Settings" button on the right
-        settings_row = QHBoxLayout()
-        settings_row.setContentsMargins(0, 0, 0, 0)
-        settings_row.setSpacing(6)
-
-        self._location_label = QLabel()
-        self._location_label.setStyleSheet(f"""
-            color: {COLORS['text_tertiary']};
-            font-size: 11px;
-            background: transparent;
-        """)
-        self._update_location_label()
-        settings_row.addWidget(self._location_label, 1)
-
-        self._settings_btn = QPushButton(self.i18n.t("birdid.settings_link"))
-        self._settings_btn.setIcon(load_tinted_icon("gem.svg", ICON_IDLE, 13))
-        self._settings_btn.setIconSize(QSize(13, 13))
-        self._settings_btn.setToolTip(self.i18n.t("birdid.settings_link_tooltip"))
-        self._settings_btn.setCursor(POINTING_HAND_CURSOR)
-        self._settings_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent;
-                border: none;
-                color: {COLORS['text_tertiary']};
-                font-size: 11px;
-                padding: 2px 4px;
+        # ── 区域快速控件 filter_frame ────────────────────────────────────────
+        # Region quick controls: data source (eBird checkbox) + country + region
+        # ─────────────────────────────────────────────────────────────────────
+        _combo_style = f"""
+            QComboBox {{
+                background-color: {COLORS['bg_input']};
+                border: 1px solid {COLORS['border_subtle']};
                 border-radius: 4px;
+                padding: 4px 8px;
+                color: {COLORS['text_secondary']};
+                font-size: 11px;
             }}
-            QPushButton:hover {{
-                background-color: {COLORS['bg_card']};
-                color: {COLORS['accent']};
+            QComboBox:hover {{ border-color: {COLORS['accent']}; }}
+            QComboBox::drop-down {{ border: none; }}
+            QComboBox QAbstractItemView {{
+                background-color: {COLORS['bg_elevated']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 6px;
+                color: {COLORS['text_primary']};
+                selection-background-color: {COLORS['accent_dim']};
+                selection-color: {COLORS['accent']};
+                outline: none;
+            }}
+            QComboBox QAbstractItemView::item {{
+                padding: 5px 8px;
+                min-height: 22px;
+            }}
+            QComboBox QAbstractItemView::item:disabled {{
+                color: {COLORS['border']};
+                background: transparent;
+            }}
+        """
+
+        filter_frame = QFrame()
+        filter_frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {COLORS['bg_elevated']};
+                border-radius: 8px;
+                padding: 8px;
             }}
         """)
-        self._settings_btn.clicked.connect(
-            lambda: self.open_settings_requested.emit("birdid")
+        filter_layout = QVBoxLayout(filter_frame)
+        filter_layout.setContentsMargins(8, 8, 8, 8)
+        filter_layout.setSpacing(6)
+
+        # ── 国家选择行 / Country row ──────────────────────────────────────────
+        country_row = QHBoxLayout()
+        country_label = QLabel(self.i18n.t("birdid.country"))
+        country_label.setStyleSheet(
+            f"color: {COLORS['text_tertiary']}; font-size: 11px;"
         )
-        settings_row.addWidget(self._settings_btn)
+        country_row.addWidget(country_label)
 
-        identify_layout.addLayout(settings_row)
+        self.country_combo = QComboBox()
+        self._populate_country_combo()
+        self.country_combo.setStyleSheet(_combo_style)
+        self.country_combo.currentTextChanged.connect(self._on_country_changed)
+        country_row.addWidget(self.country_combo, 1)
+        filter_layout.addLayout(country_row)
 
+        # ── 区域选择行（州级国家才显示）/ Region row (only for AU/US/CN) ──────
+        self._region_row = QWidget()
+        self._region_row.setStyleSheet("background: transparent;")
+        region_row_layout = QHBoxLayout(self._region_row)
+        region_row_layout.setContentsMargins(0, 0, 0, 0)
+        region_row_layout.setSpacing(6)
+
+        self._region_label = QLabel(self.i18n.t("birdid.region"))
+        self._region_label.setStyleSheet(
+            f"color: {COLORS['text_tertiary']}; font-size: 11px;"
+        )
+        region_row_layout.addWidget(self._region_label)
+
+        self.region_combo = QComboBox()
+        self.region_combo.addItem(self.i18n.t("birdid.region_entire_country"))
+        self.region_combo.setStyleSheet(_combo_style)
+        self.region_combo.currentTextChanged.connect(self._on_region_changed)
+        region_row_layout.addWidget(self.region_combo, 1)
+
+        self._region_row.hide()
+        filter_layout.addWidget(self._region_row)
+
+        # ── eBird 数据源 checkbox（隐藏，通过 advanced_config 控制）───────────
+        # eBird datasource checkbox; hidden by default but kept for settings sync
+        self.ebird_checkbox = QCheckBox()
+        self.ebird_checkbox.setChecked(True)
+        self.ebird_checkbox.hide()
+        self.ebird_checkbox.stateChanged.connect(self._on_ebird_changed)
+
+        identify_layout.addWidget(filter_frame)
+
+        # ── 拖放区 / Drop area ────────────────────────────────────────────────
         self.drop_area = DropArea()
         self.drop_area.fileDropped.connect(self.on_file_dropped)
         identify_layout.addWidget(self.drop_area)
@@ -812,6 +975,390 @@ class BirdIDDockWidget(QDockWidget):
 
         self.setWidget(container)
 
+    # ------------------------------------------------------------------
+    # 设置应用与保存 / Apply settings & save
+    # ------------------------------------------------------------------
+
+    def _apply_settings(self) -> None:
+        """
+        将 self.settings 中的国家/区域/eBird 值回填到对应控件。
+        使用 _applying_settings=True 守卫，防止控件变更触发回写。
+        Apply country/region/eBird values from self.settings to the widgets.
+        Uses _applying_settings=True guard to prevent widget-change callbacks
+        from writing back to advanced_config during the refresh.
+
+        参数 / Parameters: (none)
+        返回 / Returns: None
+        """
+        self._applying_settings = True
+
+        # 填充 eBird checkbox
+        # Populate eBird checkbox
+        self.ebird_checkbox.setChecked(self.settings.get("use_ebird", True))
+
+        country_code = self.settings.get("country_code")
+        saved_country = self.settings.get(
+            "selected_country", self.i18n.t("birdid.country_auto_gps")
+        )
+
+        matched = False
+        # 优先按 code 匹配（支持 reload 后 top10 显示名语言切换）
+        # Prefer matching by code (handles language-switched display names after reload)
+        if country_code:
+            for display_name, code in self.country_list.items():
+                if code == country_code:
+                    idx = self.country_combo.findText(display_name)
+                    if idx >= 0:
+                        self.country_combo.setCurrentIndex(idx)
+                        matched = True
+                    break
+
+        if not matched:
+            idx = self.country_combo.findText(saved_country)
+            if idx >= 0:
+                self.country_combo.setCurrentIndex(idx)
+            elif country_code and country_code not in (None, "GLOBAL", "MORE"):
+                # 非 Top10 国家：动态插入到「更多国家」前
+                # Non-Top10 country: insert dynamically before "More countries"
+                for country in self.regions_data.get("countries", []):
+                    if country.get("code") == country_code:
+                        display_name = saved_country or country.get("name_cn") or country.get("name")
+                        t = self.i18n.t
+                        more_idx = self.country_combo.findText(t("birdid.country_more"))
+                        if more_idx >= 0:
+                            self.country_combo.insertItem(more_idx, display_name)
+                            self.country_list[display_name] = country_code
+                            self.country_combo.setCurrentText(display_name)
+                        break
+
+        saved_region = self.settings.get(
+            "selected_region", self.i18n.t("birdid.region_entire_country")
+        )
+        # 延迟 100 ms 等 _on_country_changed 完成区域填充后再设置区域
+        # Delay 100ms so _on_country_changed finishes populating regions first
+        QTimer.singleShot(100, lambda: self._apply_saved_region(saved_region))
+
+    def _apply_saved_region(self, saved_region: str) -> None:
+        """
+        在区域下拉填充完毕后选中已保存的区域，随后复位 _applying_settings 守卫。
+        Select the previously saved region in the region combo after it has been
+        populated, then reset the _applying_settings guard.
+
+        参数 / Parameters:
+            saved_region (str): 要选中的区域显示名称 / Region display name to select.
+        返回 / Returns: None
+        """
+        idx = self.region_combo.findText(saved_region)
+        if idx >= 0:
+            self.region_combo.setCurrentIndex(idx)
+        self._applying_settings = False
+
+    def _save_to_advanced_config(self) -> None:
+        """
+        将面板当前国家/区域/eBird 状态写入 advanced_config（单一事实源）。
+        Save the panel's current country/region/eBird state to advanced_config
+        (single source of truth). Does NOT write any JSON file directly.
+
+        参数 / Parameters: (none)
+        返回 / Returns: None
+        """
+        from advanced_config import get_advanced_config
+
+        use_ebird: bool = self.ebird_checkbox.isChecked()
+
+        country_display: str = self.country_combo.currentText()
+        country_code = self.country_list.get(country_display)
+        # 分隔符/特殊条目不写入
+        # Separators/special entries are not persisted
+        if country_code in ("SEP1", "SEP2", "MORE"):
+            return
+
+        region_display: str = self.region_combo.currentText()
+        region_code: Optional[str] = None
+        t_entire = self.i18n.t("birdid.region_entire_country")
+        if region_display and region_display != t_entire:
+            m = re.search(r"\(([A-Z]{2}-[A-Z0-9]+)\)", region_display)
+            if m:
+                region_code = m.group(1)
+
+        # 同步更新 self.settings 缓存
+        # Update self.settings cache to keep pipeline in sync
+        self.settings = {
+            "use_ebird": use_ebird,
+            "auto_identify": self.settings.get("auto_identify", False),
+            "selected_country": country_display,
+            "country_code": country_code,
+            "selected_region": region_display,
+            "region_code": region_code,
+        }
+
+        get_advanced_config().set_birdid_region(
+            use_ebird,
+            country_code,
+            country_display,
+            region_code,
+            region_display,
+        )
+
+    # ------------------------------------------------------------------
+    # 控件事件处理 / Widget event handlers
+    # ------------------------------------------------------------------
+
+    def _on_ebird_changed(self, _state: int) -> None:
+        """
+        eBird checkbox 状态变化 → 写入 advanced_config。
+        eBird checkbox state change → write to advanced_config.
+
+        参数 / Parameters:
+            _state (int): Qt checkbox state (unused; read directly from widget).
+        返回 / Returns: None
+        """
+        if getattr(self, "_applying_settings", False):
+            return
+        self._save_to_advanced_config()
+
+    def _on_country_changed(self, country_display: str) -> None:
+        """
+        国家下拉变更：若选「更多国家」则弹窗；否则填充区域下拉并决定是否显示区域行。
+        Country combo changed: show more-countries dialog if "More" selected;
+        otherwise populate region combo and show/hide region row.
+
+        参数 / Parameters:
+            country_display (str): 下拉当前选中项文本 / Currently selected combo text.
+        返回 / Returns: None
+        """
+        country_code = self.country_list.get(country_display)
+
+        # 分隔符不处理 / Separators are no-ops
+        if country_code in ("SEP1", "SEP2"):
+            return
+
+        # 「更多国家」→ 弹出对话框
+        # "More countries" → show dialog
+        if country_code == "MORE":
+            self._show_more_countries_dialog()
+            return
+
+        self._updating_regions = True
+
+        self.region_combo.clear()
+        self.region_combo.addItem(self.i18n.t("birdid.region_entire_country"))
+
+        # 仅 AU/US/CN 显示州/省级区域行
+        # Only AU / US / CN show the state/province region row
+        _STATE_COUNTRIES = {"AU", "US", "CN"}
+        is_english = self.i18n.current_lang.startswith("en")
+
+        show_region = False
+        if country_code and country_code not in (None, "GLOBAL"):
+            for country in self.regions_data.get("countries", []):
+                if country.get("code") == country_code:
+                    if country.get("has_regions") and country.get("regions"):
+                        for region in country["regions"]:
+                            r_code = region.get("code", "")
+                            if is_english:
+                                r_name = region.get("name", r_code)
+                            else:
+                                r_name = region.get("name_cn") or region.get("name", r_code)
+                            self.region_combo.addItem(f"{r_name} ({r_code})")
+                        show_region = country_code in _STATE_COUNTRIES
+                    break
+
+        if hasattr(self, "_region_row"):
+            self._region_row.setVisible(show_region)
+
+        self._updating_regions = False
+
+        if not getattr(self, "_applying_settings", False):
+            self._save_to_advanced_config()
+
+    def _on_region_changed(self, _region_display: str) -> None:
+        """
+        区域下拉变更 → 写入 advanced_config（如不在填充/应用流程中）。
+        Region combo changed → write to advanced_config (unless refreshing).
+
+        参数 / Parameters:
+            _region_display (str): 新选中区域文本（未使用，读取 widget 值）/
+                                   Newly selected text (unused; widget value is read).
+        返回 / Returns: None
+        """
+        if getattr(self, "_updating_regions", False) or getattr(self, "_applying_settings", False):
+            return
+        self._save_to_advanced_config()
+
+    def _show_more_countries_dialog(self) -> None:
+        """
+        弹出「更多国家」对话框：展示完整国家列表（含搜索框）。
+        选中后将该国家插入下拉菜单（若不在 top10 中）并设为当前选中项。
+        Show the "More countries" dialog with a full searchable country list.
+        On confirm, inserts the chosen country into the combo (if not already
+        in top10) and sets it as the current selection.
+
+        参数 / Parameters: (none)
+        返回 / Returns: None
+        """
+        t = self.i18n.t
+        is_english = self.i18n.current_lang.startswith("en")
+
+        top10_codes = {"AU", "BR", "CN", "GB", "HK", "ID", "JP", "MY", "TW", "US", "GLOBAL"}
+        continent_codes = {"AF", "AS", "EU", "NA", "SA", "OC"}
+
+        continent_i18n = {
+            "AF": "birdid.continent_af",
+            "AS": "birdid.continent_as",
+            "EU": "birdid.continent_eu",
+            "NA": "birdid.continent_na",
+            "SA": "birdid.continent_sa",
+            "OC": "birdid.continent_oc",
+        }
+
+        other_country_i18n = {
+            "AR": "birdid.country_ar", "CA": "birdid.country_ca",
+            "CH": "birdid.country_ch", "CL": "birdid.country_cl",
+            "CO": "birdid.country_co", "CR": "birdid.country_cr",
+            "DE": "birdid.country_de", "EC": "birdid.country_ec",
+            "EG": "birdid.country_eg", "ES": "birdid.country_es",
+            "FI": "birdid.country_fi", "FR": "birdid.country_fr",
+            "GR": "birdid.country_gr", "IN": "birdid.country_in",
+            "IT": "birdid.country_it", "KE": "birdid.country_ke",
+            "KR": "birdid.country_kr", "LK": "birdid.country_lk",
+            "MA": "birdid.country_ma", "MG": "birdid.country_mg",
+            "MN": "birdid.country_mn", "MX": "birdid.country_mx",
+            "NL": "birdid.country_nl", "NO": "birdid.country_no",
+            "NP": "birdid.country_np", "NZ": "birdid.country_nz",
+            "PE": "birdid.country_pe", "PH": "birdid.country_ph",
+            "PL": "birdid.country_pl", "PT": "birdid.country_pt",
+            "RU": "birdid.country_ru", "SE": "birdid.country_se",
+            "SG": "birdid.country_sg", "TH": "birdid.country_th",
+            "TZ": "birdid.country_tz", "UA": "birdid.country_ua",
+            "VN": "birdid.country_vn", "ZA": "birdid.country_za",
+        }
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle(t("birdid.country_dialog_title"))
+        dialog.setMinimumSize(320, 450)
+        dialog.setStyleSheet(f"""
+            QDialog {{
+                background-color: {COLORS['bg_primary']};
+            }}
+            QLineEdit {{
+                background-color: {COLORS['bg_input']};
+                border: 1px solid {COLORS['border_subtle']};
+                border-radius: 6px;
+                padding: 8px;
+                color: {COLORS['text_primary']};
+                font-size: 13px;
+            }}
+            QLineEdit:focus {{
+                border-color: {COLORS['accent']};
+            }}
+            QListWidget {{
+                background-color: {COLORS['bg_elevated']};
+                border: 1px solid {COLORS['border_subtle']};
+                border-radius: 6px;
+                color: {COLORS['text_primary']};
+                font-size: 13px;
+            }}
+            QListWidget::item {{
+                padding: 8px;
+            }}
+            QListWidget::item:selected {{
+                background-color: {COLORS['accent']};
+                color: {COLORS['bg_void']};
+            }}
+        """)
+
+        dlg_layout = QVBoxLayout(dialog)
+        dlg_layout.setContentsMargins(12, 12, 12, 12)
+        dlg_layout.setSpacing(8)
+
+        # 搜索框 / Search input
+        search_input = QLineEdit()
+        search_input.setPlaceholderText(t("birdid.search_country_placeholder"))
+        dlg_layout.addWidget(search_input)
+
+        list_widget = QListWidget()
+
+        # 收集并排序除 Top10 外的国家/大洲
+        # Collect and sort countries/continents outside Top10
+        other_regions: list = []
+        for region in self.regions_data.get("countries", []):
+            code = region.get("code", "")
+            if code in top10_codes:
+                continue
+            name_en = region.get("name", code)
+            name_cn = region.get("name_cn", "")
+            if code in continent_codes:
+                i18n_key = continent_i18n.get(code)
+                if i18n_key:
+                    base_name = t(i18n_key)
+                else:
+                    base_name = name_cn if not is_english and name_cn else name_en
+                display = f"🌍 {base_name}"
+            else:
+                i18n_key = other_country_i18n.get(code)
+                if i18n_key:
+                    display = t(i18n_key)
+                else:
+                    display = name_cn if not is_english and name_cn else name_en
+            other_regions.append((name_en.lower(), display, code, name_en))
+
+        other_regions.sort(key=lambda x: x[0])
+
+        for _, display, code, name_en in other_regions:
+            item = QListWidgetItem(display)
+            item.setData(USER_ROLE, code)
+            item.setData(USER_ROLE + 1, name_en)  # 用于搜索 / For search
+            list_widget.addItem(item)
+
+        dlg_layout.addWidget(list_widget)
+
+        def _filter(text: str) -> None:
+            text = text.lower()
+            for i in range(list_widget.count()):
+                it = list_widget.item(i)
+                visible = (
+                    text in it.text().lower()
+                    or text in (it.data(USER_ROLE + 1) or "").lower()
+                )
+                it.setHidden(not visible)
+
+        search_input.textChanged.connect(_filter)
+
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        button_box.accepted.connect(dialog.accept)
+        button_box.rejected.connect(dialog.reject)
+        dlg_layout.addWidget(button_box)
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            selected = list_widget.currentItem()
+            if selected:
+                code_data = selected.data(USER_ROLE)
+                if not isinstance(code_data, str):
+                    return
+                display = selected.text()
+                existing = [
+                    self.country_combo.itemText(i)
+                    for i in range(self.country_combo.count())
+                ]
+                if display not in existing:
+                    idx = self.country_combo.findText(t("birdid.country_more"))
+                    if idx >= 0:
+                        self.country_combo.insertItem(idx, display)
+                        self.country_list[display] = code_data
+                self.country_combo.setCurrentText(display)
+        else:
+            # 取消 → 恢复上次保存的国家
+            # Cancel → restore last saved country
+            saved = self.settings.get(
+                "selected_country", t("birdid.country_auto_gps")
+            )
+            self.country_combo.setCurrentText(saved)
+
+    # ------------------------------------------------------------------
 
     def _show_qimage_preview(self, qimage):
         from PySide6.QtGui import QImage
