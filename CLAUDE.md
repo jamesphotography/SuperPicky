@@ -18,6 +18,21 @@ Use `scripts_dev/AI_CODING_RULES.md` as the single source of truth for this repo
 - For `.spec` changes: packaged startup smoke test.
 - For DB/threading changes: run a small multi-thread write/read stress check and confirm no transaction-state errors.
 
+## 设置中心架构 / Settings Center Architecture
+
+所有用户设置统一由「设置中心」管理。改动任何设置相关代码前必读以下约定（违反这些约定正是本次重构前的混乱根源）：
+All user settings are managed by the unified Settings Center. Read these conventions before touching any settings code:
+
+- **单一事实源 / SSOT**：`advanced_config`（`advanced_config.json`）是所有设置的唯一存储。新增设置项 = 在 `DEFAULT_CONFIG` 加字段 + 加 `@property`/`set_*`；**setter 的 clamp 范围必须与 UI 控件范围一致**。**禁止**再引入独立 json 或控件本地状态。
+  `advanced_config` is the only store. Add a setting via DEFAULT_CONFIG + property/setter; the setter's clamp range MUST match the UI widget range. Never add separate json files or widget-local state.
+- **设置中心 / Settings Center**：`ui/settings_center.py` 的 `SettingsCenter`（左侧分类导航 + 右侧 6 页：精选/识鸟/输出/视频/外部应用/关于）。主窗口经 `_open_settings_center(start_page)` 打开；关闭后调用 `_refresh_skill_chip()` + `_refresh_param_panel()` 刷新首页。
+- **首页快速面板 / Home quick panel**：`main_window._create_parameters_section`（2 滑块：锐度/美学 + 3 开关：飞行/连拍/识鸟）是 `advanced_config` 的快捷编辑器，与设置中心**双向同步**。两处编辑同一字段，**滑块范围必须一致且对齐 setter clamp**——否则会静默截断或默认值漂移（已踩坑：锐度 100-600、美学 0-70）。
+- **技能等级 / Skill level**：用 `core.skill_presets`（无 Qt 依赖）做 档↔阈值 换算。手动改阈值 → `skill_level="custom"` 并同步 `custom_sharpness`/`custom_aesthetics`（精选页与首页都遵循此协同，避免 GUI/CLI 路径发散）。
+- **开关样式 / Checkbox style**：统一用 `ui.icon_utils.checkbox_indicator_qss`（圆圈=未选 / 带勾圆圈=选中），勿用全局默认方块。
+- **识鸟设置 / BirdID**：`birdid_*` 字段在 `advanced_config`；启动时 `migrate_birdid_dock_settings()` 从旧 `birdid_dock_settings.json` 幂等迁移（接线在 `main.py`）；区域数据加载用 `core/region_data.py`；识鸟面板 `birdid_dock` 只负责运行时 UI（选图/截图/结果）。
+- **已删除 / Removed**：`ui/about_dialog.py`、`ui/advanced_settings_dialog.py`（内容并入设置中心）。`ui/skill_level_dialog.py` 仅保留被复用的 `SkillLevelCard`/`SkillLevelSelector`/`get_skill_level_thresholds`。
+- 设计与计划文档 / Design & plan docs：`docs/specs/2026-06-24-settings-center-design.md`、`docs/plans/2026-06-24-settings-center.md`。
+
 ## 第一性原理 / First Principles
 
 请使用第一性原理思考。你不能总是假设我非常清楚自己想要什么和该怎么得到。请保持审慎，从原始需求和问题出发，如果动机和目标不清晰，停下来和我讨论。
