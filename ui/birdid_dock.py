@@ -10,7 +10,6 @@ and result display. Built-in data-source (eBird), country, and region quick cont
 are provided; settings are persisted via advanced_config.
 """
 
-import json
 import os
 import re
 import sys
@@ -664,8 +663,7 @@ class BirdIDDockWidget(QDockWidget):
         # Guard prevents re-saving to advanced_config while refreshing widgets
         self._applying_settings = True
         try:
-            if hasattr(self, "ebird_checkbox"):
-                self.ebird_checkbox.setChecked(self.settings.get("use_ebird", True))
+            # _apply_settings 会刷新 数据源/国家/区域 全部控件 / refreshes all controls
             if hasattr(self, "country_combo") and hasattr(self, "region_combo"):
                 self._apply_settings()
                 return  # _apply_settings already resets _applying_settings via QTimer
