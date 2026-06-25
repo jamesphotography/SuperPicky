@@ -40,7 +40,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ui.icon_utils import ICON_ACTIVE, ICON_IDLE, load_tinted_icon  # noqa: F401
+from ui.icon_utils import ICON_ACTIVE, ICON_IDLE, load_tinted_icon, checkbox_indicator_qss  # noqa: F401
 from ui.styles import COLORS  # noqa: F401
 
 # ── 常量 / Constants ──────────────────────────────────────────────────────────
@@ -139,6 +139,19 @@ class SettingsCenter(QDialog):
         self.show_page(start_page)
 
     # ── 页面构建 / Page construction ─────────────────────────────────────────
+
+    def _checkbox_qss(self) -> str:
+        """设置中心统一开关样式:文字 + 圆圈(未选)/带勾圆圈(选中),与首页快速面板一致。
+        统一为圆圈+勾,替代全局默认的「方块选中全绿」(不直观,易被忽略)。
+
+        Unified checkbox style: text + circle (unchecked) / checked-circle indicator,
+        matching the home quick-panel; replaces the global square-checkbox look.
+        """
+        return (
+            f"QCheckBox {{ color: {COLORS['text_secondary']}; font-size: 12px;"
+            f" background: transparent; }}"
+            + checkbox_indicator_qss(16, COLORS['text_muted'], COLORS['accent'])
+        )
 
     def _build_page(self, key: str) -> QWidget:
         """
@@ -329,13 +342,13 @@ class SettingsCenter(QDialog):
         # 飞鸟检测 / Flight detection
         self._cull_flight = QCheckBox(self.i18n.t("settings.culling_flight_label"))
         self._cull_flight.setChecked(cfg.flight_check)
-        self._cull_flight.setStyleSheet(f"color:{COLORS['text_secondary']};font-size:12px;")
+        self._cull_flight.setStyleSheet(self._checkbox_qss())
         lay.addWidget(self._cull_flight)
 
         # 连拍检测 / Burst detection
         self._cull_burst = QCheckBox(self.i18n.t("settings.culling_burst_label"))
         self._cull_burst.setChecked(cfg.burst_check)
-        self._cull_burst.setStyleSheet(f"color:{COLORS['text_secondary']};font-size:12px;")
+        self._cull_burst.setStyleSheet(self._checkbox_qss())
         lay.addWidget(self._cull_burst)
 
         # 连拍速度 / Burst FPS
@@ -411,9 +424,7 @@ class SettingsCenter(QDialog):
 
         self._bid_auto = QCheckBox(self.i18n.t("settings.birdid_auto_label"))
         self._bid_auto.setChecked(cfg.birdid_auto_identify)
-        self._bid_auto.setStyleSheet(
-            f"color:{COLORS['text_secondary']};font-size:12px;"
-        )
+        self._bid_auto.setStyleSheet(self._checkbox_qss())
         lay.addWidget(self._bid_auto)
 
         # ── 置信度滑块 / Confidence slider (range 30-95, mirrors set_birdid_confidence clamp) ──
@@ -1027,9 +1038,7 @@ class SettingsCenter(QDialog):
         # 保留预览图 / Keep preview files
         self._keep_temp_files = QCheckBox(self.i18n.t("advanced_settings.keep_preview"))
         self._keep_temp_files.setChecked(cfg.keep_temp_files)
-        self._keep_temp_files.setStyleSheet(
-            f"color:{COLORS['text_secondary']};font-size:12px;"
-        )
+        self._keep_temp_files.setStyleSheet(self._checkbox_qss())
         lay.addWidget(self._keep_temp_files)
 
         keep_hint = QLabel(self.i18n.t("advanced_settings.keep_preview_hint"))
@@ -1043,9 +1052,7 @@ class SettingsCenter(QDialog):
             self.i18n.t("advanced_settings.completion_sound")
         )
         self._completion_sound.setChecked(cfg.completion_sound_enabled)
-        self._completion_sound.setStyleSheet(
-            f"color:{COLORS['text_secondary']};font-size:12px;"
-        )
+        self._completion_sound.setStyleSheet(self._checkbox_qss())
         lay.addWidget(self._completion_sound)
 
         sound_hint = QLabel(self.i18n.t("advanced_settings.completion_sound_hint"))
@@ -1059,9 +1066,7 @@ class SettingsCenter(QDialog):
             self.i18n.t("advanced_settings.detail_metadata_for_rejected")
         )
         self._detail_meta_for_rejected.setChecked(cfg.get_detail_metadata_for_rejected())
-        self._detail_meta_for_rejected.setStyleSheet(
-            f"color:{COLORS['text_secondary']};font-size:12px;"
-        )
+        self._detail_meta_for_rejected.setStyleSheet(self._checkbox_qss())
         lay.addWidget(self._detail_meta_for_rejected)
 
         detail_hint = QLabel(self.i18n.t("advanced_settings.detail_metadata_hint"))
@@ -1165,9 +1170,7 @@ class SettingsCenter(QDialog):
         # ── 总开关区 / Master toggle section ─────────────────────────────────
         self._video_auto_check = QCheckBox(self.i18n.t("video_opts.enable_checkbox"))
         self._video_auto_check.setChecked(bool(raw.get("video_auto_process_in_main", True)))
-        self._video_auto_check.setStyleSheet(
-            f"color:{COLORS['text_secondary']};font-size:12px;"
-        )
+        self._video_auto_check.setStyleSheet(self._checkbox_qss())
         self._video_auto_check.setToolTip(self.i18n.t("video_opts.enable_tooltip"))
         lay.addWidget(self._video_auto_check)
 
@@ -1291,18 +1294,14 @@ class SettingsCenter(QDialog):
         # 鸟种识别开关 / Species ID toggle
         self._video_species_id = QCheckBox(self.i18n.t("video_opts.birdid_checkbox"))
         self._video_species_id.setChecked(bool(raw.get("video_enable_species_id", True)))
-        self._video_species_id.setStyleSheet(
-            f"color:{COLORS['text_secondary']};font-size:12px;"
-        )
+        self._video_species_id.setStyleSheet(self._checkbox_qss())
         self._video_species_id.setToolTip(self.i18n.t("video_opts.birdid_tooltip"))
         lay.addWidget(self._video_species_id)
 
         # 飞行检测开关 / Flight detection toggle
         self._video_flight = QCheckBox(self.i18n.t("video_opts.flight_checkbox"))
         self._video_flight.setChecked(bool(raw.get("video_enable_flight", True)))
-        self._video_flight.setStyleSheet(
-            f"color:{COLORS['text_secondary']};font-size:12px;"
-        )
+        self._video_flight.setStyleSheet(self._checkbox_qss())
         self._video_flight.setToolTip(self.i18n.t("video_opts.flight_tooltip"))
         lay.addWidget(self._video_flight)
 
