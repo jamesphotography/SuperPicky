@@ -245,10 +245,10 @@
     "poor_quality": "  0⭐ 质量差: {reason} (AI:{confidence:.2f}{iqa_text})",
     "yolo_inference": "  ⏱️  [2/7] YOLO推理: {time:.1f}ms",
     "result_parsing": "  ⏱️  [3/7] 结果解析: {time:.1f}ms",
-    "nima_score": "🎨 NIMA 美学评分: {score:.2f} / 10",
-    "nima_timing": "  ⏱️  [4/7] NIMA评分: {time:.1f}ms",
-    "nima_failed": "⚠️  NIMA 计算失败: {error}",
-    "nima_timing_failed": "  ⏱️  [4/7] NIMA评分(失败): {time:.1f}ms",
+    "nima_score": "🎨 TOPIQ 美学评分: {score:.2f} / 10",
+    "nima_timing": "  ⏱️  [4/7] TOPIQ评分: {time:.1f}ms",
+    "nima_failed": "⚠️  TOPIQ 计算失败: {error}",
+    "nima_timing_failed": "  ⏱️  [4/7] TOPIQ评分(失败): {time:.1f}ms",
     "brisque_score": "🔧 BRISQUE 技术质量: {score:.2f} / 100 (越低越好)",
     "brisque_timing": "  ⏱️  [6/7] BRISQUE评分: {time:.1f}ms",
     "brisque_failed": "⚠️  BRISQUE 计算失败: {error}",
@@ -711,7 +711,7 @@
   "tooltips": {
     "ai_confidence": "AI检测到鸟的置信度阈值，低于此值将不处理",
     "sharpness": "照片锐度阈值，影响2星和3星评分",
-    "nima": "NIMA美学评分阈值，影响2星和3星评分",
+    "nima": "TOPIQ美学评分阈值，影响2星和3星评分",
     "normalization": "锐度归一化方法，影响大小鸟之间的公平性"
   },
   "help": {
@@ -1457,7 +1457,7 @@
     "culling_threshold_section": "筛选阈值",
     "culling_ai_label": "AI 置信度",
     "culling_sharp_label": "锐度阈值",
-    "culling_nima_label": "美学阈值（NIMA）",
+    "culling_nima_label": "美学阈值（TOPIQ）",
     "culling_detect_section": "检测开关",
     "culling_flight_label": "飞鸟检测",
     "culling_burst_label": "连拍检测",
@@ -1468,7 +1468,7 @@
     "birdid_conf_label": "识别置信度",
     "birdid_section_source": "数据源",
     "birdid_source_ebird": "eBird（推荐）",
-    "birdid_source_gbif": "GBIF",
+    "birdid_source_gbif": "全球 / 不限地区",
     "birdid_section_region": "国家 / 地区",
     "birdid_country_label": "国家",
     "birdid_region_label": "地区"

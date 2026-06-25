@@ -245,10 +245,10 @@
     "poor_quality": "  0⭐ Poor quality: {reason} (AI:{confidence:.2f}{iqa_text})",
     "yolo_inference": "  ⏱️  [2/7] YOLO Inference: {time:.1f}ms",
     "result_parsing": "  ⏱️  [3/7] Result Parsing: {time:.1f}ms",
-    "nima_score": "🎨 NIMA Aesthetic Score: {score:.2f} / 10",
-    "nima_timing": "  ⏱️  [4/7] NIMA Scoring: {time:.1f}ms",
-    "nima_failed": "⚠️  NIMA calculation failed: {error}",
-    "nima_timing_failed": "  ⏱️  [4/7] NIMA Scoring(Failed): {time:.1f}ms",
+    "nima_score": "🎨 TOPIQ Aesthetic Score: {score:.2f} / 10",
+    "nima_timing": "  ⏱️  [4/7] TOPIQ Scoring: {time:.1f}ms",
+    "nima_failed": "⚠️  TOPIQ calculation failed: {error}",
+    "nima_timing_failed": "  ⏱️  [4/7] TOPIQ Scoring(Failed): {time:.1f}ms",
     "brisque_score": "🔧 BRISQUE Technical Quality: {score:.2f} / 100 (lower is better)",
     "brisque_timing": "  ⏱️  [6/7] BRISQUE Scoring: {time:.1f}ms",
     "brisque_failed": "⚠️  BRISQUE calculation failed: {error}",
@@ -711,7 +711,7 @@
   "tooltips": {
     "ai_confidence": "AI bird detection confidence threshold, photos below this won't be processed",
     "sharpness": "Photo sharpness threshold, affects 2-star and 3-star ratings",
-    "nima": "NIMA aesthetic score threshold, affects 2-star and 3-star ratings",
+    "nima": "TOPIQ aesthetic score threshold, affects 2-star and 3-star ratings",
     "normalization": "Sharpness normalization method, affects fairness between large and small birds"
   },
   "help": {
@@ -1457,7 +1457,7 @@
     "culling_threshold_section": "Filter Thresholds",
     "culling_ai_label": "AI Confidence",
     "culling_sharp_label": "Sharpness Threshold",
-    "culling_nima_label": "Aesthetics Threshold (NIMA)",
+    "culling_nima_label": "Aesthetics Threshold (TOPIQ)",
     "culling_detect_section": "Detection Switches",
     "culling_flight_label": "Flight Detection",
     "culling_burst_label": "Burst Detection",
@@ -1468,7 +1468,7 @@
     "birdid_conf_label": "Identification Confidence",
     "birdid_section_source": "Data Source",
     "birdid_source_ebird": "eBird (Recommended)",
-    "birdid_source_gbif": "GBIF",
+    "birdid_source_gbif": "Global / No region filter",
     "birdid_section_region": "Country / Region",
     "birdid_country_label": "Country",
     "birdid_region_label": "Region"
