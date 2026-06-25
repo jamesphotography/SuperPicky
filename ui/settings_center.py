@@ -12,7 +12,6 @@ Tasks 3-6 will replace the placeholder pages with real content.
 from __future__ import annotations
 
 import os
-import re
 import subprocess
 import sys
 from typing import Any, cast
@@ -574,7 +573,7 @@ class SettingsCenter(QDialog):
         region_label.setFixedWidth(160)
 
         self._bid_region = QComboBox()
-        self._bid_region.addItem(self.i18n.t("birdid.region_entire_country"))
+        self._bid_region.addItem(self.i18n.t("birdid.region_entire_country"), None)
 
         region_row.addWidget(region_label)
         region_row.addWidget(self._bid_region, 1)
@@ -617,7 +616,7 @@ class SettingsCenter(QDialog):
                                        ISO country code, or None / "GLOBAL" for no sub-regions.
         """
         self._bid_region.clear()
-        self._bid_region.addItem(self.i18n.t("birdid.region_entire_country"))
+        self._bid_region.addItem(self.i18n.t("birdid.region_entire_country"), None)
 
         is_english = self.i18n.current_lang.startswith("en")
 
@@ -634,7 +633,7 @@ class SettingsCenter(QDialog):
                                     region_entry.get("name_cn")
                                     or region_entry.get("name", rc)
                                 )
-                            self._bid_region.addItem(f"{region_name} ({rc})")
+                            self._bid_region.addItem(region_name, rc)
                     break
 
     def _restore_birdid_country(self, cfg) -> None:
@@ -692,11 +691,14 @@ class SettingsCenter(QDialog):
         # Populate regions directly (bypass guard), then restore the saved region
         current_code = self._bid_country_list.get(self._bid_country.currentText())
         self._populate_bid_regions(current_code)
-        saved_region = cfg.birdid_selected_region
-        if saved_region:
-            idx = self._bid_region.findText(saved_region)
-            if idx >= 0:
-                self._bid_region.setCurrentIndex(idx)
+        # 优先按 region_code(itemData)恢复,回退按显示名(兼容旧数据)
+        # Restore by region_code (itemData) first; fall back to display name (legacy)
+        saved_region_code = cfg.birdid_region_code
+        idx = self._bid_region.findData(saved_region_code) if saved_region_code else -1
+        if idx < 0:
+            idx = self._bid_region.findText(cfg.birdid_selected_region or "")
+        if idx >= 0:
+            self._bid_region.setCurrentIndex(idx)
 
     def _on_bid_country_changed(self, country_display: str) -> None:
         """
@@ -775,12 +777,7 @@ class SettingsCenter(QDialog):
 
         # 地区 / Region
         region_display = self._bid_region.currentText()
-        region_code: str | None = None
-        entire_country_text = self.i18n.t("birdid.region_entire_country")
-        if region_display and region_display != entire_country_text:
-            match = re.search(r"\(([A-Z]{2}-[A-Z0-9]+)\)", region_display)
-            if match:
-                region_code = match.group(1)
+        region_code: str | None = self._bid_region.currentData()
 
         cfg.set_birdid_region(
             use_ebird=use_ebird,

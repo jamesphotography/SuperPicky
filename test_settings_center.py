@@ -296,11 +296,12 @@ def test_birdid_subnational_region_restore(monkeypatch):
             "C1 guard bug may still be present."
         )
 
-        # 当前选中的地区文字应包含 AU-ACT
-        # The currently selected region text should contain AU-ACT
-        current_region_text = w._bid_region.currentText()
-        assert "AU-ACT" in current_region_text, (
-            f"Expected saved region AU-ACT to be restored, got: '{current_region_text}'"
+        # region_code 现存于 itemData(显示文本只剩名称,不含 ISO 代码)
+        # region_code now lives in itemData (display text shows only the name, no ISO code)
+        current_region_code = w._bid_region.currentData()
+        assert current_region_code == "AU-ACT", (
+            f"Expected saved region AU-ACT to be restored, got data: '{current_region_code}' "
+            f"(text='{w._bid_region.currentText()}')"
         )
 
         w.close()

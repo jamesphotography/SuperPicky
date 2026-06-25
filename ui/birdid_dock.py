@@ -11,7 +11,6 @@ are provided; settings are persisted via advanced_config.
 """
 
 import os
-import re
 import sys
 from collections import OrderedDict
 from typing import Any, Optional, cast
@@ -788,7 +787,7 @@ class BirdIDDockWidget(QDockWidget):
         region_row_layout.addWidget(self._region_label)
 
         self.region_combo = QComboBox()
-        self.region_combo.addItem(self.i18n.t("birdid.region_entire_country"))
+        self.region_combo.addItem(self.i18n.t("birdid.region_entire_country"), None)
         self.region_combo.setStyleSheet(_combo_style)
         self.region_combo.currentTextChanged.connect(self._on_region_changed)
         region_row_layout.addWidget(self.region_combo, 1)
@@ -1032,21 +1031,29 @@ class BirdIDDockWidget(QDockWidget):
         saved_region = self.settings.get(
             "selected_region", self.i18n.t("birdid.region_entire_country")
         )
+        saved_region_code = self.settings.get("region_code")
         # 延迟 100 ms 等 _on_country_changed 完成区域填充后再设置区域
         # Delay 100ms so _on_country_changed finishes populating regions first
-        QTimer.singleShot(100, lambda: self._apply_saved_region(saved_region))
+        QTimer.singleShot(
+            100, lambda: self._apply_saved_region(saved_region_code, saved_region)
+        )
 
-    def _apply_saved_region(self, saved_region: str) -> None:
+    def _apply_saved_region(self, region_code: Optional[str], saved_region: str) -> None:
         """
-        在区域下拉填充完毕后选中已保存的区域，随后复位 _applying_settings 守卫。
-        Select the previously saved region in the region combo after it has been
-        populated, then reset the _applying_settings guard.
+        区域下拉填充完毕后,优先按 region_code(itemData)选中已保存区域;
+        未命中再回退按显示名匹配(兼容旧数据)。随后复位 _applying_settings 守卫。
+
+        Select the saved region by region_code (itemData) after the combo is
+        populated; fall back to matching by display name (legacy data). Then reset
+        the _applying_settings guard.
 
         参数 / Parameters:
-            saved_region (str): 要选中的区域显示名称 / Region display name to select.
-        返回 / Returns: None
+            region_code (Optional[str]): ISO 区域代码,如 "CN-11" / ISO region code.
+            saved_region (str): 区域显示名(回退匹配用)/ Region display name (fallback).
         """
-        idx = self.region_combo.findText(saved_region)
+        idx = self.region_combo.findData(region_code) if region_code else -1
+        if idx < 0:
+            idx = self.region_combo.findText(saved_region)
         if idx >= 0:
             self.region_combo.setCurrentIndex(idx)
         self._applying_settings = False
@@ -1072,12 +1079,7 @@ class BirdIDDockWidget(QDockWidget):
             return
 
         region_display: str = self.region_combo.currentText()
-        region_code: Optional[str] = None
-        t_entire = self.i18n.t("birdid.region_entire_country")
-        if region_display and region_display != t_entire:
-            m = re.search(r"\(([A-Z]{2}-[A-Z0-9]+)\)", region_display)
-            if m:
-                region_code = m.group(1)
+        region_code: Optional[str] = self.region_combo.currentData()
 
         # 同步更新 self.settings 缓存
         # Update self.settings cache to keep pipeline in sync
@@ -1140,7 +1142,7 @@ class BirdIDDockWidget(QDockWidget):
         self._updating_regions = True
 
         self.region_combo.clear()
-        self.region_combo.addItem(self.i18n.t("birdid.region_entire_country"))
+        self.region_combo.addItem(self.i18n.t("birdid.region_entire_country"), None)
 
         # 仅 AU/US/CN 显示州/省级区域行
         # Only AU / US / CN show the state/province region row
@@ -1158,7 +1160,7 @@ class BirdIDDockWidget(QDockWidget):
                                 r_name = region.get("name", r_code)
                             else:
                                 r_name = region.get("name_cn") or region.get("name", r_code)
-                            self.region_combo.addItem(f"{r_name} ({r_code})")
+                            self.region_combo.addItem(r_name, r_code)
                         show_region = country_code in _STATE_COUNTRIES
                     break
 
@@ -1292,7 +1294,7 @@ class BirdIDDockWidget(QDockWidget):
                     base_name = t(i18n_key)
                 else:
                     base_name = name_cn if not is_english and name_cn else name_en
-                display = f"🌍 {base_name}"
+                display = base_name   # 大洲图标改用 globe.svg(下方 setIcon),不再用 emoji
             else:
                 i18n_key = other_country_i18n.get(code)
                 if i18n_key:
@@ -1305,6 +1307,8 @@ class BirdIDDockWidget(QDockWidget):
 
         for _, display, code, name_en in other_regions:
             item = QListWidgetItem(display)
+            if code in continent_codes:   # 大洲项加 globe.svg 图标(替代旧 🌍 emoji)
+                item.setIcon(load_tinted_icon("globe.svg", ICON_IDLE, 16))
             item.setData(USER_ROLE, code)
             item.setData(USER_ROLE + 1, name_en)  # 用于搜索 / For search
             list_widget.addItem(item)
