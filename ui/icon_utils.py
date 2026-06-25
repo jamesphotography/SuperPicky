@@ -179,6 +179,24 @@ def tinted_png_path(svg_name: str, color: str, size: int = 12, dpr: float = 2.0)
     return path.replace(os.sep, "/")
 
 
+def glyph_png_path(glyph: str, color: str, size: int = 14, dpr: float = 2.0) -> str:
+    """
+    把单个字形按「实际墨水边界」归一化渲染为 PNG(视觉大小统一,见 glyph_pixmap),
+    返回正斜杠路径,供富文本 QLabel `<img src=...>` 使用(如详情面板罕见度图标,
+    统一 ○◔◑◕● 大小)。结果按参数缓存。
+
+    Render a single glyph (size-normalized via glyph_pixmap) to a PNG and return a
+    forward-slash path for rich-text QLabel `<img src=...>` (e.g. detail-panel rarity
+    icon, unifying ○◔◑◕● sizes). Cached by params.
+    """
+    os.makedirs(_PNG_CACHE_DIR, exist_ok=True)
+    key = hashlib.md5(f"glyph|{glyph}|{color}|{size}|{dpr}".encode("utf-8")).hexdigest()[:12]
+    path = os.path.join(_PNG_CACHE_DIR, f"{key}.png")
+    if not os.path.exists(path):
+        glyph_pixmap(glyph, color, size, dpr).save(path, "PNG")
+    return path.replace(os.sep, "/")
+
+
 def checkbox_indicator_qss(size: int = 15, unchecked_color: str = None, checked_color: str = None) -> str:
     """
     返回把 QCheckBox 指示器换成 circle.svg(未选)/circle-check.svg(选中)的样式片段。
