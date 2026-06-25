@@ -17,7 +17,7 @@ import sys
 import tempfile
 
 from PySide6.QtCore import Qt, QRectF
-from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPixmap
+from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
 from ui.styles import COLORS
@@ -69,6 +69,68 @@ def load_tinted_icon(svg_name: str, color: str, size: int = 20, dpr: float = 1.0
     return QIcon(QPixmap.fromImage(render_tinted_image(svg_name, color, size, dpr)))
 
 
+_GLYPH_PIXMAP_CACHE: dict = {}
+
+
+def glyph_pixmap(glyph: str, color: str, size: int = 16, dpr: float = 2.0,
+                 fill_ratio: float = 0.80) -> QPixmap:
+    """
+    把单个字形渲染成固定 size 的方形 pixmap,并按其「实际墨水边界」缩放+居中,
+    使一组字形(如罕见度 ○◔◑◕●)视觉大小一致 —— 规避 Unicode 几何字符在各平台
+    字体下大小/基线不一的问题。墨水边界用像素扫描求得(比 tightBoundingRect 更
+    可靠,直接量渲染结果)。结果按 (字形,色,尺寸,dpr,比例) 缓存。
+
+    Render a single glyph into a fixed square pixmap, scaled & centered by its
+    actual ink bounding box (found by pixel scan) so a set of glyphs renders at a
+    consistent visual size across platform fonts. Cached.
+    """
+    key = (glyph, color, size, round(dpr, 2), fill_ratio)
+    cached = _GLYPH_PIXMAP_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    px = max(1, int(round(size * dpr)))
+    work = 48
+    tmp = QImage(work, work, QImage.Format_ARGB32_Premultiplied)
+    tmp.fill(Qt.transparent)
+    p = QPainter(tmp)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    p.setRenderHint(QPainter.TextAntialiasing, True)
+    f = QFont()
+    f.setPixelSize(int(work * 0.72))
+    p.setFont(f)
+    p.setPen(QColor(color))
+    p.drawText(QRectF(0, 0, work, work), int(Qt.AlignCenter), glyph)
+    p.end()
+
+    # 扫描非透明像素的实际边界 / scan ink bbox
+    minx, miny, maxx, maxy = work, work, -1, -1
+    for y in range(work):
+        for x in range(work):
+            if (tmp.pixel(x, y) >> 24) & 0xFF:
+                minx = x if x < minx else minx
+                maxx = x if x > maxx else maxx
+                miny = y if y < miny else miny
+                maxy = y if y > maxy else maxy
+
+    out = QImage(px, px, QImage.Format_ARGB32_Premultiplied)
+    out.fill(Qt.transparent)
+    if maxx >= minx and maxy >= miny:
+        gw, gh = maxx - minx + 1, maxy - miny + 1
+        scale = (px * fill_ratio) / max(gw, gh)
+        tw, th = gw * scale, gh * scale
+        p2 = QPainter(out)
+        p2.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        p2.drawImage(QRectF((px - tw) / 2.0, (px - th) / 2.0, tw, th),
+                     tmp, QRectF(minx, miny, gw, gh))
+        p2.end()
+
+    pm = QPixmap.fromImage(out)
+    pm.setDevicePixelRatio(dpr)
+    _GLYPH_PIXMAP_CACHE[key] = pm
+    return pm
+
+
 def stars_image(count: int, color: str, size: int = 16, gap: int = 2, dpr: float = 2.0) -> QImage:
     """
     横排渲染 count 颗 star.svg 染成 color,返回一张 QImage(headless 安全)。
@@ -114,6 +176,24 @@ def tinted_png_path(svg_name: str, color: str, size: int = 12, dpr: float = 2.0)
     path = os.path.join(_PNG_CACHE_DIR, f"{key}.png")
     if not os.path.exists(path):
         render_tinted_image(svg_name, color, size, dpr).save(path, "PNG")
+    return path.replace(os.sep, "/")
+
+
+def glyph_png_path(glyph: str, color: str, size: int = 14, dpr: float = 2.0) -> str:
+    """
+    把单个字形按「实际墨水边界」归一化渲染为 PNG(视觉大小统一,见 glyph_pixmap),
+    返回正斜杠路径,供富文本 QLabel `<img src=...>` 使用(如详情面板罕见度图标,
+    统一 ○◔◑◕● 大小)。结果按参数缓存。
+
+    Render a single glyph (size-normalized via glyph_pixmap) to a PNG and return a
+    forward-slash path for rich-text QLabel `<img src=...>` (e.g. detail-panel rarity
+    icon, unifying ○◔◑◕● sizes). Cached by params.
+    """
+    os.makedirs(_PNG_CACHE_DIR, exist_ok=True)
+    key = hashlib.md5(f"glyph|{glyph}|{color}|{size}|{dpr}".encode("utf-8")).hexdigest()[:12]
+    path = os.path.join(_PNG_CACHE_DIR, f"{key}.png")
+    if not os.path.exists(path):
+        glyph_pixmap(glyph, color, size, dpr).save(path, "PNG")
     return path.replace(os.sep, "/")
 
 

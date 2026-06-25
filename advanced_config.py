@@ -155,6 +155,15 @@ class AdvancedConfig:
         "video_enable_species_id": True,
         "video_enable_flight": True,
         "video_first_run_prompted": False,
+
+        # V4.4: 识鸟设置统一进 advanced_config(原 birdid_dock_settings.json)
+        "birdid_auto_identify": False,
+        "birdid_use_ebird": True,
+        "birdid_country_code": None,
+        "birdid_selected_country": "自动检测 (GPS)",
+        "birdid_region_code": None,
+        "birdid_selected_region": "整个国家",
+        "birdid_dock_settings_migrated": False,
     }
 
     def __init__(self, config_file=None):
@@ -257,12 +266,12 @@ class AdvancedConfig:
         self.config["min_confidence"] = max(0.3, min(0.7, float(value)))
 
     def set_min_sharpness(self, value):
-        """设置锐度最低阈值 (100-500) - 头部区域锐度"""
-        self.config["min_sharpness"] = max(100, min(500, int(value)))
+        """设置锐度最低阈值 (100-600) - 头部区域锐度"""
+        self.config["min_sharpness"] = max(100, min(600, int(value)))
 
     def set_min_nima(self, value):
-        """设置美学最低阈值 (0.0-5.0)"""
-        self.config["min_nima"] = max(0.0, min(5.0, float(value)))
+        """设置美学最低阈值 (0.0-7.0)"""
+        self.config["min_nima"] = max(0.0, min(7.0, float(value)))
 
     # V3.2: 移除 set_max_brisque 方法
 
@@ -636,6 +645,199 @@ class AdvancedConfig:
     def get_dict(self):
         """获取配置字典（用于传递给其他模块）"""
         return self.config.copy()
+
+    # V4.4: 识鸟设置 (Bird Identification Settings)
+    @property
+    def birdid_auto_identify(self) -> bool:
+        """
+        获取自动识鸟开关。
+
+        返回:
+        bool: 是否启用自动识鸟
+
+        Get the auto bird identification flag.
+
+        Return:
+        bool: Whether auto bird identification is enabled.
+        """
+        return bool(self.config.get("birdid_auto_identify", False))
+
+    @property
+    def birdid_use_ebird(self) -> bool:
+        """
+        获取是否使用 eBird 源。
+
+        返回:
+        bool: 是否使用 eBird（默认 True）
+
+        Get whether to use eBird as source.
+
+        Return:
+        bool: Whether to use eBird (default True).
+        """
+        return bool(self.config.get("birdid_use_ebird", True))
+
+    @property
+    def birdid_country_code(self):
+        """
+        获取识鸟国家代码。
+
+        返回:
+        str or None: ISO 国家代码（如 "AU"），无选择时为 None
+
+        Get the bird identification country code.
+
+        Return:
+        str or None: ISO country code (e.g., "AU"), None if not set.
+        """
+        return self.config.get("birdid_country_code")
+
+    @property
+    def birdid_selected_country(self) -> str:
+        """
+        获取识鸟国家显示名称。
+
+        返回:
+        str: 用户选择的国家显示名称（默认 "自动检测 (GPS)"）
+
+        Get the bird identification country display name.
+
+        Return:
+        str: User-selected country name (default "自动检测 (GPS)").
+        """
+        return self.config.get("birdid_selected_country", "自动检测 (GPS)")
+
+    @property
+    def birdid_region_code(self):
+        """
+        获取识鸟地区代码。
+
+        返回:
+        str or None: 地区代码（如 "AU-QLD"），无选择时为 None
+
+        Get the bird identification region code.
+
+        Return:
+        str or None: Region code (e.g., "AU-QLD"), None if not set.
+        """
+        return self.config.get("birdid_region_code")
+
+    @property
+    def birdid_selected_region(self) -> str:
+        """
+        获取识鸟地区显示名称。
+
+        返回:
+        str: 用户选择的地区显示名称（默认 "整个国家"）
+
+        Get the bird identification region display name.
+
+        Return:
+        str: User-selected region name (default "整个国家").
+        """
+        return self.config.get("birdid_selected_region", "整个国家")
+
+    def set_birdid_auto_identify(self, value: bool):
+        """
+        设置自动识鸟开关并保存。
+
+        参数:
+        value (bool): 是否启用自动识鸟
+
+        Set the auto bird identification flag and save.
+
+        Parameters:
+        value (bool): Whether to enable auto bird identification.
+        """
+        self.config["birdid_auto_identify"] = bool(value)
+        self.save()
+
+    def set_birdid_region(
+        self,
+        use_ebird: bool,
+        country_code,
+        selected_country: str,
+        region_code,
+        selected_region: str,
+    ):
+        """
+        一次性设置全部识鸟地区相关字段并保存。
+
+        参数:
+        use_ebird (bool): 是否使用 eBird
+        country_code (str or None): ISO 国家代码
+        selected_country (str): 国家显示名称
+        region_code (str or None): 地区代码
+        selected_region (str): 地区显示名称
+
+        Set all bird identification region settings at once and save.
+
+        Parameters:
+        use_ebird (bool): Whether to use eBird.
+        country_code (str or None): ISO country code.
+        selected_country (str): Country display name.
+        region_code (str or None): Region code.
+        selected_region (str): Region display name.
+        """
+        self.config["birdid_use_ebird"] = bool(use_ebird)
+        self.config["birdid_country_code"] = country_code
+        self.config["birdid_selected_country"] = selected_country
+        self.config["birdid_region_code"] = region_code
+        self.config["birdid_selected_region"] = selected_region
+        self.save()
+
+    def migrate_birdid_dock_settings(self, legacy_path: str = None) -> bool:
+        """
+        一次性把旧 birdid_dock_settings.json 搬入 advanced_config。幂等(哨兵字段);旧文件保留。
+
+        参数:
+        legacy_path (str, optional): 旧配置文件路径。如果为 None，使用默认应用配置目录下的文件
+
+        返回:
+        bool: 若成功迁移返回 True，若已迁移或文件不存在或读取失败返回 False
+
+        Migrate legacy birdid_dock_settings.json to advanced_config. Idempotent (sentinel field); legacy file is kept.
+
+        Parameters:
+        legacy_path (str, optional): Path to legacy config file. If None, uses default app config directory.
+
+        Return:
+        bool: True if migration succeeded, False if already migrated, file not found, or read failed.
+        """
+        from config import get_app_config_dir
+
+        # 哨兵检查:已迁移过则直接返回 False / Sentinel check: skip if already migrated
+        if self.config.get("birdid_dock_settings_migrated", False):
+            return False
+
+        if legacy_path is None:
+            legacy_path = os.path.join(
+                str(get_app_config_dir()), "birdid_dock_settings.json"
+            )
+
+        if not os.path.exists(legacy_path):
+            # 全新用户无旧文件:标记已处理,避免每次启动重复探测
+            # New user has no legacy file: mark as processed to avoid repeated detection on startup
+            self.config["birdid_dock_settings_migrated"] = True
+            self.save()
+            return False
+
+        try:
+            with open(legacy_path, "r", encoding="utf-8") as f:
+                old = json.load(f)
+        except Exception:
+            return False  # 读失败不置位,下次重试 / Don't set flag on read failure; retry next time
+
+        self.config["birdid_use_ebird"] = bool(old.get("use_ebird", True))
+        self.config["birdid_country_code"] = old.get("country_code")
+        self.config["birdid_selected_country"] = old.get(
+            "selected_country", "自动检测 (GPS)"
+        )
+        self.config["birdid_region_code"] = old.get("region_code")
+        self.config["birdid_selected_region"] = old.get("selected_region", "整个国家")
+        self.config["birdid_dock_settings_migrated"] = True
+        self.save()
+        return True
 
 
 def get_advanced_config():

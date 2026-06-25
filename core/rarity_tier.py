@@ -167,3 +167,18 @@ def tier_color(tier_index: Optional[int]) -> Optional[str]:
     if tier_index is None or not (0 <= tier_index < 5):
         return None
     return TIER_COLORS[tier_index]
+
+
+def tier_name_color(tier_index: Optional[int], default: Optional[str] = None) -> Optional[str]:
+    """
+    鸟种「名字」着色规则（比 tier_color 更克制，只分三档）：
+      常见(0)/无数据 → default（正常色）；能见(1) → 橙；少见及以上(2/3/4) → 红。
+
+    Bird-name coloring (3 buckets only): common/unknown → default;
+    occasional(1) → orange; uncommon-and-rarer(>=2) → red.
+    """
+    if tier_index is None or tier_index <= 0:
+        return default
+    if tier_index == 1:
+        return "#FC7F3F"   # 橙 — 能见
+    return "#D81E05"       # 红 — 少见 / 罕见 / 传奇

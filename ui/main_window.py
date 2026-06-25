@@ -40,9 +40,17 @@ from ui.styles import (
     COLORS, FONTS, LOG_COLORS, PROGRESS_INFO_STYLE, PROGRESS_PERCENT_STYLE
 )
 from ui.custom_dialogs import StyledMessageBox
-from ui.icon_utils import load_tinted_icon, checkbox_indicator_qss, ICON_IDLE
-from ui.skill_level_dialog import SkillLevelDialog, SKILL_PRESETS, get_skill_level_thresholds
+from ui.icon_utils import load_tinted_icon, checkbox_indicator_qss, tinted_png_path, ICON_IDLE
+from ui.skill_level_dialog import get_skill_level_thresholds
 from ui.welcome_onboarding_dialog import EnvironmentRepairDialog, WelcomeOnboardingDialog
+
+import re as _re
+# 运行日志去 emoji:覆盖 emoji 主区 / Dingbats / 杂项符号,
+# 但保留文本符号 ★☆(2605/2606)、箭头 →、分隔线 ━、乘号 ×。
+_LOG_EMOJI_RE = _re.compile(
+    "[\U0001F000-\U0001FAFF\U00002700-\U000027BF\U00002B00-\U00002BFF"
+    "\u2600-\u2604\u2607-\u26FF\uFE0F]+"
+)
 from core.initialization_manager import InitializationManager
 
 
@@ -85,7 +93,7 @@ class WorkerSignals(QObject):
     log = Signal(str, str)  # message, tag
     finished = Signal(dict)
     error = Signal(str)
-    crop_preview = Signal(object, object)  # V4.2: 发送裁剪预览图像 (numpy array BGR) + focus_status str
+    crop_preview = Signal(object, object, object)  # 裁剪预览图(numpy BGR) + focus_status + rating(星级)
     update_check_done = Signal(bool, object)  # V4.2: 更新检测完成 (has_update, update_info)
 
 
@@ -279,61 +287,15 @@ class WorkerThread(threading.Thread):
         from advanced_config import get_advanced_config
         birdid_confidence_threshold = get_advanced_config().birdid_confidence
 
-        # 从设置文件读取国家/区域配置
-        try:
-            import json
-            import re
-
-            birdid_settings_dir = str(get_app_config_dir())
-            birdid_settings_path = os.path.join(birdid_settings_dir, 'birdid_dock_settings.json')
-
-            if os.path.exists(birdid_settings_path):
-                with open(birdid_settings_path, 'r', encoding='utf-8') as f:
-                    birdid_settings = json.load(f)
-                    # 只从文件读取国家/区域配置，auto_identify 从 ui_settings 读取
-                    birdid_use_ebird = birdid_settings.get('use_ebird', True)
-                    
-                    # V4.0.4: 直接读取 country_code（新格式）
-                    birdid_country_code = birdid_settings.get('country_code')
-                    
-                    # 兼容旧格式：如果没有 country_code，尝试从 selected_country 解析
-                    if not birdid_country_code:
-                        selected_country = birdid_settings.get('selected_country', '自动检测 (GPS)')
-                        if selected_country and selected_country != '自动检测 (GPS)':
-                            # 尝试从 "澳大利亚 (AU)" 格式中提取代码
-                            match = re.search(r'\(([A-Z]{2,3})\)', selected_country)
-                            if match:
-                                birdid_country_code = match.group(1)
-                            else:
-                                # V4.0.4: 名称到代码的映射（兼容旧设置文件）
-                                country_name_to_code = {
-                                    '澳大利亚': 'AU', '中国': 'CN', '美国': 'US',
-                                    '日本': 'JP', '英国': 'GB', '新西兰': 'NZ',
-                                    '加拿大': 'CA', '印度': 'IN', '德国': 'DE',
-                                    '法国': 'FR', '巴西': 'BR', '南非': 'ZA',
-                                    '韩国': 'KR', '台湾': 'TW', '香港': 'HK',
-                                    '新加坡': 'SG', '马来西亚': 'MY', '泰国': 'TH',
-                                    '印度尼西亚': 'ID', '菲律宾': 'PH', '意大利': 'IT',
-                                    '西班牙': 'ES', '荷兰': 'NL', '哥斯达黎加': 'CR',
-                                }
-                                birdid_country_code = country_name_to_code.get(selected_country.strip())
-                    
-                    # V4.0.4: 直接读取 region_code（新格式）
-                    birdid_region_code = birdid_settings.get('region_code')
-                    
-                    # 兼容旧格式：如果没有 region_code，尝试从 selected_region 解析
-                    if not birdid_region_code:
-                        selected_region = birdid_settings.get('selected_region', '整个国家')
-                        if selected_region and selected_region != '整个国家':
-                            match = re.search(r'\(([A-Z]{2}-[A-Z0-9]+)\)', selected_region)
-                            if match:
-                                birdid_region_code = match.group(1)
-        except Exception as e:
-            # BirdID 设置读取失败不影响主流程
-            # 使用默认值
-            birdid_use_ebird = True
-            birdid_country_code = None
-            birdid_region_code = None
+        # Task8: 直接从统一设置中心（get_advanced_config）读取国家/区域配置，
+        # 避免依赖已废弃的 birdid_dock_settings.json（_save_settings 已删除）。
+        # Task8: Read country/region config directly from the unified Settings Center
+        # (get_advanced_config) to avoid relying on the deprecated birdid_dock_settings.json
+        # (whose writer _save_settings was removed in Task 8).
+        _adv_birdid = get_advanced_config()
+        birdid_use_ebird = _adv_birdid.birdid_use_ebird
+        birdid_country_code = _adv_birdid.birdid_country_code
+        birdid_region_code = _adv_birdid.birdid_region_code
 
         settings = ProcessingSettings(
             ai_confidence=self.ui_settings[0],
@@ -439,8 +401,8 @@ class WorkerThread(threading.Thread):
             self.signals.progress.emit(int(value))
 
         # V4.2: 裁剪预览回调
-        def crop_preview_callback(debug_img, focus_status=None):
-            self.signals.crop_preview.emit(debug_img, focus_status)
+        def crop_preview_callback(debug_img, focus_status=None, rating=None):
+            self.signals.crop_preview.emit(debug_img, focus_status, rating)
 
         callbacks = ProcessingCallbacks(
             log=log_callback,
@@ -842,18 +804,14 @@ class SuperPickyMainWindow(QMainWindow):
         self._recent_menu = menubar.addMenu(self.i18n.t("menu.recent_dirs"))
         self._refresh_recent_menu()
 
-        # 设置菜单
+        # 设置菜单 — Task 7: 合并为单一「设置」入口，所有配置页在设置中心内完成
+        # Settings menu — Task 7: collapsed into a single "Settings" entry; all config inside SettingsCenter
         settings_menu = menubar.addMenu(self.i18n.t("menu.settings_menu"))
-        
-        # 参数设置
+
+        # 单一设置入口 → 打开设置中心 / Single settings entry → open SettingsCenter
         settings_action = QAction(self.i18n.t("menu.settings"), self)
-        settings_action.triggered.connect(self._show_advanced_settings)
+        settings_action.triggered.connect(lambda: self._open_settings_center("culling"))
         settings_menu.addAction(settings_action)
-        
-        # V4.3: 摄影水平设置
-        skill_level_action = QAction(self.i18n.t("skill_level.section_title") + "...", self)
-        skill_level_action.triggered.connect(self._show_skill_level_dialog)
-        settings_menu.addAction(skill_level_action)
 
         update_action = QAction(self.i18n.t("menu.check_update"), self)
         update_action.triggered.connect(self._show_update_center)
@@ -862,34 +820,35 @@ class SuperPickyMainWindow(QMainWindow):
         repair_action = QAction(self.i18n.t("menu.environment_repair"), self)
         repair_action.triggered.connect(self._show_environment_repair_dialog)
         settings_menu.addAction(repair_action)
-        
+
         settings_menu.addSeparator()
-        
+
         # 界面语言子菜单
         lang_menu = settings_menu.addMenu(self.i18n.t("menu.language"))
-        
+
         # 简体中文
         zh_action = QAction(self.i18n.t("menu.lang_zh"), self)
         zh_action.setCheckable(True)
         zh_action.setChecked(self.config.language == "zh_CN")
         zh_action.triggered.connect(lambda: self._change_language("zh_CN"))
         lang_menu.addAction(zh_action)
-        
+
         # English
         en_action = QAction(self.i18n.t("menu.lang_en"), self)
         en_action.setCheckable(True)
         en_action.setChecked(self.config.language == "en")
         en_action.triggered.connect(lambda: self._change_language("en"))
         lang_menu.addAction(en_action)
-        
+
         self.lang_actions = {"zh_CN": zh_action, "en": en_action}
 
-        # 帮助菜单
+        # 帮助菜单 — 关于已移入设置中心 / Help menu — About is now inside SettingsCenter
         help_menu = menubar.addMenu(self.i18n.t("menu.help"))
-        
-        # 关于
+
+        # 关于入口保留：用 _open_settings_center("about") 打开设置中心内的关于页
+        # About entry retained: opens the About page inside SettingsCenter
         about_action = QAction(self.i18n.t("menu.about"), self)
-        about_action.triggered.connect(self._show_about)
+        about_action.triggered.connect(lambda: self._open_settings_center("about"))
         help_menu.addAction(about_action)
 
     def _refresh_recent_menu(self):
@@ -941,7 +900,9 @@ class SuperPickyMainWindow(QMainWindow):
         self._create_directory_section(main_layout)
         main_layout.addSpacing(20)
 
-        # 参数设置
+        # 首页「快速调整」参数面板:2 滑块(锐度/美学)+ 3 开关(飞行/连拍/识鸟)。
+        # 这些控件是 advanced_config(单一事实源)的快捷编辑器,与设置中心双向同步。
+        # Home quick-adjust panel: 2 sliders + 3 toggles, two-way bound to advanced_config (SSOT).
         self._create_parameters_section(main_layout)
         main_layout.addSpacing(20)
 
@@ -961,18 +922,28 @@ class SuperPickyMainWindow(QMainWindow):
         self._create_button_section(main_layout)
 
     def _setup_birdid_dock(self):
-        """设置识鸟停靠面板"""
+        """
+        设置识鸟停靠面板，并连接 open_settings_requested signal。
+        Set up the BirdID dock panel and connect the open_settings_requested signal.
+        """
         from .birdid_dock import BirdIDDockWidget
 
         self.birdid_dock = BirdIDDockWidget(self)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.birdid_dock)
-        
+
         # 设置 dock 初始宽度为最小值，让主区域更宽
+        # Set initial dock width to minimum so the main area is wider
         self.birdid_dock.setFixedWidth(280)
         # 延迟解除固定宽度限制，让用户可以调整
+        # Defer removal of fixed-width so the user can later resize
         QTimer.singleShot(100, lambda: self.birdid_dock.setFixedWidth(16777215))  # QWIDGETSIZE_MAX
 
+        # Task 8: "设置"链接 → 打开设置中心 birdid 页
+        # Task 8: "Settings" link → open Settings Center on the birdid page
+        self.birdid_dock.open_settings_requested.connect(self._open_settings_center)
+
         # 更新菜单动作的状态
+        # Update menu action state when dock visibility changes
         self.birdid_dock.visibilityChanged.connect(self._on_birdid_dock_visibility_changed)
 
     def _on_birdid_dock_visibility_changed(self, visible):
@@ -1162,33 +1133,6 @@ class SuperPickyMainWindow(QMainWindow):
         # 退出应用
         QApplication.quit()
     
-    def _on_birdid_check_changed(self, state):
-        """识鸟开关状态变化 - 同步到 BirdID Dock 设置"""
-        import json
-        try:
-            settings_dir = str(get_app_config_dir())
-            os.makedirs(settings_dir, exist_ok=True)
-            settings_path = os.path.join(settings_dir, 'birdid_dock_settings.json')
-            
-            # 读取现有设置
-            settings = {}
-            if os.path.exists(settings_path):
-                with open(settings_path, 'r', encoding='utf-8') as f:
-                    settings = json.load(f)
-            
-            # 更新 auto_identify
-            settings['auto_identify'] = (state == 2)  # Qt.Checked = 2
-            
-            # 保存设置
-            with open(settings_path, 'w', encoding='utf-8') as f:
-                json.dump(settings, f, ensure_ascii=False, indent=2)
-            
-            # 同步到 BirdID Dock（如果存在）
-            if hasattr(self, 'birdid_dock') and self.birdid_dock:
-                self.birdid_dock.auto_identify_checkbox.setChecked(state == 2)
-        except Exception as e:
-            print(f"同步识鸟设置失败: {e}")
-
     def _create_header_section(self, parent_layout):
         """创建头部区域 - 品牌展示"""
         header = QFrame()
@@ -1272,6 +1216,20 @@ class SuperPickyMainWindow(QMainWindow):
         version_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom)
         header_layout.addWidget(version_label)
 
+        # Task 7: 技能水平 chip — 只读展示，点击后打开设置中心（culling 页）
+        # Task 7: skill level chip — read-only display; click opens SettingsCenter (culling page)
+        self.skill_level_label = QLabel("")
+        self.skill_level_label.setStyleSheet(f"""
+            color: {COLORS['accent']};
+            font-size: 11px;
+            padding: 2px 6px;
+            background-color: {COLORS['accent']}15;
+            border-radius: 4px;
+        """)
+        self.skill_level_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.skill_level_label.mousePressEvent = lambda _ev: self._open_settings_center("culling")
+        header_layout.addSpacing(8)
+        header_layout.addWidget(self.skill_level_label)
 
         parent_layout.addWidget(header)
 
@@ -1298,167 +1256,6 @@ class SuperPickyMainWindow(QMainWindow):
         dir_layout.addWidget(browse_btn)
 
         parent_layout.addLayout(dir_layout)
-
-    def _create_parameters_section(self, parent_layout):
-        """创建参数设置区域"""
-        # 参数卡片容器
-        params_frame = QFrame()
-        params_frame.setStyleSheet(f"""
-            QFrame {{
-                background-color: {COLORS['bg_elevated']};
-                border-radius: 10px;
-            }}
-        """)
-
-        params_layout = QVBoxLayout(params_frame)
-        params_layout.setContentsMargins(20, 16, 20, 16)
-        params_layout.setSpacing(16)
-
-        # 头部: 标题 + 飞鸟检测开关
-        header_layout = QHBoxLayout()
-
-        params_title = QLabel(self.i18n.t("labels.selection_params"))
-        params_title.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 13px; font-weight: 500;")
-        header_layout.addWidget(params_title)
-
-        header_layout.addStretch()
-
-        # 飞鸟检测开关
-        flight_layout = QHBoxLayout()
-        flight_layout.setSpacing(10)
-
-        flight_label = QLabel(self.i18n.t("labels.flight_detection"))
-        flight_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
-        flight_layout.addWidget(flight_label)
-
-        self.flight_check = QCheckBox()
-        self.flight_check.setChecked(self.config.flight_check)
-        self.flight_check.setStyleSheet(checkbox_indicator_qss(16, COLORS['text_muted'], COLORS['accent']))
-        flight_layout.addWidget(self.flight_check)
-
-        header_layout.addLayout(flight_layout)
-        
-        # V4.0: 连拍检测开关
-        burst_layout = QHBoxLayout()
-        burst_layout.setSpacing(10)
-        
-        burst_label = QLabel(self.i18n.t("labels.burst"))
-        burst_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
-        burst_layout.addWidget(burst_label)
-        
-        self.burst_check = QCheckBox()
-        self.burst_check.setChecked(self.config.burst_check)
-        self.burst_check.setStyleSheet(checkbox_indicator_qss(16, COLORS['text_muted'], COLORS['accent']))
-        burst_layout.addWidget(self.burst_check)
-        
-        header_layout.addLayout(burst_layout)
-
-        # 持久化复选框状态
-        self.flight_check.stateChanged.connect(self._save_check_states)
-        self.burst_check.stateChanged.connect(self._save_check_states)
-        
-        # V4.2: 自动识鸟开关
-        birdid_layout = QHBoxLayout()
-        birdid_layout.setSpacing(10)
-        
-        birdid_label = QLabel(self.i18n.t("menu.birdid_label"))
-        birdid_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
-        birdid_layout.addWidget(birdid_label)
-        
-        self.birdid_check = QCheckBox()
-        self.birdid_check.setStyleSheet(checkbox_indicator_qss(16, COLORS['text_muted'], COLORS['accent']))
-        # 从保存的设置中读取状态
-        birdid_saved_state = False
-        try:
-            import json
-            settings_dir = str(get_app_config_dir())
-            settings_path = os.path.join(settings_dir, 'birdid_dock_settings.json')
-            if os.path.exists(settings_path):
-                with open(settings_path, 'r', encoding='utf-8') as f:
-                    birdid_settings = json.load(f)
-                    birdid_saved_state = birdid_settings.get('auto_identify', False)
-        except Exception:
-            pass
-        self.birdid_check.setChecked(birdid_saved_state)
-        self.birdid_check.stateChanged.connect(self._on_birdid_check_changed)
-        birdid_layout.addWidget(self.birdid_check)
-        
-        header_layout.addLayout(birdid_layout)
-        
-        # V4.3: 摄影水平显示标签
-        skill_level_layout = QHBoxLayout()
-        skill_level_layout.setSpacing(4)
-        
-        self.skill_level_label = QLabel("")
-        self.skill_level_label.setStyleSheet(f"""
-            color: {COLORS['accent']};
-            font-size: 11px;
-            padding: 2px 6px;
-            background-color: {COLORS['accent']}15;
-            border-radius: 4px;
-        """)
-        skill_level_layout.addWidget(self.skill_level_label)
-        
-        header_layout.addLayout(skill_level_layout)
-        
-        params_layout.addLayout(header_layout)
-
-        # 隐藏变量（从高级配置读取，避免硬编码）
-        self.ai_confidence = int(self.config.min_confidence * 100)  # V4.2: 读取用户设置的检测敏感度
-        self.norm_mode = "log_compression"
-
-        # 滑块区域
-        sliders_layout = QVBoxLayout()
-        sliders_layout.setSpacing(16)
-
-        # 锐度阈值
-        sharp_layout = QHBoxLayout()
-        sharp_layout.setSpacing(16)
-
-        sharp_label = QLabel(self.i18n.t("labels.sharpness_short"))
-        sharp_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 13px; min-width: 80px;")
-        sharp_layout.addWidget(sharp_label)
-
-        self.sharp_slider = QSlider(Qt.Orientation.Horizontal)
-        self.sharp_slider.setRange(200, 600)  # 新范围 200-600
-        self.sharp_slider.setValue(400)  # 新默认值
-        self.sharp_slider.setSingleStep(10)  # V4.0: 更精细的调节（键盘方向键）
-        self.sharp_slider.setPageStep(10)    # V4.0: 点击滑块轨道的步进值
-        self.sharp_slider.valueChanged.connect(self._on_sharp_changed)
-        sharp_layout.addWidget(self.sharp_slider)
-
-        self.sharp_value = QLabel("400")  # 新默认值
-        self.sharp_value.setStyleSheet(VALUE_STYLE)
-        self.sharp_value.setFixedWidth(50)
-        self.sharp_value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        sharp_layout.addWidget(self.sharp_value)
-
-        sliders_layout.addLayout(sharp_layout)
-
-        # 美学阈值
-        nima_layout = QHBoxLayout()
-        nima_layout.setSpacing(16)
-
-        nima_label = QLabel(self.i18n.t("labels.aesthetics"))
-        nima_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 13px; min-width: 80px;")
-        nima_layout.addWidget(nima_label)
-
-        self.nima_slider = QSlider(Qt.Orientation.Horizontal)
-        self.nima_slider.setRange(40, 70)  # 新范围 4.0-7.0
-        self.nima_slider.setValue(50)  # 默认值 5.0
-        self.nima_slider.valueChanged.connect(self._on_nima_changed)
-        nima_layout.addWidget(self.nima_slider)
-
-        self.nima_value = QLabel("5.0")  # 默认值
-        self.nima_value.setStyleSheet(VALUE_STYLE)
-        self.nima_value.setFixedWidth(50)
-        self.nima_value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        nima_layout.addWidget(self.nima_value)
-
-        sliders_layout.addLayout(nima_layout)
-
-        params_layout.addLayout(sliders_layout)
-        parent_layout.addWidget(params_frame)
 
     def _create_log_section(self, parent_layout):
         """创建日志区域"""
@@ -1582,28 +1379,6 @@ class SuperPickyMainWindow(QMainWindow):
         parent_layout.addLayout(btn_layout)
 
     # ========== 槽函数 ==========
-
-    @Slot()
-    def _on_sharp_changed(self):
-        """锐度滑块变化"""
-        value = self.sharp_slider.value()
-        rounded = round(value / 10) * 10  # V4.0: 改为 10 步进
-        self.sharp_slider.blockSignals(True)
-        self.sharp_slider.setValue(rounded)
-        self.sharp_slider.blockSignals(False)
-        self.sharp_value.setText(str(rounded))
-        
-        # V4.3: 检测是否为自选模式（手动调整滑块）
-        self._check_custom_mode()
-
-    @Slot()
-    def _on_nima_changed(self):
-        """NIMA 滑块变化"""
-        value = self.nima_slider.value() / 10.0
-        self.nima_value.setText(f"{value:.1f}")
-        
-        # V4.3: 检测是否为自选模式（手动调整滑块）
-        self._check_custom_mode()
 
     @Slot()
     def _on_path_entered(self):
@@ -1801,6 +1576,33 @@ class SuperPickyMainWindow(QMainWindow):
         except Exception as e:
             self._log(f"  ⚠️ 打开目录失败: {e}", "warning")
 
+    def _status_folder_icon_html(self, px: int = 14) -> str:
+        """
+        把 folder.svg 染成状态栏文字色,转成内联 base64 <img>,供富文本 QLabel
+        复用「浏览」按钮同款图标(替代旧的 📂 emoji)。结果缓存,避免重复渲染。
+
+        Render folder.svg (tinted to the banner text color) as an inline base64
+        <img> so the rich-text QLabel can reuse the Browse button's icon,
+        replacing the old 📂 emoji. Cached after first build.
+        """
+        cached = getattr(self, "_folder_icon_html_cache", None)
+        if cached:
+            return cached
+        import base64
+        from PySide6.QtCore import QBuffer, QByteArray
+        pix = load_tinted_icon("folder.svg", COLORS["text_secondary"], px).pixmap(px, px)
+        ba = QByteArray()
+        buf = QBuffer(ba)
+        buf.open(QBuffer.OpenModeFlag.WriteOnly)
+        pix.save(buf, "PNG")
+        buf.close()
+        b64 = bytes(ba.toBase64()).decode("ascii")
+        self._folder_icon_html_cache = (
+            f'<img src="data:image/png;base64,{b64}" '
+            f'width="{px}" height="{px}" style="vertical-align:middle;">'
+        )
+        return self._folder_icon_html_cache
+
     def _update_status_banner(self, state: str, data=None):
         """更新状态条显示。
 
@@ -1823,7 +1625,12 @@ class SuperPickyMainWindow(QMainWindow):
             """)
         elif state == "ready":
             dirname = os.path.basename(self.directory_path) if self.directory_path else ""
-            self._status_banner.setText(self.i18n.t("labels.dir_ready").format(dirname=dirname))
+            # 复用「浏览」按钮同款 folder.svg(内联染色 img)替代旧 📂 emoji;
+            # 富文本会折叠空格,故文案空格转 &nbsp; 保留原间距 / keep spacing in rich text
+            import html as _html
+            text = self.i18n.t("labels.dir_ready").format(
+                dirname=_html.escape(dirname)).replace(" ", "&nbsp;")
+            self._status_banner.setText(self._status_folder_icon_html() + "&nbsp;&nbsp;" + text)
             self._status_banner.setStyleSheet(f"""
                 QLabel {{
                     background-color: {COLORS['bg_card']};
@@ -2032,46 +1839,65 @@ class SuperPickyMainWindow(QMainWindow):
             )
             return
 
-        # 确认弹窗 - 动态构建消息
+        # 确认弹窗 - 动态构建消息(HTML:emoji 换 SVG 图标,QLabel 自动按富文本渲染)
+        import html as _html
+        from ui.styles import COLORS as _C
+        _green = _C.get("focus_best", "#00cc44")
+        _accent = _C.get("accent", "#00d4aa")
+        _sec = _C.get("text_secondary", "#a1a1a1")
+
+        def _ico(svg, color, size=14):
+            p = tinted_png_path(svg, color, size)
+            return f'<img src="{p}" width="{size}" height="{size}" style="vertical-align:middle"> '
+
+        def _esc(s):
+            return _html.escape(str(s), quote=False)
+
+        # Task 7: 从 advanced_config 读取开关状态，不再读取已删除的参数面板控件
+        # Task 7: read switch states from advanced_config; old panel widgets removed
+        _adv_confirm = get_advanced_config()
         extra_notes = []
-        if self.flight_check.isChecked():
-            extra_notes.append(self.i18n.t("dialogs.note_flight"))
-        if self.birdid_check.isChecked():
-            extra_notes.append(self.i18n.t("dialogs.note_birdid"))
-            # 显示当前国家/区域设置
-            if hasattr(self, 'birdid_dock') and self.birdid_dock:
-                country_display = self.birdid_dock.country_combo.currentText()
-                region_display = self.birdid_dock.region_combo.currentText()
-                # 构建显示文本
-                location_info = f"  🌍 {country_display}"
+        if _adv_confirm.flight_check:
+            extra_notes.append(_ico("bird.svg", _green) + _esc(self.i18n.t("dialogs.note_flight")))
+        if _adv_confirm.birdid_auto_identify:
+            extra_notes.append(_ico("eye.svg", _accent) + _esc(self.i18n.t("dialogs.note_birdid")))
+            # 显示当前国家/区域设置（从 advanced_config 读取，Task 8 后不再依赖 dock 内控件）
+            # Show current country/region from advanced_config (Task 8: no longer reads dock widgets)
+            country_display = _adv_confirm.birdid_selected_country or ""
+            region_display = _adv_confirm.birdid_selected_region or ""
+            if country_display:
+                location_info = f"&nbsp;&nbsp;&nbsp;&nbsp;{_esc(country_display)}"
                 if region_display and region_display != self.i18n.t("birdid.region_entire_country"):
-                    location_info += f" - {region_display}"
+                    location_info += f" - {_esc(region_display)}"
                 extra_notes.append(location_info)
             # V4.3: 检查是否选择了国家，如果是 Auto Detect GPS 则提示
-            if hasattr(self, 'birdid_dock') and self.birdid_dock:
-                country_display = self.birdid_dock.country_combo.currentText()
-                country_code = self.birdid_dock.country_list.get(country_display)
-                if country_code is None:  # "自动检测 (GPS)" 模式
-                    reply = StyledMessageBox.question(
-                        self,
-                        self.i18n.t("birdid.country_prompt_title"),
-                        self.i18n.t("birdid.country_prompt_message"),
-                        yes_text=self.i18n.t("labels.yes"),
-                        no_text=self.i18n.t("labels.no")
-                    )
-                    if reply == StyledMessageBox.Yes:
-                        # 用户选择现在选择国家
-                        self.birdid_dock.country_combo.showPopup()
-                        return  # 等用户选择后再开始
-        if self.burst_check.isChecked():
-            extra_notes.append(self.i18n.t("dialogs.note_burst"))
-        
+            # V4.3: Prompt if country is still in Auto GPS mode
+            country_code = _adv_confirm.birdid_country_code
+            if country_code is None:  # "自动检测 (GPS)" 模式 / Auto GPS mode
+                reply = StyledMessageBox.question(
+                    self,
+                    self.i18n.t("birdid.country_prompt_title"),
+                    self.i18n.t("birdid.country_prompt_message"),
+                    yes_text=self.i18n.t("labels.yes"),
+                    no_text=self.i18n.t("labels.no")
+                )
+                if reply == StyledMessageBox.Yes:
+                    # 用户选择现在配置国家：打开设置中心 birdid 页
+                    # User chose to configure now: open Settings Center on birdid page
+                    self._open_settings_center("birdid")
+                    return  # 等用户配置后再开始 / Wait for user to configure
+        if _adv_confirm.burst_check:
+            extra_notes.append(_ico("square-stack.svg", _sec) + _esc(self.i18n.t("dialogs.note_burst")))
+
         notes_block = ""
         if extra_notes:
-            notes_block = "\n" + "\n".join(extra_notes) + "\n"
+            notes_block = "<br>" + "<br>".join(extra_notes) + "<br>"
 
-        base_msg = self.i18n.t("dialogs.file_organization_msg", extra_notes=notes_block)
-        
+        # 正文转富文本:escape + 换行→<br>,再把哨兵替换为已是 HTML 的附注块
+        _sentinel = "@@EXTRA_NOTES@@"
+        _raw = self.i18n.t("dialogs.file_organization_msg", extra_notes=_sentinel)
+        base_msg = _esc(_raw).replace("\n", "<br>").replace(_sentinel, notes_block)
+
         reply = StyledMessageBox.question(
             self,
             self.i18n.t("dialogs.file_organization_title"),
@@ -2169,17 +1995,19 @@ class SuperPickyMainWindow(QMainWindow):
         self._update_status(self.i18n.t("labels.processing"), COLORS['warning'])
         self._log(self.i18n.t("logs.processing_start"))
 
-        # 准备 UI 设置
+        # Task 7: 准备 UI 设置 — 改从 advanced_config 读取，不再依赖已删除的参数面板控件
+        # Task 7: Prepare UI settings — read from advanced_config; old panel widgets removed
+        _adv = get_advanced_config()
         ui_settings = [
-            self.ai_confidence,
-            self.sharp_slider.value(),
-            self.nima_slider.value() / 10.0,
-            True,  # V4.0.5: 始终保存裁切，用于 debug_crop_path 持久化
-            self.norm_mode,
-            self.flight_check.isChecked(),
-            False,                            # 曝光检测已移除，固定为 False
-            self.burst_check.isChecked(),     # V4.0: 连拍检测开关
-            self.birdid_check.isChecked(),    # V4.2: 识鸟开关
+            int(_adv.min_confidence * 100),   # [0] AI 置信度 / AI confidence
+            int(_adv.min_sharpness),           # [1] 锐度阈值 / sharpness threshold
+            _adv.min_nima,                     # [2] NIMA 美学阈值 / NIMA aesthetics threshold
+            True,                              # [3] 始终保存裁切 / always save crop
+            "log_compression",                 # [4] 归一化模式 / normalization mode
+            bool(_adv.flight_check),           # [5] 飞鸟检测 / flight detection
+            False,                             # [6] 曝光检测已移除，固定 False / exposure removed
+            bool(_adv.burst_check),            # [7] 连拍检测 / burst detection
+            bool(_adv.birdid_auto_identify),   # [8] 识鸟开关 / bird ID auto-identify
         ]
 
         # 创建信号
@@ -2249,12 +2077,9 @@ class SuperPickyMainWindow(QMainWindow):
         self._update_status_banner("done", counts)
         self._update_action_buttons("has_results")
 
-        # 显示报告（不清空之前的日志）
-        report = self._format_statistics_report(stats)
-        self._log(report)
-
-        # 显示 Lightroom 指南
-        self._show_lightroom_guide()
+        # 显示报告（不清空之前的日志；HTML 渲染,评级/飞版/精焦用 SVG）
+        self._show_statistics_report(stats)
+        # Lightroom 指南已停用（用户群体太少）：保留 _show_lightroom_guide 方法备用
 
         # V4.2: 通知 BirdIDDock 显示完成信息（传入 stats 替代 debug_dir）
         if hasattr(self, 'birdid_dock') and self.birdid_dock:
@@ -2486,10 +2311,6 @@ class SuperPickyMainWindow(QMainWindow):
                 
                 if fallback_restored > 0:
                     emit_log(i18n.t("logs.restored_files", count=fallback_restored))
-                
-                total_restored = restored_count + fallback_restored
-                if total_restored == 0:
-                    emit_log(i18n.t("logs.no_files_to_restore"))
 
                 # V4.3.1: 无条件「按目录名摊平」兜底——把仍残留在 鸟种/星级/burst_
                 # 子目录里的文件递归移回根目录。manifest 可能不完整（连拍成员未入库等），
@@ -2498,11 +2319,20 @@ class SuperPickyMainWindow(QMainWindow):
                 # 无残留时 moved=0，因此始终执行无副作用。
                 # V4.3.1: unconditional name-based flatten safety net — recursively move
                 # any files still stranded in species/rating/burst_ subdirs back to root.
+                flatten_moved = 0
                 try:
                     from tools.find_bird_util import force_flatten_directory
-                    force_flatten_directory(directory_path, log_callback=emit_log, i18n=i18n)
+                    _fstats = force_flatten_directory(directory_path, log_callback=emit_log, i18n=i18n)
+                    flatten_moved = int(_fstats.get("moved", 0)) if _fstats else 0
                 except Exception as _fe:
                     emit_log(f"⚠️ flatten fallback failed: {_fe}")
+
+                # 恢复总数 = manifest 恢复 + 评分目录兜底 + 按目录名摊平兜底（合并显示,避免数字与实际不符）
+                total_restored = restored_count + fallback_restored + flatten_moved
+                if total_restored == 0:
+                    emit_log(i18n.t("logs.no_files_to_restore"))
+                else:
+                    emit_log(i18n.t("logs.restored_files", count=total_restored))
 
                 # V4.0.4: 根据模式决定是否重置EXIF
                 if _skip_exif_reset:
@@ -2650,12 +2480,15 @@ class SuperPickyMainWindow(QMainWindow):
             )
             return
 
+        # Task 7: 从 advanced_config 读取阈值，不再读取已删除的滑块控件
+        # Task 7: read thresholds from advanced_config; old slider widgets removed
+        _adv_pad = get_advanced_config()
         from .post_adjustment_dialog import PostAdjustmentDialog
         dialog = PostAdjustmentDialog(
             self,
             self.directory_path,
-            current_sharpness=self.sharp_slider.value(),
-            current_nima=self.nima_slider.value() / 10.0,
+            current_sharpness=int(_adv_pad.min_sharpness),
+            current_nima=_adv_pad.min_nima,
             on_complete_callback=self._on_post_adjustment_complete,
             log_callback=self._log
         )
@@ -2720,25 +2553,6 @@ class SuperPickyMainWindow(QMainWindow):
         self._video_analyzer_window.raise_()
         self._video_analyzer_window.activateWindow()
 
-    def _show_advanced_settings(self):
-        """显示高级设置"""
-        from .advanced_settings_dialog import AdvancedSettingsDialog
-        dialog = AdvancedSettingsDialog(self)
-        result = dialog.exec()
-        
-        # V4.2: 如果用户保存了设置，更新主窗口的变量并显示新配置
-        if result:
-            # 重新加载配置
-            self.config = get_advanced_config()
-            # 更新 ai_confidence 变量
-            self.ai_confidence = int(self.config.min_confidence * 100)
-            # 在控制台显示更新后的设置
-            self._log(self.i18n.t("logs.settings_updated"))
-            self._log(self.i18n.t("logs.detection_sensitivity", v=self.ai_confidence))
-            self._log(self.i18n.t("logs.min_sharpness", v=self.config.min_sharpness))
-            self._log(self.i18n.t("logs.min_aesthetics", v=self.config.min_nima))
-            self._log(self.i18n.t("logs.birdid_confidence_log", v=self.config.birdid_confidence))
-
     def _change_language(self, lang_code):
         """切换界面语言"""
         from ui.custom_dialogs import StyledMessageBox
@@ -2759,12 +2573,198 @@ class SuperPickyMainWindow(QMainWindow):
                 msg = "界面语言已更改，重启应用后生效。"
             StyledMessageBox.information(self, title, msg)
 
-    @Slot()
-    def _show_about(self):
-        """显示关于对话框"""
-        from .about_dialog import AboutDialog
-        dialog = AboutDialog(self, self.i18n)
-        dialog.exec()
+    def _open_settings_center(self, start_page: str = "culling") -> None:
+        """打开设置中心弹窗，关闭后刷新依赖值（技能 chip、识鸟面板状态）。
+
+        Task 7: 统一设置入口。所有参数、水平、识鸟等配置都在设置中心内完成。
+        关闭后调用 _refresh_skill_chip 保证 header chip 与当前配置同步；
+        通过 Task 8 guard 调用 birdid_dock.reload_from_config()（Task 8 提供方法）。
+
+        Open the SettingsCenter dialog; refresh dependent values after it closes.
+        Task 7: Unified settings entry. All config lives inside SettingsCenter.
+        After close: refresh skill chip + call birdid_dock.reload_from_config (Task 8).
+
+        Parameters:
+            start_page (str): 设置中心初始显示页 key / Initial page key ("culling"/"about"/etc.)
+        """
+        from ui.settings_center import SettingsCenter
+        dlg = SettingsCenter(self.i18n, parent=self, start_page=start_page)
+        dlg.exec()
+
+        # 刷新技能 chip 标签，确保与 advanced_config 中当前值一致
+        # Refresh the skill level chip so it reflects the current advanced_config value
+        self._refresh_skill_chip()
+        # 刷新首页快速参数面板,与设置中心改动保持一致(SSOT 双向同步)
+        self._refresh_param_panel()
+
+        # Task 8 guard: birdid_dock.reload_from_config 由 Task 8 提供
+        # Task 8 guard: reload_from_config is provided by Task 8
+        dock = getattr(self, "birdid_dock", None)
+        if dock is not None and hasattr(dock, "reload_from_config"):
+            dock.reload_from_config()
+
+    def _refresh_skill_chip(self) -> None:
+        """从 advanced_config 读取当前技能等级并刷新 header chip 标签。
+
+        供 _open_settings_center 关闭后调用，确保 chip 显示值与持久化配置一致。
+
+        Read current skill level from advanced_config and refresh the header chip label.
+        Called by _open_settings_center after the dialog closes.
+        """
+        _cfg = get_advanced_config()
+        self._update_skill_level_label(_cfg.skill_level)
+
+    def _create_parameters_section(self, parent_layout):
+        """
+        首页「快速调整」参数面板:锐度/美学两滑块 + 飞行/连拍/识鸟三开关。
+
+        所有控件双向绑定 advanced_config(单一事实源):初值从 config 读,改动写回 config;
+        范围与设置中心精选页一致(锐度 100-600,美学 0-70 即 0.0-7.0),避免两处不一致或截断。
+        手动改滑块视为自定义档(skill_level=custom 并同步 custom_*),与设置中心精选页协同一致。
+        初值在 connect 之前设置,故不会在构建时误触发回调。
+
+        Home quick-adjust panel: sharpness/aesthetics sliders + flight/burst/birdid toggles.
+        Two-way bound to advanced_config (SSOT); ranges match the Settings Center culling page.
+        Editing a slider marks the skill level as custom (consistent with the culling page).
+        """
+        cfg = self.config
+        params_frame = QFrame()
+        params_frame.setStyleSheet(
+            f"QFrame {{ background-color: {COLORS['bg_elevated']}; border-radius: 10px; }}")
+        params_layout = QVBoxLayout(params_frame)
+        params_layout.setContentsMargins(20, 16, 20, 16)
+        params_layout.setSpacing(16)
+
+        # 头部:标题 + 三开关 / Header: title + three toggles
+        header_layout = QHBoxLayout()
+        params_title = QLabel(self.i18n.t("labels.selection_params"))
+        params_title.setStyleSheet(
+            f"color: {COLORS['text_primary']}; font-size: 13px; font-weight: 500;")
+        header_layout.addWidget(params_title)
+        header_layout.addStretch()
+
+        def _toggle(label_text: str, checked: bool) -> QCheckBox:
+            box = QHBoxLayout()
+            box.setSpacing(10)
+            lbl = QLabel(label_text)
+            lbl.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
+            box.addWidget(lbl)
+            cb = QCheckBox()
+            cb.setChecked(checked)   # 设初值在 connect 之前 / set before connect
+            cb.setStyleSheet(checkbox_indicator_qss(16, COLORS['text_muted'], COLORS['accent']))
+            box.addWidget(cb)
+            header_layout.addLayout(box)
+            return cb
+
+        self.flight_check = _toggle(self.i18n.t("labels.flight_detection"), bool(cfg.flight_check))
+        self.burst_check = _toggle(self.i18n.t("labels.burst"), bool(cfg.burst_check))
+        self.birdid_check = _toggle(self.i18n.t("menu.birdid_label"), bool(cfg.birdid_auto_identify))
+        self.flight_check.stateChanged.connect(self._save_check_states)
+        self.burst_check.stateChanged.connect(self._save_check_states)
+        self.birdid_check.stateChanged.connect(self._on_birdid_check_changed)
+        params_layout.addLayout(header_layout)
+
+        # 滑块区:锐度 + 美学(范围对齐设置中心精选页)/ Sliders aligned with culling page
+        sliders_layout = QVBoxLayout()
+        sliders_layout.setSpacing(16)
+
+        sharp_layout = QHBoxLayout()
+        sharp_layout.setSpacing(16)
+        sharp_label = QLabel(self.i18n.t("labels.sharpness_short"))
+        sharp_label.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 13px; min-width: 80px;")
+        sharp_layout.addWidget(sharp_label)
+        self.sharp_slider = QSlider(Qt.Orientation.Horizontal)
+        self.sharp_slider.setRange(100, 600)
+        self.sharp_slider.setSingleStep(10)
+        self.sharp_slider.setPageStep(10)
+        self.sharp_slider.setValue(int(cfg.min_sharpness))   # 初值在 connect 之前
+        self.sharp_slider.valueChanged.connect(self._on_sharp_changed)
+        sharp_layout.addWidget(self.sharp_slider)
+        self.sharp_value = QLabel(str(int(cfg.min_sharpness)))
+        self.sharp_value.setStyleSheet(VALUE_STYLE)
+        self.sharp_value.setFixedWidth(50)
+        self.sharp_value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        sharp_layout.addWidget(self.sharp_value)
+        sliders_layout.addLayout(sharp_layout)
+
+        nima_layout = QHBoxLayout()
+        nima_layout.setSpacing(16)
+        nima_label = QLabel(self.i18n.t("labels.aesthetics"))
+        nima_label.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 13px; min-width: 80px;")
+        nima_layout.addWidget(nima_label)
+        self.nima_slider = QSlider(Qt.Orientation.Horizontal)
+        self.nima_slider.setRange(0, 70)
+        self.nima_slider.setValue(int(round(cfg.min_nima * 10)))   # 初值在 connect 之前
+        self.nima_slider.valueChanged.connect(self._on_nima_changed)
+        nima_layout.addWidget(self.nima_slider)
+        self.nima_value = QLabel(f"{cfg.min_nima:.1f}")
+        self.nima_value.setStyleSheet(VALUE_STYLE)
+        self.nima_value.setFixedWidth(50)
+        self.nima_value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        nima_layout.addWidget(self.nima_value)
+        sliders_layout.addLayout(nima_layout)
+
+        params_layout.addLayout(sliders_layout)
+        parent_layout.addWidget(params_frame)
+
+    def _on_sharp_changed(self, value):
+        """锐度滑块:更新显示 + 写 advanced_config(转自定义档,与设置中心协同)。"""
+        self.sharp_value.setText(str(value))
+        if getattr(self, "_params_loading", False):
+            return
+        self.config.set_min_sharpness(value)
+        self._mark_custom_skill()
+
+    def _on_nima_changed(self, value):
+        """美学滑块:更新显示(value/10=NIMA)+ 写 advanced_config(转自定义档)。"""
+        self.nima_value.setText(f"{value / 10.0:.1f}")
+        if getattr(self, "_params_loading", False):
+            return
+        self.config.set_min_nima(value / 10.0)
+        self._mark_custom_skill()
+
+    def _mark_custom_skill(self):
+        """手动改阈值 → 技能档转「自定义」并同步 custom_*,与设置中心精选页协同一致。"""
+        cfg = self.config
+        cfg.set_custom_sharpness(self.sharp_slider.value())
+        cfg.set_custom_aesthetics(self.nima_slider.value() / 10.0)
+        if cfg.skill_level != "custom":
+            cfg.set_skill_level("custom")
+        self._refresh_skill_chip()
+
+    def _save_check_states(self, *_):
+        """飞行/连拍开关 → 写 advanced_config。"""
+        if getattr(self, "_params_loading", False):
+            return
+        cfg = self.config
+        cfg.config["flight_check"] = bool(self.flight_check.isChecked())
+        cfg.config["burst_check"] = bool(self.burst_check.isChecked())
+        cfg.save()
+
+    def _on_birdid_check_changed(self, *_):
+        """识鸟开关 → 写 advanced_config.birdid_auto_identify。"""
+        if getattr(self, "_params_loading", False):
+            return
+        self.config.set_birdid_auto_identify(bool(self.birdid_check.isChecked()))
+
+    def _refresh_param_panel(self):
+        """设置中心关闭后,从 advanced_config 刷新首页参数控件,保持两处一致(loading 守卫避免回写)。"""
+        if not hasattr(self, "sharp_slider"):
+            return
+        cfg = self.config
+        self._params_loading = True
+        try:
+            self.sharp_slider.setValue(int(cfg.min_sharpness))
+            self.nima_slider.setValue(int(round(cfg.min_nima * 10)))
+            self.flight_check.setChecked(bool(cfg.flight_check))
+            self.burst_check.setChecked(bool(cfg.burst_check))
+            self.birdid_check.setChecked(bool(cfg.birdid_auto_identify))
+            self.sharp_value.setText(str(int(cfg.min_sharpness)))
+            self.nima_value.setText(f"{cfg.min_nima:.1f}")
+        finally:
+            self._params_loading = False
 
     @Slot()
     def _toggle_birdid_dock(self, checked):
@@ -2842,6 +2842,9 @@ class SuperPickyMainWindow(QMainWindow):
 
         print(message)
 
+        # 运行日志统一去除 emoji(横幅与「预加载完成」绿勾另行用 SVG 图标)
+        message = _LOG_EMOJI_RE.sub("", message)
+
         cursor = self.log_text.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
 
@@ -2850,7 +2853,7 @@ class SuperPickyMainWindow(QMainWindow):
             color = LOG_COLORS['error']
         elif tag == "warning":
             color = LOG_COLORS['warning']
-        elif tag == "success":
+        elif tag in ("success", "success_check"):
             color = LOG_COLORS['success']
         elif tag == "info":
             color = LOG_COLORS['info']
@@ -2861,53 +2864,135 @@ class SuperPickyMainWindow(QMainWindow):
         timestamp = datetime.now().strftime("%H:%M:%S")
         time_color = LOG_COLORS['time']
 
-        # V3.9: 格式化消息（转义 HTML 特殊字符，防止 < > & 被解释为 HTML）
+        # success_check:仅「所有模型预加载完成」用绿勾 SVG(唯一保留的状态标记)
+        icon_html = ""
+        if tag == "success_check":
+            _p = tinted_png_path("check.svg", LOG_COLORS['success'], 14)
+            icon_html = f'<img src="{_p}" width="14" height="14" style="vertical-align:middle"> '
+
+        # V3.9: 转义 HTML 特殊字符（防止 < > & 被解释为 HTML）
         import html
-        html_message = html.escape(message).replace('\n', '<br>')
+
+        # 构造正文 HTML：photo_good/species 做行内分段染色（只染关键信息那段）
+        if tag == "photo_good":
+            # 3星逐张：文件名之后（第一个 |）染绿，序号/文件名保持灰
+            _d, _g = LOG_COLORS['default'], LOG_COLORS['photo_good']
+            _parts = message.split("|", 1)
+            if len(_parts) == 2:
+                body_html = (f'<span style="color: {_d};">{html.escape(_parts[0])}</span>'
+                             f'<span style="color: {_g};">|{html.escape(_parts[1])}</span>')
+            else:
+                body_html = f'<span style="color: {_g};">{html.escape(message)}</span>'
+        elif tag == "species":
+            # Bird ID：鸟名之后（第一个 :）染红，前缀保持灰
+            _d, _r = LOG_COLORS['default'], LOG_COLORS['species']
+            _parts = message.split(":", 1)
+            if len(_parts) == 2:
+                body_html = (f'<span style="color: {_d};">{html.escape(_parts[0])}:</span>'
+                             f'<span style="color: {_r};">{html.escape(_parts[1])}</span>')
+            else:
+                body_html = f'<span style="color: {_r};">{html.escape(message)}</span>'
+        else:
+            _m = html.escape(message).replace('\n', '<br>')
+            body_html = f'<span style="color: {color};">{_m}</span>'
 
         # 对于简短消息添加时间戳
         if len(message) < 100 and '\n' not in message:
             cursor.insertHtml(
                 f'<span style="color: {time_color};">{timestamp}</span> '
-                f'<span style="color: {color};">{html_message}</span><br>'
+                f'{icon_html}{body_html}<br>'
             )
         else:
-            cursor.insertHtml(f'<span style="color: {color};">{html_message}</span><br>')
+            cursor.insertHtml(f'{icon_html}{body_html}<br>')
 
         self.log_text.setTextCursor(cursor)
         self.log_text.ensureCursorVisible()
 
     def _show_initial_help(self):
-        """显示初始帮助信息"""
-        t = self.i18n.t
+        """显示初始帮助信息(HTML:图标左对齐、同行图标与文字垂直居中)"""
+        import html as _html
         from constants import APP_VERSION
-        help_text = f"""━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  {t("help.welcome_title", version=APP_VERSION)}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-{t("help.usage_steps_title")}
-  1. {t("help.step1")}
-  2. {t("help.step2")}
-  3. {t("help.step3")}
-  4. {t("help.step4")}
-
-{t("help.rating_rules_title")}
-  {t("help.rule_3_star")}
-    {t("help.rule_picked", percentage=self.config.picked_top_percentage)}
-  {t("help.rule_2_star")}
-  {t("help.rule_1_star")}
-  {t("help.rule_0_star")}
-  {t("help.rule_flying")}
-  {t("help.rule_focus")}
-  {t("help.rule_exposure")}
-  {t("help.burst_info")}
-
-{t("help.ready")}"""
-        self._log(help_text)
-
-    def _format_statistics_report(self, stats):
-        """格式化统计报告"""
+        from ui.icon_utils import tinted_png_path
+        from ui.styles import COLORS
         t = self.i18n.t
+
+        gold = COLORS.get("star_gold", "#ffcc00")
+        green = COLORS.get("focus_best", "#00cc44")   # 飞版绿
+        red = "#ff5555"                                # 精焦红
+        muted = COLORS.get("text_muted", "#8a8a8a")
+        sec = COLORS.get("text_secondary", "#a1a1a1")
+        pri = COLORS.get("text_primary", "#e0e0e0")
+        accent = COLORS.get("accent", "#00d4aa")
+
+        def ico(svg, color, size=14):
+            p = tinted_png_path(svg, color, size)
+            return f'<img src="{p}" width="{size}" height="{size}" style="vertical-align:middle"> '
+
+        def esc(s):
+            return _html.escape(str(s))
+
+        line = "━" * 30
+        pct = self.config.picked_top_percentage
+
+        # 居中:分隔线 + 欢迎语 + 分隔线
+        center_top = (
+            f'<div align="center" style="color:{sec}">{line}<br>'
+            f'<span style="color:{accent};font-weight:bold">'
+            f'{esc(t("help.welcome_title", version=APP_VERSION))}</span>'
+            f'<br>{line}</div>'
+        )
+
+        # 左对齐:使用步骤 + 评分规则(同一 div 内 <br> 分行,行距正常)
+        rows = [f'<span style="color:{pri};font-weight:bold">{esc(t("help.usage_steps_title"))}</span>']
+        for i, key in enumerate(("step1", "step2", "step3", "step4"), 1):
+            rows.append(f'<span style="color:{sec}">&nbsp;&nbsp;{i}. {esc(t("help." + key))}</span>')
+        rows.append('')
+        rows.append(f'<span style="color:{pri};font-weight:bold">{esc(t("help.rating_rules_title"))}</span>')
+        rules = [
+            (ico("star.svg", gold) * 3, esc(t("help.rule_3_star"))),
+            ('&nbsp;&nbsp;&nbsp;&nbsp;' + ico("crown.svg", gold),
+             esc(t("help.rule_picked", percentage=pct))),
+            (ico("star.svg", gold) * 2, esc(t("help.rule_2_star"))),
+            (ico("star.svg", gold), esc(t("help.rule_1_star"))),
+            (ico("circle-off.svg", muted), esc(t("help.rule_0_star"))),
+            (ico("bird.svg", green), esc(t("help.rule_flying"))),
+            (ico("scan-eye.svg", red), esc(t("help.rule_focus"))),
+            (ico("square-stack.svg", sec), esc(t("help.burst_info"))),
+        ]
+        for ic, txt in rules:
+            rows.append(f'<span style="color:{sec}">&nbsp;&nbsp;{ic}{txt}</span>')
+        left_block = '<div align="left">' + '<br>'.join(rows) + '</div>'
+
+        center_bottom = f'<div align="left" style="color:{accent}">{esc(t("help.ready"))}</div>'
+
+        cursor = self.log_text.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.insertHtml(center_top + '<div>&nbsp;</div>' + left_block
+                          + '<div>&nbsp;</div>' + center_bottom + '<br>')
+        self.log_text.setTextCursor(cursor)
+        self.log_text.ensureCursorVisible()
+
+    def _show_statistics_report(self, stats):
+        """统计报告(HTML 渲染:评级用星/冠 SVG、飞版/精焦用对应 SVG、鸟种红色)"""
+        import html as _html
+        from ui.icon_utils import tinted_png_path
+        from ui.styles import COLORS
+        t = self.i18n.t
+
+        gold = COLORS.get("star_gold", "#ffcc00")
+        green = COLORS.get("focus_best", "#00cc44")   # 飞版绿
+        red = "#ff5555"                                # 精焦红 / 鸟种红
+        muted = COLORS.get("text_muted", "#8a8a8a")
+        sec = COLORS.get("text_secondary", "#a1a1a1")
+        accent = COLORS.get("accent", "#00d4aa")
+
+        def ico(svg, color, size=14):
+            p = tinted_png_path(svg, color, size)
+            return f'<img src="{p}" width="{size}" height="{size}" style="vertical-align:middle"> '
+
+        def esc(s):
+            return _html.escape(str(s))
+
         total = stats.get('total', 0)
         star_3 = stats.get('star_3', 0)
         star_2 = stats.get('star_2', 0)
@@ -2918,58 +3003,71 @@ class SuperPickyMainWindow(QMainWindow):
         avg_time = stats.get('avg_time', 0)
         picked = stats.get('picked', 0)
         flying = stats.get('flying', 0)
-
+        focus_precise = stats.get('focus_precise', 0)
         bird_total = star_3 + star_2 + star_1 + star_0
 
-        report = "\n" + "━" * 50 + "\n"
-        report += f"  {t('report.title')}\n"
-        report += "━" * 50 + "\n\n"
+        line = "━" * 30
+        head = (
+            f'<div align="center" style="color:{sec}">{line}<br>'
+            f'<span style="color:{accent};font-weight:bold">{esc(t("report.title"))}</span>'
+            f'<br>{line}</div>'
+        )
 
-        report += t("report.total_photos", total=total) + "\n"
-        report += t("report.total_time", time_sec=total_time, time_min=total_time/60) + "\n"
-        report += t("report.avg_time", avg=avg_time) + "\n\n"
-
+        rows = [
+            f'<span style="color:{sec}">{esc(t("report.total_photos", total=total))}</span>',
+            f'<span style="color:{sec}">{esc(t("report.total_time", time_sec=total_time, time_min=total_time/60))}</span>',
+            f'<span style="color:{sec}">{esc(t("report.avg_time", avg=avg_time))}</span>',
+            '',
+        ]
         if total > 0:
-            report += f"  ⭐⭐⭐  {star_3:>4}  ({star_3/total*100:>5.1f}%)\n"
+            def pct(n):
+                return f"{n/total*100:.1f}%"
+            rows.append(f'<span style="color:{sec}">{ico("star.svg", gold)*3}{star_3} ({pct(star_3)})</span>')
             if picked > 0 and star_3 > 0:
-                report += f"    └─ 🏆  {picked} ({picked/star_3*100:.0f}%)\n"
-            report += f"  ⭐⭐    {star_2:>4}  ({star_2/total*100:>5.1f}%)\n"
-            report += f"  ⭐      {star_1:>4}  ({star_1/total*100:>5.1f}%)\n"
+                rows.append(f'<span style="color:{sec}">&nbsp;&nbsp;&nbsp;&nbsp;└─ {ico("crown.svg", gold)}{picked} ({picked/star_3*100:.0f}%)</span>')
+            rows.append(f'<span style="color:{sec}">{ico("star.svg", gold)*2}{star_2} ({pct(star_2)})</span>')
+            rows.append(f'<span style="color:{sec}">{ico("star.svg", gold)}{star_1} ({pct(star_1)})</span>')
             if star_0 > 0:
-                report += f"  0⭐     {star_0:>4}  ({star_0/total*100:>5.1f}%)\n"
-            report += f"  ❌      {no_bird:>4}  ({no_bird/total*100:>5.1f}%)\n\n"
-            report += t("report.bird_total", count=bird_total, percent=bird_total/total*100) + "\n"
-
+                rows.append(f'<span style="color:{sec}">{ico("star.svg", muted)}{star_0} ({pct(star_0)})</span>')
+            rows.append(f'<span style="color:{sec}">{ico("circle-off.svg", muted)}{esc(t("browser.focus_no_bird"))} {no_bird} ({pct(no_bird)})</span>')
+            rows.append('')
+            rows.append(f'<span style="color:{sec}">{esc(t("report.bird_total", count=bird_total, percent=bird_total/total*100))}</span>')
             if flying > 0:
-                report += f"{t('help.rule_flying')}: {flying}\n"
-            
-            # V4.2: 精焦统计（红色标签）
-            focus_precise = stats.get('focus_precise', 0)
+                rows.append(f'<span style="color:{sec}">{ico("bird.svg", green)}{esc(t("help.rule_flying"))}: {flying}</span>')
             if focus_precise > 0:
-                report += f"{t('help.rule_focus')}: {focus_precise}\n"
-            
-            # V4.2: 识别鸟种统计 (language-aware)
+                rows.append(f'<span style="color:{sec}">{ico("scan-eye.svg", red)}{esc(t("help.rule_focus"))}: {focus_precise}</span>')
+
+            # 识别鸟种(红色文字, language-aware)
             bird_species = stats.get('bird_species', [])
             if bird_species:
-                # Pick the correct language name based on current locale
+                from core.rarity_tier import tier_name_color
                 is_chinese = self.i18n.current_lang.startswith('zh')
-                species_names = []
+                parts = []  # 逐种按罕见度着色:常见默认/能见橙/少见以上红
                 for sp in bird_species:
                     if isinstance(sp, dict):
                         name = sp.get('cn_name', '') if is_chinese else sp.get('en_name', '')
-                        # Fallback to the other language if preferred is empty
                         if not name:
                             name = sp.get('en_name', '') if is_chinese else sp.get('cn_name', '')
-                        if name:
-                            species_names.append(name)
+                        tier = sp.get('gbif_tier')
                     else:
-                        # Legacy support: if it's still a string (old format)
-                        species_names.append(str(sp))
-                if species_names:
-                    report += "\n" + t("logs.bird_species_identified", count=len(species_names), species=', '.join(species_names))
+                        name, tier = str(sp), None
+                    if name:
+                        c = tier_name_color(tier, default=sec)
+                        parts.append(f'<span style="color:{c}">{esc(name)}</span>')
+                if parts:
+                    rows.append('')
+                    _sentinel = "@@SPLIST@@"
+                    _line = esc(t("logs.bird_species_identified", count=len(parts), species=_sentinel))
+                    rows.append(f'<span style="color:{sec}">{_line.replace(_sentinel, ", ".join(parts))}</span>')
 
-        report += "\n" + "━" * 50
-        return report
+        body = '<div align="left">' + '<br>'.join(rows) + '</div>'
+        tail = f'<div align="center" style="color:{sec}">{line}</div>'
+
+        cursor = self.log_text.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.insertHtml(head + '<div>&nbsp;</div>' + body + tail + '<br>')
+        self.log_text.setTextCursor(cursor)
+        self.log_text.ensureCursorVisible()
 
     def _show_lightroom_guide(self):
         """显示 Lightroom 指南"""
@@ -3172,7 +3270,7 @@ class SuperPickyMainWindow(QMainWindow):
                 pass
 
             if not fail_items:
-                self.log_signal.emit(self.i18n.t("preload.preload_complete"), "success")
+                self.log_signal.emit(self.i18n.t("preload.preload_complete"), "success_check")
             else:
                 failed_str = ", ".join(name for name, _ in fail_items)
                 self.log_signal.emit(
@@ -3745,14 +3843,7 @@ class SuperPickyMainWindow(QMainWindow):
                 app.quit()
 
     # ========== V4.3: 摄影水平预设 ==========
-    
-    def _show_skill_level_dialog(self):
-        """菜单打开水平选择对话框"""
-        # 保留此手动入口：onboarding 只负责首启流程，后续用户仍可在设置菜单中单独调整摄影等级。
-        dialog = SkillLevelDialog(self.i18n, self)
-        dialog.level_selected.connect(self._on_skill_level_selected)
-        dialog.exec()
-    
+
     def _show_first_run_skill_level_dialog(
         self,
         *,
@@ -3890,65 +3981,29 @@ class SuperPickyMainWindow(QMainWindow):
         )
     
     def _apply_skill_level_thresholds(self, level_key: str):
-        """应用水平预设的阈值到滑块"""
-        sharpness, aesthetics = get_skill_level_thresholds(level_key, self.config)
-        
-        # 阻止信号防止触发 _check_custom_mode
-        self._applying_preset = True
-        
-        self.sharp_slider.blockSignals(True)
-        self.sharp_slider.setValue(int(sharpness))
-        self.sharp_slider.blockSignals(False)
-        self.sharp_value.setText(str(int(sharpness)))
-        
-        self.nima_slider.blockSignals(True)
-        self.nima_slider.setValue(int(aesthetics * 10))
-        self.nima_slider.blockSignals(False)
-        self.nima_value.setText(f"{aesthetics:.1f}")
-        
-        self._applying_preset = False
-        
-        # 更新水平显示标签
-        self._update_skill_level_label(level_key)
-    
-    def _save_check_states(self):
-        """持久化主界面复选框状态"""
-        self.config.set_flight_check(self.flight_check.isChecked())
-        self.config.set_burst_check(self.burst_check.isChecked())
-        self.config.save()
+        """应用水平预设的阈值到 advanced_config（参数面板已删除，不再写滑块）。
 
-    def _check_custom_mode(self):
-        """检查当前滑块值是否与任何预设匹配，如果不匹配则切换到自选模式"""
-        # 如果正在应用预设，跳过检查
-        if getattr(self, '_applying_preset', False):
-            return
-        
-        current_sharpness = self.sharp_slider.value()
-        current_aesthetics = self.nima_slider.value() / 10.0
-        
-        # 检查是否匹配某个预设
-        for level_key, preset in SKILL_PRESETS.items():
-            if (current_sharpness == preset["sharpness"] and 
-                abs(current_aesthetics - preset["aesthetics"]) < 0.05):
-                # 匹配预设
-                if self.config.skill_level != level_key:
-                    self.config.set_skill_level(level_key)
-                    self.config.save()
-                    self._update_skill_level_label(level_key)
-                return
-        
-        # 不匹配任何预设，切换到自选模式
-        # 不匹配任何预设，切换到自选模式
-        if self.config.skill_level != "custom":
-            self.config.set_skill_level("custom")
-            self._update_skill_level_label("custom")
-            print(f"🎛️ 已切换到自选模式")
-            
-        # 始终更新自选值并保存
-        self.config.set_custom_sharpness(current_sharpness)
-        self.config.set_custom_aesthetics(current_aesthetics)
-        self.config.save()
-    
+        Task 7: 锐度/美学阈值持久化到 advanced_config 而非 UI 控件。
+        原来写 sharp_slider / nima_slider 的逻辑已移除。
+
+        Apply skill-level preset thresholds to advanced_config (parameter panel
+        removed; no more sliders to write to).
+
+        Parameters:
+            level_key (str): 技能等级键值 ("beginner"/"intermediate"/"master"/"custom")
+        """
+        sharpness, aesthetics = get_skill_level_thresholds(level_key, self.config)
+
+        # Task 7: 持久化到 advanced_config，供下次 _start_processing 读取
+        # Task 7: persist to advanced_config so next _start_processing picks it up
+        _cfg = get_advanced_config()
+        _cfg.set_min_sharpness(int(sharpness))
+        _cfg.set_min_nima(aesthetics)
+        _cfg.save()
+
+        # 同步刷新主窗口的技能 chip 标签 / Refresh skill chip label on main window
+        self._update_skill_level_label(level_key)
+
     def _update_skill_level_label(self, level_key: str):
         """更新主界面的水平显示标签"""
         if hasattr(self, 'skill_level_label'):
