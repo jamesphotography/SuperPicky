@@ -2151,7 +2151,7 @@ def main():
     logging.info("Working directory set to: %s", project_root)
 
     plan = resolve_download_plan(
-        {"core_detection", "quality", "keypoint", "flight", "birdid"},
+        {"core_detection", "quality", "keypoint", "flight", "birdid", "enhance"},
         include_optional_local=False,
     )
     success_count = 0
