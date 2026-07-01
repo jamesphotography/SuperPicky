@@ -10,7 +10,6 @@ positive samples" grouped by bird species. Users check/uncheck photos and
 see the total count/estimated size; the "Pack" button calls build_submission
 to produce a desktop zip.
 """
-import os
 from dataclasses import dataclass, field
 from typing import List, Optional, Set
 
@@ -160,7 +159,18 @@ class SubmissionReviewDialog(QDialog):
             QMessageBox.information(self, self.i18n.t("submission.title"),
                                     self.i18n.t("submission.none_selected"))
             return
-        res = build_submission(items, self._out_dir, self._app_version)
+        try:
+            res = build_submission(items, self._out_dir, self._app_version)
+        except Exception as e:
+            # 面向非技术用户的优雅错误处理：无写权限退回/图片损坏等意外情况，
+            # 不让异常直接崩到 Qt 事件循环，改弹提示框告知用户。
+            # User-friendly error handling: don't let exceptions (e.g. no
+            # write permission, corrupted files) propagate into the Qt
+            # event loop; show a message box instead.
+            QMessageBox.critical(
+                self, self.i18n.t("submission.title"),
+                self.i18n.t("submission.pack_error", error=str(e)))
+            return
         self.result_zip_path = res.zip_path
         msg = self.i18n.t("submission.done",
                           count=res.count, path=res.zip_path)

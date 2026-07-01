@@ -1487,6 +1487,8 @@
     "skipped_n": "{n} photo(s) were skipped because they could not be read.",
     "no_corrections": "There are no correction records available to submit.",
     "consent_title": "Submit Correction Samples",
-    "consent_body": "This is an optional feature: the photos you select will be sent to the developer solely to help improve bird identification. GPS location and EXIF shooting data are automatically stripped on export, so your privacy is protected. Continue?"
+    "consent_body": "This is an optional feature: the photos you select will be sent to the developer solely to help improve bird identification. GPS location and EXIF shooting data are automatically stripped on export, so your privacy is protected. Continue?",
+    "submit_button": "📤 Submit Corrections",
+    "pack_error": "Packaging failed: {error}"
   }
 }
