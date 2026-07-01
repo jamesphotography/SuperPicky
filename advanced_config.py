@@ -164,6 +164,9 @@ class AdvancedConfig:
         "birdid_region_code": None,
         "birdid_selected_region": "整个国家",
         "birdid_dock_settings_migrated": False,
+
+        # 纠错样本提交：首次是否已弹过「自愿说明」/ Correction submission first-run consent
+        "correction_consent_shown": False,
     }
 
     def __init__(self, config_file=None):
@@ -260,6 +263,11 @@ class AdvancedConfig:
     def language(self):
         return self.config["language"]
 
+    @property
+    def correction_consent_shown(self) -> bool:
+        """纠错样本提交的首次自愿说明是否已展示过。"""
+        return bool(self.config.get("correction_consent_shown", False))
+
     # Setter方法
     def set_min_confidence(self, value):
         """设置AI置信度阈值 (0.3-0.7)"""
@@ -298,6 +306,11 @@ class AdvancedConfig:
     def set_save_csv(self, value):
         """设置是否保存CSV"""
         self.config["save_csv"] = bool(value)
+
+    def set_correction_consent_shown(self, value: bool) -> None:
+        """设置纠错样本提交首次说明已展示，并持久化。"""
+        self.config["correction_consent_shown"] = bool(value)
+        self.save()
 
     def set_log_level(self, value):
         """设置日志详细程度"""
