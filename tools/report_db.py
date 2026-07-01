@@ -190,6 +190,27 @@ class ReportDB:
                     )
                 """)
 
+                # 纠错样本表（correction submission）：随项目持久化。
+                # 记录一次「改鸟种」事件的原预测(wrong_*)与改正结果(corrected_*)。
+                # Corrections table for the correction-submission feature.
+                self._conn.execute("""
+                    CREATE TABLE IF NOT EXISTS corrections (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        filename TEXT NOT NULL,
+                        wrong_cn TEXT,
+                        wrong_en TEXT,
+                        corrected_model_class_id INTEGER,
+                        corrected_cn TEXT,
+                        corrected_en TEXT,
+                        birdid_confidence REAL,
+                        created_at TEXT
+                    )
+                """)
+                self._conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_corrections_filename "
+                    "ON corrections(filename)"
+                )
+
                 # 初始化元数据
                 self._conn.execute(
                     "INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)",
@@ -679,6 +700,70 @@ class ReportDB:
             results = [dict(row) for row in cursor.fetchall()]
 
         return results
+
+    # ==========================================================================
+    #  纠错样本（correction submission）
+    # ==========================================================================
+
+    def insert_correction(self, data: dict) -> None:
+        """
+        插入一条纠错记录（每次「改鸟种」事件一条）。
+
+        参数 / Args:
+            data: 键含 filename, wrong_cn, wrong_en, corrected_model_class_id,
+                  corrected_cn, corrected_en, birdid_confidence。created_at 自动填。
+        """
+        cols = ("filename", "wrong_cn", "wrong_en", "corrected_model_class_id",
+                "corrected_cn", "corrected_en", "birdid_confidence", "created_at")
+        row = {k: data.get(k) for k in cols}
+        row["created_at"] = _now_iso()
+        placeholders = ", ".join(["?"] * len(cols))
+        col_str = ", ".join(cols)
+        sql = f"INSERT INTO corrections ({col_str}) VALUES ({placeholders})"
+        with self._lock:
+            self._conn.execute(sql, [row[c] for c in cols])
+            self._safe_commit()
+
+    def get_corrections(self) -> List[dict]:
+        """返回全部纠错记录，按 created_at 升序。"""
+        with self._lock:
+            cursor = self._conn.execute(
+                "SELECT * FROM corrections ORDER BY created_at, id"
+            )
+            return [dict(r) for r in cursor.fetchall()]
+
+    def get_photos_by_species(
+        self,
+        cn: Optional[str] = None,
+        en: Optional[str] = None,
+        exclude_filename: Optional[str] = None,
+    ) -> List[dict]:
+        """
+        查当前项目内同鸟种、可当正样本的照片（has_bird=1 且 rating!=-1）。
+
+        cn 优先；cn 为空时用 en。exclude_filename 排除被改正图自身。
+        """
+        col = None
+        val = None
+        if cn and cn.strip():
+            col, val = "bird_species_cn", cn.strip()
+        elif en and en.strip():
+            col, val = "bird_species_en", en.strip()
+        if col is None:
+            return []
+        assert col in {"bird_species_cn", "bird_species_en"}
+        sql = (
+            f"SELECT * FROM photos WHERE {col} = ? AND has_bird = 1 "
+            "AND rating != -1"
+        )
+        params: List[Any] = [val]
+        if exclude_filename:
+            sql += " AND filename != ?"
+            params.append(exclude_filename)
+        sql += " ORDER BY filename"
+        with self._lock:
+            cursor = self._conn.execute(sql, params)
+            return [dict(r) for r in cursor.fetchall()]
 
     def get_statistics(self) -> dict:
         """
