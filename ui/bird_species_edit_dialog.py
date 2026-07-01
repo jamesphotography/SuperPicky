@@ -92,6 +92,7 @@ class BirdSpeciesEditDialog(QDialog):
 
         self.selected_cn: str = ""
         self.selected_en: str = ""
+        self.selected_latin: str = ""
         self._selected_data: Optional[Dict] = None
 
         self._db_path = _get_birdname_db_path()
@@ -349,11 +350,12 @@ class BirdSpeciesEditDialog(QDialog):
         self._on_confirm()
 
     def _on_confirm(self):
-        """确认选择，写入 selected_cn / selected_en 后关闭。"""
+        """确认选择，写入 selected_cn / selected_en / selected_latin 后关闭。"""
         if not self._selected_data:
             return
         self.selected_cn = (self._selected_data.get("chinese_name") or "").strip()
         self.selected_en = (self._selected_data.get("english_name") or "").strip()
+        self.selected_latin = (self._selected_data.get("latin_name") or "").strip()
         self.accept()
 
     def _clear_results(self):
