@@ -1473,4 +1473,20 @@
     "birdid_country_label": "Country",
     "birdid_region_label": "Region"
   }
+,
+  "submission": {
+    "title": "Submit Correction Samples",
+    "hint": "Check the photos below to package the corrected photo and its suggested positive samples and send them to the developer to help improve bird identification. GPS/EXIF privacy data is stripped automatically on export.",
+    "pack": "Pack",
+    "cancel": "Cancel",
+    "none_selected": "Please select at least one photo.",
+    "no_class_id": "No model class id found; this group cannot be submitted",
+    "summary": "{count} photo(s) selected",
+    "done": "Packaging complete: {count} photo(s) saved to:\n{path}",
+    "too_big": "Note: the archive exceeds {mb} MB; consider using cloud storage instead of an email attachment.",
+    "skipped_n": "{n} photo(s) were skipped because they could not be read.",
+    "no_corrections": "There are no correction records available to submit.",
+    "consent_title": "Submit Correction Samples",
+    "consent_body": "This is an optional feature: the photos you select will be sent to the developer solely to help improve bird identification. GPS location and EXIF shooting data are automatically stripped on export, so your privacy is protected. Continue?"
+  }
 }
