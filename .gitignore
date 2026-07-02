@@ -1,6 +1,10 @@
 # Git worktrees
 .worktrees/
 
+# 一键训练工具（内部私有，不开源、不入库、不打包）—— 工具代码与工作区都留本地
+tools/train/
+训练工作区/
+
 # Superpowers 可视化草图工作目录 / brainstorm visual companion
 .superpowers/
 

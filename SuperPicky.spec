@@ -149,6 +149,8 @@ a = Analysis(
         'pyarrow',
         'facexlib',
         'datasets',
+        # 一键训练工具（内部，仅 James 本地用）绝不进用户版 App
+        'tools.train',
     ],
     noarchive=False,
     optimize=0,

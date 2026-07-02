@@ -384,6 +384,13 @@ def _open_submission_review(window) -> None:
             window._db.get_photos_by_species(
                 cn=c["corrected_cn"], en=c["corrected_en"],
                 exclude_filename=c["filename"])
+        # DB 里 current_path/original_path 存的是相对 dir_path 的相对路径，
+        # 必须用 _resolve_photo_paths 转成绝对路径，否则 load_image 找不到文件。
+        # current_path/original_path in the DB are stored relative to dir_path;
+        # must resolve to absolute paths via _resolve_photo_paths, otherwise
+        # load_image cannot locate the file.
+        failed = window._resolve_photo_paths(failed)
+        positives = [window._resolve_photo_paths(p) for p in positives]
         groups.append(SpeciesGroup(
             corrected_cn=c["corrected_cn"] or "",
             corrected_en=c["corrected_en"] or "",
