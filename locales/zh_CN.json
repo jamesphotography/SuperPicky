@@ -1473,4 +1473,22 @@
     "birdid_country_label": "国家",
     "birdid_region_label": "地区"
   }
+,
+  "submission": {
+    "title": "纠错样本提交",
+    "hint": "勾选下方照片，将「被改正图」与「建议正样本」打包发送给开发者，用于改进鸟种识别模型。导出会自动抹掉 GPS/EXIF 隐私信息。",
+    "pack": "打包",
+    "cancel": "取消",
+    "none_selected": "请至少勾选一张照片。",
+    "no_class_id": "未反查到模型类别，该组无法提交",
+    "summary": "已选 {count} 张照片",
+    "done": "打包完成，共 {count} 张照片，已保存到：\n{path}",
+    "too_big": "提示：压缩包已超过 {mb} MB，建议改用网盘发送而非邮件附件。",
+    "skipped_n": "有 {n} 张照片因无法读取而被跳过。",
+    "no_corrections": "当前没有可提交的纠错记录。",
+    "consent_title": "提交纠错样本",
+    "consent_body": "这是一项自愿功能：您选中的照片将发送给开发者，仅用于改进鸟种识别模型。导出过程会自动抹掉照片中的 GPS 位置与 EXIF 拍摄信息，不会泄露您的隐私。是否继续？",
+    "submit_button": "📤 提交纠错",
+    "pack_error": "打包失败：{error}"
+  }
 }
