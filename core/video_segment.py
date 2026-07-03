@@ -1,23 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SuperPicky V4.3 — 视频时间段合并与 SRT 字幕生成
+SuperPicky V4.3 — 视频时间段合并
 
 纯函数模块，不依赖任何 AI 模型或 IO，便于单元测试。
 提供：
     - BirdSegment           ：时间段数据类
     - merge_frame_results() ：把逐帧检测结果合并为连续时间段
     - filter_short_segments(): 过滤过短的时间段（误检）
-    - write_srt()           ：写出 SRT 字幕文件
 
-Pure-function module for video segment merging and SRT subtitle generation.
+Pure-function module for video segment merging.
 No AI model or IO dependencies, easy to unit-test.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import List, Optional, Tuple
 
 
@@ -322,126 +320,3 @@ def _absorb(host: BirdSegment, guest: BirdSegment) -> BirdSegment:
         best_frame_bbox=new_best_bbox,
     )
 
-
-# ============================================================================
-# SRT 字幕生成 / SRT subtitle generation
-# ============================================================================
-
-def write_srt(segments: List[BirdSegment], output_path: str | Path,
-              bird_label: str = "🐦 检测到鸟类",
-              no_bird_label: str = "[无鸟]",
-              *,
-              use_english: bool = False,
-              flying_label: str = "飞行中",
-              perched_label: str = "停栖") -> None:
-    """
-    把时间段列表写成 SRT 字幕文件
-
-    SRT 格式（每条 4 行）：
-        序号
-        00:00:00,000 --> 00:00:05,000
-        字幕内容
-        （空行）
-
-    字幕内容根据 BirdSegment 已填充的字段动态组装：
-        Phase 1（仅 YOLO）   : "🐦 检测到鸟类 | 89%"
-        Phase 2 + 鸟种       : "🐦 澳洲蛇鹈 (Australasian Darter) | 83%"
-        Phase 2 + 鸟种 + 飞行 : "🦅 澳洲蛇鹈 (Australasian Darter) | 飞行中 | 83%"
-
-    参数:
-        segments (List[BirdSegment]): 时间段列表
-        output_path (str | Path)    : 输出 SRT 文件路径（UTF-8 编码）
-        bird_label (str)            : 有鸟段的回退前缀（无鸟种识别时使用）
-        no_bird_label (str)         : 无鸟段的字幕
-
-    返回:
-        None
-
-    Write segments as an SRT subtitle file (UTF-8).
-    Subtitle text adapts to available BirdSegment fields (Phase 1/Phase 2).
-    """
-    lines: List[str] = []
-    for idx, seg in enumerate(segments, start=1):
-        lines.append(str(idx))
-        lines.append(f"{_format_srt_time(seg.start_sec)} --> {_format_srt_time(seg.end_sec)}")
-        if seg.has_bird:
-            lines.append(_format_bird_segment_caption(
-                seg, bird_label,
-                use_english=use_english,
-                flying_label=flying_label,
-                perched_label=perched_label,
-            ))
-        else:
-            lines.append(no_bird_label)
-        lines.append("")  # 空行分隔
-
-    out_path = Path(output_path)
-    out_path.write_text("\n".join(lines), encoding="utf-8")
-
-
-def _format_bird_segment_caption(seg: BirdSegment, fallback_label: str,
-                                 *,
-                                 use_english: bool = False,
-                                 flying_label: str = "飞行中",
-                                 perched_label: str = "停栖") -> str:
-    """
-    根据 BirdSegment 已填充的字段组装有鸟段字幕（跟随界面语言）
-
-    优先级：
-        1. 有鸟种识别 → 用单一语言的鸟种名（英文模式优先 species_en，否则 species_zh）
-        2. 无鸟种识别 → 使用 fallback_label
-        额外：is_flying 不为 None → 追加飞行/停栖标签（由调用方按 locale 传入）
-        始终：追加置信度（鸟种 conf > 0 用鸟种，否则用 YOLO conf）
-
-    参数:
-        use_english (bool): True 时鸟种名优先英文，飞行标签用英文
-        flying_label (str): 飞行状态文案（由调用方按 locale 传入）
-        perched_label (str): 停栖状态文案（由调用方按 locale 传入）
-
-    Compose caption for a bird segment based on available Phase 2 fields.
-    Species name and flight labels follow the UI language passed in by the caller,
-    keeping this module free of any i18n dependency (fully param-driven/testable).
-    """
-    parts: List[str] = []
-
-    # —— 鸟种部分（单一语言，跟随界面语言）/ Species part (single language, follows UI)
-    if seg.species_zh or seg.species_en:
-        # 飞行段用 🦅，停栖段用 🐦 / Flying = eagle emoji, perched = bird emoji
-        emoji = "🦅" if seg.is_flying else "🐦"
-        zh = seg.species_zh or ""
-        en = seg.species_en or ""
-        # 英文模式优先英文名，缺失则回退中文；中文模式反之
-        # English mode prefers en (falls back to zh); zh mode is the reverse.
-        name = (en or zh) if use_english else (zh or en)
-        parts.append(f"{emoji} {name}")
-    else:
-        parts.append(fallback_label)
-
-    # —— 飞行状态 / Flight state
-    if seg.is_flying is not None:
-        parts.append(flying_label if seg.is_flying else perched_label)
-
-    # —— 置信度 / Confidence
-    # 优先用鸟种置信度（更具体），否则用 YOLO 平均置信度
-    # Prefer species confidence (more specific); fallback to YOLO avg.
-    if seg.species_conf > 0:
-        conf_pct = int(round(seg.species_conf * 100))
-    else:
-        conf_pct = int(round(seg.avg_conf * 100))
-    parts.append(f"{conf_pct}%")
-
-    return " | ".join(parts)
-
-
-def _format_srt_time(seconds: float) -> str:
-    """
-    秒数 → SRT 时间格式 (HH:MM:SS,mmm)
-
-    Convert seconds to SRT time format (HH:MM:SS,mmm).
-    """
-    total_ms = max(0, int(round(seconds * 1000)))
-    hours = total_ms // 3_600_000
-    minutes = (total_ms % 3_600_000) // 60_000
-    secs = (total_ms % 60_000) // 1000
-    millis = total_ms % 1000
-    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
