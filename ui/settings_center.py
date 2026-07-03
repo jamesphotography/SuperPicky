@@ -1166,7 +1166,7 @@ class SettingsCenter(QDialog):
 
         # ── 总开关区 / Master toggle section ─────────────────────────────────
         self._video_auto_check = QCheckBox(self.i18n.t("video_opts.enable_checkbox"))
-        self._video_auto_check.setChecked(bool(raw.get("video_auto_process_in_main", True)))
+        self._video_auto_check.setChecked(bool(raw.get("video_auto_process_in_main", False)))
         self._video_auto_check.setStyleSheet(self._checkbox_qss())
         self._video_auto_check.setToolTip(self.i18n.t("video_opts.enable_tooltip"))
         lay.addWidget(self._video_auto_check)
