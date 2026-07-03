@@ -6,7 +6,6 @@ SuperPicky V4.3 Phase 3 — 视频分析结果整理器
 把 VideoAnalyzer 的分析结果落地到磁盘：
     - 按主鸟种归类（有鸟视频 → 3星_有鸟/{主鸟种}/  / 无鸟视频 → 0星_无鸟/）
     - 按鸟种 + 拍摄日期重命名视频文件
-    - 同时把 SRT 字幕文件写到同目录同名
 
 设计原则：
     - 纯函数 + 单一职责，便于单测和复用
@@ -15,8 +14,7 @@ SuperPicky V4.3 Phase 3 — 视频分析结果整理器
     - 命名冲突自动加 _2/_3 后缀（不覆盖现有文件）
 
 Video analysis result organizer for Phase 3.
-Moves/copies videos into species-named subdirectories with renamed filenames,
-plus SRT subtitles alongside.
+Moves/copies videos into species-named subdirectories with renamed filenames.
 """
 
 from __future__ import annotations
@@ -31,7 +29,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Literal, Optional, Tuple
 
-from core.video_segment import BirdSegment, write_srt
+from core.video_segment import BirdSegment
 
 
 # ============================================================================
@@ -60,19 +58,15 @@ class OrganizeOptions:
     other_species_folder   : 有鸟但识别失败的目录名 / 命名前缀，默认 "其他鸟"
     use_english            : True 时鸟种文件夹名/文件名前缀用英文名（species_en），
                              False（默认）用中文名。由 UI 层按界面语言传入。
-    flying_label           : SRT 里飞行状态文案（按 locale 由调用方传入），默认 "飞行中"
-    perched_label          : SRT 里停栖状态文案（按 locale 由调用方传入），默认 "停栖"
 
     Videos are organized directly under the source parent dir, by species.
-    Localization (folder/prefix language + SRT labels) is decided by the UI layer
-    and passed in here, keeping the organizer itself free of i18n dependency.
+    Localization (folder/prefix language) is decided by the UI layer and
+    passed in here, keeping the organizer itself free of i18n dependency.
     """
     operation: Literal['move', 'copy'] = 'move'
     no_bird_folder: str = "无鸟"
     other_species_folder: str = "其他鸟"
     use_english: bool = False
-    flying_label: str = "飞行中"
-    perched_label: str = "停栖"
 
 
 @dataclass(slots=True)
@@ -80,7 +74,6 @@ class OrganizeResult:
     """单视频整理结果 / Result of organizing a single video"""
     source_path: str
     target_video_path: Optional[str] = None
-    target_srt_path: Optional[str] = None
     species_used: List[str] = field(default_factory=list)
     capture_date: Optional[datetime] = None
     success: bool = False
@@ -356,7 +349,7 @@ class VideoOrganizer:
     def organize(self, video_path: str,
                  segments: List[BirdSegment]) -> OrganizeResult:
         """
-        整理单个视频：聚合鸟种 → 提取日期 → 构建路径 → 移动 → 写 SRT
+        整理单个视频：聚合鸟种 → 提取日期 → 构建路径 → 移动
 
         参数:
             video_path (str): 源视频路径
@@ -366,7 +359,7 @@ class VideoOrganizer:
             OrganizeResult: 整理结果（含错误信息，便于 UI 显示）
 
         Organize one video: aggregate species → extract date → build path
-        → move/copy → write SRT.
+        → move/copy.
         """
         result = OrganizeResult(source_path=video_path)
         try:
@@ -436,20 +429,6 @@ class VideoOrganizer:
                 shutil.copy2(str(source_p), str(final_target))
             result.target_video_path = str(final_target)
 
-            # 5. 写 SRT 到同目录同名（用 stem 替换扩展名）
-            srt_path = final_target.with_suffix('.srt')
-            try:
-                write_srt(
-                    segments, srt_path,
-                    use_english=self.options.use_english,
-                    flying_label=self.options.flying_label,
-                    perched_label=self.options.perched_label,
-                )
-                result.target_srt_path = str(srt_path)
-            except Exception as e:
-                # SRT 失败不影响视频整理本身 / SRT failure does not fail the whole op
-                result.error = f"SRT 写入失败: {e}"
-
             result.success = True
             return result
 
@@ -475,7 +454,7 @@ def record_organized_results(results: List[OrganizeResult]) -> List[str]:
     把一次整理（move）的结果写成「归类清单」，供后续「复原」精确撤销。
 
     清单按【原始视频所在目录】分组写入，每个目录一个 VIDEO_MANIFEST_NAME 文件，
-    记录「原始路径 → 落地视频路径 / SRT 路径」。已存在清单则合并去重（按原始路径）。
+    记录「原始路径 → 落地视频路径」。已存在清单则合并去重（按原始路径）。
 
     仅记录真正发生移动的条目（source_path 与落地路径不同、未被幂等跳过、成功）。
     copy 模式不应调用本函数（原文件仍在，复原会重复）。
@@ -499,7 +478,6 @@ def record_organized_results(results: List[OrganizeResult]) -> List[str]:
         by_dir.setdefault(src_dir, []).append({
             "original": os.path.abspath(r.source_path),
             "video": os.path.abspath(r.target_video_path),
-            "srt": os.path.abspath(r.target_srt_path) if r.target_srt_path else None,
         })
 
     written: List[str] = []
