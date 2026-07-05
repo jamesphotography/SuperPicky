@@ -24,8 +24,9 @@ def test_nav_has_six_pages_and_switch():
     """
     from ui.settings_center import SettingsCenter, PAGE_ORDER
     w = SettingsCenter(get_i18n())
-    assert PAGE_ORDER == ["culling", "birdid", "output", "video", "apps", "about"]
-    assert w._nav.count() == 6
+    # ExtremeSimple: "video" 页已从设置中心剥离(见 ui/settings_center.py PAGE_ORDER 注释)
+    assert PAGE_ORDER == ["culling", "birdid", "output", "apps", "about"]
+    assert w._nav.count() == 5
     w.show_page("about")
     assert w._stack.currentIndex() == PAGE_ORDER.index("about")
     w.close()
@@ -412,14 +413,16 @@ def test_about_page_shows_version():
 
 def test_output_video_apps_pages_build():
     """
-    验证输出、视频、外部应用三个设置页能正确构建，且关键属性存在。
+    验证输出、外部应用设置页能正确构建，且关键属性存在。
+    "video" 页已从 PAGE_ORDER 剥离(ExtremeSimple)，不再纳入本测试。
 
-    Verify that the output, video, and apps settings pages build correctly
-    and that the key widget attributes are present.
+    Verify that the output and apps settings pages build correctly and that
+    the key widget attributes are present. The "video" page is stripped from
+    PAGE_ORDER (ExtremeSimple), so it's no longer covered here.
     """
     from ui.settings_center import SettingsCenter
     w = SettingsCenter(get_i18n())
-    for key in ("output", "video", "apps"):
+    for key in ("output", "apps"):
         w.show_page(key)
     assert hasattr(w, "_apps_list")   # 外部应用列表存在 / External apps list exists
     w.close()

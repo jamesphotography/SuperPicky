@@ -853,14 +853,18 @@ class ResultsBrowserWindow(QMainWindow):
         size_box.addWidget(self._size_slider)
         layout.addLayout(size_box)
 
-        # 提交纠错入口：改鸟种后可选打包发给开发者，用于改进识鸟模型。
-        # "Submit corrections" entry: optionally package correction samples for the developer.
-        self._submit_corrections_btn = QPushButton(self.i18n.t("submission.submit_button"))
-        self._submit_corrections_btn.setObjectName("tertiary")
-        self._submit_corrections_btn.setFixedHeight(32)
-        self._submit_corrections_btn.setToolTip(self.i18n.t("submission.title"))
-        self._submit_corrections_btn.clicked.connect(self._on_submit_corrections)
-        layout.addWidget(self._submit_corrections_btn)
+        # ExtremeSimple: 「提交本次纠错」按钮已从工具栏剥离（_on_submit_corrections/
+        # _open_submission_review/CorrectionTracker 等纠错提交代码本身保留不动；
+        # 鸟种手动编辑能力不受影响，record_correction_if_species_changed 仍会
+        # 静默记录本地纠错样本，只是没有入口能打包提交。未来要恢复只需把这段
+        # 按钮创建代码加回来）。
+        # ExtremeSimple: the "Submit corrections" button is stripped from the
+        # toolbar (_on_submit_corrections / _open_submission_review /
+        # CorrectionTracker etc. are untouched). Manual species editing is
+        # unaffected; record_correction_if_species_changed keeps silently
+        # logging local correction samples, there's just no entry point to
+        # package and submit them. Re-add this button-creation block to bring
+        # it back.
 
         return bar
 
@@ -2098,14 +2102,18 @@ class ResultsBrowserWidget(QWidget):
         self._size_slider.valueChanged.connect(self._on_size_changed)
         layout.addWidget(self._size_slider)
 
-        # 提交纠错入口：改鸟种后可选打包发给开发者，用于改进识鸟模型。
-        # "Submit corrections" entry: optionally package correction samples for the developer.
-        self._submit_corrections_btn = QPushButton(self.i18n.t("submission.submit_button"))
-        self._submit_corrections_btn.setObjectName("tertiary")
-        self._submit_corrections_btn.setFixedHeight(32)
-        self._submit_corrections_btn.setToolTip(self.i18n.t("submission.title"))
-        self._submit_corrections_btn.clicked.connect(self._on_submit_corrections)
-        layout.addWidget(self._submit_corrections_btn)
+        # ExtremeSimple: 「提交本次纠错」按钮已从工具栏剥离（_on_submit_corrections/
+        # _open_submission_review/CorrectionTracker 等纠错提交代码本身保留不动；
+        # 鸟种手动编辑能力不受影响，record_correction_if_species_changed 仍会
+        # 静默记录本地纠错样本，只是没有入口能打包提交。未来要恢复只需把这段
+        # 按钮创建代码加回来）。
+        # ExtremeSimple: the "Submit corrections" button is stripped from the
+        # toolbar (_on_submit_corrections / _open_submission_review /
+        # CorrectionTracker etc. are untouched). Manual species editing is
+        # unaffected; record_correction_if_species_changed keeps silently
+        # logging local correction samples, there's just no entry point to
+        # package and submit them. Re-add this button-creation block to bring
+        # it back.
 
         return bar
 

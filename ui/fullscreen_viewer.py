@@ -930,14 +930,21 @@ class FullscreenViewer(QWidget):
         self._edit_species_btn = self._tool_btn("square-pen.svg", self.i18n.t("fullscreen.tb_species"),
                                                 self._on_edit_species_clicked)
         v.addWidget(self._edit_species_btn)
-        self._crop_advice_btn = self._tool_btn("crop.svg", self.i18n.t("browser.crop_advice_btn"),
-                                               self._on_crop_advice_clicked)
-        v.addWidget(self._crop_advice_btn)
-        # 自动修图:打开工作区并直接进对应功能
-        # (手动裁剪不再在详情页单列,统一在裁剪工作区内部提供 / manual crop lives inside Crop Studio)
-        self._auto_retouch_btn = self._tool_btn("image-plus.svg", self.i18n.t("fullscreen.tb_auto"),
-                                                self._on_auto_retouch_clicked)
-        v.addWidget(self._auto_retouch_btn)
+        # ExtremeSimple: 「裁剪建议」按钮已从工具栏剥离（_on_crop_advice_clicked/
+        # crop_advice_requested 信号本身保留在下方；这是打开 Crop Studio 的唯一
+        # 入口，摘掉后 ui/crop_studio.py 与 core/crop_advisor.py 全部变为不可达但
+        # 原封不动。未来要恢复只需把这两行按钮创建代码加回来）。
+        # ExtremeSimple: the "crop advice" button is stripped from the toolbar
+        # (_on_crop_advice_clicked / crop_advice_requested stay below). This was
+        # the sole entry point into Crop Studio, so ui/crop_studio.py and
+        # core/crop_advisor.py are now unreachable but untouched. Re-add these
+        # two lines to bring it back.
+        # ExtremeSimple: 「自动修图」按钮已从工具栏剥离（_on_auto_retouch_clicked/
+        # auto_retouch_requested 信号本身保留在下方，未来要恢复只需把这两行按钮
+        # 创建代码加回来）。
+        # ExtremeSimple: the "auto retouch" button is stripped from the toolbar
+        # (_on_auto_retouch_clicked / auto_retouch_requested stay below; re-add
+        # these two lines to bring the button back).
 
         v.addStretch()
 

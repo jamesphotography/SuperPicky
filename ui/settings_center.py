@@ -44,7 +44,15 @@ from ui.styles import COLORS  # noqa: F401
 
 # ── 常量 / Constants ──────────────────────────────────────────────────────────
 
-PAGE_ORDER: list[str] = ["culling", "birdid", "output", "video", "apps", "about"]
+# ExtremeSimple: "video" 已从 PAGE_ORDER 剥离（导航项+页面均由这一个列表驱动，
+# 摘掉这一个 key 就同时去掉了导航条目和 stack 页；_PAGE_ICON/_PAGE_TITLE_KEY 的
+# "video" 项与 _build_video_page() 方法本身都保留不动，未来要恢复只需把
+# "video" 加回列表）。
+# ExtremeSimple: "video" is stripped from PAGE_ORDER (both the nav item and the
+# stacked page are driven by this single list, so removing this one key cuts
+# both). The "video" entries in _PAGE_ICON/_PAGE_TITLE_KEY and the
+# _build_video_page() method itself are untouched; re-add "video" to bring it back.
+PAGE_ORDER: list[str] = ["culling", "birdid", "output", "apps", "about"]
 
 _PAGE_ICON: dict[str, str] = {
     "culling": "gem.svg",
