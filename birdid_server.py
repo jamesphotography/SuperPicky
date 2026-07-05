@@ -22,16 +22,14 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from PIL import Image
 
-from birdid.bird_identifier import (
-    identify_bird,
-    predict_bird,
-    load_image,
-    extract_gps_from_exif,
-    get_classifier,
-    get_database_manager,
-    get_yolo_detector,
-    YOLO_AVAILABLE
-)
+# 注意：birdid.bird_identifier（torch/YOLO 模型栈）改为懒加载。
+# 顶层 import 会让服务器监听被模型栈导入阻塞十几秒以上，导致应用启动后
+# Lightroom 插件在这段窗口期内连不上 5156 端口（表现为"没有反应"）。
+# 各接口在函数体内按需导入；模型预热由 server_manager 的后台线程完成。
+# NOTE: birdid.bird_identifier (the torch/YOLO model stack) is lazily imported.
+# A top-level import blocks the server from listening for 10+ seconds, so the
+# Lightroom plugin cannot reach port 5156 right after app launch. Each endpoint
+# imports on demand; model warm-up happens in server_manager's background thread.
 
 # 创建 Flask 应用
 app = Flask(__name__)
@@ -167,7 +165,19 @@ def update_gui_settings_from_gps(region_code: str, region_name: str = None):
 
 
 def ensure_models_loaded():
-    """确保模型已加载"""
+    """
+    确保模型已加载（首次调用会触发重型模型栈导入与权重加载）。
+
+    Ensure models are loaded (first call triggers the heavy model-stack
+    import and weight loading).
+    """
+    from birdid.bird_identifier import (
+        get_classifier,
+        get_database_manager,
+        get_yolo_detector,
+        YOLO_AVAILABLE,
+    )
+
     print(t("server.loading_models_cli"))
     get_classifier()
     print(t("server.classifier_loaded"))
@@ -184,12 +194,27 @@ def ensure_models_loaded():
 
 @app.route('/health', methods=['GET'])
 def health_check():
-    """健康检查接口"""
+    """
+    健康检查接口。
+
+    不触发重型模型栈导入：服务器一监听就能返回 ok，让 Lightroom 插件
+    在模型后台加载期间也能确认服务存在。models_loaded 反映模型栈是否就绪。
+
+    Health check endpoint. It never triggers the heavy model-stack import:
+    the server can answer ok as soon as it listens, so the Lightroom plugin
+    can confirm the service exists while models are still loading in the
+    background. models_loaded reflects whether the model stack is ready.
+    """
+    bird_identifier = sys.modules.get('birdid.bird_identifier')
     return jsonify({
         'status': 'ok',
         'service': 'SuperPicky BirdID API',
         'version': __version__,
-        'yolo_available': YOLO_AVAILABLE
+        'models_loaded': bird_identifier is not None,
+        'yolo_available': (
+            getattr(bird_identifier, 'YOLO_AVAILABLE', None)
+            if bird_identifier is not None else None
+        ),
     })
 
 
@@ -285,8 +310,10 @@ def recognize_bird():
         print(t("server.log_ebird", value=t("server.yes") if use_ebird else t("server.no")))
         print(t("server.log_location", country=country_code or 'N/A', region=region_code or 'N/A'))
 
-        # 执行识别
+        # 执行识别（懒加载：首次请求会在此处完成模型栈导入）
+        # Run recognition (lazy: the first request finishes the model-stack import here)
         from advanced_config import get_advanced_config
+        from birdid.bird_identifier import identify_bird
         result = identify_bird(
             image_path,
             use_yolo=use_yolo,
