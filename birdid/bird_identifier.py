@@ -575,33 +575,28 @@ def _load_raw_via_exiftool(image_path: str) -> Image.Image:
     """
     使用 ExifTool 从 RAW 文件提取可解码预览图。
     Extract a decodable preview image from a RAW file via ExifTool.
+
+    复用 tools.exiftool_manager 的常驻进程，而非自行拼路径 + 裸 subprocess：
+    旧实现硬编码 mac-only 路径且从未在 Windows 上传 creationflags=
+    CREATE_NO_WINDOW，导致 Windows 用户处理时弹出一闪而过的控制台窗口。
+
+    Reuse tools.exiftool_manager's persistent process instead of rolling our
+    own path lookup + bare subprocess: the old code hardcoded macOS-only paths
+    and never passed creationflags=CREATE_NO_WINDOW on Windows, flashing a
+    console window during processing.
     """
-    import subprocess
     from io import BytesIO
+    from tools.exiftool_manager import get_exiftool_manager
 
-    possible_paths = []
-    if getattr(sys, "frozen", False):
-        meipass = get_runtime_meipass()
-        if meipass is not None:
-            possible_paths.append(os.path.join(meipass, "exiftools_mac", "exiftool"))
-    possible_paths += [
-        os.path.join(PROJECT_ROOT, "exiftools_mac", "exiftool"),
-        "/opt/homebrew/bin/exiftool",
-        "/usr/local/bin/exiftool",
-        "exiftool",
-    ]
-    exiftool = next((p for p in possible_paths if os.path.isfile(p)), "exiftool")
-
+    manager = get_exiftool_manager()
     for tag in ["-JpgFromRaw", "-PreviewImage", "-ThumbnailImage"]:
         try:
-            result = subprocess.run(
-                [exiftool, "-b", tag, image_path], capture_output=True, timeout=15
-            )
-            if result.returncode == 0 and result.stdout and len(result.stdout) > 1000:
+            data = manager.extract_binary(image_path, tag)
+            if data and len(data) > 1000:
                 # V4.3.0: JpgFromRaw/Preview 自带 Orientation，按方向旋转再转 RGB
-                img = _auto_orient(Image.open(BytesIO(result.stdout))).convert("RGB")
+                img = _auto_orient(Image.open(BytesIO(data))).convert("RGB")
                 return img
-        except Exception as e:
+        except Exception:
             continue
 
     raise Exception(
@@ -636,109 +631,74 @@ def _load_heif(image_path: str) -> Image.Image:
 def extract_gps_from_exif(
     image_path: str,
 ) -> Tuple[Optional[float], Optional[float], str]:
-    import subprocess
-    import json as json_module
+    """
+    从照片提取 GPS 坐标：优先走 ExifTool，取不到再退回 PIL EXIF。
 
+    复用 tools.exiftool_manager 的常驻进程，而非自行拼路径 + 裸 subprocess：
+    旧实现硬编码 mac-only 路径且从未在 Windows 上传 creationflags=
+    CREATE_NO_WINDOW；这个函数在 identify_bird() 里每张照片都会调用一次，
+    导致 Windows 用户开启识鸟处理文件夹时每张照片都弹一次一闪而过的控制台
+    窗口（关闭识鸟就不会走到这条路径，现象完全对应）。
+
+    Extract GPS coordinates from a photo: try ExifTool first, then fall back
+    to PIL EXIF.
+
+    Reuse tools.exiftool_manager's persistent process instead of rolling our
+    own path lookup + bare subprocess: the old code hardcoded macOS-only paths
+    and never passed creationflags=CREATE_NO_WINDOW on Windows. This function
+    runs once per photo inside identify_bird(), so Windows users saw a console
+    window flash for every photo while Bird ID was on (and never otherwise —
+    matching the exact symptom reported).
+    """
     try:
-        exiftool_paths = [
-            "/usr/local/bin/exiftool",
-            "/opt/homebrew/bin/exiftool",
-            "exiftool",
-        ]
+        from tools.exiftool_manager import get_exiftool_manager
 
-        exiftool_path = None
-        for path in exiftool_paths:
-            try:
-                result = subprocess.run(
-                    [path, "-ver"], capture_output=True, text=False, timeout=5
-                )
-                if result.returncode == 0:
-                    stdout_bytes = result.stdout
-                    decoded_output = None
-                    for encoding in ["utf-8", "gbk", "gb2312", "latin-1"]:
-                        try:
-                            decoded_output = stdout_bytes.decode(encoding)
-                            break
-                        except UnicodeDecodeError:
-                            continue
+        gps_data = get_exiftool_manager().read_metadata(
+            image_path,
+            extra_args=[
+                "-GPSLatitude",
+                "-GPSLongitude",
+                "-GPSLatitudeRef",
+                "-GPSLongitudeRef",
+            ],
+        )
 
-                    if decoded_output is None:
-                        decoded_output = stdout_bytes.decode("latin-1")
+        if gps_data:
+            lat_str = gps_data.get("GPSLatitude", "")
+            lon_str = gps_data.get("GPSLongitude", "")
+            lat_ref = gps_data.get("GPSLatitudeRef", "N")
+            lon_ref = gps_data.get("GPSLongitudeRef", "E")
 
-                    if decoded_output.strip():
-                        exiftool_path = path
-                        break
-            except:
-                continue
+            if lat_str and lon_str:
 
-        if exiftool_path:
-            result = subprocess.run(
-                [
-                    exiftool_path,
-                    "-j",
-                    "-GPSLatitude",
-                    "-GPSLongitude",
-                    "-GPSLatitudeRef",
-                    "-GPSLongitudeRef",
-                    image_path,
-                ],
-                capture_output=True,
-                text=False,
-                timeout=10,
-            )
+                def parse_dms(dms_str):
+                    import re
 
-            if result.returncode == 0 and result.stdout:
-                stdout_bytes = result.stdout
-                decoded_output = None
-                for encoding in ["utf-8", "gbk", "gb2312", "latin-1"]:
+                    match = re.search(
+                        r'(\d+)\s*deg\s*(\d+)\'\s*([\d.]+)"?', str(dms_str)
+                    )
+                    if match:
+                        d, m, s = (
+                            float(match.group(1)),
+                            float(match.group(2)),
+                            float(match.group(3)),
+                        )
+                        return d + m / 60 + s / 3600
                     try:
-                        decoded_output = stdout_bytes.decode(encoding)
-                        break
-                    except UnicodeDecodeError:
-                        continue
+                        return float(dms_str)
+                    except:
+                        return None
 
-                if decoded_output is None:
-                    decoded_output = stdout_bytes.decode("latin-1")
+                lat = parse_dms(lat_str)
+                lon = parse_dms(lon_str)
 
-                data = json_module.loads(decoded_output)
-                if data and len(data) > 0:
-                    gps_data = data[0]
-
-                    lat_str = gps_data.get("GPSLatitude", "")
-                    lon_str = gps_data.get("GPSLongitude", "")
-                    lat_ref = gps_data.get("GPSLatitudeRef", "N")
-                    lon_ref = gps_data.get("GPSLongitudeRef", "E")
-
-                    if lat_str and lon_str:
-
-                        def parse_dms(dms_str):
-                            import re
-
-                            match = re.search(
-                                r'(\d+)\s*deg\s*(\d+)\'\s*([\d.]+)"?', str(dms_str)
-                            )
-                            if match:
-                                d, m, s = (
-                                    float(match.group(1)),
-                                    float(match.group(2)),
-                                    float(match.group(3)),
-                                )
-                                return d + m / 60 + s / 3600
-                            try:
-                                return float(dms_str)
-                            except:
-                                return None
-
-                        lat = parse_dms(lat_str)
-                        lon = parse_dms(lon_str)
-
-                        if lat is not None and lon is not None:
-                            if lat_ref and lat_ref.upper().startswith("S"):
-                                lat = -lat
-                            if lon_ref and lon_ref.upper().startswith("W"):
-                                lon = -lon
-                            return lat, lon, f"GPS: {lat:.6f}, {lon:.6f}"
-    except Exception as e:
+                if lat is not None and lon is not None:
+                    if lat_ref and lat_ref.upper().startswith("S"):
+                        lat = -lat
+                    if lon_ref and lon_ref.upper().startswith("W"):
+                        lon = -lon
+                    return lat, lon, f"GPS: {lat:.6f}, {lon:.6f}"
+    except Exception:
         pass
 
     try:
