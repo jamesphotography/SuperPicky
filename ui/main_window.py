@@ -174,7 +174,7 @@ class WorkerThread(threading.Thread):
             cfg = get_advanced_config()
         except Exception:
             return
-        if not cfg.config.get("video_auto_process_in_main"):
+        if not cfg.video_auto_process_in_main:
             self.signals.log.emit(
                 f"⏭ 检测到 {len(video_paths)} 个视频，但视频处理未启用（参数设置可开启）",
                 "info"
@@ -711,7 +711,7 @@ class SuperPickyMainWindow(QMainWindow):
         # V4.0: 设置系统托盘图标（关闭窗口时最小化到托盘）
         self._setup_system_tray()
         self._really_quit = False  # 标记是否真正退出
-        self._background_mode = False  # V4.0: 标记是否进入后台模式（不停止服务器）
+        self._tray_hint_shown = False  # 首次隐藏到托盘时提示一次（每次会话）
         self._suppress_results_browser_once = False
         self._resume_prompt_handled = False
         self._initialization_dialog_open = False
@@ -1041,8 +1041,92 @@ class SuperPickyMainWindow(QMainWindow):
             | Qt.WindowState.WindowActive
         )
     
+    def _tray_resident_available(self) -> bool:
+        """
+        判断是否具备"隐藏到托盘常驻"的条件（托盘图标已创建且系统支持）。
+
+        Return whether hide-to-tray residency is available (tray icon created
+        and the system supports a tray).
+
+        返回 / Return:
+        bool: True 表示关窗可以安全地转为托盘驻留 / closing can hide to tray.
+        """
+        return (
+            hasattr(self, 'tray_icon')
+            and self.tray_icon is not None
+            and QSystemTrayIcon.isSystemTrayAvailable()
+        )
+
+    def _hide_to_tray(self):
+        """
+        隐藏主窗口到托盘，进程与识鸟 API 服务器继续驻留运行。
+
+        打包版的 API 服务器是主进程内的线程，只有进程活着 Lightroom 插件
+        才能连上 5156 端口——这是"真驻留"的关键（旧的"后台模式"退出进程，
+        服务器随之死亡，插件就连不上了）。
+
+        Hide the main window to the tray; the process and the BirdID API
+        server stay resident. In packaged builds the API server is a thread
+        inside this process, so the Lightroom plugin can only reach port 5156
+        while the process lives — the old "background mode" quit the process
+        and silently killed the server.
+        """
+        self.hide()
+
+        # macOS: 没有其他可见窗口时隐藏 Dock 图标（Accessory 模式），
+        # _show_main_window 会恢复 Regular。托盘（菜单栏）图标始终保留。
+        # macOS: hide the Dock icon (Accessory) when no other window is
+        # visible; _show_main_window restores Regular. The tray icon remains.
+        if sys.platform == 'darwin':
+            try:
+                others_visible = any(
+                    w.isVisible() and w.isWindow()
+                    for w in QApplication.topLevelWidgets()
+                    if w is not self
+                )
+                if not others_visible:
+                    import importlib
+                    appkit = importlib.import_module("AppKit")
+                    appkit.NSApp.setActivationPolicy_(
+                        appkit.NSApplicationActivationPolicyAccessory
+                    )
+            except Exception:
+                pass
+
+        # 每次会话首次隐藏时用托盘气泡提示驻留状态与退出方式
+        # Show a one-per-session tray balloon explaining residency and how to quit
+        if not self._tray_hint_shown and self._tray_resident_available():
+            self._tray_hint_shown = True
+            try:
+                self.tray_icon.showMessage(
+                    self.i18n.t("server.tray_resident_title"),
+                    self.i18n.t("server.tray_resident_msg"),
+                    QSystemTrayIcon.MessageIcon.Information,
+                    5000,
+                )
+            except Exception:
+                pass
+
     def _quit_app(self):
         """完全退出应用（清理由 aboutToQuit 信号统一处理）"""
+        # 任务进行中时先确认，避免托盘"完全退出"误杀处理任务
+        # Confirm first if a task is running, so tray "Quit" cannot kill it by accident
+        if self.worker and self.worker.is_alive():
+            reply = StyledMessageBox.question(
+                self,
+                self.i18n.t("messages.exit_title"),
+                self.i18n.t("messages.exit_confirm"),
+                yes_text=self.i18n.t("buttons.cancel"),
+                no_text=self.i18n.t("labels.yes")
+            )
+            if reply != StyledMessageBox.No:  # 未确认退出 / quit not confirmed
+                return
+            self.worker.request_stop()
+            self.worker._stop_caffeinate()  # V3.8.1: 确保终止 caffeinate 进程
+        self._force_quit()
+
+    def _force_quit(self):
+        """不再确认，直接退出（清理由 aboutToQuit 信号统一处理）"""
         self._really_quit = True
         if hasattr(self, 'tray_icon'):
             self.tray_icon.hide()         # 先隐藏托盘，避免用户二次点击
@@ -1098,41 +1182,6 @@ class SuperPickyMainWindow(QMainWindow):
         if hasattr(self, 'tray_icon') and self.tray_icon:
             self.tray_icon.hide()         # 清托盘图标（备用，_quit_app 已调过一次也无害）
 
-    def _minimize_to_tray(self):
-        """V4.0: 进入后台模式（服务器继续运行，GUI 完全退出）"""
-        from server_manager import get_server_status, start_server_daemon
-        
-        # 1. 确保服务器以守护进程模式运行
-        status = get_server_status()
-        if not status['healthy']:
-            print("🚀 启动守护进程服务器...")
-            success, msg, pid = start_server_daemon()
-            if not success:
-                self._log(f"❌ 无法启动后台服务器: {msg}", "error")
-                return
-            print(f"✅ 服务器已启动 (PID: {pid})")
-        else:
-            print(f"✅ 服务器已在运行 (PID: {status['pid']})")
-        
-        # 2. 显示提示
-        QMessageBox.information(
-            self,
-            self.i18n.t("menu.background_mode_title"),
-            self.i18n.t("menu.background_mode_msg"),
-            QMessageBox.StandardButton.Ok
-        )
-        
-        # 3. 设置后台模式标志，然后退出 GUI
-        self._background_mode = True  # 告诉 closeEvent 不要停止服务器
-        print("✅ GUI 即将退出，服务器继续运行")
-        
-        # 隐藏托盘图标
-        if hasattr(self, 'tray_icon') and self.tray_icon:
-            self.tray_icon.hide()
-        
-        # 退出应用
-        QApplication.quit()
-    
     def _create_header_section(self, parent_layout):
         """创建头部区域 - 品牌展示"""
         header = QFrame()
@@ -2535,8 +2584,10 @@ class SuperPickyMainWindow(QMainWindow):
         # 不论用户怎么选，都标记已提示
         # Mark as prompted regardless of choice
         cfg.config["video_first_run_prompted"] = True
-        cfg.config["video_auto_process_in_main"] = (reply == StyledMessageBox.Yes)
-        cfg.save()
+        cfg.set_video_auto_process_in_main(reply == StyledMessageBox.Yes)
+        # 首页「视频」开关需同步反映这里的选择，否则会显示旧值直到设置中心刷新一次
+        # Keep the home-panel "Video" toggle in sync with this choice
+        self._refresh_param_panel()
 
     def _open_video_analyzer(self):
         """
@@ -2616,16 +2667,20 @@ class SuperPickyMainWindow(QMainWindow):
 
     def _create_parameters_section(self, parent_layout):
         """
-        首页「快速调整」参数面板:锐度/美学两滑块 + 飞行/连拍/识鸟三开关。
+        首页「快速调整」参数面板:锐度/美学两滑块 + 飞行/连拍/识鸟/视频四开关。
 
         所有控件双向绑定 advanced_config(单一事实源):初值从 config 读,改动写回 config;
         范围与设置中心精选页一致(锐度 100-600,美学 0-70 即 0.0-7.0),避免两处不一致或截断。
         手动改滑块视为自定义档(skill_level=custom 并同步 custom_*),与设置中心精选页协同一致。
         初值在 connect 之前设置,故不会在构建时误触发回调。
+        「视频」开关默认关闭(大多数用户不需要视频识鸟),绑定 video_auto_process_in_main,
+        与设置中心「视频」页的总开关双向同步。
 
-        Home quick-adjust panel: sharpness/aesthetics sliders + flight/burst/birdid toggles.
+        Home quick-adjust panel: sharpness/aesthetics sliders + flight/burst/birdid/video toggles.
         Two-way bound to advanced_config (SSOT); ranges match the Settings Center culling page.
         Editing a slider marks the skill level as custom (consistent with the culling page).
+        The "Video" toggle defaults to off (most users don't need video bird-ID) and is bound
+        to video_auto_process_in_main, kept in sync with the Video page in Settings Center.
         """
         cfg = self.config
         params_frame = QFrame()
@@ -2659,9 +2714,11 @@ class SuperPickyMainWindow(QMainWindow):
         self.flight_check = _toggle(self.i18n.t("labels.flight_detection"), bool(cfg.flight_check))
         self.burst_check = _toggle(self.i18n.t("labels.burst"), bool(cfg.burst_check))
         self.birdid_check = _toggle(self.i18n.t("menu.birdid_label"), bool(cfg.birdid_auto_identify))
+        self.video_check = _toggle(self.i18n.t("labels.video_toggle"), bool(cfg.video_auto_process_in_main))
         self.flight_check.stateChanged.connect(self._save_check_states)
         self.burst_check.stateChanged.connect(self._save_check_states)
         self.birdid_check.stateChanged.connect(self._on_birdid_check_changed)
+        self.video_check.stateChanged.connect(self._on_video_check_changed)
         params_layout.addLayout(header_layout)
 
         # 滑块区:锐度 + 美学(范围对齐设置中心精选页)/ Sliders aligned with culling page
@@ -2749,6 +2806,12 @@ class SuperPickyMainWindow(QMainWindow):
             return
         self.config.set_birdid_auto_identify(bool(self.birdid_check.isChecked()))
 
+    def _on_video_check_changed(self, *_):
+        """视频开关 → 写 advanced_config.video_auto_process_in_main。"""
+        if getattr(self, "_params_loading", False):
+            return
+        self.config.set_video_auto_process_in_main(bool(self.video_check.isChecked()))
+
     def _refresh_param_panel(self):
         """设置中心关闭后,从 advanced_config 刷新首页参数控件,保持两处一致(loading 守卫避免回写)。"""
         if not hasattr(self, "sharp_slider"):
@@ -2761,6 +2824,7 @@ class SuperPickyMainWindow(QMainWindow):
             self.flight_check.setChecked(bool(cfg.flight_check))
             self.burst_check.setChecked(bool(cfg.burst_check))
             self.birdid_check.setChecked(bool(cfg.birdid_auto_identify))
+            self.video_check.setChecked(bool(cfg.video_auto_process_in_main))
             self.sharp_value.setText(str(int(cfg.min_sharpness)))
             self.nima_value.setText(f"{cfg.min_nima:.1f}")
         finally:
@@ -3123,16 +3187,35 @@ class SuperPickyMainWindow(QMainWindow):
                 pass
 
     def closeEvent(self, event):
-        """窗口关闭事件"""
-        # V4.0: 后台模式不停止服务器
-        if getattr(self, '_background_mode', False):
-            print("✅ 后台模式：服务器继续运行")
-            if hasattr(self, 'tray_icon') and self.tray_icon:
-                self.tray_icon.hide()
-            event.accept()
+        """
+        窗口关闭事件：默认隐藏到托盘驻留，而不是退出进程。
+
+        真驻留修复：打包版识鸟 API 服务器运行在主进程线程里，进程一退
+        Lightroom 插件就连不上 5156。因此关窗只隐藏窗口；真正退出统一走
+        托盘"完全退出"（_quit_app）。系统注销/关机时不拦截，托盘不可用时
+        回退为旧的退出行为。
+
+        Close event: hide to tray by default instead of quitting. In packaged
+        builds the BirdID API server is a thread of this process, so quitting
+        kills the port the Lightroom plugin depends on. Real quit goes through
+        the tray "Quit" action (_quit_app). Session shutdown is never blocked,
+        and we fall back to the old quit behavior when no tray is available.
+        """
+        app = QApplication.instance()
+        saving_session = bool(app is not None and app.isSavingSession())
+
+        if (
+            not getattr(self, '_really_quit', False)
+            and not saving_session
+            and self._tray_resident_available()
+        ):
+            event.ignore()
+            self._hide_to_tray()
             return
-        
-        if self.worker and self.worker.is_alive():
+
+        # 兜底退出路径（托盘不可用 / 系统注销）：维持原有确认与清理逻辑
+        # Fallback quit path (no tray / session shutdown): keep old confirm + cleanup
+        if self.worker and self.worker.is_alive() and not saving_session:
             reply = StyledMessageBox.question(
                 self,
                 self.i18n.t("messages.exit_title"),
@@ -3145,7 +3228,7 @@ class SuperPickyMainWindow(QMainWindow):
                 self.worker.request_stop()
                 self.worker._stop_caffeinate()  # V3.8.1: 确保终止 caffeinate 进程
                 self._stop_birdid_server()  # V4.0: 停止识鸟 API 服务
-                self._quit_app()
+                self._force_quit()          # 已确认过，不再二次弹窗 / already confirmed
                 event.accept()
             else:
                 event.ignore()

@@ -145,12 +145,13 @@ class AdvancedConfig:
         "video_min_segment_frames": 2,
 
         # V4.3 Phase 4: 主流程视频集成 / Main-flow video integration
-        # video_auto_process_in_main : 选鸟时是否自动分析视频（默认开）
+        # video_auto_process_in_main : 选鸟时是否自动分析视频（默认关——大多数用户不拍视频，
+        #                              首页快速面板「视频」开关 + 首次发现视频的一次性提示均可开启）
         # video_species_mode         : 默认识别模式 instant/fast/full（默认 instant 极速）
         # video_enable_species_id    : 是否启用鸟种识别（默认开）
         # video_enable_flight        : 是否启用飞行检测（默认开）
         # video_first_run_prompted   : 首次发现视频弹一次性提示后标记（避免重复弹）
-        "video_auto_process_in_main": True,
+        "video_auto_process_in_main": False,
         "video_species_mode": "instant",
         "video_enable_species_id": True,
         "video_enable_flight": True,
@@ -763,6 +764,37 @@ class AdvancedConfig:
         value (bool): Whether to enable auto bird identification.
         """
         self.config["birdid_auto_identify"] = bool(value)
+        self.save()
+
+    # V4.3 Phase 4: 主流程视频总开关 (Main-flow video auto-process toggle)
+    @property
+    def video_auto_process_in_main(self) -> bool:
+        """
+        获取选鸟时是否自动分析视频。
+
+        返回:
+        bool: 是否启用主流程视频自动处理（默认 False）
+
+        Get whether videos are auto-processed during the main culling flow.
+
+        Return:
+        bool: Whether main-flow video auto-processing is enabled (default False).
+        """
+        return bool(self.config.get("video_auto_process_in_main", False))
+
+    def set_video_auto_process_in_main(self, value: bool):
+        """
+        设置选鸟时是否自动分析视频并保存。
+
+        参数:
+        value (bool): 是否启用主流程视频自动处理
+
+        Set whether videos are auto-processed during the main culling flow, and save.
+
+        Parameters:
+        value (bool): Whether to enable main-flow video auto-processing.
+        """
+        self.config["video_auto_process_in_main"] = bool(value)
         self.save()
 
     def set_birdid_region(
