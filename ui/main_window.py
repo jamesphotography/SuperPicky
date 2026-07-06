@@ -697,14 +697,12 @@ class SuperPickyMainWindow(QMainWindow):
         self._birdid_server_process = None
         QTimer.singleShot(1000, self._auto_start_birdid_server)
 
-        # V4.0.1: 启动时检查更新（延迟2秒，避免阻塞UI，没有更新时不弹窗）
-        from advanced_config import get_advanced_config as _get_cfg_startup
-        # Keep the legacy startup auto-update path for full installs.
-        # Lightweight initialization owns first-run update probing and must
-        # completely skip automatic update work when the user disables it.
-        if _get_cfg_startup().auto_check_updates and self._skip_until_initialized("首次初始化尚未完成，暂不检查更新。"):
-            QTimer.singleShot(2000, lambda: self._check_for_updates(silent=True))
-        
+        # ExtremeSimple: 在线更新检测已从入口彻底剥离（tools/update_checker.py 保留不动，
+        # 未来若要恢复只需把这段启动触发和菜单项接回去）。
+        # ExtremeSimple: online update checking stripped from all entry points
+        # (tools/update_checker.py kept intact; re-wire this startup trigger +
+        # the menu action to bring it back).
+
         # V4.2: 启动时预加载所有模型（延迟3秒，后台加载不阻塞UI）
         QTimer.singleShot(3000, self._preload_all_models)
         
@@ -792,12 +790,15 @@ class SuperPickyMainWindow(QMainWindow):
         self.birdid_dock_action.triggered.connect(self._toggle_birdid_dock)
         birdid_menu.addAction(self.birdid_dock_action)
 
-        # ── V4.3 Phase 1: 视频分析菜单 ─────────────────────────
-        # Standalone video analysis window (YOLO bird/no-bird, macOS only).
-        video_menu = menubar.addMenu(self.i18n.t("menu.video_menu"))
-        video_analyze_action = QAction(self.i18n.t("menu.video_analysis"), self)
-        video_analyze_action.triggered.connect(self._open_video_analyzer)
-        video_menu.addAction(video_analyze_action)
+        # ExtremeSimple: 「视频分析」菜单已从菜单栏剥离（_open_video_analyzer 保留在
+        # 下方，ui/video_analyzer_window.py 等文件原封不动；未来要恢复只需把这段
+        # 菜单创建代码加回来）。_video_analyzer_window 属性仍初始化，避免
+        # _cleanup_on_quit 的 hasattr 检查失效。
+        # ExtremeSimple: the "Video Analysis" menu is stripped from the menu bar
+        # (_open_video_analyzer stays below; ui/video_analyzer_window.py etc. are
+        # untouched). Re-add this menu-creation block to bring it back.
+        # _video_analyzer_window still initialized so _cleanup_on_quit's hasattr
+        # check keeps working.
         self._video_analyzer_window = None  # 懒加载 / lazy-loaded singleton
 
         # ── 最近目录子菜单 ──────────────────────────────────
@@ -812,10 +813,6 @@ class SuperPickyMainWindow(QMainWindow):
         settings_action = QAction(self.i18n.t("menu.settings"), self)
         settings_action.triggered.connect(lambda: self._open_settings_center("culling"))
         settings_menu.addAction(settings_action)
-
-        update_action = QAction(self.i18n.t("menu.check_update"), self)
-        update_action.triggered.connect(self._show_update_center)
-        settings_menu.addAction(update_action)
 
         repair_action = QAction(self.i18n.t("menu.environment_repair"), self)
         repair_action.triggered.connect(self._show_environment_repair_dialog)
@@ -2714,11 +2711,16 @@ class SuperPickyMainWindow(QMainWindow):
         self.flight_check = _toggle(self.i18n.t("labels.flight_detection"), bool(cfg.flight_check))
         self.burst_check = _toggle(self.i18n.t("labels.burst"), bool(cfg.burst_check))
         self.birdid_check = _toggle(self.i18n.t("menu.birdid_label"), bool(cfg.birdid_auto_identify))
-        self.video_check = _toggle(self.i18n.t("labels.video_toggle"), bool(cfg.video_auto_process_in_main))
+        # ExtremeSimple: 首页「视频」总开关已剥离（_on_video_check_changed 保留在下方，
+        # video_auto_process_in_main 默认就是 False；未来要恢复只需把这行 _toggle(...)
+        # 创建 + 下面的 connect 加回来）。
+        # ExtremeSimple: the home-screen "video" toggle is stripped
+        # (_on_video_check_changed stays below; video_auto_process_in_main
+        # already defaults to False). Re-add the _toggle(...) call + connect
+        # below to bring it back.
         self.flight_check.stateChanged.connect(self._save_check_states)
         self.burst_check.stateChanged.connect(self._save_check_states)
         self.birdid_check.stateChanged.connect(self._on_birdid_check_changed)
-        self.video_check.stateChanged.connect(self._on_video_check_changed)
         params_layout.addLayout(header_layout)
 
         # 滑块区:锐度 + 美学(范围对齐设置中心精选页)/ Sliders aligned with culling page
@@ -2824,7 +2826,6 @@ class SuperPickyMainWindow(QMainWindow):
             self.flight_check.setChecked(bool(cfg.flight_check))
             self.burst_check.setChecked(bool(cfg.burst_check))
             self.birdid_check.setChecked(bool(cfg.birdid_auto_identify))
-            self.video_check.setChecked(bool(cfg.video_auto_process_in_main))
             self.sharp_value.setText(str(int(cfg.min_sharpness)))
             self.nima_value.setText(f"{cfg.min_nima:.1f}")
         finally:
@@ -3994,8 +3995,6 @@ class SuperPickyMainWindow(QMainWindow):
         # 首次轻量初始化完成后，这些任务之前可能被跳过，这里补一次。
         QTimer.singleShot(200, self._preload_all_models)
         QTimer.singleShot(400, self._auto_start_birdid_server)
-        if self.config.auto_check_updates:
-            QTimer.singleShot(600, lambda: self._check_for_updates(silent=True))
 
     def run_startup_prompts(self):
         """在启动统计同意流程结束后继续启动期弹窗/预设应用。"""

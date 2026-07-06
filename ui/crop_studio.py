@@ -1169,9 +1169,14 @@ class CropStudio(QWidget):
         self._btn_species = self._tool_btn("square-pen.svg", self._i18n.t("crop_studio.tb_species"),
                                            lambda: self.edit_species_requested.emit(self._photo))
         v.addWidget(self._btn_species)
-        self._btn_enhance = self._tool_btn("gem.svg", self._i18n.t("crop_studio.tb_enhance"),
-                                           self._toggle_enhance_mode)
-        v.addWidget(self._btn_enhance)
+        # ExtremeSimple: 「智能修图」按钮已从左工具栏剥离（_toggle_enhance_mode/
+        # _enter_compare_mode 等修图逻辑本身保留在下方，未来要恢复只需把这两行
+        # 按钮创建代码加回来）。apply_initial_action("enhance") 外部跳转入口
+        # 同样保留，随该按钮一起失效。
+        # ExtremeSimple: the "auto enhance" button is stripped from the left
+        # toolbar (_toggle_enhance_mode/_enter_compare_mode stay below; re-add
+        # these two lines to bring it back). The apply_initial_action("enhance")
+        # external jump-in also goes dormant along with this button.
 
         v.addStretch(1)
 

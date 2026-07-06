@@ -2150,8 +2150,24 @@ def main():
     os.chdir(project_root)
     logging.info("Working directory set to: %s", project_root)
 
+    # ExtremeSimple: 「enhance」(SVDLUT 调色 + SCUNet 降噪) 已从此打包下载集合剥离。
+    # FULL_FEATURE_SET(core/initialization_manager.py、welcome_onboarding_dialog.py)
+    # 本就不含 "enhance"，运行时从不需要这两个权重；但打包时 build_release_*.py
+    # 会先调这个 main() 把模型下载到本地 models/，再被 .spec 的整目录打包规则
+    # (os.path.join(base_path, 'models'), 'models') 原样带进 Mac/Windows Full 安装包。
+    # 去掉 "enhance" 后打包机器不会再下载 svdlut.pth/scunet_color_real.pth，
+    # 安装包也就不会再带上这约 73MB 的死重。未来要恢复 Enhance 功能时把
+    # "enhance" 加回这个集合即可。
+    # ExtremeSimple: "enhance" (SVDLUT color + SCUNet denoise) is stripped from
+    # this packaging download set. FULL_FEATURE_SET already excludes "enhance",
+    # so runtime never needs these weights; but build_release_*.py calls this
+    # main() to populate the local models/ dir before PyInstaller runs, and the
+    # .spec files' whole-directory bundling rule sweeps whatever is there into
+    # the Mac/Windows Full installers. Dropping "enhance" here stops the build
+    # machine from fetching svdlut.pth/scunet_color_real.pth, so the ~73MB of
+    # dead weight no longer ships. Re-add "enhance" to restore it.
     plan = resolve_download_plan(
-        {"core_detection", "quality", "keypoint", "flight", "birdid", "enhance"},
+        {"core_detection", "quality", "keypoint", "flight", "birdid"},
         include_optional_local=False,
     )
     success_count = 0
