@@ -411,6 +411,48 @@ def test_about_page_shows_version():
 # ── Task 5: 输出/视频/外部应用页测试 / Output/Video/Apps page tests ──────────────
 
 
+def test_scroll_areas_have_transparent_background():
+    """
+    回归测试：每个设置页的 QScrollArea 及其内容容器必须显式设为透明背景。
+
+    根因背景：macOS 原生 QStyle 下，QScrollArea 的 viewport 不会继承祖先
+    QDialog 的 QSS 背景色——系统外观为浅色模式时会掉回原生浅灰 #ececec，
+    与应用深色主题不符（用户反馈"设置页面背景淡白色"）。offscreen 测试平台
+    不会复现这个原生渲染细节，所以这里只做静态断言：确认每个 QScrollArea
+    自身样式表包含 "background: transparent"，防止未来重构时又漏掉。
+    真实渲染下的修复前/修复后对照见开发记录（forced Qt.ColorScheme.Light +
+    真实 cocoa 平台插件采样视口像素）。
+
+    Regression test: every settings page's QScrollArea and its inner content
+    container must explicitly set a transparent background.
+
+    Root cause: under the native macOS QStyle, a QScrollArea's viewport does
+    not inherit the ancestor QDialog's QSS background — it falls back to the
+    native light gray #ececec when the system appearance is Light, clashing
+    with the app's dark theme (user-reported "settings page has a pale white
+    background"). The offscreen test platform can't reproduce this native
+    rendering quirk, so this only asserts the static property: each
+    QScrollArea's own stylesheet contains "background: transparent", guarding
+    against this being dropped again in a future refactor. The real
+    before/after pixel comparison (forced Qt.ColorScheme.Light + the real
+    cocoa platform plugin) lives in the dev record, not in this offscreen test.
+    """
+    from ui.settings_center import SettingsCenter, PAGE_ORDER
+    from PySide6.QtWidgets import QScrollArea
+
+    w = SettingsCenter(get_i18n())
+    for key in PAGE_ORDER:
+        w.show_page(key)
+    scroll_areas = w.findChildren(QScrollArea)
+    assert scroll_areas, "预期设置中心里应有 QScrollArea"
+    for sa in scroll_areas:
+        assert "background: transparent" in sa.styleSheet(), (
+            f"QScrollArea 缺少透明背景样式，macOS 浅色模式下会露出原生浅灰: "
+            f"{sa.styleSheet()!r}"
+        )
+    w.close()
+
+
 def test_output_video_apps_pages_build():
     """
     验证输出、外部应用设置页能正确构建，且关键属性存在。

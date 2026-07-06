@@ -232,8 +232,18 @@ class SettingsCenter(QDialog):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.NoFrame)
+        # macOS 原生 QStyle 下 QScrollArea 的 viewport 不会继承祖先 QDialog 的
+        # QSS 背景色，系统外观为浅色时会露出原生浅灰 #ececec（与深色主题不符）。
+        # 显式设 transparent 让 QDialog 的深色背景透出来（同 birdid_dock.py 已验证的写法）。
+        # On macOS the native QStyle paints a QScrollArea's viewport without
+        # inheriting the ancestor QDialog's QSS background, so it falls back to
+        # the native light gray #ececec when the system appearance is Light —
+        # clashing with the dark theme. Setting transparent lets the QDialog's
+        # dark background show through (same fix already proven in birdid_dock.py).
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
 
         inner = QWidget()
+        inner.setStyleSheet("background: transparent;")
         lay = QVBoxLayout(inner)
         lay.setContentsMargins(24, 20, 24, 20)
         lay.setSpacing(16)
@@ -416,8 +426,18 @@ class SettingsCenter(QDialog):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.NoFrame)
+        # macOS 原生 QStyle 下 QScrollArea 的 viewport 不会继承祖先 QDialog 的
+        # QSS 背景色，系统外观为浅色时会露出原生浅灰 #ececec（与深色主题不符）。
+        # 显式设 transparent 让 QDialog 的深色背景透出来（同 birdid_dock.py 已验证的写法）。
+        # On macOS the native QStyle paints a QScrollArea's viewport without
+        # inheriting the ancestor QDialog's QSS background, so it falls back to
+        # the native light gray #ececec when the system appearance is Light —
+        # clashing with the dark theme. Setting transparent lets the QDialog's
+        # dark background show through (same fix already proven in birdid_dock.py).
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
 
         inner = QWidget()
+        inner.setStyleSheet("background: transparent;")
         lay = QVBoxLayout(inner)
         lay.setContentsMargins(24, 20, 24, 20)
         lay.setSpacing(16)
@@ -914,8 +934,18 @@ class SettingsCenter(QDialog):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.NoFrame)
+        # macOS 原生 QStyle 下 QScrollArea 的 viewport 不会继承祖先 QDialog 的
+        # QSS 背景色，系统外观为浅色时会露出原生浅灰 #ececec（与深色主题不符）。
+        # 显式设 transparent 让 QDialog 的深色背景透出来（同 birdid_dock.py 已验证的写法）。
+        # On macOS the native QStyle paints a QScrollArea's viewport without
+        # inheriting the ancestor QDialog's QSS background, so it falls back to
+        # the native light gray #ececec when the system appearance is Light —
+        # clashing with the dark theme. Setting transparent lets the QDialog's
+        # dark background show through (same fix already proven in birdid_dock.py).
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
 
         inner = QWidget()
+        inner.setStyleSheet("background: transparent;")
         lay = QVBoxLayout(inner)
         lay.setContentsMargins(24, 20, 24, 20)
         lay.setSpacing(16)
@@ -1166,8 +1196,18 @@ class SettingsCenter(QDialog):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.NoFrame)
+        # macOS 原生 QStyle 下 QScrollArea 的 viewport 不会继承祖先 QDialog 的
+        # QSS 背景色，系统外观为浅色时会露出原生浅灰 #ececec（与深色主题不符）。
+        # 显式设 transparent 让 QDialog 的深色背景透出来（同 birdid_dock.py 已验证的写法）。
+        # On macOS the native QStyle paints a QScrollArea's viewport without
+        # inheriting the ancestor QDialog's QSS background, so it falls back to
+        # the native light gray #ececec when the system appearance is Light —
+        # clashing with the dark theme. Setting transparent lets the QDialog's
+        # dark background show through (same fix already proven in birdid_dock.py).
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
 
         inner = QWidget()
+        inner.setStyleSheet("background: transparent;")
         lay = QVBoxLayout(inner)
         lay.setContentsMargins(24, 20, 24, 20)
         lay.setSpacing(16)
@@ -1570,8 +1610,18 @@ class SettingsCenter(QDialog):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.NoFrame)
+        # macOS 原生 QStyle 下 QScrollArea 的 viewport 不会继承祖先 QDialog 的
+        # QSS 背景色，系统外观为浅色时会露出原生浅灰 #ececec（与深色主题不符）。
+        # 显式设 transparent 让 QDialog 的深色背景透出来（同 birdid_dock.py 已验证的写法）。
+        # On macOS the native QStyle paints a QScrollArea's viewport without
+        # inheriting the ancestor QDialog's QSS background, so it falls back to
+        # the native light gray #ececec when the system appearance is Light —
+        # clashing with the dark theme. Setting transparent lets the QDialog's
+        # dark background show through (same fix already proven in birdid_dock.py).
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
 
         inner = QWidget()
+        inner.setStyleSheet("background: transparent;")
         lay = QVBoxLayout(inner)
         lay.setContentsMargins(32, 28, 32, 24)
         lay.setSpacing(0)
