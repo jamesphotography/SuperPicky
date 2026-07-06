@@ -504,6 +504,15 @@ def load_required_models() -> list[dict[str, str]]:
     """
     从 download_models.py 解析模型清单 / Parse the required model list from download_models.py.
     """
+    # ExtremeSimple: 智能修图(Enhance)已从产品剥离，svdlut.pth/scunet_color_real.pth
+    # 不再随包下载(见 scripts/download_models.py main() 的 feature 集合)，这里的
+    # 必需模型清单也要同步排除，否则 ensure_models() 会因为这两个文件"永远缺失"
+    # 而误判构建失败。
+    # ExtremeSimple: Enhance is stripped from the product, so
+    # svdlut.pth/scunet_color_real.pth are no longer downloaded with the package
+    # (see scripts/download_models.py main()'s feature set). This required-model
+    # list must exclude them too, or ensure_models() will always see them as
+    # "missing" and fail the build.
 
     fallback = [
         {"filename": "model20240824.pth", "dest_dir": "models"},
@@ -512,8 +521,6 @@ def load_required_models() -> list[dict[str, str]]:
         {"filename": "avonet.db", "dest_dir": "birdid/data"},
         {"filename": "cfanet_iaa_ava_res50-3cd62bb3.pth", "dest_dir": "models"},
         {"filename": "yolo11l-seg.pt", "dest_dir": "models"},
-        {"filename": "svdlut.pth", "dest_dir": "models"},
-        {"filename": "scunet_color_real.pth", "dest_dir": "models"},
     ]
 
     if not DOWNLOAD_MODELS_SCRIPT.exists():
@@ -533,7 +540,11 @@ def load_required_models() -> list[dict[str, str]]:
                 break
         if models is None:
             raise RuntimeError("download_models.py 中未找到 MODELS_TO_DOWNLOAD")
-        return [{"filename": item["filename"], "dest_dir": item["dest_dir"]} for item in models]
+        return [
+            {"filename": item["filename"], "dest_dir": item["dest_dir"]}
+            for item in models
+            if "enhance" not in item.get("feature_tags", [])
+        ]
     except BaseException as exc:
         if isinstance(exc, KeyboardInterrupt):
             raise

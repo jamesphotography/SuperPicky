@@ -1,5 +1,22 @@
 # -*- coding: utf-8 -*-
-"""打包清单含 enhance 权重 / packaging manifest includes enhance weights."""
+"""
+打包清单 / packaging manifest 与 enhance 权重的关系。
+
+scripts/download_models.py 的 MODELS_TO_DOWNLOAD 仍完整登记 enhance 两个权重
+(svdlut.pth/scunet_color_real.pth)——功能实现文件保留不动，未来要恢复 Enhance
+只需把 "enhance" 加回 main() 的 feature 集合。但 ExtremeSimple 剥离 Enhance 后，
+build_release_win.py/build_release_mac.py 的 load_required_models() fallback 列表
+不应再要求这两个文件必须存在，否则离线/解析失败时的兜底路径会误判"缺失"。
+
+MODELS_TO_DOWNLOAD in scripts/download_models.py still fully registers both
+enhance weights (svdlut.pth/scunet_color_real.pth) — the feature's
+implementation files stay untouched; restoring Enhance later just means
+re-adding "enhance" to main()'s feature set. But since ExtremeSimple stripped
+Enhance, the load_required_models() fallback list in
+build_release_win.py/build_release_mac.py must no longer require these two
+files, or the offline/parse-failure fallback path would wrongly report them
+missing.
+"""
 import ast
 import importlib
 from pathlib import Path
@@ -29,11 +46,17 @@ def _fallback_filenames(build_file: str) -> set:
     return names
 
 
-def test_win_fallback_has_enhance_weights():
+def test_win_fallback_excludes_enhance_weights():
+    """
+    ExtremeSimple 剥离 Enhance 后，fallback 清单不应再要求这两个权重存在，
+    否则 ensure_models() 会因为它们"永远缺失"而误判构建失败(真实复现过一次:
+    v4.5.0-rc1 打包就是这样挂的)。
+    """
     names = _fallback_filenames("build_release_win.py")
-    assert "svdlut.pth" in names and "scunet_color_real.pth" in names
+    assert "svdlut.pth" not in names and "scunet_color_real.pth" not in names
 
 
-def test_mac_fallback_has_enhance_weights():
+def test_mac_fallback_excludes_enhance_weights():
+    """同上，Mac 构建脚本的 fallback 清单同理。"""
     names = _fallback_filenames("build_release_mac.py")
-    assert "svdlut.pth" in names and "scunet_color_real.pth" in names
+    assert "svdlut.pth" not in names and "scunet_color_real.pth" not in names
