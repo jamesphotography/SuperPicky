@@ -157,10 +157,17 @@ class IQAScorer:
 
             # 加载图片
             img = Image.open(image_path).convert('RGB')
-            
-            # 调整尺寸到 384x384 (TOPIQ 推荐尺寸，避免 MPS 兼容性问题)
-            img = img.resize((384, 384), Image.LANCZOS)
-            
+
+            # V4.5: 先用 cv2 INTER_AREA 快速预降(大图才生效)，再 PIL LANCZOS
+            # 精修到 384x384(TOPIQ 推荐尺寸，避免 MPS 兼容性问题)。
+            # V4.5: Fast-preshrink with cv2 INTER_AREA first (large images
+            # only), then PIL LANCZOS to the final 384x384 (TOPIQ's
+            # recommended size, avoids an MPS compatibility issue).
+            img_array = _preshrink_if_large(np.array(img))
+            img = Image.fromarray(img_array).resize(
+                (_TOPIQ_INPUT_SIZE, _TOPIQ_INPUT_SIZE), Image.LANCZOS
+            )
+
             # 转为张量（复用实例变量）
             img_tensor = self._transform(img).unsqueeze(0).to(self.device)
             
