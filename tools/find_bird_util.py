@@ -456,6 +456,67 @@ def _is_superpicky_folder(name: str) -> bool:
     return name in _build_superpicky_folder_set()
 
 
+def is_ignorable_reset_residue(filename: str) -> bool:
+    """
+    判断 reset 后是否可以忽略/清理的系统元数据文件。
+
+    参数:
+    filename (str): 文件名，不需要包含完整路径。
+
+    返回:
+    bool: True 表示这是可安全删除的系统元数据残留。
+
+    Determine whether a post-reset file is ignorable OS metadata.
+
+    Parameters:
+    filename (str): File name only; a full path is not required.
+
+    Return:
+    bool: True when the file is safe-to-remove OS metadata residue.
+    """
+    lower_name = filename.lower()
+    return (
+        filename.startswith("._")
+        or lower_name in {".ds_store", "thumbs.db", "desktop.ini"}
+    )
+
+
+def cleanup_ignorable_reset_residue(directory: str) -> int:
+    """
+    递归清理 reset 目录中的系统元数据残留文件。
+
+    参数:
+    directory (str): 需要清理的目录路径。
+
+    返回:
+    int: 成功删除的残留文件数量。
+
+    Recursively remove ignorable OS metadata residue from a reset directory.
+
+    Parameters:
+    directory (str): Directory to clean.
+
+    Return:
+    int: Number of residue files successfully removed.
+    """
+    removed = 0
+    if not os.path.isdir(directory):
+        return removed
+
+    for root, _dirs, files in os.walk(directory):
+        for filename in files:
+            if not is_ignorable_reset_residue(filename):
+                continue
+            path = os.path.join(root, filename)
+            try:
+                if os.path.islink(path) or os.path.isfile(path):
+                    os.remove(path)
+                    removed += 1
+            except OSError:
+                continue
+    return removed
+
+
 def force_flatten_directory(directory, log_callback=None, i18n=None) -> dict:
     """
     高级重置核心：把「SuperPicky 生成的顶层目录」内的文件递归移回 directory 根。

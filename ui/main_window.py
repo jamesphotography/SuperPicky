@@ -2514,14 +2514,27 @@ class SuperPickyMainWindow(QMainWindow):
                 
                 # V3.9: 删除评分目录（所有文件已移走）
                 emit_log(i18n.t("logs.reset_step3"))
+                from tools.find_bird_util import cleanup_ignorable_reset_residue
                 deleted_dirs = 0
                 for rating_dir in rating_dirs:
                     rating_path = os.path.join(directory_path, rating_dir)
                     if os.path.exists(rating_path) and os.path.isdir(rating_path):
+                        # 先清理系统元数据残留，再判断是否仍有真实文件需要保留。
+                        # Remove OS metadata residue first, then preserve any real files that remain.
+                        cleanup_ignorable_reset_residue(rating_path)
                         # V4.3.0: 仅当评分目录内已无任何文件才删除，避免误删残留（数据安全）
-                        if any(fs for _r, _d, fs in os.walk(rating_path)):
+                        residual_files = []
+                        for _r, _d, fs in os.walk(rating_path):
+                            for _filename in fs:
+                                _rel = os.path.relpath(os.path.join(_r, _filename), rating_path)
+                                residual_files.append(_rel)
+                        if residual_files:
+                            sample = ", ".join(residual_files[:3])
+                            if len(residual_files) > 3:
+                                sample = f"{sample}, ..."
                             emit_log(i18n.t("logs.empty_dir_delete_failed",
-                                            dir=rating_dir, error="仍有残留文件，保留"))
+                                            dir=rating_dir,
+                                            error=f"仍有残留文件，保留: {sample}"))
                             continue
                         try:
                             shutil.rmtree(rating_path, ignore_errors=True)
