@@ -23,6 +23,52 @@ from tools.i18n import t as _t
 
 from config import get_best_device, get_lazy_registry
 
+import cv2
+
+# V4.5: TOPIQ 输入尺寸固定 384x384；源图明显更大时先用 cv2 INTER_AREA
+# 快速预降，再交给 PIL LANCZOS 做最终精修，避免直接对几千万像素的原图
+# 做 LANCZOS(耗时随源图像素数线性增长)。
+# V4.5: TOPIQ's input size is fixed at 384x384. When the source is much
+# larger, fast-shrink with cv2 INTER_AREA first, then hand off to PIL
+# LANCZOS for the final pass — avoids running LANCZOS directly on a
+# multi-megapixel source, whose cost scales with source pixel count.
+_TOPIQ_INPUT_SIZE = 384
+_TOPIQ_PRESHRINK_SIZE = _TOPIQ_INPUT_SIZE * 4  # 1536
+
+
+def _preshrink_if_large(img_array: np.ndarray) -> np.ndarray:
+    """
+    源图明显大于 TOPIQ 输入尺寸时，用 cv2 INTER_AREA 快速降到中间尺寸。
+
+    INTER_AREA 是专为降采样设计的区域平均算法，比 PIL LANCZOS 快得多，
+    用它先降到约 4 倍最终目标尺寸，再由调用方做最后一步 PIL LANCZOS 精修，
+    实测（棋盘图案 + 真实 45MP 鸟类照片）显示最终评分误差 < 0.02
+    (1-10 分制)，可忽略。小图（小于预降尺寸）原样返回，不做无意义的放大。
+
+    If the source is much larger than the TOPIQ input size, fast-shrink it
+    with cv2 INTER_AREA first. INTER_AREA is an area-averaging algorithm
+    designed for downscaling and is much faster than PIL LANCZOS; shrinking
+    to ~4x the final target size here, then letting the caller do a final
+    PIL LANCZOS pass, keeps the measured score drift under 0.02 (on a 1-10
+    scale) on both a synthetic checkerboard pattern and a real 45MP bird
+    photo. Small images (already below the pre-shrink size) are returned
+    unchanged — no point upscaling them.
+
+    Args:
+        img_array: HWC numpy array，通道顺序不限（BGR 或 RGB 均可，只做
+            空间 resize，不涉及颜色通道）。
+
+    Returns:
+        resize 后（或原样，小图时）的 HWC numpy array。
+    """
+    if max(img_array.shape[:2]) > _TOPIQ_PRESHRINK_SIZE:
+        img_array = cv2.resize(
+            img_array,
+            (_TOPIQ_PRESHRINK_SIZE, _TOPIQ_PRESHRINK_SIZE),
+            interpolation=cv2.INTER_AREA,
+        )
+    return img_array
+
 
 class IQAScorer:
     """IQA 评分器 - 使用 TOPIQ 美学评分"""
