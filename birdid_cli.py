@@ -79,6 +79,15 @@ def identify_single_osea(args, image_path: str) -> dict:
         focus_point = _read_focus_point_for_path(image_path)
 
         # YOLO 裁剪 (可选)
+        # V4.4: 记录是否真的裁剪成功，传给分类器选择对应的 transform
+        # （已裁剪用直接 resize，未裁剪用 Resize+CenterCrop），否则已经是紧凑
+        # 方形图的输入会被 CenterCrop 二次裁切，与 GUI 默认路径的结果不一致。
+        # V4.4: Track whether the YOLO crop actually succeeded so we can tell
+        # the classifier which transform to use (direct resize for an
+        # already-cropped image vs. Resize+CenterCrop otherwise); without this
+        # an already-tight square crop gets center-cropped a second time and
+        # diverges from the GUI's default recognition path.
+        is_yolo_cropped = False
         if args.yolo and YOLO_AVAILABLE:
             width, height = image.size
             if max(width, height) > 640:
@@ -89,6 +98,7 @@ def identify_single_osea(args, image_path: str) -> dict:
                     )
                     if cropped:
                         image = cropped
+                        is_yolo_cropped = True
                         result['yolo_info'] = info
                     else:
                         # 严格模式：YOLO 未检测到鸟类，直接短路返回
@@ -103,9 +113,13 @@ def identify_single_osea(args, image_path: str) -> dict:
         # 预测
         use_tta = getattr(args, 'tta', False)
         if use_tta:
-            predictions = classifier.predict_with_tta(image, top_k=args.top)
+            predictions = classifier.predict_with_tta(
+                image, top_k=args.top, is_yolo_cropped=is_yolo_cropped
+            )
         else:
-            predictions = classifier.predict(image, top_k=args.top)
+            predictions = classifier.predict(
+                image, top_k=args.top, is_yolo_cropped=is_yolo_cropped
+            )
 
         result['success'] = True
         result['results'] = predictions

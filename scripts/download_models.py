@@ -171,7 +171,7 @@ MODELS_TO_DOWNLOAD = [
         "packaged_dest_dir": "models",
         "feature_tags": ["core_detection", "birdid"],
         "required": True,
-        "sha256": None,
+        "sha256": "05e3f27d55ab1bfb1f01fa00a32e2a3308b2d9145954899ed34f6f5bc23666cc",
     },
     {
         "resource_id": "flight_model",
@@ -182,7 +182,7 @@ MODELS_TO_DOWNLOAD = [
         "packaged_dest_dir": "models",
         "feature_tags": ["flight"],
         "required": False,
-        "sha256": None,
+        "sha256": "cf2d5bd10fff0af83fbf57fe365221339152aedd712c4bbbb5b757f2838451a7",
     },
     {
         "resource_id": "keypoint_model",
@@ -193,7 +193,7 @@ MODELS_TO_DOWNLOAD = [
         "packaged_dest_dir": "models",
         "feature_tags": ["keypoint"],
         "required": False,
-        "sha256": None,
+        "sha256": "25bee11a4846e9065185bf22512e0ce4f81a62da79aece8f1683209f375904a6",
     },
     {
         "resource_id": "avonet_database",
@@ -203,7 +203,7 @@ MODELS_TO_DOWNLOAD = [
         "dest_dir": "birdid/data",
         "feature_tags": ["birdid"],
         "required": False,
-        "sha256": None,
+        "sha256": "6dd77175865bbfe034a3aa81bd293cad58ec66b912087727f078d4306086e8a0",
     },
     {
         "resource_id": "quality_model",
@@ -214,7 +214,7 @@ MODELS_TO_DOWNLOAD = [
         "packaged_dest_dir": "models",
         "feature_tags": ["quality"],
         "required": False,
-        "sha256": None,
+        "sha256": "3cd62bb33f9933ed7c6e3d5e79129e81c898eba78b7a2af516a0b0b974616975",
     },
     {
         # yolo11l-seg.pt 不在 jamesphotography/SuperPicky-models 中（该 repo 只放 .onnx 权重），
@@ -230,7 +230,7 @@ MODELS_TO_DOWNLOAD = [
         "packaged_dest_dir": "models",
         "feature_tags": ["core_detection"],
         "required": True,
-        "sha256": None,
+        "sha256": "cabe90049795dfc9a370b7934d6dec7f6b9e44a20e573b0ff81b7e205512c872",
     },
     {
         # SVDLUT 空间感知调色权重(自动修图) / SVDLUT color weight (auto-enhance)。
@@ -242,7 +242,7 @@ MODELS_TO_DOWNLOAD = [
         "packaged_dest_dir": "models",
         "feature_tags": ["enhance"],
         "required": False,
-        "sha256": None,
+        "sha256": "d4db6c5db125c271c71592c629375da92e4d6c975dbc5b8d637a3c66091bb6b1",
     },
     {
         # SCUNet 盲降噪权重(自动修图) / SCUNet denoise weight (auto-enhance)。
@@ -254,7 +254,7 @@ MODELS_TO_DOWNLOAD = [
         "packaged_dest_dir": "models",
         "feature_tags": ["enhance"],
         "required": False,
-        "sha256": None,
+        "sha256": "fa78899ba2caec9d235a900e91d96c689da71c42029230c2028b00f09f809c2e",
     },
 ]
 
