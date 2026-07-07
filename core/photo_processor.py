@@ -145,6 +145,7 @@ class PhotoProcessor:
             'star_1': 0,  # 普通照片（合格）
             'star_0': 0,  # 普通照片（问题）
             'no_bird': 0,
+            'failed': 0,  # V4.5: 处理异常被跳过的照片计数 / photos skipped due to per-photo errors
             'flying': 0,  # V3.6: 飞鸟照片计数
             'focus_precise': 0,  # V4.2: 精焦照片计数（红色标签）
             'exposure_issue': 0,  # V3.8: 曝光问题计数
@@ -159,6 +160,10 @@ class PhotoProcessor:
         self.file_ratings = {}
         self.star2_reasons = {}  # 记录2星原因: 'sharpness' 或 'nima'
         self.star_3_photos = []
+        # V4.5: 处理异常被跳过的照片文件名，供最终汇总提示（这些照片未评分/未整理）
+        # V4.5: Filenames skipped by per-photo error handling, surfaced in the
+        # end-of-run summary (these photos were neither rated nor organized).
+        self.failed_photos: List[str] = []
         self.temp_converted_jpegs = set()  # V4.0: Track temp-converted JPEGs to avoid deleting user originals
         self.file_bird_species = {}  # V4.0: Track bird species per file: {'cn_name': '...', 'en_name': '...'}
         self.burst_map = {}  # V4.0.4: Track burst group IDs: {filepath: group_id}, 0 = not a burst
@@ -579,6 +584,20 @@ class PhotoProcessor:
             if hasattr(self, 'report_db') and self.report_db:
                 self.report_db.close()
                 self.report_db = None
+
+            # V4.5: 汇总处理异常被跳过的照片——它们未评分/未整理，仍留在原目录，
+            # 避免用户只看到"处理完成"却不知道少了几张。
+            # V4.5: Summarize photos skipped by per-photo error handling — they
+            # were neither rated nor organized and remain in the source folder;
+            # without this the user only sees "done" and never learns some
+            # photos were silently missing.
+            if self.stats['failed'] > 0:
+                shown = "、".join(self.failed_photos[:10])
+                more = f" …(共{self.stats['failed']}张)" if self.stats['failed'] > 10 else ""
+                self._log(
+                    f"⚠️ {self.stats['failed']} 张照片处理异常被跳过（未评分/未整理，仍在原目录）: {shown}{more}",
+                    "warning"
+                )
 
             self.resume_state.clear()
             
@@ -1631,7 +1650,7 @@ class PhotoProcessor:
             # Pre-set fallbacks for logging/resume-marking so the except branch below
             # always has something usable even if the body raises before yolo_item /
             # original_prefix are assigned.
-            filename = files_tbr[local_index - 1] if local_index - 1 < len(files_tbr) else f"#{i}"
+            filename = files_tbr[local_index - 1]
             original_prefix = None
 
             try:
@@ -2572,15 +2591,12 @@ class PhotoProcessor:
             except ProcessingCancelled:
                 raise
             except Exception as e:
-                # 单张照片处理异常：记录日志并跳到下一张，避免拖垮整个目录剩余照片。
-                # Log and move on to the next photo instead of aborting the whole
-                # remaining batch for this directory.
-                self._log(
-                    f"  ⚠️ 第{i}张处理异常，已跳过 [{filename}]: {e}",
-                    "error"
-                )
-                if original_prefix:
-                    mark_resume_completed(original_prefix)
+                # 单张照片处理异常：记录日志、计入失败统计并跳到下一张，避免拖垮
+                # 整个目录剩余照片。不标记 resume 完成——语义见 _handle_photo_failure。
+                # Log, count the failure, and move on to the next photo instead of
+                # aborting the whole remaining batch. Deliberately NOT marked
+                # resume-completed — see _handle_photo_failure for the semantics.
+                self._handle_photo_failure(i, filename, original_prefix, e)
                 continue
         
         if self._should_stop():
@@ -2880,6 +2896,61 @@ class PhotoProcessor:
         # V4.2: 返回标注后的图像，用于 UI 实时预览
         return debug_img
     
+    def _handle_photo_failure(
+        self,
+        index: int,
+        filename: str,
+        original_prefix: Optional[str],
+        error: Exception,
+    ) -> None:
+        """
+        单张照片处理异常的统一兜底：记录日志并计入失败统计。
+
+        关键语义：**不**调用 resume_state.mark_completed()——失败照片必须留在
+        pending 列表中，这样中断后续跑会重试它；正常跑完时 process() 末尾的
+        resume_state.clear() 会统一清理，不会残留状态文件。若在这里误标完成，
+        照片会既不被移动分类、也不计入统计、续跑还永久跳过（历史"丢照片"
+        事故的同类根因）。
+
+        参数:
+        index (int): 照片在本次处理中的序号（1 基），用于日志。
+        filename (str): 照片文件名，用于日志与失败清单。
+        original_prefix (Optional[str]): 照片前缀；异常发生早于赋值时为 None，
+            仅作 filename 缺失时的兜底显示，绝不用于标记 resume 完成。
+        error (Exception): 捕获到的异常对象。
+
+        返回:
+        None
+
+        Unified per-photo failure handler: log the error and count the failure.
+
+        Key semantics: this deliberately does **not** call
+        resume_state.mark_completed() — the failed photo must stay in the
+        pending list so an interrupted-then-resumed run retries it; a normal
+        completion clears the whole state via resume_state.clear() at the end
+        of process(). Marking it completed here would leave the photo
+        unmoved, uncounted, and permanently skipped on resume (the same root
+        cause as the historical "lost photos" incident).
+
+        Parameters:
+        index (int): 1-based photo index within this run, for logging.
+        filename (str): Photo filename for the log line and failure list.
+        original_prefix (Optional[str]): Photo prefix; None when the error
+            happened before assignment. Only a display fallback — never used
+            to mark resume completion.
+        error (Exception): The caught exception.
+
+        Return:
+        None
+        """
+        display_name = filename or original_prefix or f"#{index}"
+        self._log(
+            f"  ⚠️ 第{index}张处理异常，已跳过 [{display_name}]: {error}",
+            "error"
+        )
+        self.stats['failed'] += 1
+        self.failed_photos.append(display_name)
+
     def _update_stats(self, rating: int, is_flying: bool = False, has_exposure_issue: bool = False, is_focus_precise: bool = False):
         """更新统计数据"""
         self.stats['total'] += 1
