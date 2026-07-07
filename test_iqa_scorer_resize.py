@@ -22,6 +22,28 @@ def test_small_image_is_left_untouched():
     assert out.shape == small.shape
 
 
+def test_preshrink_never_upscales_short_side():
+    """长边超阈值、短边低于阈值时，短边必须保持原样，不能被放大。
+
+    INTER_AREA 是降采样算法，放大时退化为近似最近邻会引入块状伪影；
+    对 2000x1000 这类图，若把短边 1000 强行拉到 1536，后续 LANCZOS 精修
+    也无法修复伪影，评分会产生旧路径（直接降采样）没有的漂移。
+
+    When the long side exceeds the threshold but the short side doesn't,
+    the short side must be left as-is — INTER_AREA degrades to near-nearest
+    when upscaling and the artifacts survive the final LANCZOS pass.
+    """
+    wide = np.zeros((1000, 2000, 3), dtype=np.uint8)
+    out = _preshrink_if_large(wide)
+    assert out.shape[0] == 1000, "短边(高)不应被放大"
+    assert out.shape[1] == _TOPIQ_PRESHRINK_SIZE, "长边(宽)应降到预降尺寸"
+
+    tall = np.zeros((3000, 900, 3), dtype=np.uint8)
+    out = _preshrink_if_large(tall)
+    assert out.shape[0] == _TOPIQ_PRESHRINK_SIZE, "长边(高)应降到预降尺寸"
+    assert out.shape[1] == 900, "短边(宽)不应被放大"
+
+
 def test_preshrink_preserves_dtype_and_channels():
     """预降不应该改变 dtype 或通道数。"""
     big = (np.random.rand(4000, 6000, 3) * 255).astype(np.uint8)

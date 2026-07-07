@@ -43,7 +43,9 @@ def _preshrink_if_large(img_array: np.ndarray) -> np.ndarray:
     INTER_AREA 是专为降采样设计的区域平均算法，比 PIL LANCZOS 快得多，
     用它先降到约 4 倍最终目标尺寸，再由调用方做最后一步 PIL LANCZOS 精修，
     实测（棋盘图案 + 真实 45MP 鸟类照片）显示最终评分误差 < 0.02
-    (1-10 分制)，可忽略。小图（小于预降尺寸）原样返回，不做无意义的放大。
+    (1-10 分制)，可忽略。每个维度只降不升：小图整体原样返回；长宽比极端的
+    图（长边超阈值、短边低于阈值）只降长边——INTER_AREA 在放大时会退化为
+    近似最近邻引入块状伪影，且后续 LANCZOS 精修无法修复。
 
     If the source is much larger than the TOPIQ input size, fast-shrink it
     with cv2 INTER_AREA first. INTER_AREA is an area-averaging algorithm
@@ -51,8 +53,11 @@ def _preshrink_if_large(img_array: np.ndarray) -> np.ndarray:
     to ~4x the final target size here, then letting the caller do a final
     PIL LANCZOS pass, keeps the measured score drift under 0.02 (on a 1-10
     scale) on both a synthetic checkerboard pattern and a real 45MP bird
-    photo. Small images (already below the pre-shrink size) are returned
-    unchanged — no point upscaling them.
+    photo. Each dimension is only ever shrunk, never enlarged: small images
+    are returned unchanged, and for extreme aspect ratios (long side above
+    the threshold, short side below) only the long side is reduced —
+    INTER_AREA degrades to near-nearest-neighbor when upscaling and the
+    resulting block artifacts survive the final LANCZOS pass.
 
     Args:
         img_array: HWC numpy array，通道顺序不限（BGR 或 RGB 均可，只做
@@ -61,10 +66,12 @@ def _preshrink_if_large(img_array: np.ndarray) -> np.ndarray:
     Returns:
         resize 后（或原样，小图时）的 HWC numpy array。
     """
-    if max(img_array.shape[:2]) > _TOPIQ_PRESHRINK_SIZE:
+    height, width = img_array.shape[:2]
+    if max(height, width) > _TOPIQ_PRESHRINK_SIZE:
         img_array = cv2.resize(
             img_array,
-            (_TOPIQ_PRESHRINK_SIZE, _TOPIQ_PRESHRINK_SIZE),
+            # cv2.resize 的 dsize 是 (宽, 高) / dsize is (width, height)
+            (min(width, _TOPIQ_PRESHRINK_SIZE), min(height, _TOPIQ_PRESHRINK_SIZE)),
             interpolation=cv2.INTER_AREA,
         )
     return img_array
