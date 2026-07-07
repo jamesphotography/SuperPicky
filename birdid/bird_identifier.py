@@ -271,8 +271,19 @@ def get_database_manager():
 
             if os.path.exists(DATABASE_PATH):
                 return BirdDatabaseManager(DATABASE_PATH)
+            print(f"[BirdID] 数据库文件不存在，罕见度/IUCN/AviList 命名将不可用: {DATABASE_PATH}")
         except Exception as e:
-            pass
+            # V4.4: 这里以前完全静默——调用方后续都用 `if db_manager:` 跳过相关功能，
+            # 用户只会看到"罕见度/IUCN/AviList 名称全部消失"，却无从判断是数据库损坏、
+            # 权限问题还是别的原因。这个 registry 是进程级单例缓存，只会失败一次就
+            # 定型，所以这条日志只会打印一次，不会刷屏。
+            # V4.4: This used to fail completely silently — callers all guard with
+            # `if db_manager:` and skip the related features, so the user only sees
+            # "rarity/IUCN/AviList names all vanished" with no way to tell whether
+            # it's a corrupt DB, a permissions issue, or something else. The result
+            # is cached for the process lifetime by the lazy registry, so this log
+            # line fires at most once, not on every call.
+            print(f"[BirdID] 数据库管理器初始化失败 / database manager init failed: {e}")
         return False
 
     result = registry.get_or_create("birdid.database_manager", _factory)
@@ -303,8 +314,16 @@ def get_species_filter():
             filt = AvonetFilter()
             if filt.is_available():
                 return filt
+            print("[BirdID] AVONET 地理过滤库不可用，GPS/地区过滤将被跳过 / AVONET geo-filter unavailable, GPS/region filtering will be skipped")
         except Exception as e:
-            pass
+            # V4.4: 同 get_database_manager()——以前完全静默，调用方用
+            # `if species_filter:` 跳过过滤，用户看不到"地理过滤没生效"的原因。
+            # registry 是进程级单例缓存，这条日志同样只会打印一次。
+            # V4.4: Same rationale as get_database_manager() — this used to be
+            # fully silent, and callers guard with `if species_filter:` and skip
+            # filtering with no visible cause. The registry caches the result for
+            # the process lifetime, so this also fires at most once.
+            print(f"[BirdID] 地理过滤器初始化失败 / species filter init failed: {e}")
         return None
 
     return registry.get_or_create("birdid.avonet_filter", _factory)
@@ -377,7 +396,14 @@ class YOLOBirdDetector:
             # 默认 640 会把高像素原图直接降采样到 640，杂背景里的远距小鸟被抹掉而漏检。
             # imgsz=1024 matches the picking pipeline; the default 640 downsamples a
             # high-res frame too aggressively and drops small distant birds.
-            results = self.model(img_array, conf=confidence_threshold, imgsz=1024)
+            # V4.4: 显式指定推理设备，与项目统一的 get_best_device() 策略对齐
+            # （Intel Mac 强制 CPU 等规则），避免这里悄悄走 ultralytics 自己的
+            # 默认设备选择、与主选片流程的设备行为不一致。
+            # V4.4: Explicitly pin the inference device to the project-wide
+            # get_best_device() policy (e.g. Intel Mac forced to CPU) instead of
+            # silently falling back to ultralytics' own default device selection,
+            # which could diverge from the main picking pipeline.
+            results = self.model(img_array, conf=confidence_threshold, imgsz=1024, device=CLASSIFIER_DEVICE.type)
 
             detections = []
             for result in results:
@@ -1043,7 +1069,16 @@ def identify_bird(
                     if use_gps and lat is not None and lon is not None:
                         species_class_ids = species_filter.get_species_by_gps(lat, lon)
 
-                    if species_class_ids is None and (region_code or country_code):
+                    # V4.4: GPS 命中的网格若无物种记录，get_species_by_gps 返回空
+                    # set() 而非 None；用 `is None` 判断会漏掉这种情况，导致该次
+                    # 识别悄悄退化为无过滤（不再触发下面的国家/地区回退）。改成真值
+                    # 判断，让"网格为空"与"从未查询"都能进入回退分支。
+                    # V4.4: get_species_by_gps returns an empty set() (not None)
+                    # when the GPS grid cell has no species records. An `is None`
+                    # check misses that case and silently disables filtering
+                    # instead of falling back to region/country. Use a truthiness
+                    # check so both "empty grid" and "never queried" fall through.
+                    if not species_class_ids and (region_code or country_code):
                         effective_region = region_code or country_code
                         try:
                             ebird_ids, actual_region = (
