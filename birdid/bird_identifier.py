@@ -654,6 +654,38 @@ def _load_heif(image_path: str) -> Image.Image:
         raise Exception(f"HEIF 解码失败 ({os.path.basename(image_path)}): {e}")
 
 
+def _gps_coords_present(lat: Optional[float], lon: Optional[float]) -> bool:
+    """
+    判断 GPS 坐标是否存在（两者均非 None）。
+
+    0.0 是合法坐标——赤道（lat=0.0）与本初子午线（lon=0.0）——所以这里
+    必须用 `is not None` 而非真值判断；identify_bird 曾因 `if lat and lon:`
+    把这类照片当作无 GPS，导致拍摄国家解析与按国家归一化 rarity 静默失效。
+
+    参数:
+    lat (Optional[float]): 纬度，无 GPS 时为 None
+    lon (Optional[float]): 经度，无 GPS 时为 None
+
+    返回:
+    bool: 两者均非 None 时为 True
+
+    Check whether GPS coordinates are present (both non-None).
+
+    0.0 is a legal coordinate — the equator (lat=0.0) and the prime meridian
+    (lon=0.0) — so this must use `is not None`, never truthiness;
+    identify_bird once used `if lat and lon:` and silently dropped such
+    photos' country resolution and country-aware rarity normalization.
+
+    Parameters:
+    lat (Optional[float]): Latitude, None when GPS is absent
+    lon (Optional[float]): Longitude, None when GPS is absent
+
+    Return:
+    bool: True when both are non-None
+    """
+    return lat is not None and lon is not None
+
+
 def extract_gps_from_exif(
     image_path: str,
 ) -> Tuple[Optional[float], Optional[float], str]:
@@ -1050,7 +1082,10 @@ def identify_bird(
         if use_gps:
             try:
                 lat, lon, _gps_msg = extract_gps_from_exif(image_path)
-                if lat and lon:
+                # 0.0 是合法坐标（赤道/本初子午线），必须用 is not None 语义判断
+                # 0.0 is a legal coordinate (equator/prime meridian) — presence
+                # must be checked with is-not-None semantics, not truthiness.
+                if _gps_coords_present(lat, lon):
                     result["gps_info"] = {
                         "latitude": lat,
                         "longitude": lon,
@@ -1066,7 +1101,7 @@ def identify_bird(
             try:
                 species_filter = get_species_filter()
                 if species_filter:
-                    if use_gps and lat is not None and lon is not None:
+                    if use_gps and _gps_coords_present(lat, lon):
                         species_class_ids = species_filter.get_species_by_gps(lat, lon)
 
                     # V4.4: GPS 命中的网格若无物种记录，get_species_by_gps 返回空
@@ -1122,7 +1157,7 @@ def identify_bird(
         if not results and species_class_ids:
             country_cls_ids = None
             country_cc = None
-            if lat is not None and lon is not None and species_filter is not None:
+            if _gps_coords_present(lat, lon) and species_filter is not None:
                 try:
                     country_cls_ids, country_cc = (
                         species_filter.get_species_by_country_ebird(lat, lon)
