@@ -203,15 +203,19 @@ class IQAScorer:
             return None
 
         try:
-            import cv2
             topiq_model = self._load_topiq()
 
-            # BGR → RGB → PIL Image → resize
+            # V4.5: 先用 cv2 INTER_AREA 快速预降(大图才生效)，再 BGR→RGB→PIL
+            # →LANCZOS 精修，避免对整张原图做代价高昂的 LANCZOS。
+            # V4.5: Fast-preshrink with cv2 INTER_AREA first (only kicks in
+            # for large sources), then BGR→RGB→PIL→LANCZOS for the final
+            # pass — avoids running expensive LANCZOS on the full-res source.
+            img_bgr = _preshrink_if_large(img_bgr)
             # del img_rgb 在 resize 前释放全分辨率副本，避免 50-70 MB 驻留到推理结束
             img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
             img = Image.fromarray(img_rgb)
             del img_rgb
-            img = img.resize((384, 384), Image.LANCZOS)
+            img = img.resize((_TOPIQ_INPUT_SIZE, _TOPIQ_INPUT_SIZE), Image.LANCZOS)
 
             # 转为张量（复用实例变量）
             img_tensor = self._transform(img).unsqueeze(0).to(self.device)
