@@ -1109,6 +1109,16 @@ class SuperPickyMainWindow(QMainWindow):
     
     def _show_main_window(self):
         """显示主窗口"""
+        # 窗口重新可见后复位保存标志：隐藏到托盘时已保存过一次位置，若不复位，
+        # 用户重新打开窗口后再移动/调整大小，退出时会因标志已置位而不再保存，
+        # 新位置静默丢失（PR#105 原实现的缺陷，托盘驻留是 nightly 的默认关窗
+        # 行为，此路径是主路径而非边缘场景）。
+        # Reset the placement-saved flag once the window is visible again:
+        # hiding to tray already saved once, and without this reset any
+        # move/resize after reopening would be silently lost at quit (a defect
+        # in the original PR#105; with tray residency as nightly's default
+        # close behavior this is the main path, not an edge case).
+        self._main_window_placement_saved = False
         # macOS: 恢复 Dock 图标
         if sys.platform == 'darwin':
             try:
