@@ -795,6 +795,8 @@
     "total_photos": "总共识别：{total} 张照片",
     "total_time": "总耗时：{time_sec:.1f} 秒 ({time_min:.1f} 分钟)",
     "avg_time": "平均每张：{avg:.2f} 秒",
+    "start_at": "开始时间：{time}",
+    "end_at": "结束时间：{time}",
     "star_3": "优选照片（3星）：{count} 张 ({percent:.1f}%)",
     "picked_detail": "🏆 精选旗标（美学+锐度双Top）：{count} 张 ({percent:.1f}% of 3星）",
     "star_2": "良好照片（2星）：{count} 张 ({percent:.1f}%)",

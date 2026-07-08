@@ -90,6 +90,37 @@ class DropLineEdit(QLineEdit):
         event.ignore()
 
 
+def _format_wall_clock(ts: float) -> str:
+    """
+    把 epoch 时间戳格式化为本地墙钟 HH:MM:SS，供完成报告显示。
+
+    用户可以拿报告里的开始/结束时间与自己的手表对照，自验总耗时是否
+    真实。时间戳缺失（0 或负数）时返回占位符，避免显示 1970 年的误导值。
+
+    参数:
+    ts (float): epoch 时间戳（time.time()）。
+
+    返回:
+    str: 本地时间 "HH:MM:SS"，缺失时为 "--:--:--"。
+
+    Format an epoch timestamp as local wall-clock HH:MM:SS for the
+    completion report, so users can verify the total duration against a
+    real clock. Missing timestamps (0 or negative) yield a placeholder
+    instead of a misleading 1970 time.
+
+    Parameters:
+    ts (float): Epoch timestamp from time.time().
+
+    Return:
+    str: Local "HH:MM:SS", or "--:--:--" when missing.
+    """
+    if not ts or ts <= 0:
+        return "--:--:--"
+    from datetime import datetime as _dt2
+
+    return _dt2.fromtimestamp(ts).strftime("%H:%M:%S")
+
+
 class WorkerSignals(QObject):
     """工作线程信号"""
     progress = Signal(int)
@@ -689,6 +720,8 @@ class WorkerThread(threading.Thread):
             f"  {_species_str}",
             "",
             "[Performance]",
+            f"  Started at         : {_format_wall_clock(_s.get('start_time', 0))}",
+            f"  Finished at        : {_format_wall_clock(_s.get('end_time', 0))}",
             f"  Total Time         : {_t_time:.1f}s  ({_t_time / 60:.1f} min)",
             f"  Avg per Photo      : {_avg_time:.1f}s",
             "=" * 60,
@@ -3263,8 +3296,15 @@ class SuperPickyMainWindow(QMainWindow):
             f'<br>{line}</div>'
         )
 
+        # 开始/结束墙钟时间：用户可对表自验总耗时是否真实
+        # Wall-clock start/end so users can verify the duration on a real clock
+        start_clock = _format_wall_clock(stats.get('start_time', 0))
+        end_clock = _format_wall_clock(stats.get('end_time', 0))
+
         rows = [
             f'<span style="color:{sec}">{esc(t("report.total_photos", total=total))}</span>',
+            f'<span style="color:{sec}">{esc(t("report.start_at", time=start_clock))}</span>',
+            f'<span style="color:{sec}">{esc(t("report.end_at", time=end_clock))}</span>',
             f'<span style="color:{sec}">{esc(t("report.total_time", time_sec=total_time, time_min=total_time/60))}</span>',
             f'<span style="color:{sec}">{esc(t("report.avg_time", avg=avg_time))}</span>',
             '',
