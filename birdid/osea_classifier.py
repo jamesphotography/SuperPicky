@@ -19,7 +19,7 @@ from typing import Dict, List, Optional, Set
 
 import torch
 from PIL import Image
-from torchvision import models, transforms
+from torchvision import models
 from config import (
     get_best_device,
     get_install_scoped_resource_path,
@@ -108,31 +108,17 @@ def _get_resource_path(relative_path: str) -> Path:
 DEVICE = get_best_device()
 
 
-# V4.4: 与 birdid/bird_identifier.py 的 OSEA_TRANSFORM / OSEA_TRANSFORM_DIRECT 保持
-# 完全一致（同名同参数），这两个 transform 分别对应"未裁剪整图"与"YOLO 已裁剪成
-# 紧凑方形图"两种输入，选错会导致 CLI --model osea 和 GUI 默认路径的识别结果不一致。
-# V4.4: Kept byte-for-byte identical to OSEA_TRANSFORM / OSEA_TRANSFORM_DIRECT in
-# birdid/bird_identifier.py (same names, same params). They correspond to
-# "uncropped full frame" vs. "already YOLO-cropped tight square" inputs;
-# picking the wrong one is what made `--model osea` diverge from the GUI's
-# default recognition path.
-OSEA_TRANSFORM = transforms.Compose(
-    [
-        transforms.Resize(256),
-        transforms.CenterCrop(224),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-    ]
-)
-
-OSEA_TRANSFORM_DIRECT = transforms.Compose(
-    [
-        transforms.Resize(
-            (224, 224), interpolation=transforms.InterpolationMode.LANCZOS
-        ),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-    ]
+# V4.5: transform 与温度从 birdid/osea_preprocess.py 单一事实源导入，与
+# bird_identifier.py 主流程共享同一份定义（此前两处逐字复制靠注释人工同步，
+# 漂移曾导致 CLI --model osea 与 GUI 默认路径识别结果不一致）。
+# V4.5: Transforms and temperature are imported from the SSOT module
+# birdid/osea_preprocess.py, shared with the bird_identifier.py pipeline
+# (previously copy-pasted in both files and kept in sync only by a comment —
+# drift once made `--model osea` diverge from the GUI's default path).
+from birdid.osea_preprocess import (
+    OSEA_TEMPERATURE,
+    OSEA_TRANSFORM,
+    OSEA_TRANSFORM_DIRECT,
 )
 
 
@@ -236,7 +222,7 @@ class OSEAClassifier:
         self,
         image: Image.Image,
         top_k: int = 5,
-        temperature: float = 0.9,
+        temperature: float = OSEA_TEMPERATURE,
         ebird_species_set: Optional[Set[str]] = None,
         is_yolo_cropped: bool = False,
     ) -> List[Dict]:
@@ -307,7 +293,7 @@ class OSEAClassifier:
         self,
         image: Image.Image,
         top_k: int = 5,
-        temperature: float = 0.9,
+        temperature: float = OSEA_TEMPERATURE,
         ebird_species_set: Optional[Set[str]] = None,
         is_yolo_cropped: bool = False,
     ) -> List[Dict]:

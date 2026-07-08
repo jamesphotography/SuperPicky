@@ -11,7 +11,6 @@ and compatibility with offline resource paths.
 __version__ = "1.0.0"
 
 import torch
-import torchvision.transforms as transforms
 import numpy as np
 from PIL import Image, ImageEnhance, ImageFilter
 from PIL.ExifTags import TAGS, GPSTAGS
@@ -834,23 +833,15 @@ def apply_enhancement(image: Image.Image, method: str = "unsharp_mask") -> Image
     return image
 
 
-OSEA_TRANSFORM = transforms.Compose(
-    [
-        transforms.Resize(256),
-        transforms.CenterCrop(224),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-    ]
-)
-
-OSEA_TRANSFORM_DIRECT = transforms.Compose(
-    [
-        transforms.Resize(
-            (224, 224), interpolation=transforms.InterpolationMode.LANCZOS
-        ),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-    ]
+# V4.5: transform 与温度收敛到 birdid/osea_preprocess.py 单一事实源，
+# 与 osea_classifier.py 共享同一份定义，杜绝双份复制漂移。
+# V4.5: Transforms and temperature now come from the shared SSOT module
+# birdid/osea_preprocess.py, shared with osea_classifier.py — no more
+# duplicated definitions drifting apart.
+from birdid.osea_preprocess import (
+    OSEA_TEMPERATURE,
+    OSEA_TRANSFORM,
+    OSEA_TRANSFORM_DIRECT,
 )
 
 
@@ -877,8 +868,7 @@ def predict_bird(
     num_classes = min(10964, output.shape[0])
     output = output[:num_classes]
 
-    TEMPERATURE = 0.9
-    best_probs = torch.nn.functional.softmax(output / TEMPERATURE, dim=0)
+    best_probs = torch.nn.functional.softmax(output / OSEA_TEMPERATURE, dim=0)
 
     k = min(100 if species_class_ids else top_k, len(best_probs))
     top_probs, top_indices = torch.topk(best_probs, k)
