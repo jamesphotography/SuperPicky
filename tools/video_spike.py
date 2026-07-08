@@ -40,8 +40,12 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from config import config  # noqa: E402
+from config import config, ensure_cv2_thread_pool  # noqa: E402
 from ultralytics import YOLO  # noqa: E402
+
+# ultralytics 导入时会全局 cv2.setNumThreads(0)，立即恢复线程池
+# ultralytics globally disables the cv2 thread pool at import; restore it
+ensure_cv2_thread_pool()
 
 
 # ============================================================================
