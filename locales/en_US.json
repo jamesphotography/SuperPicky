@@ -820,6 +820,8 @@
     "total_photos": "Total processed: {total} photos",
     "total_time": "Total time: {time_sec:.1f} seconds ({time_min:.1f} minutes)",
     "avg_time": "Average per photo: {avg:.2f} seconds",
+    "start_at": "Started at: {time}",
+    "end_at": "Finished at: {time}",
     "star_3": "Excellent photos (3 stars): {count} ({percent:.1f}%)",
     "picked_detail": "🏆 Picked (top in both aesthetics & sharpness): {count} ({percent:.1f}% of 3-star)",
     "star_2": "Good photos (2 stars): {count} ({percent:.1f}%)",
