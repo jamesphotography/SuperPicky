@@ -39,8 +39,49 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ui.icon_utils import ICON_ACTIVE, ICON_IDLE, load_tinted_icon, checkbox_indicator_qss  # noqa: F401
+from ui.icon_utils import (  # noqa: F401
+    ICON_ACTIVE,
+    ICON_IDLE,
+    checkbox_indicator_qss,
+    load_tinted_icon,
+    radio_indicator_qss,
+)
 from ui.styles import COLORS  # noqa: F401
+
+
+def _radio_style() -> str:
+    """
+    设置中心单选按钮的统一样式：文字样式 + 圆圈指示器。
+
+    指示器必须显式样式化——QRadioButton 挂自定义 stylesheet 后 Qt 走
+    QStyleSheetStyle 渲染，Windows 深色界面下原生选中圆点与背景融合，
+    被选中的选项反而看不见指示器（4.5.0RC2 用户反馈）。
+    与 QCheckBox 的 checkbox_indicator_qss 同一套视觉语言。
+
+    返回:
+    str: 完整的 QRadioButton 样式表字符串。
+
+    Unified style for Settings Center radio buttons: text style + circle
+    indicator. The indicator must be styled explicitly — with a custom
+    stylesheet Qt renders it via QStyleSheetStyle, and on Windows dark UI
+    the native checked dot blends into the background, leaving the selected
+    option visually indicator-less (user report on 4.5.0RC2). Matches the
+    QCheckBox visual language from checkbox_indicator_qss.
+
+    Return:
+    str: Complete QRadioButton stylesheet string.
+    """
+    # 注意：文字样式必须包进 QRadioButton{} 选择器——同一张样式表里
+    # 「裸声明 + 选择器规则」混用会导致 Qt 解析失败、整张表被丢弃，
+    # 指示器回落到原生渲染（正是要修的隐形问题）。
+    # Note: the text style must be wrapped in a QRadioButton{} selector —
+    # mixing bare declarations with selector rules in one stylesheet makes
+    # Qt discard the whole sheet, falling back to native indicator rendering
+    # (the very invisibility bug being fixed).
+    return (
+        f"QRadioButton {{ color:{COLORS['text_secondary']}; font-size:12px; }}"
+        + radio_indicator_qss()
+    )
 
 # ── 常量 / Constants ──────────────────────────────────────────────────────────
 
@@ -498,12 +539,8 @@ class SettingsCenter(QDialog):
         source_row = QHBoxLayout()
         self._bid_ebird = QRadioButton(self.i18n.t("settings.birdid_source_ebird"))
         self._bid_gbif = QRadioButton(self.i18n.t("settings.birdid_source_gbif"))
-        self._bid_ebird.setStyleSheet(
-            f"color:{COLORS['text_secondary']};font-size:12px;"
-        )
-        self._bid_gbif.setStyleSheet(
-            f"color:{COLORS['text_secondary']};font-size:12px;"
-        )
+        self._bid_ebird.setStyleSheet(_radio_style())
+        self._bid_gbif.setStyleSheet(_radio_style())
 
         # QButtonGroup 确保两者互斥 / QButtonGroup ensures mutual exclusivity
         self._bid_source_group = QButtonGroup(self)
@@ -1007,9 +1044,7 @@ class SettingsCenter(QDialog):
         self._xmp_embedded = QRadioButton(
             self.i18n.t("advanced_settings.write_embedded")
         )
-        self._xmp_embedded.setStyleSheet(
-            f"color:{COLORS['text_secondary']};font-size:12px;"
-        )
+        self._xmp_embedded.setStyleSheet(_radio_style())
         self._xmp_button_group.addButton(self._xmp_embedded, 0)
         lay.addWidget(self._xmp_embedded)
 
@@ -1023,9 +1058,7 @@ class SettingsCenter(QDialog):
         self._xmp_sidecar = QRadioButton(
             self.i18n.t("advanced_settings.write_sidecar")
         )
-        self._xmp_sidecar.setStyleSheet(
-            f"color:{COLORS['text_secondary']};font-size:12px;"
-        )
+        self._xmp_sidecar.setStyleSheet(_radio_style())
         self._xmp_button_group.addButton(self._xmp_sidecar, 1)
         lay.addWidget(self._xmp_sidecar)
 
@@ -1039,9 +1072,7 @@ class SettingsCenter(QDialog):
         self._xmp_none = QRadioButton(
             self.i18n.t("advanced_settings.write_none")
         )
-        self._xmp_none.setStyleSheet(
-            f"color:{COLORS['text_secondary']};font-size:12px;"
-        )
+        self._xmp_none.setStyleSheet(_radio_style())
         self._xmp_button_group.addButton(self._xmp_none, 2)
         lay.addWidget(self._xmp_none)
 

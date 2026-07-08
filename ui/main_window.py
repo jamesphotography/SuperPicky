@@ -33,7 +33,7 @@ from PySide6.QtCore import (
     Qt, Signal, QObject, Slot, QTimer, QPropertyAnimation, QEasingCurve, QMimeData,
     QThread, QStandardPaths, QSize, QRect,
 )
-from PySide6.QtGui import QFont, QPixmap, QIcon, QAction, QTextCursor, QColor, QDragEnterEvent, QDropEvent
+from PySide6.QtGui import QFont, QPixmap, QIcon, QAction, QTextCursor, QColor, QDragEnterEvent, QDropEvent, QKeySequence
 
 from tools.i18n import get_i18n, set_primary_language
 from advanced_config import get_advanced_config
@@ -902,6 +902,19 @@ class SuperPickyMainWindow(QMainWindow):
 
         # 单一设置入口 → 打开设置中心 / Single settings entry → open SettingsCenter
         settings_action = QAction(self.i18n.t("menu.settings"), self)
+        # NoRole：英文文案 "Preferences..." 会命中 macOS 的菜单文字启发式
+        # (PreferencesRole)，被 Qt 自动挪到应用菜单，从「设置」菜单里消失；
+        # 中文「参数设置...」不命中、行为不同。显式 NoRole 保证所有平台、
+        # 所有语言下入口都固定在这里。
+        # NoRole: the English label "Preferences..." matches macOS's text
+        # heuristic (PreferencesRole) and Qt silently relocates the item to
+        # the application menu — it vanishes from this Settings menu, while
+        # the Chinese label stays put. Explicit NoRole pins it here on every
+        # platform and language.
+        settings_action.setMenuRole(QAction.MenuRole.NoRole)
+        # Ctrl+, 在 macOS 显示为 ⌘,（打开设置的标准快捷键），Windows 为 Ctrl+,
+        # Ctrl+, renders as Cmd+, on macOS (the standard open-settings key).
+        settings_action.setShortcut(QKeySequence("Ctrl+,"))
         settings_action.triggered.connect(lambda: self._open_settings_center("culling"))
         settings_menu.addAction(settings_action)
 

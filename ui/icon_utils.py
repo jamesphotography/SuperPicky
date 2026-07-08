@@ -219,3 +219,54 @@ def checkbox_indicator_qss(size: int = 15, unchecked_color: str = None, checked_
         f"QCheckBox::indicator:hover {{ border: none; background: transparent; }}"
         f"QCheckBox::indicator:checked:hover {{ image: url({c}); border: none; background: transparent; }}"
     )
+
+
+def radio_indicator_qss(size: int = 15, unchecked_color: str = None, checked_color: str = None) -> str:
+    """
+    返回把 QRadioButton 指示器换成 circle.svg(未选)/circle-check.svg(选中)的样式片段。
+    与 checkbox_indicator_qss 同一套视觉语言：未选=圆圈(灰)，选中=带勾圆圈(accent 绿)。
+
+    必要性：QRadioButton 一旦挂了任何自定义 stylesheet，Qt 会切到
+    QStyleSheetStyle 渲染指示器，Windows 深色界面下选中态圆点的颜色会与
+    背景融合——用户看到「未选中的空心圆圈可见、被选中那项反而隐形」
+    （4.5.0RC2 用户实测反馈）。显式指定两种状态的图标可跨平台稳定渲染。
+
+    参数:
+    size (int): 指示器边长(px)，默认 15，与 checkbox 版一致。
+    unchecked_color (str): 未选中圆圈颜色，默认 text_muted 灰。
+    checked_color (str): 选中图标颜色，默认 accent 绿。
+
+    返回:
+    str: 追加到控件现有 QRadioButton 样式后面的 QSS 片段。
+
+    Return a QSS snippet replacing the QRadioButton indicator with circle.svg
+    (unchecked) and circle-check.svg (checked) — the same visual language as
+    checkbox_indicator_qss.
+
+    Why: once a QRadioButton carries any custom stylesheet, Qt renders its
+    indicator via QStyleSheetStyle, and on Windows dark UI the checked dot's
+    color blends into the background — users see the hollow circles on
+    unselected options while the selected one appears indicator-less
+    (reported on 4.5.0RC2). Explicit per-state icons render consistently
+    across platforms.
+
+    Parameters:
+    size (int): Indicator edge length in px, default 15 (matches checkbox).
+    unchecked_color (str): Unchecked circle color, defaults to muted gray.
+    checked_color (str): Checked icon color, defaults to accent green.
+
+    Return:
+    str: QSS snippet to append to a widget's existing QRadioButton style.
+    """
+    uc = unchecked_color or COLORS.get("text_muted", "#8a8a8a")
+    cc = checked_color or COLORS.get("accent", "#00d4aa")
+    u = tinted_png_path("circle.svg", uc, size)
+    c = tinted_png_path("circle-check.svg", cc, size)
+    return (
+        f"QRadioButton::indicator {{ width: {size}px; height: {size}px;"
+        f" border: none; background: transparent; border-radius: 0px; }}"
+        f"QRadioButton::indicator:unchecked {{ image: url({u}); border: none; background: transparent; }}"
+        f"QRadioButton::indicator:checked {{ image: url({c}); border: none; background: transparent; }}"
+        f"QRadioButton::indicator:hover {{ border: none; background: transparent; }}"
+        f"QRadioButton::indicator:checked:hover {{ image: url({c}); border: none; background: transparent; }}"
+    )
