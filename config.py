@@ -669,6 +669,50 @@ def get_lazy_registry() -> LazyRegistry:
     return _lazy_registry
 
 
+def ensure_cv2_thread_pool() -> None:
+    """
+    恢复被 ultralytics 关掉的 OpenCV 线程池。
+
+    `import ultralytics` 时会全局调用 cv2.setNumThreads(0)，用于规避其训练
+    场景下 fork 式 DataLoader 与 OpenCV 线程池的死锁；副作用是整个进程的
+    cv2 退化为单线程（实测 45MP 照片 INTER_AREA 从 ~24ms 变 ~225ms），
+    TOPIQ 两段式 resize、视频抽帧等所有 cv2 热路径都被拖慢。
+
+    SuperPicky 是纯推理应用：不使用 fork 式 DataLoader，且 macOS 与
+    Windows 的 multiprocessing 启动方式均为 spawn（子进程重新导入，不继承
+    线程池状态），该保护不适用。所以在每个 ultralytics 导入点之后调用本
+    函数，把线程数恢复为 OpenCV 自身的默认值（逻辑 CPU 数）。
+
+    返回:
+    None
+
+    Restore the OpenCV thread pool that ultralytics disables.
+
+    `import ultralytics` globally calls cv2.setNumThreads(0) to avoid a
+    fork-DataLoader deadlock in their training scenarios; the side effect is
+    process-wide single-threaded cv2 (measured: INTER_AREA on a 45MP frame
+    goes from ~24ms to ~225ms), slowing the TOPIQ two-stage resize, video
+    frame extraction, and every other cv2 hot path.
+
+    SuperPicky is inference-only: no fork DataLoaders, and multiprocessing
+    spawns on both macOS and Windows (children re-import and don't inherit
+    pool state), so the guard does not apply. Call this right after each
+    ultralytics import site to restore OpenCV's own default (logical CPUs).
+
+    Return:
+    None
+    """
+    try:
+        import cv2
+
+        cv2.setNumThreads(cv2.getNumberOfCPUs())
+    except Exception:
+        # cv2 不可用或后端不支持线程控制时静默跳过，不影响功能
+        # Silently skip when cv2 is unavailable or the backend doesn't
+        # support thread control — functionality is unaffected.
+        pass
+
+
 def get_best_device():
     """
     返回当前环境下最合适的 Torch 设备对象 / Return the most appropriate Torch device object for the current environment.

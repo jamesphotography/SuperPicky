@@ -5,7 +5,11 @@ import numpy as np
 from ultralytics import YOLO
 from typing import Optional
 from tools.utils import log_message
-from config import config, get_lazy_registry
+from config import config, get_lazy_registry, ensure_cv2_thread_pool
+
+# ultralytics 导入时会全局 cv2.setNumThreads(0)，立即恢复线程池
+# ultralytics globally disables the cv2 thread pool at import; restore it
+ensure_cv2_thread_pool()
 # V3.2: 移除未使用的 sharpness 计算器导入
 from iqa_scorer import get_iqa_scorer
 from advanced_config import get_advanced_config

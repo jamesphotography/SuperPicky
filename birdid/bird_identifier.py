@@ -82,6 +82,11 @@ try:
     from ultralytics import YOLO
 
     YOLO_AVAILABLE = True
+    # ultralytics 导入时会全局 cv2.setNumThreads(0)，立即恢复线程池
+    # ultralytics globally disables the cv2 thread pool at import; restore it
+    from config import ensure_cv2_thread_pool
+
+    ensure_cv2_thread_pool()
 except ImportError:
     YOLO = cast(Any, None)
     YOLO_AVAILABLE = False

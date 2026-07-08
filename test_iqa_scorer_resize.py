@@ -81,6 +81,26 @@ def _reference_score_from_array(scorer, img_bgr):
     return max(1.0, min(10.0, float(score.item() if hasattr(score, "item") else score)))
 
 
+def _min_ms_of(fn, repeats: int = 3) -> float:
+    """
+    多次执行取最小耗时（毫秒）。
+
+    单次计时会被前序测试留下的系统负载/缓存状态干扰（此前与其他测试组合跑
+    时曾因瞬时尖峰假红）；最小值是对「真实成本下界」最鲁棒的估计。
+
+    Run fn several times and return the minimum elapsed milliseconds. A
+    single sample is easily skewed by load/cache left over from earlier
+    tests (this used to flake in combined runs); the minimum is the most
+    robust estimate of the true cost floor.
+    """
+    best = float("inf")
+    for _ in range(repeats):
+        t0 = time.perf_counter()
+        fn()
+        best = min(best, (time.perf_counter() - t0) * 1000)
+    return best
+
+
 @pytest.mark.skipif(
     not os.path.exists(_TOPIQ_WEIGHT) or not os.path.exists(_REAL_PHOTO),
     reason="需要本机已有 TOPIQ 权重和样例照片",
@@ -93,16 +113,11 @@ def test_calculate_from_array_matches_reference_and_is_faster():
     assert img_bgr is not None, f"无法读取测试照片: {_REAL_PHOTO}"
 
     # 预热(排除模型加载和首次调用的编译/缓存开销，只比较 resize 策略本身)
-    scorer.calculate_from_array(img_bgr)
-    _reference_score_from_array(scorer, img_bgr)
-
-    t0 = time.time()
     new_score = scorer.calculate_from_array(img_bgr)
-    new_ms = (time.time() - t0) * 1000
-
-    t0 = time.time()
     ref_score = _reference_score_from_array(scorer, img_bgr)
-    ref_ms = (time.time() - t0) * 1000
+
+    new_ms = _min_ms_of(lambda: scorer.calculate_from_array(img_bgr))
+    ref_ms = _min_ms_of(lambda: _reference_score_from_array(scorer, img_bgr))
 
     assert new_score is not None
     assert abs(new_score - ref_score) < 0.1, (
@@ -135,16 +150,11 @@ def test_calculate_aesthetic_matches_reference_and_is_faster():
     scorer = get_iqa_scorer(device=get_best_device().type)
 
     # 预热
-    scorer.calculate_aesthetic(_REAL_PHOTO)
-    _reference_score_from_path(scorer, _REAL_PHOTO)
-
-    t0 = time.time()
     new_score = scorer.calculate_aesthetic(_REAL_PHOTO)
-    new_ms = (time.time() - t0) * 1000
-
-    t0 = time.time()
     ref_score = _reference_score_from_path(scorer, _REAL_PHOTO)
-    ref_ms = (time.time() - t0) * 1000
+
+    new_ms = _min_ms_of(lambda: scorer.calculate_aesthetic(_REAL_PHOTO))
+    ref_ms = _min_ms_of(lambda: _reference_score_from_path(scorer, _REAL_PHOTO))
 
     assert new_score is not None
     assert abs(new_score - ref_score) < 0.1, (
