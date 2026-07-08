@@ -792,7 +792,11 @@ class WelcomeOnboardingDialog(QDialog):
         self.stack = QStackedWidget()
         for page_builder in (
             self._build_welcome_page,
-            self._build_update_page,
+            # ExtremeSimple: 在线更新开关页已从首启向导剥离（_build_update_page 方法
+            # 本身保留在下方，未来要恢复只需把这一行加回来）。
+            # ExtremeSimple: the auto-update opt-in page is stripped from onboarding
+            # (the _build_update_page method itself stays below; re-add this line
+            # to bring it back).
             self._build_skill_level_page,
             self._build_feature_page,
             self._build_runtime_status_page,

@@ -171,7 +171,7 @@ MODELS_TO_DOWNLOAD = [
         "packaged_dest_dir": "models",
         "feature_tags": ["core_detection", "birdid"],
         "required": True,
-        "sha256": None,
+        "sha256": "05e3f27d55ab1bfb1f01fa00a32e2a3308b2d9145954899ed34f6f5bc23666cc",
     },
     {
         "resource_id": "flight_model",
@@ -182,7 +182,7 @@ MODELS_TO_DOWNLOAD = [
         "packaged_dest_dir": "models",
         "feature_tags": ["flight"],
         "required": False,
-        "sha256": None,
+        "sha256": "cf2d5bd10fff0af83fbf57fe365221339152aedd712c4bbbb5b757f2838451a7",
     },
     {
         "resource_id": "keypoint_model",
@@ -193,7 +193,7 @@ MODELS_TO_DOWNLOAD = [
         "packaged_dest_dir": "models",
         "feature_tags": ["keypoint"],
         "required": False,
-        "sha256": None,
+        "sha256": "25bee11a4846e9065185bf22512e0ce4f81a62da79aece8f1683209f375904a6",
     },
     {
         "resource_id": "avonet_database",
@@ -203,7 +203,7 @@ MODELS_TO_DOWNLOAD = [
         "dest_dir": "birdid/data",
         "feature_tags": ["birdid"],
         "required": False,
-        "sha256": None,
+        "sha256": "6dd77175865bbfe034a3aa81bd293cad58ec66b912087727f078d4306086e8a0",
     },
     {
         "resource_id": "quality_model",
@@ -214,7 +214,7 @@ MODELS_TO_DOWNLOAD = [
         "packaged_dest_dir": "models",
         "feature_tags": ["quality"],
         "required": False,
-        "sha256": None,
+        "sha256": "3cd62bb33f9933ed7c6e3d5e79129e81c898eba78b7a2af516a0b0b974616975",
     },
     {
         # yolo11l-seg.pt 不在 jamesphotography/SuperPicky-models 中（该 repo 只放 .onnx 权重），
@@ -230,7 +230,31 @@ MODELS_TO_DOWNLOAD = [
         "packaged_dest_dir": "models",
         "feature_tags": ["core_detection"],
         "required": True,
-        "sha256": None,
+        "sha256": "cabe90049795dfc9a370b7934d6dec7f6b9e44a20e573b0ff81b7e205512c872",
+    },
+    {
+        # SVDLUT 空间感知调色权重(自动修图) / SVDLUT color weight (auto-enhance)。
+        "resource_id": "color_model",
+        "category": "Enhance",
+        "repo_id": "jamesphotography/SuperPicky-models",
+        "filename": "svdlut.pth",
+        "dest_dir": "models",
+        "packaged_dest_dir": "models",
+        "feature_tags": ["enhance"],
+        "required": False,
+        "sha256": "d4db6c5db125c271c71592c629375da92e4d6c975dbc5b8d637a3c66091bb6b1",
+    },
+    {
+        # SCUNet 盲降噪权重(自动修图) / SCUNet denoise weight (auto-enhance)。
+        "resource_id": "denoise_model",
+        "category": "Enhance",
+        "repo_id": "jamesphotography/SuperPicky-models",
+        "filename": "scunet_color_real.pth",
+        "dest_dir": "models",
+        "packaged_dest_dir": "models",
+        "feature_tags": ["enhance"],
+        "required": False,
+        "sha256": "fa78899ba2caec9d235a900e91d96c689da71c42029230c2028b00f09f809c2e",
     },
 ]
 
@@ -2126,6 +2150,22 @@ def main():
     os.chdir(project_root)
     logging.info("Working directory set to: %s", project_root)
 
+    # ExtremeSimple: 「enhance」(SVDLUT 调色 + SCUNet 降噪) 已从此打包下载集合剥离。
+    # FULL_FEATURE_SET(core/initialization_manager.py、welcome_onboarding_dialog.py)
+    # 本就不含 "enhance"，运行时从不需要这两个权重；但打包时 build_release_*.py
+    # 会先调这个 main() 把模型下载到本地 models/，再被 .spec 的整目录打包规则
+    # (os.path.join(base_path, 'models'), 'models') 原样带进 Mac/Windows Full 安装包。
+    # 去掉 "enhance" 后打包机器不会再下载 svdlut.pth/scunet_color_real.pth，
+    # 安装包也就不会再带上这约 73MB 的死重。未来要恢复 Enhance 功能时把
+    # "enhance" 加回这个集合即可。
+    # ExtremeSimple: "enhance" (SVDLUT color + SCUNet denoise) is stripped from
+    # this packaging download set. FULL_FEATURE_SET already excludes "enhance",
+    # so runtime never needs these weights; but build_release_*.py calls this
+    # main() to populate the local models/ dir before PyInstaller runs, and the
+    # .spec files' whole-directory bundling rule sweeps whatever is there into
+    # the Mac/Windows Full installers. Dropping "enhance" here stops the build
+    # machine from fetching svdlut.pth/scunet_color_real.pth, so the ~73MB of
+    # dead weight no longer ships. Re-add "enhance" to restore it.
     plan = resolve_download_plan(
         {"core_detection", "quality", "keypoint", "flight", "birdid"},
         include_optional_local=False,

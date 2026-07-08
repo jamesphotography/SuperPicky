@@ -16,7 +16,7 @@ from PySide6.QtCore import Qt, Signal, QSize, QThread, Slot, QTimer
 from PySide6.QtGui import QPixmap, QFont, QGuiApplication, QImage
 
 from ui.styles import COLORS, FONTS
-from ui.icon_utils import load_tinted_icon, stars_pixmap, tinted_png_path, ICON_IDLE, ICON_ACTIVE
+from ui.icon_utils import load_tinted_icon, stars_pixmap, tinted_png_path, glyph_png_path, ICON_IDLE, ICON_ACTIVE
 from core.rarity_tier import gbif_score_to_tier, tier_name, tier_icon, tier_color
 
 
@@ -841,10 +841,14 @@ class DetailPanel(QWidget):
         if gbif_r is not None:
             tidx = gbif_score_to_tier(gbif_r)
             is_zh = not self.i18n.current_lang.startswith('en')
-            icon = tier_icon(tidx)
             name = tier_name(tidx, is_zh=is_zh)
             color = tier_color(tidx) or COLORS['text_primary']
-            self._val_gbif_rarity.setText(f"{icon} {name}  ({gbif_r:.1f})")
+            # 罕见度图标用归一化 glyph(富文本内联),统一 ○◔◑◕● 大小;染 tier 颜色
+            icon_png = glyph_png_path(tier_icon(tidx), color, 14)
+            self._val_gbif_rarity.setText(
+                f'<img src="{icon_png}" width="14" height="14" style="vertical-align:middle;">'
+                f'  {name}  ({gbif_r:.1f})'
+            )
             self._val_gbif_rarity.setStyleSheet(
                 f"color: {color}; font-size: 13px; font-weight: 600; background: transparent;"
             )

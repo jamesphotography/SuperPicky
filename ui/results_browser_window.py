@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
     QSlider, QComboBox, QMessageBox, QSizePolicy, QApplication,
     QStackedWidget, QMenu
 )
-from PySide6.QtCore import Qt, Signal, Slot, QProcess, QSize
+from PySide6.QtCore import Qt, Signal, Slot, QProcess, QSize, QTimer
 from PySide6.QtGui import QAction, QKeyEvent, QIcon, QFont
 
 from ui.icon_utils import load_tinted_icon, ICON_IDLE
@@ -38,6 +38,7 @@ from typing import Optional
 
 from tools.i18n import get_i18n
 from tools.report_db import ReportDB
+from constants import APP_VERSION
 
 
 def _photo_identity(photo: dict) -> tuple:
@@ -230,6 +231,177 @@ def _trigger_species_change(
 
     import threading
     threading.Thread(target=_do, daemon=True).start()
+
+
+# ============================================================
+#  纠错样本提交（Correction Submission）
+#  说明：本文件内 ResultsBrowserWindow / ResultsBrowserWidget 是两个并行的
+#  三栏浏览器实现（QMainWindow 版 + 可嵌入的 QWidget 版），改鸟种/提交纠错的
+#  业务逻辑完全一致。参照上面 _trigger_species_change 的既有写法——把共享
+#  逻辑放到模块级函数，两个类各自的方法只做薄封装——避免同一段逻辑在两个
+#  类里各写一份、后续各自漂移。
+#
+#  Note: this file has two parallel three-pane browser implementations
+#  (a QMainWindow version and an embeddable QWidget version) with identical
+#  species-edit / submit-corrections logic. Following the existing pattern
+#  of _trigger_species_change above, the shared logic lives in module-level
+#  functions; each class's method is a thin wrapper. This avoids duplicating
+#  the same block in both classes and letting them drift apart.
+# ============================================================
+
+
+def build_correction_payload(photo: dict, new_cn: str, new_en: str,
+                              new_latin: str) -> dict:
+    """
+    从 photo 现值(原预测) + 新选鸟种拼 CorrectionTracker.record_correction 入参。
+
+    **必须在把新鸟种覆盖进 photo/DB 之前调用**，否则原预测(wrong_*)已丢。
+
+    Build the payload for CorrectionTracker.record_correction from the
+    current (pre-overwrite) photo values plus the newly chosen species.
+
+    **MUST be called before the new species is written into photo/DB**,
+    otherwise the original prediction (wrong_*) is already lost.
+
+    参数 / Args:
+        photo: 当前照片字典（覆盖前）。
+        new_cn / new_en / new_latin: 用户新选中文名/英文名/学名。
+
+    返回 / Returns:
+        dict: 供 CorrectionTracker.record_correction(**payload 派生参数) 使用的字段。
+    """
+    return {
+        "filename": photo.get("filename"),
+        "wrong_cn": photo.get("bird_species_cn"),
+        "wrong_en": photo.get("bird_species_en"),
+        "corrected_cn": new_cn,
+        "corrected_en": new_en,
+        "corrected_latin": new_latin,
+        "birdid_confidence": photo.get("birdid_confidence"),
+    }
+
+
+def _record_species_correction(window, photo: dict, new_cn: str, new_en: str,
+                                new_latin: str) -> None:
+    """
+    改鸟种确认后记录纠错样本（供「提交本次纠错」使用）。
+
+    调用方必须在覆盖 photo["bird_species_cn"/"bird_species_en"] 之前调用本
+    函数，否则原预测已丢失（build_correction_payload 依赖 photo 现值）。
+    纠错记录失败不得阻断改鸟种主流程，因此内部吞掉异常仅打印警告。
+
+    Record a correction sample after a species edit is confirmed (used later
+    by "submit corrections"). Callers MUST invoke this BEFORE overwriting
+    photo["bird_species_cn"/"bird_species_en"], otherwise the original
+    prediction is already lost (build_correction_payload reads photo as-is).
+    A recording failure must never block the species-change flow, so
+    exceptions are swallowed here (with a printed warning).
+
+    参数 / Args:
+        window: 持有 _db / _correction_tracker 属性的窗口或部件实例
+                （ResultsBrowserWindow 或 ResultsBrowserWidget）。
+        photo: 当前照片字典（覆盖前，含原预测）。
+        new_cn / new_en / new_latin: 用户新选中文名/英文名/学名。
+    """
+    if not getattr(window, "_db", None):
+        return
+    try:
+        from core.correction_tracker import CorrectionTracker
+        from birdid.bird_database_manager import BirdDatabaseManager
+        if getattr(window, "_correction_tracker", None) is None:
+            window._correction_tracker = CorrectionTracker(
+                window._db, BirdDatabaseManager()
+            )
+        payload = build_correction_payload(photo, new_cn, new_en, new_latin)
+        window._correction_tracker.record_correction(
+            filename=payload["filename"],
+            wrong_cn=payload["wrong_cn"], wrong_en=payload["wrong_en"],
+            corrected_cn=payload["corrected_cn"],
+            corrected_en=payload["corrected_en"],
+            corrected_latin=payload["corrected_latin"],
+            birdid_confidence=payload["birdid_confidence"],
+        )
+    except Exception as e:
+        print(f"⚠️ [Correction] 记录纠错失败(不阻断改鸟种): {e}")
+
+
+def _open_submission_review(window) -> None:
+    """
+    「提交本次纠错」核心逻辑：读 corrections 表→按鸟种分组→（首次）征询
+    自愿说明→弹复审窗打包到桌面。ResultsBrowserWindow / ResultsBrowserWidget
+    共用本函数。
+
+    Core "submit corrections" logic: read the corrections table, group by
+    species, ask for one-time voluntary consent, then open the review
+    dialog to pack results to the desktop. Shared by both
+    ResultsBrowserWindow and ResultsBrowserWidget.
+
+    参数 / Args:
+        window: 持有 _db / _correction_tracker / i18n 属性的窗口或部件实例，
+                同时作为弹窗 parent。
+    """
+    from advanced_config import get_advanced_config
+    from ui.submission_review_dialog import SubmissionReviewDialog, SpeciesGroup
+
+    if not window._db:
+        return
+    if not hasattr(window._db, "get_corrections"):
+        # 合并多目录模式下的 MergedReportDB 暂不支持纠错查询，优雅退回而非崩溃。
+        # MergedReportDB (merged multi-directory mode) doesn't support
+        # correction queries yet; bail out gracefully instead of crashing.
+        QMessageBox.information(
+            window, window.i18n.t("submission.title"),
+            window.i18n.t("submission.no_corrections"))
+        return
+
+    corrections = window._db.get_corrections()
+    if not corrections:
+        QMessageBox.information(
+            window, window.i18n.t("submission.title"),
+            window.i18n.t("submission.no_corrections"))
+        return
+
+    # 首次自愿说明
+    # One-time voluntary consent prompt.
+    cfg = get_advanced_config()
+    if not cfg.correction_consent_shown:
+        ans = QMessageBox.question(
+            window, window.i18n.t("submission.consent_title"),
+            window.i18n.t("submission.consent_body"),
+            QMessageBox.Yes | QMessageBox.No)
+        if ans != QMessageBox.Yes:
+            return
+        cfg.set_correction_consent_shown(True)
+
+    # 按鸟种分组：每条 correction = 一个被改正图 + 同鸟种正样本
+    # Group by species: each correction row = one corrected photo + positives of the same species.
+    groups = []
+    for c in corrections:
+        failed = window._db.get_photo(c["filename"]) or {"filename": c["filename"]}
+        positives = window._correction_tracker.find_positive_samples(
+            c["corrected_cn"], c["corrected_en"], exclude_filename=c["filename"]
+        ) if getattr(window, "_correction_tracker", None) else \
+            window._db.get_photos_by_species(
+                cn=c["corrected_cn"], en=c["corrected_en"],
+                exclude_filename=c["filename"])
+        # DB 里 current_path/original_path 存的是相对 dir_path 的相对路径，
+        # 必须用 _resolve_photo_paths 转成绝对路径，否则 load_image 找不到文件。
+        # current_path/original_path in the DB are stored relative to dir_path;
+        # must resolve to absolute paths via _resolve_photo_paths, otherwise
+        # load_image cannot locate the file.
+        failed = window._resolve_photo_paths(failed)
+        positives = [window._resolve_photo_paths(p) for p in positives]
+        groups.append(SpeciesGroup(
+            corrected_cn=c["corrected_cn"] or "",
+            corrected_en=c["corrected_en"] or "",
+            model_class_id=c["corrected_model_class_id"],
+            failed=failed, positives=positives,
+        ))
+
+    desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+    out_dir = desktop if os.path.isdir(desktop) else os.path.expanduser("~")
+    dlg = SubmissionReviewDialog(groups, out_dir, APP_VERSION, parent=window)
+    dlg.exec()
 
 
 # ============================================================
@@ -456,6 +628,7 @@ class ResultsBrowserWindow(QMainWindow):
         super().__init__(parent)
         self.i18n = get_i18n()
         self._db: Optional[ReportDB] = None
+        self._correction_tracker = None  # 惰性创建的纠错记录器 / lazily-created CorrectionTracker
         self._directory: str = ""
         self._all_photos: list = []
         self._filtered_photos: list = []
@@ -561,6 +734,8 @@ class ResultsBrowserWindow(QMainWindow):
         self._fullscreen.context_menu_requested.connect(self._on_fullscreen_context_menu)
         self._fullscreen.species_edit_requested.connect(self._on_species_edit_requested)
         self._fullscreen.crop_advice_requested.connect(self._on_crop_advice_requested)
+        self._fullscreen.auto_retouch_requested.connect(
+            lambda p: self._open_studio_with_action(p, "enhance"))
         self._fullscreen.burst_sequence_requested.connect(self._open_burst_sequence)
         self._stack.addWidget(self._fullscreen)   # index 1
 
@@ -677,6 +852,19 @@ class ResultsBrowserWindow(QMainWindow):
         self._size_slider.valueChanged.connect(self._on_size_changed)
         size_box.addWidget(self._size_slider)
         layout.addLayout(size_box)
+
+        # ExtremeSimple: 「提交本次纠错」按钮已从工具栏剥离（_on_submit_corrections/
+        # _open_submission_review/CorrectionTracker 等纠错提交代码本身保留不动；
+        # 鸟种手动编辑能力不受影响，record_correction_if_species_changed 仍会
+        # 静默记录本地纠错样本，只是没有入口能打包提交。未来要恢复只需把这段
+        # 按钮创建代码加回来）。
+        # ExtremeSimple: the "Submit corrections" button is stripped from the
+        # toolbar (_on_submit_corrections / _open_submission_review /
+        # CorrectionTracker etc. are untouched). Manual species editing is
+        # unaffected; record_correction_if_species_changed keeps silently
+        # logging local correction samples, there's just no entry point to
+        # package and submit them. Re-add this button-creation block to bring
+        # it back.
 
         return bar
 
@@ -1238,6 +1426,10 @@ class ResultsBrowserWindow(QMainWindow):
         db_key = _photo_db_key(photo)
         base_dir = photo.get("_base_dir") or self._directory
 
+        # 纠错记录：必须在覆盖 bird_species 字段之前抓原预测。
+        # Record correction BEFORE overwriting species fields (original prediction).
+        self._record_correction(photo, new_cn, new_en, dialog.selected_latin)
+
         # 1. 同步更新 photo 副本 + 缓存列表
         # Update both the local photo copy and the cached list so show_photo displays the new name.
         photo["bird_species_cn"] = new_cn
@@ -1271,14 +1463,46 @@ class ResultsBrowserWindow(QMainWindow):
         # Background: move files and update burst group members' DB records.
         _trigger_species_change(base_dir, photo, new_cn, new_en, self._db, db_key)
 
+    def _record_correction(self, photo: dict, new_cn: str, new_en: str,
+                            new_latin: str) -> None:
+        """
+        薄封装：调用模块级共享实现 _record_species_correction，
+        ResultsBrowserWindow / ResultsBrowserWidget 两处改鸟种入口共用同一份逻辑，避免发散。
+
+        Thin wrapper delegating to the module-level shared implementation
+        _record_species_correction, so both species-edit call sites
+        (ResultsBrowserWindow / ResultsBrowserWidget) share one logic path.
+        """
+        _record_species_correction(self, photo, new_cn, new_en, new_latin)
+
+    def _on_submit_corrections(self):
+        """
+        「提交本次纠错」：读 corrections 表，按鸟种分组，弹复审窗打包到桌面。
+        首次使用先弹一次自愿说明并记住同意。
+
+        "Submit corrections": read the corrections table, group by species,
+        and open the review dialog to pack results to the desktop. Shows a
+        one-time voluntary consent prompt on first use.
+        """
+        _open_submission_review(self)
+
+    def _open_studio_with_action(self, photo: dict, action: str):
+        """
+        打开 Crop Studio 后跳到指定功能(大图「手动裁剪」/「自动修图」入口)。
+        复用 _on_crop_advice_requested 打开工作区,再在已持有实例上应用初始动作。
+        """
+        self._on_crop_advice_requested(photo)
+        studio = getattr(self, "_crop_studio", None)
+        if studio is not None:
+            QTimer.singleShot(0, lambda: studio.apply_initial_action(action))
+
     def _on_crop_advice_requested(self, photo: dict):
         """
-        打开裁剪建议弹窗（非破坏性预览）。
-        Open the crop advisor dialog (non-destructive preview).
+        打开全屏「后期工作区」Crop Studio（非破坏性预览 + 裁剪导出）。
+        Open the fullscreen Crop Studio (non-destructive preview + crop export).
         """
-        from ui.crop_advisor_dialog import CropAdvisorDialog
         # 复用详情面板的显示图解析：优先可解码的 temp JPEG，
-        # 避免把 RAW(current_path)喂给弹窗——cv2/PIL 解不了 RAW 会报 TIFF 错。
+        # 避免把 RAW(current_path)喂给工作区——cv2/PIL 解不了 RAW 会报 TIFF 错。
         # Reuse the detail panel's display-path resolution: prefer the decodable
         # temp JPEG, never feed a RAW file (cv2/PIL can't decode it).
         rp = self._resolve_photo_paths(photo)
@@ -1292,7 +1516,7 @@ class ResultsBrowserWindow(QMainWindow):
             else:
                 path = None
         print(
-            f"🪶 [CropAdvisor] 入口解析: temp_jpeg={rp.get('temp_jpeg_path')!r} "
+            f"🪶 [CropStudio] 入口解析: temp_jpeg={rp.get('temp_jpeg_path')!r} "
             f"debug_crop={rp.get('debug_crop_path')!r} current={rp.get('current_path')!r} "
             f"original={rp.get('original_path')!r} → 选用={path!r}"
         )
@@ -1304,8 +1528,22 @@ class ResultsBrowserWindow(QMainWindow):
                 self.i18n.t("crop_advisor.no_decodable_image"),
             )
             return
-        dialog = CropAdvisorDialog(image_path=path, parent=self)
-        dialog.exec()
+
+        # 合并显示字段(鸟种/星级/罕见度/IUCN)与解析出的绝对路径；把可解码图注入
+        # temp_jpeg_path 使工作区按同一坐标系分析/导出。
+        # Merge display fields with resolved absolute paths; inject the decodable
+        # image as temp_jpeg_path so the studio analyzes/exports in one coord space.
+        studio_photo = dict(photo)
+        for k in ("original_path", "current_path"):
+            if rp.get(k):
+                studio_photo[k] = rp.get(k)
+        studio_photo["temp_jpeg_path"] = path
+
+        from ui.crop_studio import CropStudio
+        studio = CropStudio(studio_photo, self.i18n, parent=self)
+        studio.closed.connect(lambda: setattr(self, "_crop_studio", None))
+        self._crop_studio = studio  # 持有引用,避免被 GC / keep a reference
+        studio.showFullScreen()
 
     @Slot(list)
     def _on_multi_selection_changed(self, photos: list):
@@ -1674,6 +1912,7 @@ class ResultsBrowserWidget(QWidget):
         super().__init__(parent)
         self.i18n = get_i18n()
         self._db: Optional[ReportDB] = None
+        self._correction_tracker = None  # 惰性创建的纠错记录器 / lazily-created CorrectionTracker
         self._directory: str = ""
         self._all_photos: list = []
         self._filtered_photos: list = []
@@ -1862,6 +2101,19 @@ class ResultsBrowserWidget(QWidget):
         self._size_slider.setFixedWidth(100)
         self._size_slider.valueChanged.connect(self._on_size_changed)
         layout.addWidget(self._size_slider)
+
+        # ExtremeSimple: 「提交本次纠错」按钮已从工具栏剥离（_on_submit_corrections/
+        # _open_submission_review/CorrectionTracker 等纠错提交代码本身保留不动；
+        # 鸟种手动编辑能力不受影响，record_correction_if_species_changed 仍会
+        # 静默记录本地纠错样本，只是没有入口能打包提交。未来要恢复只需把这段
+        # 按钮创建代码加回来）。
+        # ExtremeSimple: the "Submit corrections" button is stripped from the
+        # toolbar (_on_submit_corrections / _open_submission_review /
+        # CorrectionTracker etc. are untouched). Manual species editing is
+        # unaffected; record_correction_if_species_changed keeps silently
+        # logging local correction samples, there's just no entry point to
+        # package and submit them. Re-add this button-creation block to bring
+        # it back.
 
         return bar
 
@@ -2269,6 +2521,10 @@ class ResultsBrowserWidget(QWidget):
         db_key = _photo_db_key(photo)
         base_dir = photo.get("_base_dir") or self._directory
 
+        # 纠错记录：必须在覆盖 bird_species 字段之前抓原预测。
+        # Record correction BEFORE overwriting species fields (original prediction).
+        self._record_correction(photo, new_cn, new_en, dialog.selected_latin)
+
         # 1. 同步更新 photo 副本 + 缓存列表
         # Update both the local photo copy and the cached list so show_photo displays the new name.
         photo["bird_species_cn"] = new_cn
@@ -2302,14 +2558,46 @@ class ResultsBrowserWidget(QWidget):
         # Background: move files and update burst group members' DB records.
         _trigger_species_change(base_dir, photo, new_cn, new_en, self._db, db_key)
 
+    def _record_correction(self, photo: dict, new_cn: str, new_en: str,
+                            new_latin: str) -> None:
+        """
+        薄封装：调用模块级共享实现 _record_species_correction，
+        ResultsBrowserWindow / ResultsBrowserWidget 两处改鸟种入口共用同一份逻辑，避免发散。
+
+        Thin wrapper delegating to the module-level shared implementation
+        _record_species_correction, so both species-edit call sites
+        (ResultsBrowserWindow / ResultsBrowserWidget) share one logic path.
+        """
+        _record_species_correction(self, photo, new_cn, new_en, new_latin)
+
+    def _on_submit_corrections(self):
+        """
+        「提交本次纠错」：读 corrections 表，按鸟种分组，弹复审窗打包到桌面。
+        首次使用先弹一次自愿说明并记住同意。
+
+        "Submit corrections": read the corrections table, group by species,
+        and open the review dialog to pack results to the desktop. Shows a
+        one-time voluntary consent prompt on first use.
+        """
+        _open_submission_review(self)
+
+    def _open_studio_with_action(self, photo: dict, action: str):
+        """
+        打开 Crop Studio 后跳到指定功能(大图「手动裁剪」/「自动修图」入口)。
+        复用 _on_crop_advice_requested 打开工作区,再在已持有实例上应用初始动作。
+        """
+        self._on_crop_advice_requested(photo)
+        studio = getattr(self, "_crop_studio", None)
+        if studio is not None:
+            QTimer.singleShot(0, lambda: studio.apply_initial_action(action))
+
     def _on_crop_advice_requested(self, photo: dict):
         """
-        打开裁剪建议弹窗（非破坏性预览）。
-        Open the crop advisor dialog (non-destructive preview).
+        打开全屏「后期工作区」Crop Studio（非破坏性预览 + 裁剪导出）。
+        Open the fullscreen Crop Studio (non-destructive preview + crop export).
         """
-        from ui.crop_advisor_dialog import CropAdvisorDialog
         # 复用详情面板的显示图解析：优先可解码的 temp JPEG，
-        # 避免把 RAW(current_path)喂给弹窗——cv2/PIL 解不了 RAW 会报 TIFF 错。
+        # 避免把 RAW(current_path)喂给工作区——cv2/PIL 解不了 RAW 会报 TIFF 错。
         # Reuse the detail panel's display-path resolution: prefer the decodable
         # temp JPEG, never feed a RAW file (cv2/PIL can't decode it).
         rp = self._resolve_photo_paths(photo)
@@ -2323,7 +2611,7 @@ class ResultsBrowserWidget(QWidget):
             else:
                 path = None
         print(
-            f"🪶 [CropAdvisor] 入口解析: temp_jpeg={rp.get('temp_jpeg_path')!r} "
+            f"🪶 [CropStudio] 入口解析: temp_jpeg={rp.get('temp_jpeg_path')!r} "
             f"debug_crop={rp.get('debug_crop_path')!r} current={rp.get('current_path')!r} "
             f"original={rp.get('original_path')!r} → 选用={path!r}"
         )
@@ -2335,8 +2623,22 @@ class ResultsBrowserWidget(QWidget):
                 self.i18n.t("crop_advisor.no_decodable_image"),
             )
             return
-        dialog = CropAdvisorDialog(image_path=path, parent=self)
-        dialog.exec()
+
+        # 合并显示字段(鸟种/星级/罕见度/IUCN)与解析出的绝对路径；把可解码图注入
+        # temp_jpeg_path 使工作区按同一坐标系分析/导出。
+        # Merge display fields with resolved absolute paths; inject the decodable
+        # image as temp_jpeg_path so the studio analyzes/exports in one coord space.
+        studio_photo = dict(photo)
+        for k in ("original_path", "current_path"):
+            if rp.get(k):
+                studio_photo[k] = rp.get(k)
+        studio_photo["temp_jpeg_path"] = path
+
+        from ui.crop_studio import CropStudio
+        studio = CropStudio(studio_photo, self.i18n, parent=self)
+        studio.closed.connect(lambda: setattr(self, "_crop_studio", None))
+        self._crop_studio = studio  # 持有引用,避免被 GC / keep a reference
+        studio.showFullScreen()
 
     @Slot(list)
     def _on_multi_selection_changed(self, photos: list):

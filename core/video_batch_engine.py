@@ -32,7 +32,7 @@ class VideoBatchStats:
     """
     total: int = 0
     analyzed: int = 0              # 成功分析的视频数
-    organized: int = 0             # 成功整理（move + SRT）的视频数
+    organized: int = 0             # 成功整理（move）的视频数
     failed: int = 0                # 整理失败的视频数
     cancelled: int = 0             # 被用户中断的视频数
     species_counts: dict = field(default_factory=dict)   # 鸟种 → 视频数
@@ -141,7 +141,7 @@ class VideoBatchEngine:
             flight_classifier=self._flight_clf,
             species_mode=self.species_mode,
         )
-        # 落地命名 + SRT 文案跟随界面语言 / Folder & SRT labels follow UI language
+        # 落地命名跟随界面语言 / Folder naming follows UI language
         _i18n = get_i18n()
         _use_en = _i18n.current_lang.startswith('en')
         organizer = VideoOrganizer(options=OrganizeOptions(
@@ -149,8 +149,6 @@ class VideoBatchEngine:
             use_english=_use_en,
             no_bird_folder=_i18n.t("video.folder_no_bird"),
             other_species_folder=_i18n.t("video.folder_other_species"),
-            flying_label=_i18n.t("video.seg_flying"),
-            perched_label=_i18n.t("video.seg_perched"),
         ))
         org_results = []  # 收集用于写「归类清单」（供复原）/ collect for the manifest
 

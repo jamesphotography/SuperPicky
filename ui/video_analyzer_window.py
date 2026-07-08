@@ -9,7 +9,6 @@ SuperPicky V4.3 Phase 1 — 视频分析独立窗口
     - 拖入单个视频 或 选择目录批量分析
     - YOLO 鸟类检测（有鸟/无鸟二分类）
     - 自适应抽帧（max_frames=60 默认，用户可调）
-    - 输出每个视频的 SRT 字幕文件（保存到视频旁）
 
 不在 Phase 1 范围：
     - BirdID 鸟种识别（Phase 2）
@@ -169,7 +168,7 @@ def _format_segments_detail(segments) -> str:
 
 
 def _fmt_mmss(sec: float) -> str:
-    """秒数 → m:ss 格式（结果表用，比 SRT 简洁）/ Seconds → m:ss for compact display"""
+    """秒数 → m:ss 格式（结果表用）/ Seconds → m:ss for compact display"""
     m = int(sec) // 60
     s = sec - m * 60
     return f"{m}:{s:05.2f}"
@@ -716,7 +715,7 @@ class VideoAnalyzerWindow(QMainWindow):
     def _on_error(self, msg: str):
         self.statusBar().showMessage(self.i18n.t("video.error_status", error=msg))
 
-    # ── Phase 3: 应用归类（移动 + 重命名 + SRT）/ Organize ─────────────────
+    # ── Phase 3: 应用归类（移动 + 重命名）/ Organize ─────────────────
 
     def _on_organize(self):
         """
@@ -728,7 +727,7 @@ class VideoAnalyzerWindow(QMainWindow):
 
     def _do_organize(self, skip_confirm: bool = False):
         """
-        实际整理逻辑：按主鸟种重命名 + 移动 + 写 SRT
+        实际整理逻辑：按主鸟种重命名 + 移动
 
         参数:
             skip_confirm (bool): True 时跳过确认弹窗（自动整理时使用）
@@ -752,15 +751,13 @@ class VideoAnalyzerWindow(QMainWindow):
         from tools.video_organizer import (
             VideoOrganizer, OrganizeOptions, record_organized_results,
         )
-        # 落地命名 + SRT 文案跟随界面语言 / Folder & SRT labels follow UI language
+        # 落地命名跟随界面语言 / Folder naming follows UI language
         use_en = self.i18n.current_lang.startswith('en')
         organizer = VideoOrganizer(options=OrganizeOptions(
             operation='move',
             use_english=use_en,
             no_bird_folder=self.i18n.t("video.folder_no_bird"),
             other_species_folder=self.i18n.t("video.folder_other_species"),
-            flying_label=self.i18n.t("video.seg_flying"),
-            perched_label=self.i18n.t("video.seg_perched"),
         ))
 
         succeeded = 0

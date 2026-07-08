@@ -94,6 +94,10 @@ def _scan_directory_once(dir_path: str) -> Tuple[int, List[str], List[str]]:
     try:
         with os.scandir(dir_path) as entries:
             for entry in entries:
+                # 跳过隐藏项:macOS AppleDouble(._*)、.DS_Store、.superpicky 等。
+                # 否则 ._ 伴生文件会让 photo_count 翻倍、并把 ._*.MOV 误当视频打不开。
+                if entry.name.startswith('.'):
+                    continue
                 if entry.is_file(follow_symlinks=False):
                     ext = os.path.splitext(entry.name)[1].lower()
                     if ext in _PHOTO_EXTENSIONS:

@@ -716,6 +716,8 @@ LOG_COLORS = {
     'default': COLORS['text_secondary'],
     'muted': COLORS['text_muted'],
     'time': COLORS['text_muted'],
+    'photo_good': COLORS['accent'],   # 3星逐张日志:文件名之后那段(绿)
+    'species': '#ff5555',             # Bird ID:鸟名之后那段(红)
 }
 
 # ==================== 对话框专用样式 ====================

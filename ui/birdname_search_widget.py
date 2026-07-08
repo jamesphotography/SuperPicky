@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QTimer
 
 from ui.styles import COLORS, FONTS
+from ui.icon_utils import tinted_png_path, glyph_pixmap
 from tools.i18n import get_i18n
 from config import get_birdname_settings_path, get_install_scoped_resource_path
 
@@ -174,14 +175,13 @@ class BirdResultCard(QFrame):
         # Rarity glyph on the right, shown only when a tier is available.
         if tier_index is not None:
             color = tier_color(tier_index) or COLORS["text_secondary"]
-            self.rarity_label = QLabel(tier_icon(tier_index))
+            # 罕见度字形渲染成统一尺寸 pixmap,规避 ○◔◑◕● 各字形大小不一(列表并排时尤其明显)
+            self.rarity_label = QLabel()
+            self.rarity_label.setPixmap(glyph_pixmap(tier_icon(tier_index), color, 16))
             self.rarity_label.setAlignment(Qt.AlignCenter)
             self.rarity_label.setFixedWidth(22)
             self.rarity_label.setToolTip(tier_name(tier_index))
-            self.rarity_label.setStyleSheet(
-                f"color: {color}; font-size: 16px; background: transparent; "
-                f"border: none;"
-            )
+            self.rarity_label.setStyleSheet("background: transparent; border: none;")
             root.addWidget(self.rarity_label, 0, Qt.AlignVCenter)
 
     def _apply_style(self, selected: bool):
@@ -262,7 +262,12 @@ class BirdNameSearchWidget(QWidget):
         title_row = QHBoxLayout()
         title_row.setSpacing(6)
 
-        title_label = QLabel(self.i18n.t("birdname_search.title"))
+        # 标题前的放大镜复用 file-search-corner.svg(染主文字色)富文本内联,替代 🔍 emoji
+        _search_icon = (
+            f'<img src="{tinted_png_path("file-search-corner.svg", COLORS["text_primary"], 14)}" '
+            f'width="14" height="14" style="vertical-align:middle;">'
+        )
+        title_label = QLabel(f'{_search_icon}&nbsp;{self.i18n.t("birdname_search.title")}')
         title_label.setFixedHeight(28)
         title_label.setStyleSheet(f"""
             color: {COLORS['text_primary']};

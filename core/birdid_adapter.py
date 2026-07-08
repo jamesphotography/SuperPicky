@@ -30,6 +30,15 @@ from PIL import Image
 from core.bird_classifier_base import BirdClassifier, SpeciesResult
 from tools.image_crop import smart_square_crop
 
+# V4.4: identify() 在视频分析里逐帧调用，如果模型/数据库持续损坏，朴素的
+# warning 会每帧打印一次刷屏；用一个进程级标志把日志限制为只打印一次，
+# 既能定位问题又不会淹没其他日志。
+# V4.4: identify() is called once per video frame; a naive warning would
+# flood the log once per frame if the model/DB stays broken. A process-level
+# flag caps this to a single print so the root cause is still discoverable
+# without drowning out everything else.
+_warned_identify_failure = False
+
 
 class BirdIDAdapter(BirdClassifier):
     """
@@ -110,9 +119,16 @@ class BirdIDAdapter(BirdClassifier):
 
         try:
             result_dict = identify_bird(**kwargs)
-        except Exception:
-            # 任何异常（模型加载失败、数据库缺失等）返回空列表
-            # Return empty on any failure (model load, DB missing, etc.)
+        except Exception as e:
+            # 任何异常（模型加载失败、数据库缺失等）返回空列表；只在进程内首次
+            # 失败时打印一次，避免逐帧刷屏（见模块顶部 _warned_identify_failure 说明）。
+            # Return empty on any failure (model load, DB missing, etc.); only
+            # print once per process to avoid per-frame log spam (see the
+            # _warned_identify_failure note at the top of this module).
+            global _warned_identify_failure
+            if not _warned_identify_failure:
+                _warned_identify_failure = True
+                print(f"[BirdIDAdapter] identify_bird 调用失败(本进程仅提示一次) / identify_bird call failed (logged once per process): {e}")
             return []
 
         if not result_dict.get("success"):

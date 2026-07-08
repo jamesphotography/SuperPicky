@@ -271,8 +271,19 @@ def get_database_manager():
 
             if os.path.exists(DATABASE_PATH):
                 return BirdDatabaseManager(DATABASE_PATH)
+            print(f"[BirdID] 数据库文件不存在，罕见度/IUCN/AviList 命名将不可用: {DATABASE_PATH}")
         except Exception as e:
-            pass
+            # V4.4: 这里以前完全静默——调用方后续都用 `if db_manager:` 跳过相关功能，
+            # 用户只会看到"罕见度/IUCN/AviList 名称全部消失"，却无从判断是数据库损坏、
+            # 权限问题还是别的原因。这个 registry 是进程级单例缓存，只会失败一次就
+            # 定型，所以这条日志只会打印一次，不会刷屏。
+            # V4.4: This used to fail completely silently — callers all guard with
+            # `if db_manager:` and skip the related features, so the user only sees
+            # "rarity/IUCN/AviList names all vanished" with no way to tell whether
+            # it's a corrupt DB, a permissions issue, or something else. The result
+            # is cached for the process lifetime by the lazy registry, so this log
+            # line fires at most once, not on every call.
+            print(f"[BirdID] 数据库管理器初始化失败 / database manager init failed: {e}")
         return False
 
     result = registry.get_or_create("birdid.database_manager", _factory)
@@ -303,8 +314,16 @@ def get_species_filter():
             filt = AvonetFilter()
             if filt.is_available():
                 return filt
+            print("[BirdID] AVONET 地理过滤库不可用，GPS/地区过滤将被跳过 / AVONET geo-filter unavailable, GPS/region filtering will be skipped")
         except Exception as e:
-            pass
+            # V4.4: 同 get_database_manager()——以前完全静默，调用方用
+            # `if species_filter:` 跳过过滤，用户看不到"地理过滤没生效"的原因。
+            # registry 是进程级单例缓存，这条日志同样只会打印一次。
+            # V4.4: Same rationale as get_database_manager() — this used to be
+            # fully silent, and callers guard with `if species_filter:` and skip
+            # filtering with no visible cause. The registry caches the result for
+            # the process lifetime, so this also fires at most once.
+            print(f"[BirdID] 地理过滤器初始化失败 / species filter init failed: {e}")
         return None
 
     return registry.get_or_create("birdid.avonet_filter", _factory)
@@ -377,7 +396,14 @@ class YOLOBirdDetector:
             # 默认 640 会把高像素原图直接降采样到 640，杂背景里的远距小鸟被抹掉而漏检。
             # imgsz=1024 matches the picking pipeline; the default 640 downsamples a
             # high-res frame too aggressively and drops small distant birds.
-            results = self.model(img_array, conf=confidence_threshold, imgsz=1024)
+            # V4.4: 显式指定推理设备，与项目统一的 get_best_device() 策略对齐
+            # （Intel Mac 强制 CPU 等规则），避免这里悄悄走 ultralytics 自己的
+            # 默认设备选择、与主选片流程的设备行为不一致。
+            # V4.4: Explicitly pin the inference device to the project-wide
+            # get_best_device() policy (e.g. Intel Mac forced to CPU) instead of
+            # silently falling back to ultralytics' own default device selection,
+            # which could diverge from the main picking pipeline.
+            results = self.model(img_array, conf=confidence_threshold, imgsz=1024, device=CLASSIFIER_DEVICE.type)
 
             detections = []
             for result in results:
@@ -575,33 +601,28 @@ def _load_raw_via_exiftool(image_path: str) -> Image.Image:
     """
     使用 ExifTool 从 RAW 文件提取可解码预览图。
     Extract a decodable preview image from a RAW file via ExifTool.
+
+    复用 tools.exiftool_manager 的常驻进程，而非自行拼路径 + 裸 subprocess：
+    旧实现硬编码 mac-only 路径且从未在 Windows 上传 creationflags=
+    CREATE_NO_WINDOW，导致 Windows 用户处理时弹出一闪而过的控制台窗口。
+
+    Reuse tools.exiftool_manager's persistent process instead of rolling our
+    own path lookup + bare subprocess: the old code hardcoded macOS-only paths
+    and never passed creationflags=CREATE_NO_WINDOW on Windows, flashing a
+    console window during processing.
     """
-    import subprocess
     from io import BytesIO
+    from tools.exiftool_manager import get_exiftool_manager
 
-    possible_paths = []
-    if getattr(sys, "frozen", False):
-        meipass = get_runtime_meipass()
-        if meipass is not None:
-            possible_paths.append(os.path.join(meipass, "exiftools_mac", "exiftool"))
-    possible_paths += [
-        os.path.join(PROJECT_ROOT, "exiftools_mac", "exiftool"),
-        "/opt/homebrew/bin/exiftool",
-        "/usr/local/bin/exiftool",
-        "exiftool",
-    ]
-    exiftool = next((p for p in possible_paths if os.path.isfile(p)), "exiftool")
-
+    manager = get_exiftool_manager()
     for tag in ["-JpgFromRaw", "-PreviewImage", "-ThumbnailImage"]:
         try:
-            result = subprocess.run(
-                [exiftool, "-b", tag, image_path], capture_output=True, timeout=15
-            )
-            if result.returncode == 0 and result.stdout and len(result.stdout) > 1000:
+            data = manager.extract_binary(image_path, tag)
+            if data and len(data) > 1000:
                 # V4.3.0: JpgFromRaw/Preview 自带 Orientation，按方向旋转再转 RGB
-                img = _auto_orient(Image.open(BytesIO(result.stdout))).convert("RGB")
+                img = _auto_orient(Image.open(BytesIO(data))).convert("RGB")
                 return img
-        except Exception as e:
+        except Exception:
             continue
 
     raise Exception(
@@ -633,112 +654,109 @@ def _load_heif(image_path: str) -> Image.Image:
         raise Exception(f"HEIF 解码失败 ({os.path.basename(image_path)}): {e}")
 
 
+def _gps_coords_present(lat: Optional[float], lon: Optional[float]) -> bool:
+    """
+    判断 GPS 坐标是否存在（两者均非 None）。
+
+    0.0 是合法坐标——赤道（lat=0.0）与本初子午线（lon=0.0）——所以这里
+    必须用 `is not None` 而非真值判断；identify_bird 曾因 `if lat and lon:`
+    把这类照片当作无 GPS，导致拍摄国家解析与按国家归一化 rarity 静默失效。
+
+    参数:
+    lat (Optional[float]): 纬度，无 GPS 时为 None
+    lon (Optional[float]): 经度，无 GPS 时为 None
+
+    返回:
+    bool: 两者均非 None 时为 True
+
+    Check whether GPS coordinates are present (both non-None).
+
+    0.0 is a legal coordinate — the equator (lat=0.0) and the prime meridian
+    (lon=0.0) — so this must use `is not None`, never truthiness;
+    identify_bird once used `if lat and lon:` and silently dropped such
+    photos' country resolution and country-aware rarity normalization.
+
+    Parameters:
+    lat (Optional[float]): Latitude, None when GPS is absent
+    lon (Optional[float]): Longitude, None when GPS is absent
+
+    Return:
+    bool: True when both are non-None
+    """
+    return lat is not None and lon is not None
+
+
 def extract_gps_from_exif(
     image_path: str,
 ) -> Tuple[Optional[float], Optional[float], str]:
-    import subprocess
-    import json as json_module
+    """
+    从照片提取 GPS 坐标：优先走 ExifTool，取不到再退回 PIL EXIF。
 
+    复用 tools.exiftool_manager 的常驻进程，而非自行拼路径 + 裸 subprocess：
+    旧实现硬编码 mac-only 路径且从未在 Windows 上传 creationflags=
+    CREATE_NO_WINDOW；这个函数在 identify_bird() 里每张照片都会调用一次，
+    导致 Windows 用户开启识鸟处理文件夹时每张照片都弹一次一闪而过的控制台
+    窗口（关闭识鸟就不会走到这条路径，现象完全对应）。
+
+    Extract GPS coordinates from a photo: try ExifTool first, then fall back
+    to PIL EXIF.
+
+    Reuse tools.exiftool_manager's persistent process instead of rolling our
+    own path lookup + bare subprocess: the old code hardcoded macOS-only paths
+    and never passed creationflags=CREATE_NO_WINDOW on Windows. This function
+    runs once per photo inside identify_bird(), so Windows users saw a console
+    window flash for every photo while Bird ID was on (and never otherwise —
+    matching the exact symptom reported).
+    """
     try:
-        exiftool_paths = [
-            "/usr/local/bin/exiftool",
-            "/opt/homebrew/bin/exiftool",
-            "exiftool",
-        ]
+        from tools.exiftool_manager import get_exiftool_manager
 
-        exiftool_path = None
-        for path in exiftool_paths:
-            try:
-                result = subprocess.run(
-                    [path, "-ver"], capture_output=True, text=False, timeout=5
-                )
-                if result.returncode == 0:
-                    stdout_bytes = result.stdout
-                    decoded_output = None
-                    for encoding in ["utf-8", "gbk", "gb2312", "latin-1"]:
-                        try:
-                            decoded_output = stdout_bytes.decode(encoding)
-                            break
-                        except UnicodeDecodeError:
-                            continue
+        gps_data = get_exiftool_manager().read_metadata(
+            image_path,
+            extra_args=[
+                "-GPSLatitude",
+                "-GPSLongitude",
+                "-GPSLatitudeRef",
+                "-GPSLongitudeRef",
+            ],
+        )
 
-                    if decoded_output is None:
-                        decoded_output = stdout_bytes.decode("latin-1")
+        if gps_data:
+            lat_str = gps_data.get("GPSLatitude", "")
+            lon_str = gps_data.get("GPSLongitude", "")
+            lat_ref = gps_data.get("GPSLatitudeRef", "N")
+            lon_ref = gps_data.get("GPSLongitudeRef", "E")
 
-                    if decoded_output.strip():
-                        exiftool_path = path
-                        break
-            except:
-                continue
+            if lat_str and lon_str:
 
-        if exiftool_path:
-            result = subprocess.run(
-                [
-                    exiftool_path,
-                    "-j",
-                    "-GPSLatitude",
-                    "-GPSLongitude",
-                    "-GPSLatitudeRef",
-                    "-GPSLongitudeRef",
-                    image_path,
-                ],
-                capture_output=True,
-                text=False,
-                timeout=10,
-            )
+                def parse_dms(dms_str):
+                    import re
 
-            if result.returncode == 0 and result.stdout:
-                stdout_bytes = result.stdout
-                decoded_output = None
-                for encoding in ["utf-8", "gbk", "gb2312", "latin-1"]:
+                    match = re.search(
+                        r'(\d+)\s*deg\s*(\d+)\'\s*([\d.]+)"?', str(dms_str)
+                    )
+                    if match:
+                        d, m, s = (
+                            float(match.group(1)),
+                            float(match.group(2)),
+                            float(match.group(3)),
+                        )
+                        return d + m / 60 + s / 3600
                     try:
-                        decoded_output = stdout_bytes.decode(encoding)
-                        break
-                    except UnicodeDecodeError:
-                        continue
+                        return float(dms_str)
+                    except:
+                        return None
 
-                if decoded_output is None:
-                    decoded_output = stdout_bytes.decode("latin-1")
+                lat = parse_dms(lat_str)
+                lon = parse_dms(lon_str)
 
-                data = json_module.loads(decoded_output)
-                if data and len(data) > 0:
-                    gps_data = data[0]
-
-                    lat_str = gps_data.get("GPSLatitude", "")
-                    lon_str = gps_data.get("GPSLongitude", "")
-                    lat_ref = gps_data.get("GPSLatitudeRef", "N")
-                    lon_ref = gps_data.get("GPSLongitudeRef", "E")
-
-                    if lat_str and lon_str:
-
-                        def parse_dms(dms_str):
-                            import re
-
-                            match = re.search(
-                                r'(\d+)\s*deg\s*(\d+)\'\s*([\d.]+)"?', str(dms_str)
-                            )
-                            if match:
-                                d, m, s = (
-                                    float(match.group(1)),
-                                    float(match.group(2)),
-                                    float(match.group(3)),
-                                )
-                                return d + m / 60 + s / 3600
-                            try:
-                                return float(dms_str)
-                            except:
-                                return None
-
-                        lat = parse_dms(lat_str)
-                        lon = parse_dms(lon_str)
-
-                        if lat is not None and lon is not None:
-                            if lat_ref and lat_ref.upper().startswith("S"):
-                                lat = -lat
-                            if lon_ref and lon_ref.upper().startswith("W"):
-                                lon = -lon
-                            return lat, lon, f"GPS: {lat:.6f}, {lon:.6f}"
-    except Exception as e:
+                if lat is not None and lon is not None:
+                    if lat_ref and lat_ref.upper().startswith("S"):
+                        lat = -lat
+                    if lon_ref and lon_ref.upper().startswith("W"):
+                        lon = -lon
+                    return lat, lon, f"GPS: {lat:.6f}, {lon:.6f}"
+    except Exception:
         pass
 
     try:
@@ -1064,7 +1082,10 @@ def identify_bird(
         if use_gps:
             try:
                 lat, lon, _gps_msg = extract_gps_from_exif(image_path)
-                if lat and lon:
+                # 0.0 是合法坐标（赤道/本初子午线），必须用 is not None 语义判断
+                # 0.0 is a legal coordinate (equator/prime meridian) — presence
+                # must be checked with is-not-None semantics, not truthiness.
+                if _gps_coords_present(lat, lon):
                     result["gps_info"] = {
                         "latitude": lat,
                         "longitude": lon,
@@ -1080,10 +1101,19 @@ def identify_bird(
             try:
                 species_filter = get_species_filter()
                 if species_filter:
-                    if use_gps and lat is not None and lon is not None:
+                    if use_gps and _gps_coords_present(lat, lon):
                         species_class_ids = species_filter.get_species_by_gps(lat, lon)
 
-                    if species_class_ids is None and (region_code or country_code):
+                    # V4.4: GPS 命中的网格若无物种记录，get_species_by_gps 返回空
+                    # set() 而非 None；用 `is None` 判断会漏掉这种情况，导致该次
+                    # 识别悄悄退化为无过滤（不再触发下面的国家/地区回退）。改成真值
+                    # 判断，让"网格为空"与"从未查询"都能进入回退分支。
+                    # V4.4: get_species_by_gps returns an empty set() (not None)
+                    # when the GPS grid cell has no species records. An `is None`
+                    # check misses that case and silently disables filtering
+                    # instead of falling back to region/country. Use a truthiness
+                    # check so both "empty grid" and "never queried" fall through.
+                    if not species_class_ids and (region_code or country_code):
                         effective_region = region_code or country_code
                         try:
                             ebird_ids, actual_region = (
@@ -1127,7 +1157,7 @@ def identify_bird(
         if not results and species_class_ids:
             country_cls_ids = None
             country_cc = None
-            if lat is not None and lon is not None and species_filter is not None:
+            if _gps_coords_present(lat, lon) and species_filter is not None:
                 try:
                     country_cls_ids, country_cc = (
                         species_filter.get_species_by_country_ebird(lat, lon)
