@@ -29,7 +29,10 @@ from PySide6.QtWidgets import (
     QDialog,
     QSystemTrayIcon, QApplication  # V4.0: 系统托盘图标
 )
-from PySide6.QtCore import Qt, Signal, QObject, Slot, QTimer, QPropertyAnimation, QEasingCurve, QMimeData, QThread, QStandardPaths, QSize
+from PySide6.QtCore import (
+    Qt, Signal, QObject, Slot, QTimer, QPropertyAnimation, QEasingCurve, QMimeData,
+    QThread, QStandardPaths, QSize, QRect,
+)
 from PySide6.QtGui import QFont, QPixmap, QIcon, QAction, QTextCursor, QColor, QDragEnterEvent, QDropEvent
 
 from tools.i18n import get_i18n, set_primary_language
@@ -671,6 +674,7 @@ class SuperPickyMainWindow(QMainWindow):
         self.worker_signals = None
         self.current_progress = 0
         self.total_files = 0
+        self._main_window_placement_saved = False
 
         # 设置窗口
         self._setup_window()
@@ -766,7 +770,10 @@ class SuperPickyMainWindow(QMainWindow):
         """设置窗口属性"""
         self.setWindowTitle(self.i18n.t("app.window_title"))
         self.setMinimumSize(800, 720)
-        self.resize(960, 820)
+        if not self._restore_main_window_geometry():
+            self.resize(960, 820)
+        if self.config.main_window_maximized:
+            QTimer.singleShot(0, self.showMaximized)
 
         # 应用全局样式表
         self.setStyleSheet(GLOBAL_STYLE)
@@ -775,6 +782,90 @@ class SuperPickyMainWindow(QMainWindow):
         icon_path = get_resource_path("img/icon.png")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
+
+    def _restore_main_window_geometry(self) -> bool:
+        """
+        恢复主窗口普通状态下的几何信息。
+
+        返回:
+        bool: 成功恢复返回 True，否则回退默认窗口大小。
+
+        Restore the main window normal-state geometry.
+
+        Return:
+        bool: True when restored; False when the default size should be used.
+        """
+        saved = self.config.get_main_window_geometry()
+        if not saved:
+            return False
+
+        rect = QRect(saved["x"], saved["y"], saved["width"], saved["height"])
+        if not self._is_valid_main_window_rect(rect):
+            return False
+
+        self.setGeometry(rect)
+        return True
+
+    def _is_valid_main_window_rect(self, rect: QRect) -> bool:
+        """
+        校验保存的窗口矩形是否仍适合当前屏幕环境。
+
+        参数:
+        rect (QRect): 待校验的窗口矩形。
+
+        返回:
+        bool: 矩形尺寸达标且至少与一个可用屏幕相交时返回 True。
+
+        Validate whether a saved window rectangle still fits the current screens.
+
+        Parameters:
+        rect (QRect): Window rectangle to validate.
+
+        Return:
+        bool: True when size is acceptable and it intersects an available screen.
+        """
+        if not rect.isValid() or rect.width() < 800 or rect.height() < 720:
+            return False
+
+        screens = QApplication.screens()
+        if not screens:
+            return True
+
+        return any(screen.availableGeometry().intersects(rect) for screen in screens)
+
+    def _save_main_window_placement(self) -> None:
+        """
+        保存主窗口普通几何和最大化状态。
+
+        最大化状态与普通几何分开保存；这样下次以最大化打开后，取消最大化仍能回到
+        用户上次的普通窗口大小。最小化状态不保存，避免应用下次启动时不可见。
+
+        Save the main window normal geometry and maximized state.
+
+        Maximized state is stored separately from normal geometry so restoring from
+        maximized returns to the user's previous normal size. Minimized state is
+        intentionally ignored so the app never reopens invisible.
+        """
+        if self._main_window_placement_saved:
+            return
+
+        if self.isMaximized() or self.isMinimized():
+            rect = self.normalGeometry()
+        else:
+            rect = self.geometry()
+
+        if self._is_valid_main_window_rect(rect):
+            self.config.set_main_window_geometry(
+                {
+                    "x": rect.x(),
+                    "y": rect.y(),
+                    "width": rect.width(),
+                    "height": rect.height(),
+                }
+            )
+        self.config.set_main_window_maximized(self.isMaximized())
+        if self.config.save():
+            self._main_window_placement_saved = True
 
     def _setup_menu(self):
         """设置菜单栏"""
@@ -1124,6 +1215,7 @@ class SuperPickyMainWindow(QMainWindow):
 
     def _force_quit(self):
         """不再确认，直接退出（清理由 aboutToQuit 信号统一处理）"""
+        self._save_main_window_placement()
         self._really_quit = True
         if hasattr(self, 'tray_icon'):
             self.tray_icon.hide()         # 先隐藏托盘，避免用户二次点击
@@ -1134,6 +1226,8 @@ class SuperPickyMainWindow(QMainWindow):
         无论通过 X按鈕 / Cmd+Q / 托盘退出，都会经过此处。
         Mac 和 Windows 均适用。
         """
+        self._save_main_window_placement()
+
         if self.worker and self.worker.is_alive():
             try:
                 self.worker.request_stop()
@@ -3223,6 +3317,12 @@ class SuperPickyMainWindow(QMainWindow):
             and not saving_session
             and self._tray_resident_available()
         ):
+            # 隐藏进托盘前保存窗口位置——此刻窗口仍可见，几何信息是准确的；
+            # 之后从托盘重新显示时会复位保存标志（见 _show_main_window）。
+            # Save placement before hiding to tray — the window is still
+            # visible so geometry is accurate; the saved flag is reset when
+            # the window is shown again (see _show_main_window).
+            self._save_main_window_placement()
             event.ignore()
             self._hide_to_tray()
             return
@@ -3247,6 +3347,7 @@ class SuperPickyMainWindow(QMainWindow):
             else:
                 event.ignore()
         else:
+            self._save_main_window_placement()
             QApplication.quit()           # 触发 aboutToQuit → _cleanup_on_quit
             event.accept()
 

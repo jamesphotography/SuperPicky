@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import sys
+from typing import Dict, Optional
 from tools.i18n import t as _t
 from config import get_app_config_dir, get_lazy_registry
 
@@ -134,6 +135,12 @@ class AdvancedConfig:
 
         # 最近选鸟目录历史（最多保留 10 个，按最近使用时间倒序）
         "recent_directories": [],
+
+        # 主窗口位置和最大化状态。普通几何与最大化状态分开存储，便于跨屏幕校验。
+        # Main-window placement and maximized state. Normal geometry is stored
+        # separately from maximized state so it can be validated across monitors.
+        "main_window_geometry": None,
+        "main_window_maximized": False,
 
         # V4.3 Phase 1: 视频分析配置 / Video analysis config
         # video_max_frames        : 单视频抽帧总数上限（处理时间与视频时长解耦）
@@ -634,6 +641,64 @@ class AdvancedConfig:
 
     def set_exposure_check(self, value):
         self.config["exposure_check"] = bool(value)
+
+    # ──────────────────────────────────────────────
+    # 主窗口位置状态
+    # ──────────────────────────────────────────────
+    def get_main_window_geometry(self) -> Optional[Dict[str, int]]:
+        """
+        获取主窗口普通状态下的几何信息。
+
+        返回:
+        Optional[Dict[str, int]]: 包含 x/y/width/height 的字典；缺失或格式异常时返回 None。
+
+        Get the main window normal-state geometry.
+
+        Return:
+        Optional[Dict[str, int]]: Dict with x/y/width/height, or None when missing/invalid.
+        """
+        value = self.config.get("main_window_geometry")
+        if not isinstance(value, dict):
+            return None
+
+        required_keys = ("x", "y", "width", "height")
+        if not all(key in value for key in required_keys):
+            return None
+
+        try:
+            return {key: int(value[key]) for key in required_keys}
+        except (TypeError, ValueError):
+            return None
+
+    def set_main_window_geometry(self, value: Optional[Dict[str, int]]) -> None:
+        """
+        保存主窗口普通状态下的几何信息。
+
+        参数:
+        value (Optional[Dict[str, int]]): 包含 x/y/width/height 的字典；None 表示清空。
+
+        Save the main window normal-state geometry.
+
+        Parameters:
+        value (Optional[Dict[str, int]]): Dict with x/y/width/height, or None to clear.
+        """
+        if value is None:
+            self.config["main_window_geometry"] = None
+            return
+
+        self.config["main_window_geometry"] = {
+            "x": int(value["x"]),
+            "y": int(value["y"]),
+            "width": int(value["width"]),
+            "height": int(value["height"]),
+        }
+
+    @property
+    def main_window_maximized(self) -> bool:
+        return bool(self.config.get("main_window_maximized", False))
+
+    def set_main_window_maximized(self, value: bool) -> None:
+        self.config["main_window_maximized"] = bool(value)
 
     # ──────────────────────────────────────────────
     # 最近选鸟目录历史
