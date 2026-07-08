@@ -270,8 +270,54 @@ class WorkerThread(threading.Thread):
             finally:
                 self.caffeinate_process = None
 
+    @staticmethod
+    def _finalize_photo_stage_timing(stats: dict, wall_start: float, wall_end: float) -> None:
+        """
+        用「worker 开始干活 → 照片阶段完成」的 wall time 收口计时统计。
+
+        统一单目录与批量模式的口径：起点是 process_files() 入口（用户确认
+        弹窗已点完、真正开始干活），终点是照片阶段全部完成（视频阶段之前）。
+        单目录模式下会覆盖 PhotoProcessor 内部口径的旧值——那个口径从
+        process() 入口才开始，漏掉预扫描/系统信息采集等 worker 前置开销。
+
+        参数:
+        stats (dict): 统计字典，原地写入 start_time/end_time/total_time/avg_time。
+        wall_start (float): 照片阶段起点时间戳（time.time()）。
+        wall_end (float): 照片阶段终点时间戳。
+
+        返回:
+        None
+
+        Finalize timing stats with the wall time from "worker starts real
+        work" to "photo stage complete", unifying single-dir and batch
+        semantics: start = process_files() entry (user confirmations done),
+        end = photo stage done (before the video stage). In single-dir mode
+        this overrides PhotoProcessor's internal timing, which starts at
+        process() entry and misses pre-scan/system-info overhead.
+
+        Parameters:
+        stats (dict): Stats dict; start/end/total/avg written in place.
+        wall_start (float): Photo-stage start timestamp (time.time()).
+        wall_end (float): Photo-stage end timestamp.
+
+        Return:
+        None
+        """
+        stats['start_time'] = wall_start
+        stats['end_time'] = wall_end
+        stats['total_time'] = wall_end - wall_start
+        total = stats.get('total', 0)
+        stats['avg_time'] = stats['total_time'] / total if total > 0 else 0
+
     def process_files(self):
         """处理文件"""
+        import time as _time
+        # 照片阶段计时起点：用户确认完毕、worker 真正开始干活（含预扫描、
+        # 会话头系统信息采集等前置开销），终点在照片阶段完成处收口。
+        # Photo-stage wall-clock start: user confirmations done, real work
+        # begins (includes pre-scan and session-header overhead); finalized
+        # when the photo stage completes.
+        _photo_stage_wall_start = _time.time()
         from tools.utils import log_message as _log_to_file  # 日志文件写入（全程可用）
         from core.photo_processor import (
             PhotoProcessor,
@@ -453,6 +499,14 @@ class WorkerThread(threading.Thread):
                     log_callback(self.i18n.t("logs.burst_none_detected"), "info")
 
                 self.stats = result.stats
+                # 用 worker 级 wall time 覆盖 processor 内部口径（含预扫描/
+                # 会话头等前置开销），与批量模式口径一致。
+                # Override the processor-internal timing with the worker-level
+                # wall time (includes pre-scan/session-header overhead),
+                # matching batch-mode semantics.
+                self._finalize_photo_stage_timing(
+                    self.stats, _photo_stage_wall_start, _time.time()
+                )
             finally:
                 self._active_processor = None
         else:
@@ -476,8 +530,10 @@ class WorkerThread(threading.Thread):
                 'burst_groups': 0, 'burst_moved': 0,
                 'bird_species': [],
             }
-            import time as _time
-            aggregated['start_time'] = _time.time()
+            # 起点用 process_files() 入口的 wall time，与单目录口径一致
+            # Start from the process_files() entry wall time, matching
+            # single-directory semantics.
+            aggregated['start_time'] = _photo_stage_wall_start
 
             for idx, scanned_dir in enumerate(scan_results, 1):
                 sub_dir = scanned_dir.path
@@ -546,12 +602,11 @@ class WorkerThread(threading.Thread):
 
                 processed_so_far += dir_count
 
-            aggregated['end_time'] = _time.time()
-            aggregated['total_time'] = aggregated['end_time'] - aggregated['start_time']
-            if aggregated['total'] > 0:
-                aggregated['avg_time'] = aggregated['total_time'] / aggregated['total']
-            else:
-                aggregated['avg_time'] = 0
+            # 与单目录路径共用同一个收口函数，保证两种模式口径一致
+            # Shared finalizer keeps both modes' timing semantics identical.
+            self._finalize_photo_stage_timing(
+                aggregated, _photo_stage_wall_start, _time.time()
+            )
 
             # Deduplicate bird species
             seen = set()
