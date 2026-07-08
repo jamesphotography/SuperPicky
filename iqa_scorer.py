@@ -144,6 +144,62 @@ class IQAScorer:
         """
         return self.calculate_aesthetic(image_path)
 
+    def _score_pil_image(self, img: Image.Image) -> float:
+        """
+        共享推理路径：对 RGB PIL 图像计算 TOPIQ 美学评分。
+
+        calculate_aesthetic()（路径入口）与 calculate_from_array()（数组入口）
+        都委托到这里，推理细节（预降、LANCZOS 精修、transform、FP16、
+        inference_mode、clamp）只维护一处，避免两个入口静默分叉。
+
+        预降只在图像明显大于阈值时触发：先用零拷贝的 img.size 判断，小图
+        不再付出 np.array/Image.fromarray 两次整图拷贝的代价。
+
+        参数:
+        img (Image.Image): RGB 模式的 PIL 图像。
+
+        返回:
+        float: 美学分数，已 clamp 到 [1, 10]。
+
+        Shared inference path: TOPIQ aesthetic score for an RGB PIL image.
+
+        Both calculate_aesthetic() (path entry) and calculate_from_array()
+        (array entry) delegate here so inference details (pre-shrink, LANCZOS
+        finishing, transform, FP16, inference_mode, clamp) live in exactly
+        one place. The pre-shrink only engages when the image is clearly
+        above the threshold — checked via the zero-copy img.size first, so
+        small images no longer pay two full-frame pixel copies.
+
+        Parameters:
+        img (Image.Image): PIL image in RGB mode.
+
+        Return:
+        float: Aesthetic score clamped to [1, 10].
+        """
+        topiq_model = self._load_topiq()
+
+        # 零拷贝判断：只有大图才转 numpy 走 cv2 INTER_AREA 预降
+        # Zero-copy check: only large images take the numpy/cv2 pre-shrink
+        if max(img.size) > _TOPIQ_PRESHRINK_SIZE:
+            img = Image.fromarray(_preshrink_if_large(np.array(img)))
+        img = img.resize((_TOPIQ_INPUT_SIZE, _TOPIQ_INPUT_SIZE), Image.LANCZOS)
+
+        # 转为张量（复用实例变量）
+        img_tensor = self._transform(img).unsqueeze(0).to(self.device)
+
+        # V4.0.5: 使用 FP16 和 inference_mode 优化推理
+        if hasattr(self, '_use_fp16') and self._use_fp16:
+            img_tensor = img_tensor.half()
+
+        with torch.inference_mode():
+            score = topiq_model(img_tensor, return_mos=True)
+
+        if isinstance(score, torch.Tensor):
+            score = score.item()
+
+        # 分数范围 [1, 10]
+        return max(1.0, min(10.0, float(score)))
+
     def calculate_aesthetic(self, image_path: str) -> Optional[float]:
         """
         计算 TOPIQ 美学评分
@@ -159,43 +215,8 @@ class IQAScorer:
             return None
 
         try:
-            # 加载模型
-            topiq_model = self._load_topiq()
-
-            # 加载图片
             img = Image.open(image_path).convert('RGB')
-
-            # V4.5: 先用 cv2 INTER_AREA 快速预降(大图才生效)，再 PIL LANCZOS
-            # 精修到 384x384(TOPIQ 推荐尺寸，避免 MPS 兼容性问题)。
-            # V4.5: Fast-preshrink with cv2 INTER_AREA first (large images
-            # only), then PIL LANCZOS to the final 384x384 (TOPIQ's
-            # recommended size, avoids an MPS compatibility issue).
-            img_array = _preshrink_if_large(np.array(img))
-            img = Image.fromarray(img_array).resize(
-                (_TOPIQ_INPUT_SIZE, _TOPIQ_INPUT_SIZE), Image.LANCZOS
-            )
-
-            # 转为张量（复用实例变量）
-            img_tensor = self._transform(img).unsqueeze(0).to(self.device)
-            
-            # V4.0.5: 使用 FP16 和 inference_mode 优化推理
-            if hasattr(self, '_use_fp16') and self._use_fp16:
-                img_tensor = img_tensor.half()
-
-            # 计算评分
-            with torch.inference_mode():
-                score = topiq_model(img_tensor, return_mos=True)
-
-            # 转换为 Python float
-            if isinstance(score, torch.Tensor):
-                score = score.item()
-
-            # 分数范围 [1, 10]
-            score = float(score)
-            score = max(1.0, min(10.0, score))
-
-            return score
-
+            return self._score_pil_image(img)
         except Exception as e:
             print(f"❌ TOPIQ 计算失败: {e}")
             return None
@@ -217,38 +238,19 @@ class IQAScorer:
             return None
 
         try:
-            topiq_model = self._load_topiq()
-
-            # V4.5: 先用 cv2 INTER_AREA 快速预降(大图才生效)，再 BGR→RGB→PIL
-            # →LANCZOS 精修，避免对整张原图做代价高昂的 LANCZOS。
-            # V4.5: Fast-preshrink with cv2 INTER_AREA first (only kicks in
-            # for large sources), then BGR→RGB→PIL→LANCZOS for the final
-            # pass — avoids running expensive LANCZOS on the full-res source.
+            # V4.5: 输入已是 numpy，先在 numpy 侧完成 cv2 INTER_AREA 预降
+            # （大图才生效），再转 PIL 交给共享推理路径；预降后的图必然小于
+            # 阈值，_score_pil_image 内部的预降判断自动跳过，不会重复。
+            # V4.5: The input is already numpy, so pre-shrink on the numpy
+            # side (large sources only), then hand a PIL image to the shared
+            # inference path; the pre-shrunk image is below the threshold so
+            # _score_pil_image's own check is a no-op — no double work.
             img_bgr = _preshrink_if_large(img_bgr)
-            # del img_rgb 在 resize 前释放全分辨率副本，避免 50-70 MB 驻留到推理结束
+            # del img_rgb 在评分前释放全分辨率副本，避免 50-70 MB 驻留到推理结束
             img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
             img = Image.fromarray(img_rgb)
             del img_rgb
-            img = img.resize((_TOPIQ_INPUT_SIZE, _TOPIQ_INPUT_SIZE), Image.LANCZOS)
-
-            # 转为张量（复用实例变量）
-            img_tensor = self._transform(img).unsqueeze(0).to(self.device)
-
-            # FP16 推理
-            if hasattr(self, '_use_fp16') and self._use_fp16:
-                img_tensor = img_tensor.half()
-
-            # 计算评分
-            with torch.inference_mode():
-                score = topiq_model(img_tensor, return_mos=True)
-
-            if isinstance(score, torch.Tensor):
-                score = score.item()
-
-            score = float(score)
-            score = max(1.0, min(10.0, score))
-            return score
-
+            return self._score_pil_image(img)
         except Exception as e:
             print(f"❌ TOPIQ (from array) 计算失败: {e}")
             return None

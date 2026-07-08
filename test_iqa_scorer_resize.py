@@ -162,3 +162,49 @@ def test_calculate_nima_is_alias_of_calculate_aesthetic():
 
     src = inspect.getsource(scorer.calculate_nima)
     assert "calculate_aesthetic" in src
+
+
+def test_public_methods_share_single_inference_path():
+    """两个公开入口必须委托同一个 _score_pil_image()，推理细节只维护一处。
+
+    此前 calculate_aesthetic() 与 calculate_from_array() 各自内联一套
+    「预降→LANCZOS→transform→fp16→inference→clamp」，调整任何推理细节
+    都要同步改两处，漏一处即静默分叉。
+    Both public entry points must delegate to one _score_pil_image() so
+    inference details live in exactly one place.
+    """
+    import inspect
+
+    from iqa_scorer import IQAScorer
+
+    assert hasattr(IQAScorer, "_score_pil_image")
+    assert "_score_pil_image" in inspect.getsource(IQAScorer.calculate_aesthetic)
+    assert "_score_pil_image" in inspect.getsource(IQAScorer.calculate_from_array)
+
+
+@pytest.mark.skipif(
+    not os.path.exists(_TOPIQ_WEIGHT),
+    reason="需要本机已有 TOPIQ 权重",
+)
+def test_small_image_path_skips_numpy_roundtrip(monkeypatch, tmp_path):
+    """小于预降阈值的图不得再走 np.array/Image.fromarray 整图往返。
+
+    旧实现对小图也无条件转 numpy 再转回 PIL，两次整图像素拷贝纯属浪费；
+    应先用零拷贝的 img.size 判断，只有大图才进预降路径。
+    Images below the pre-shrink threshold must not pay the
+    np.array/Image.fromarray round-trip; check img.size (zero-copy) first.
+    """
+    import iqa_scorer as iqa_module
+
+    def _must_not_be_called(img_array):
+        raise AssertionError("小图不应进入 _preshrink_if_large 预降路径")
+
+    monkeypatch.setattr(iqa_module, "_preshrink_if_large", _must_not_be_called)
+
+    small_path = tmp_path / "small.jpg"
+    Image.new("RGB", (800, 600), color=(120, 140, 90)).save(small_path)
+
+    scorer = get_iqa_scorer(device=get_best_device().type)
+    score = scorer.calculate_aesthetic(str(small_path))
+    assert score is not None, "小图评分不应因预降路径被触发而失败"
+    assert 1.0 <= score <= 10.0
