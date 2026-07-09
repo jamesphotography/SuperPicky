@@ -158,7 +158,6 @@ class PhotoProcessor:
         
         # 内部状态
         self.file_ratings = {}
-        self.star2_reasons = {}  # 记录2星原因: 'sharpness' 或 'nima'
         self.star_3_photos = []
         # V4.5: 处理异常被跳过的照片文件名，供最终汇总提示（这些照片未评分/未整理）
         # V4.5: Filenames skipped by per-photo error handling, surfaced in the
@@ -2212,15 +2211,6 @@ class PhotoProcessor:
                         pass  # 曝光检测失败不影响处理
                     add_photo_stage('exposure', (time.time() - exposure_start) * 1000)
             
-                # V3.8: 飞版加成（仅当 confidence >= 0.5 且 is_flying 时）
-                # 锐度+100，美学+0.5，加成后的值用于评分
-                rating_sharpness = head_sharpness
-                rating_topiq = topiq
-                if is_flying and confidence >= 0.5:
-                    rating_sharpness = head_sharpness + 100
-                    if topiq is not None:
-                        rating_topiq = topiq + 0.5
-            
                 # V4.3: ISO 锐度归一化 - 高 ISO 噪点会虚高锐度值，需要补偿
                 # 从 RAW 或 JPEG 读取 ISO 值并计算归一化系数
                 iso_start = time.time()
@@ -2541,7 +2531,12 @@ class PhotoProcessor:
                 caption_lines.append(self.i18n.t("logs.caption_data", conf=confidence, sharp=sharpness_str, nima=topiq_str, vis=best_eye_visibility))
                 flying_str = self.i18n.t("logs.flying_yes") if is_flying else self.i18n.t("logs.flying_no")
                 caption_lines.append(self.i18n.t("logs.caption_factors", sharp_w=focus_sharpness_weight, aes_w=focus_topiq_weight, flying=flying_str))
-                adj_sharpness = head_sharpness * focus_sharpness_weight if head_sharpness else 0
+                # V4.6(rating-v2/T5): adj 值统一用 ISO 归一化后的锐度(评星实际
+                # 输入口径),修复 DB/EXIF 存的 adj 与评分依据不一致的旧漂移。
+                # V4.6 (rating-v2/T5): adjusted values use the ISO-normalized
+                # sharpness (the actual rating input), fixing the old drift
+                # between stored adj_* and what the rating actually saw.
+                adj_sharpness = normalized_sharpness * focus_sharpness_weight if normalized_sharpness else 0
                 if is_flying and head_sharpness:
                     adj_sharpness = adj_sharpness * 1.2
                 adj_topiq_val = 0.0
@@ -2674,7 +2669,7 @@ class PhotoProcessor:
                 # V3.4: 以下操作对 RAW 和纯 JPEG 都执行
                 if target_file_path and os.path.exists(target_file_path):
                     # V4.1: 计算调整后锐度（用于 CSV，保证重新评星一致性）
-                    adj_sharpness_csv = head_sharpness * focus_sharpness_weight if head_sharpness else 0
+                    adj_sharpness_csv = normalized_sharpness * focus_sharpness_weight if normalized_sharpness else 0
                     if is_flying and head_sharpness:
                         adj_sharpness_csv = adj_sharpness_csv * 1.2
                     adj_topiq_csv = topiq * focus_topiq_weight if topiq else None
@@ -2731,16 +2726,6 @@ class PhotoProcessor:
                     # V4.0.5: 纯 JPEG 的识鸟已移到 EXIF 写入前，这里只处理 RAW 的后续操作
                     # 注意：对于 RAW 文件，在上面的分支中已经执行过
                 
-                    # 记录2星原因（用于分目录）（V3.8: 使用加成后的值）
-                    if rating_value == 2:
-                        sharpness_ok = rating_sharpness >= self.settings.sharpness_threshold
-                        topiq_ok = rating_topiq is not None and rating_topiq >= self.settings.nima_threshold
-                        if sharpness_ok and not topiq_ok:
-                            self.star2_reasons[file_prefix] = 'sharpness'
-                        elif topiq_ok and not sharpness_ok:
-                            self.star2_reasons[file_prefix] = 'nima'  # 保留原字段名兼容
-                        else:
-                            self.star2_reasons[file_prefix] = 'both'
                 else:
                     # 目标文件不存在时仍写入路径字段，确保 DB 记录不丢失
                     # Write path fields even when the target file is missing to keep DB record intact
@@ -2862,6 +2847,9 @@ class PhotoProcessor:
                 three=sum(1 for p, r in v2_results.items()
                           if p in v2_pending and r.rating == 3),
                 quota=int(quota3),
+                overall=round(sum(1 for pfx, r in v2_results.items()
+                                  if pfx in v2_pending and r.rating == 3)
+                              * 100 / max(1, total_files)),
                 changed=v2_changed,
             ))
 

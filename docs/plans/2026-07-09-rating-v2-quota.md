@@ -34,9 +34,12 @@
       与既有测试);技能卡片联动配额;手动改配额→custom 档;i18n 中英已加。
       顺带修复:硬门槛置信度改跟随用户 AI 置信度设置(gate_photo min_confidence
       参数化,photo_processor 判池与终评均传 settings.ai_confidence)
-- [ ] T5 清偿口径不一致:DB adj_* = 评星实际输入(含ISO归一化);删 V3.8 加法加成残留
-      (photo_processor:2178-2183,:2625 的 rating_sharpness/rating_topiq)
-- [ ] T6 结果浏览器改星联动:改星移动文件逻辑不变;重评星入口若用旧引擎需对齐(核查 rating_mover)
+- [x] T5 清偿口径不一致:adj_sharpness/adj_sharpness_csv 统一含 ISO 归一化
+      (评星实际输入口径);删 V3.8 加法加成残留 rating_sharpness/rating_topiq
+      与 star2_reasons(全仓库无读取方,死状态整块移除)
+- [x] T6 rating_mover 核查通过:与评分引擎零耦合(纯文件移动),无需改动
+- [x] 方案A(用户拍板):配额分母=排序池;滑块标签写明「可选照片中前N%,
+      无鸟/糊片不占分母」,汇总日志加「占全部 {overall}%」
 - [ ] T7 验证:单测全绿;同一目录 nightly vs dev 全流程对比(住处鸟片1 + Test-Superpicky);
       py_compile;中文 EXIF 写读回
 
