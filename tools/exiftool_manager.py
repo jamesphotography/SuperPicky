@@ -20,6 +20,201 @@ import queue
 
 import atexit
 
+
+class _ExifToolProcess:
+    """
+    单个 exiftool -stay_open 常驻进程的封装（进程句柄 + stdout 读取线程 + 锁）。
+
+    读写分离：ExifToolManager 持有 read/write 两个实例，读操作（read_metadata/
+    extract_binary/对焦点读取等）与写操作（batch_set_metadata 等）各走一个进程，
+    互不阻塞。此前读写共用一个进程和一把锁，批量写 64 个文件会持锁约 3 秒，
+    导致主流程的对焦点/ISO 读取被卡住（表现为每约 30 张照片停顿 3 秒）。
+
+    A wrapper around one exiftool -stay_open persistent process (process handle
+    + stdout reader thread + lock). ExifToolManager keeps two instances
+    (read/write) so read calls are never queued behind a long batch write,
+    which previously stalled the main pipeline ~3s every ~30 photos because
+    both paths shared one process and one lock.
+    """
+
+    def __init__(self, exiftool_path: str, cwd: str, role: str):
+        """
+        参数 / Parameters:
+            exiftool_path (str): exiftool 可执行文件路径 / exiftool executable path
+            cwd (str): 进程工作目录（Windows 需在 exiftool 目录下运行）/ working dir
+            role (str): 'read' 或 'write'，仅用于日志标识 / log label only
+        """
+        self.exiftool_path = exiftool_path
+        self._cwd = cwd
+        self.role = role
+        # RLock：批量写方法需要在持锁期间调用 start()/read_until_ready()
+        # RLock: batch writers call start()/read_until_ready() while holding it
+        self.lock = threading.RLock()
+        self.process = None
+        self._stdout_queue = None
+        self._reader_thread = None
+
+    @staticmethod
+    def _read_stdout_to_queue(out_pipe, q):
+        """后台线程读取 stdout / Background thread draining stdout into a queue"""
+        try:
+            for line in iter(out_pipe.readline, b''):
+                q.put(line)
+        except:
+            pass
+        finally:
+            try:
+                out_pipe.close()
+            except:
+                pass
+
+    def is_alive(self) -> bool:
+        """进程是否存活 / Whether the process is running"""
+        return self.process is not None and self.process.poll() is None
+
+    def start(self):
+        """启动常驻 ExifTool 进程（幂等）/ Start the persistent process (idempotent)"""
+        with self.lock:
+            if self.is_alive():
+                return
+
+            try:
+                # 启动命令（不在此处使用 -fast/-ignoreMinorErrors，避免 ARW 写入后 Image Edge Viewer 无法打开）
+                # 旧版 SuperPickyOsk 写入时未使用这两项，ARW 在 Sony 软件中可正常查看
+                cmd = [
+                    self.exiftool_path,
+                    '-stay_open', 'True',
+                    '-@', '-',
+                    '-common_args',
+                    '-charset', 'utf8',
+                    '-overwrite_original_in_place',  # 保留文件 Birth Time（inode 不变）
+                ]
+
+                creationflags = subprocess.CREATE_NO_WINDOW if sys.platform.startswith('win') else 0
+
+                # 将 stderr 合并到 stdout，避免 stderr 缓冲区塞满导致死锁
+                self.process = subprocess.Popen(
+                    cmd,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    cwd=self._cwd,
+                    creationflags=creationflags
+                )
+
+                # 启动读取线程
+                self._stdout_queue = queue.Queue()
+                self._reader_thread = threading.Thread(
+                    target=self._read_stdout_to_queue,
+                    args=(self.process.stdout, self._stdout_queue),
+                    daemon=True
+                )
+                self._reader_thread.start()
+
+                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 🚀 ExifTool persistent process started ({self.role}, PID: {self.process.pid}, threaded read)")
+            except Exception as e:
+                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ❌ Failed to start ExifTool process ({self.role}): {e}")
+                self.process = None
+
+    def stop(self):
+        """停止常驻进程 / Stop the persistent process"""
+        with self.lock:
+            if not self.process:
+                return
+
+            process = self.process
+            reader_thread = self._reader_thread
+            pid = process.pid
+            try:
+                if process.poll() is None and process.stdin:
+                    process.stdin.write(b'-stay_open\nFalse\n')
+                    process.stdin.flush()
+                    process.wait(timeout=2)
+                    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ✅ ExifTool process ({self.role}, PID: {pid}) stopped gracefully")
+            except Exception as e:
+                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ⚠️  ExifTool process ({self.role}, PID: {pid}) stop failed: {e}")
+            finally:
+                if process.poll() is None:
+                    try:
+                        process.kill()
+                        process.wait(timeout=2)
+                        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ✅ ExifTool process ({self.role}, PID: {pid}) killed")
+                    except Exception as e:
+                        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ⚠️  ExifTool process ({self.role}, PID: {pid}) kill failed: {e}")
+                for pipe_name in ('stdin', 'stdout', 'stderr'):
+                    pipe = getattr(process, pipe_name, None)
+                    if pipe is None:
+                        continue
+                    try:
+                        pipe.close()
+                    except Exception:
+                        pass
+                if reader_thread is not None and reader_thread.is_alive():
+                    try:
+                        reader_thread.join(timeout=2)
+                    except Exception:
+                        pass
+                self.process = None
+                self._stdout_queue = None
+                self._reader_thread = None
+
+    def read_until_ready(self, timeout=10.0) -> bytes:
+        """从队列读取直到 {ready}，支持超时 / Read stdout lines until {ready} or timeout"""
+        if not self._stdout_queue:
+            return b""
+
+        output = b""
+        start_time = time.time()
+
+        while True:
+            # 计算剩余时间
+            elapsed = time.time() - start_time
+            remaining = timeout - elapsed
+
+            if remaining <= 0:
+                raise TimeoutError(f"ExifTool timeout ({timeout}s)")
+
+            try:
+                line = self._stdout_queue.get(timeout=remaining)
+                output += line
+                if b'{ready}' in line:
+                    return output
+            except queue.Empty:
+                raise TimeoutError(f"ExifTool timeout ({timeout}s)")
+
+    def send_command(self, args: List[str], timeout=30.0) -> bytes:
+        """
+        发送一条命令（单个 -execute）到常驻进程并返回输出。
+        出错时打印日志、停止进程（下次调用自动重启）并抛出异常。
+
+        Send one command (single -execute) to the persistent process and return
+        its output. On failure: log, stop the process (auto-restart on next
+        call), and re-raise.
+        """
+        with self.lock:
+            self.start()
+            if not self.process:
+                raise RuntimeError(f"ExifTool process not available ({self.role})")
+
+            try:
+                # 确保命令以 -execute 结尾
+                if '-execute' not in args:
+                    cmd_str = '\n'.join(args) + '\n-execute\n'
+                else:
+                    cmd_str = '\n'.join(args) + '\n'
+
+                self.process.stdin.write(cmd_str.encode('utf-8'))
+                self.process.stdin.flush()
+
+                # 读取直到 {ready}
+                return self.read_until_ready(timeout)
+            except (TimeoutError, Exception) as e:
+                # 记录错误并停止进程，下次会自动重新启动
+                print(f"❌ ExifTool persistent error ({self.role}): {e}")
+                self.stop()
+                raise
+
+
 class ExifToolManager:
     """ExifTool管理器 - 使用本地打包的exiftool"""
 
@@ -36,11 +231,15 @@ class ExifToolManager:
 
         print(f"✅ ExifTool loaded: {self.exiftool_path}")
         
-        # V4.0.5: 常驻进程对象
-        self._process = None
-        self._stdout_queue = None
-        self._reader_thread = None
-        self._lock = threading.RLock()
+        # V4.5: 读写分离的两个常驻进程。读操作（对焦点/ISO/GPS/预览提取）走
+        # read 进程，写操作（星级/题注批量写入）走 write 进程，读延迟不再受
+        # 批量写持锁时长影响（原共用进程时每 ~30 张照片主流程停顿 ~3 秒）。
+        # V4.5: Two persistent processes, one for reads (focus point / ISO /
+        # GPS / preview extraction) and one for writes (rating/caption
+        # batches), so read latency no longer depends on batch-write duration
+        # (sharing one process used to stall the pipeline ~3s every ~30 photos).
+        self._read_proc = _ExifToolProcess(self.exiftool_path, self._exiftool_cwd, 'read')
+        self._write_proc = _ExifToolProcess(self.exiftool_path, self._exiftool_cwd, 'write')
         self._session_lock = threading.Lock()
         self._persistent_session_count = 0
         self._shutdown_lock = threading.Lock()
@@ -196,106 +395,16 @@ class ExifToolManager:
             print(f"   ❌ ExifTool error: {type(e).__name__}: {e}")
             return False
 
-    @staticmethod
-    def _read_stdout_to_queue(out_pipe, q):
-        """后台线程读取 stdout"""
-        try:
-            for line in iter(out_pipe.readline, b''):
-                q.put(line)
-        except:
-            pass
-        finally:
-            try:
-                out_pipe.close()
-            except:
-                pass
-
     def _start_process(self):
-        """启动常驻 ExifTool 进程 (V4.0.5)"""
-        with self._lock:
-            if self._process is not None and self._process.poll() is None:
-                return
-
-            try:
-                # 启动命令（不在此处使用 -fast/-ignoreMinorErrors，避免 ARW 写入后 Image Edge Viewer 无法打开）
-                # 旧版 SuperPickyOsk 写入时未使用这两项，ARW 在 Sony 软件中可正常查看
-                cmd = [
-                    self.exiftool_path,
-                    '-stay_open', 'True',
-                    '-@', '-',
-                    '-common_args',
-                    '-charset', 'utf8',
-                    '-overwrite_original_in_place',  # 保留文件 Birth Time（inode 不变）
-                ]
-                
-                creationflags = subprocess.CREATE_NO_WINDOW if sys.platform.startswith('win') else 0
-                
-                # 将 stderr 合并到 stdout，避免 stderr 缓冲区塞满导致死锁
-                self._process = subprocess.Popen(
-                    cmd,
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    cwd=self._exiftool_cwd,
-                    creationflags=creationflags
-                )
-                
-                # 启动读取线程
-                self._stdout_queue = queue.Queue()
-                self._reader_thread = threading.Thread(
-                    target=self._read_stdout_to_queue,
-                    args=(self._process.stdout, self._stdout_queue),
-                    daemon=True
-                )
-                self._reader_thread.start()
-                
-                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 🚀 ExifTool persistent process started (PID: {self._process.pid}, threaded read)")
-            except Exception as e:
-                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ❌ Failed to start ExifTool process: {e}")
-                self._process = None
+        """启动读/写两个常驻 ExifTool 进程 / Start both persistent processes"""
+        self._read_proc.start()
+        self._write_proc.start()
 
     def _stop_process(self):
-        """停止常驻进程"""
-        with self._lock:
-            if not self._process:
-                return
+        """停止读/写两个常驻进程 / Stop both persistent processes"""
+        self._read_proc.stop()
+        self._write_proc.stop()
 
-            process = self._process
-            reader_thread = self._reader_thread
-            pid = process.pid
-            try:
-                if process.poll() is None and process.stdin:
-                    process.stdin.write(b'-stay_open\nFalse\n')
-                    process.stdin.flush()
-                    process.wait(timeout=2)
-                    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ✅ ExifTool process (PID: {pid}) stopped gracefully")
-            except Exception as e:
-                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ⚠️  ExifTool process (PID: {pid}) stop failed: {e}")
-            finally:
-                if process.poll() is None:
-                    try:
-                        process.kill()
-                        process.wait(timeout=2)
-                        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ✅ ExifTool process (PID: {pid}) killed")
-                    except Exception as e:
-                        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ⚠️  ExifTool process (PID: {pid}) kill failed: {e}")
-                for pipe_name in ('stdin', 'stdout', 'stderr'):
-                    pipe = getattr(process, pipe_name, None)
-                    if pipe is None:
-                        continue
-                    try:
-                        pipe.close()
-                    except Exception:
-                        pass
-                if reader_thread is not None and reader_thread.is_alive():
-                    try:
-                        reader_thread.join(timeout=2)
-                    except Exception:
-                        pass
-                self._process = None
-                self._stdout_queue = None
-                self._reader_thread = None
-    
     def shutdown(self):
         """关闭ExifTool管理器，停止所有相关进程"""
         global exiftool_manager
@@ -330,7 +439,7 @@ class ExifToolManager:
             return
 
         self._start_process()
-        if self._process is None or self._process.poll() is not None:
+        if not (self._read_proc.is_alive() and self._write_proc.is_alive()):
             with self._session_lock:
                 self._persistent_session_count = max(0, self._persistent_session_count - 1)
             owner_suffix = f" ({owner})" if owner else ""
@@ -348,59 +457,22 @@ class ExifToolManager:
         if should_stop:
             self._stop_process()
 
-    def _read_until_ready(self, timeout=10.0) -> bytes:
-        """从队列读取直到 {ready}，支持超时"""
-        if not self._stdout_queue:
-            return b""
-            
-        output = b""
-        start_time = time.time()
-        
-        while True:
-            # 计算剩余时间
-            elapsed = time.time() - start_time
-            remaining = timeout - elapsed
-            
-            if remaining <= 0:
-                raise TimeoutError(f"ExifTool timeout ({timeout}s)")
-            
-            try:
-                line = self._stdout_queue.get(timeout=remaining)
-                output += line
-                if b'{ready}' in line:
-                    return output
-            except queue.Empty:
-                raise TimeoutError(f"ExifTool timeout ({timeout}s)")
-
     def _send_command(self, args: List[str], timeout=30.0) -> bytes:
-        """发送原始命令到常驻进程并返回输出 (V4.0.6)"""
-        with self._lock:
-            self._start_process()
-            if not self._process:
-                raise RuntimeError("ExifTool process not available")
+        """
+        发送只读命令到 read 常驻进程并返回输出 (V4.5: 读写分离)。
+        仅供读取类方法（read_metadata/extract_binary/_read_arw_structure）使用，
+        写入类方法请走 _send_to_process（write 进程）。
 
-            try:
-                # 确保命令以 -execute 结尾
-                if '-execute' not in args:
-                    cmd_str = '\n'.join(args) + '\n-execute\n'
-                else:
-                    cmd_str = '\n'.join(args) + '\n'
-                
-                self._process.stdin.write(cmd_str.encode('utf-8'))
-                self._process.stdin.flush()
-                
-                # 读取直到 {ready}
-                return self._read_until_ready(timeout)
-            except (TimeoutError, Exception) as e:
-                # 记录错误并停止进程，下次会自动重新启动
-                print(f"❌ ExifTool persistent error: {e}")
-                self._stop_process()
-                raise
+        Send a read-only command to the persistent read process (V4.5 split).
+        For read-style methods only; write-style methods must use
+        _send_to_process (write process).
+        """
+        return self._read_proc.send_command(args, timeout)
 
     def _send_to_process(self, args: List[str], timeout=30.0) -> bool:
-        """发送命令到常驻进程并等待结果，返回成功标志"""
+        """发送写入命令到 write 常驻进程并等待结果，返回成功标志"""
         try:
-            output = self._send_command(args, timeout)
+            output = self._write_proc.send_command(args, timeout)
             decoded = output.decode('utf-8', errors='replace')
             # 通过 exiftool 的实际更新计数判断成功，避免路径名含"Error"或
             # 同时出现 Warning+Error 时的误判
@@ -940,24 +1012,30 @@ class ExifToolManager:
         
         num_executes = 0
         total_timeout = 30.0
+        # V4.5: 批量写只占用 write 进程；read 进程保持空闲，主流程的
+        # 对焦点/ISO/GPS 读取不再被整批写入持锁阻塞。
+        # V4.5: The batch only occupies the write process; the read process
+        # stays free so focus/ISO/GPS reads are no longer blocked for the
+        # whole batch duration.
+        wp = self._write_proc
         try:
-            with self._lock:
-                self._start_process()
-                if not self._process:
+            with wp.lock:
+                wp.start()
+                if not wp.process:
                     raise Exception("Process not started")
-                    
+
                 cmd_str = '\n'.join(args_list) + '\n' # 注意这里不加 -execute，因为 args_list 里已经包含了 N 个 -execute
-                
+
                 # 写入大量数据
-                self._process.stdin.write(cmd_str.encode('utf-8'))
-                self._process.stdin.flush()
-                
+                wp.process.stdin.write(cmd_str.encode('utf-8'))
+                wp.process.stdin.flush()
+
                 # 读取输出：我们需要读取 N 次 {ready}
                 num_executes = args_list.count('-execute')
                 # 按文件数线性放大超时
                 total_timeout = max(30.0, num_executes * 5.0)
                 start_time = time.time()
-                
+
                 error_count = 0
                 for _ in range(num_executes):
                     elapsed = time.time() - start_time
@@ -966,7 +1044,7 @@ class ExifToolManager:
                         raise TimeoutError(f"Batch timeout after {total_timeout}s")
 
                     # 读取一次 {ready}
-                    output = self._read_until_ready(timeout=remaining)
+                    output = wp.read_until_ready(timeout=remaining)
 
                     # 简单的错误检测 (累积)
                     decoded = output.decode('utf-8', errors='replace')
@@ -975,14 +1053,14 @@ class ExifToolManager:
 
                 stats['success'] += num_executes - error_count
                 stats['failed'] += error_count
-                    
+
         except TimeoutError:
             print(f"❌ Batch ExifTool timeout (>{total_timeout}s)")
-            self._stop_process()
+            wp.stop()
             stats['failed'] += num_executes
         except Exception as e:
             print(f"❌ Batch persistent error: {e}")
-            self._stop_process()
+            wp.stop()
             stats['failed'] += num_executes
         finally:
             for tmp_path in caption_temp_files:
@@ -1278,17 +1356,20 @@ class ExifToolManager:
             batch_args.append('-execute')
 
             try:
-                with self._lock:
-                    self._start_process()
-                    if not self._process:
+                # V4.5: 批量重置走 write 进程，与批量写入同一路由
+                # V4.5: Batch reset uses the write process, same route as batch writes
+                wp = self._write_proc
+                with wp.lock:
+                    wp.start()
+                    if not wp.process:
                         raise RuntimeError("Process not started")
 
                     cmd_str = '\n'.join(batch_args) + '\n'
-                    self._process.stdin.write(cmd_str.encode('utf-8'))
-                    self._process.stdin.flush()
+                    wp.process.stdin.write(cmd_str.encode('utf-8'))
+                    wp.process.stdin.flush()
 
                     # 单次 -execute，读一次 {ready} / Single -execute, one {ready} read.
-                    output = self._read_until_ready(timeout=60)
+                    output = wp.read_until_ready(timeout=60)
                     decoded = output.decode('utf-8', errors='replace')
 
                 # 锁已释放，再做日志和统计，不阻塞其他 ExifTool 调用。
@@ -1315,7 +1396,7 @@ class ExifToolManager:
 
             except Exception as e:
                 stats['failed'] += len(valid_files)
-                self._stop_process()
+                self._write_proc.stop()
                 if i18n:
                     log(f"  ❌ {i18n.t('logs.batch_error', start=batch_start+1, end=batch_end, error=str(e))}")
                 else:
