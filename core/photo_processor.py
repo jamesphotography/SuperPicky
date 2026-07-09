@@ -2522,7 +2522,20 @@ class PhotoProcessor:
                             })
                     
                         # BirdID 异步提交（2星及以上）
-                        if self.settings.auto_identify and rating_value >= 2:
+                        # V4.6(rating-v2/T3): 识鸟门控从「星级≥2」改为硬门槛+锐度粗筛。
+                        # V2 定星延后到批处理末尾,循环中不再有即时星级可依赖;
+                        # 粗筛挡掉明显进不了 2★ 的样本,控制识鸟任务量(约+25%)。
+                        # V4.6 (rating-v2/T3): gate BirdID on hard gates + a coarse
+                        # sharpness screen instead of "rating >= 2" — V2 assigns
+                        # stars in the post-pass, so no instant rating exists here.
+                        if self.settings.auto_identify and (
+                            rating_value >= 2 or (
+                                detected
+                                and confidence >= 0.5
+                                and not all_keypoints_hidden
+                                and normalized_sharpness >= 250
+                            )
+                        ):
                             _birdid_crop_pil = None
                             if bird_crop_bgr is not None:
                                 try:
@@ -2557,7 +2570,20 @@ class PhotoProcessor:
                             'caption': caption,
                         })
                         # BirdID 异步提交（2星及以上）
-                        if self.settings.auto_identify and rating_value >= 2:
+                        # V4.6(rating-v2/T3): 识鸟门控从「星级≥2」改为硬门槛+锐度粗筛。
+                        # V2 定星延后到批处理末尾,循环中不再有即时星级可依赖;
+                        # 粗筛挡掉明显进不了 2★ 的样本,控制识鸟任务量(约+25%)。
+                        # V4.6 (rating-v2/T3): gate BirdID on hard gates + a coarse
+                        # sharpness screen instead of "rating >= 2" — V2 assigns
+                        # stars in the post-pass, so no instant rating exists here.
+                        if self.settings.auto_identify and (
+                            rating_value >= 2 or (
+                                detected
+                                and confidence >= 0.5
+                                and not all_keypoints_hidden
+                                and normalized_sharpness >= 250
+                            )
+                        ):
                             _birdid_crop_pil = None
                             if bird_crop_bgr is not None:
                                 try:
