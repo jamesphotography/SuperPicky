@@ -289,6 +289,7 @@
     "burst_consolidate_complete": "✅ Burst merge complete: {groups} groups, moved {moved} photos to highest rating directory",
     "bird_species_identified": "Identified {count} species: {species}",
     "caption_final": "Final Rating: {rating} Star | {reason}",
+    "rating_v2_summary": "🎯 Rating V2 done: pool {total}, 3-star {three} (quota {quota}%), {changed} differ from estimate",
     "caption_data": "[Data] AI Conf: {conf:.0%} | Head Sharp: {sharp} | Aesthetics: {nima} | Eye Vis: {vis:.0%}",
     "caption_factors": "[Factors] Focus Sharp Weight: {sharp_w:.2f} | Focus Aes Weight: {aes_w:.2f} | Flying: {flying}",
     "caption_adjusted": "[Adjusted] Sharpness: {sharp:.2f} (threshold 400) | Aesthetics: {nima:.2f} (threshold 5.0)",
@@ -767,6 +768,13 @@
     "visibility_suffix": ", Eye vis {val:.0%}",
     "flying_suffix": ", BIF bonus",
     "reason_fmt": "{rating_name} Photo ({base_reason}{exposure}{focus}{visibility}{flying})"
+  },
+  "rating_v2": {
+    "top_quota": "Excellent (top {percent}% of batch)",
+    "mid_quota": "Good (top {percent}% of batch)",
+    "rest_quota": "Average (top {percent}% of batch)",
+    "eye_capped": "Good (low eye visibility, capped at 2 stars)",
+    "burst_capped": "Good (burst 3-star cap reached, demoted to 2 stars)"
   },
   "lightroom_guide": {
     "title": "Lightroom Classic User Guide - How to View and Use SuperPicky Ratings",

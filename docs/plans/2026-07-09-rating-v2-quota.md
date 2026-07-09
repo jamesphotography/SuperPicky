@@ -19,15 +19,16 @@
 - [x] T0 原型验证(tools/rating_v2_prototype.py,两目录实测通过)
 - [x] T1 核心模块 `core/rating_quota.py`:纯函数批量定星(硬门槛+Q+配额+封顶+连拍cap),
       无 Qt/IO 依赖,含单测 test_rating_quota.py
-- [ ] T2 TOPIQ 改打鸟裁剪区(photo_processor Phase 3:orig_img→bird_crop_bgr;
-      整图分保留给无鸟详情路径 calculate_rejected_quality_detail 不变)
-- [ ] T3 photo_processor 两遍定星改造(最大项):
-      - 循环内:照常算指标+硬门槛,星级列 pending;星级相关 EXIF(rating/pick/caption)
-        不再逐张 queue,收集到 pending 列表
-      - 后置阶段(collect_birdid 之后、picked 旗标之前):调 rating_quota 统一定星
-        → 更新 file_ratings/DB/日志 → 批量 queue EXIF → flush
-      - 处理中日志:每张打指标(锐度/TOPIQ/飞鸟),星级在收尾统一打
-      - 识鸟提交门控改硬门槛+锐度≥250(photo_processor:2468,:2503)
+- [x] T2 TOPIQ 改打鸟裁剪区(bird_crop_bgr,无裁剪回退整图;
+      无鸟详情路径 calculate_rejected_quality_detail 保持整图不变)
+- [x] T3 photo_processor 两遍定星改造:
+      - [x] T3a 识鸟提交门控改「星级≥2 或 硬门槛+锐度≥250」
+      - [x] T3b 两遍定星:advanced_config 加 rating_algorithm(默认v2)/custom_quota3;
+        循环内 gate_photo 判池,池内照片的星级 EXIF(queue_star_metadata 挂起)、
+        统计、star_3_photos、file_ratings 全部延后;收尾 assign_ratings 统一定星
+        →回填 EXIF(重写 caption 首行)/统计/DB rating→入队终批;i18n rating_v2.* 键
+      - 已知留痕:循环中单张日志仍显示 v1 预估星级(收尾打 V2 汇总行);
+        star2_reasons 仍按 v1 口径(2★子目录分类,待 T5/T6 时一并处理)
 - [ ] T4 skill_presets:阈值→配额映射(新手25/进阶20/大师10 + custom_quota3);
       settings_center 精选页与首页快速面板滑块改配额语义(SSOT 约定:setter clamp=UI范围);
       i18n 中英文案

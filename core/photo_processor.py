@@ -1066,6 +1066,20 @@ class PhotoProcessor:
             metadata_batch.append(item)
             if len(metadata_batch) >= metadata_batch_size:
                 flush_metadata_batch()
+
+        def queue_star_metadata(item: Dict, original_prefix: str, in_pool: bool):
+            """
+            星级相关 EXIF 条目的路由:V2 排序池内的照片先挂起,收尾统一定星
+            后回填 rating/caption 再入队;其余照片(硬门槛终局)直接入队。
+
+            Route star-dependent EXIF items: photos in the V2 ranking pool are
+            parked until the post-pass finalizes their rating/caption; photos
+            finalized by hard gates are queued immediately.
+            """
+            if in_pool and original_prefix in v2_pending:
+                v2_pending[original_prefix]['items'].append(item)
+            else:
+                queue_metadata(item)
         
         # UI设置转为列表格式
         ui_settings = [
@@ -1135,6 +1149,24 @@ class PhotoProcessor:
             if percent > progress_state['last_percent']:
                 progress_state['last_percent'] = percent
                 self._progress(percent)
+
+        # V4.6(rating-v2/T3b): 两遍定星状态。循环内只做硬门槛判定与指标采集;
+        # 过硬门槛(进入排序池)照片的星级相关 EXIF/统计/评分记录全部挂起在
+        # v2_pending,收尾阶段用 core.rating_quota.assign_ratings 按批内配额
+        # 统一定星后回填。循环中日志显示的星级为 v1 预估,最终以收尾为准。
+        # V4.6 (rating-v2/T3b): two-pass rating state. During the loop, photos
+        # passing every hard gate only collect metrics; their star-dependent
+        # EXIF items / stats / rating records are parked in v2_pending and
+        # finalized in the post-pass via assign_ratings (batch quota).
+        from core.rating_quota import (
+            PhotoMetricsV2,
+            assign_ratings as assign_ratings_v2,
+            gate_photo as gate_photo_v2,
+            get_quota3_for_skill,
+            DEFAULT_QUOTA2,
+        )
+        v2_enabled = self.config.rating_algorithm == "v2"
+        v2_pending: Dict[str, Dict] = {}
 
         if self.settings.auto_identify:
             try:
@@ -2435,10 +2467,47 @@ class PhotoProcessor:
                 photo_time_ms = (time.time() - photo_start_time) * 1000 + yolo_ms
                 has_exposure_issue = is_overexposed or is_underexposed
                 self._log_photo_result_simple(i, total_files, filename, rating_value, reason, photo_time_ms, is_flying, has_exposure_issue, focus_status)
-            
+
                 # 记录统计（V4.2: 添加精焦判定）
                 is_focus_precise = focus_sharpness_weight > 1.0 if 'focus_sharpness_weight' in dir() else False
-                self._update_stats(rating_value, is_flying, has_exposure_issue, is_focus_precise)
+
+                # V4.6(rating-v2/T3b): 判定是否进入 V2 排序池(过全部硬门槛)。
+                # 池内照片本轮 rating_value 仅为 v1 预估;星级相关的统计/EXIF/
+                # 评分记录挂起到 v2_pending,收尾按批内配额统一定星后回填。
+                # V4.6 (rating-v2/T3b): pool-membership check. Pool photos treat
+                # this iteration's rating_value as a provisional estimate; their
+                # star-dependent side effects are parked in v2_pending.
+                v2_in_pool = False
+                if v2_enabled and detected:
+                    _v2_metrics = PhotoMetricsV2(
+                        key=original_prefix,
+                        detected=True,
+                        confidence=confidence,
+                        norm_sharpness=normalized_sharpness,
+                        topiq=topiq,
+                        best_eye=best_eye_visibility,
+                        beak_vis=beak_vis,
+                        is_flying=is_flying,
+                        focus_status=focus_status or "",
+                        has_exposure_issue=has_exposure_issue,
+                        burst_id=self.burst_map.get(filepath) if self.burst_map else None,
+                    )
+                    if gate_photo_v2(_v2_metrics) is None:
+                        v2_in_pool = True
+                        v2_pending[original_prefix] = {
+                            'metrics': _v2_metrics,
+                            'items': [],
+                            'v1_rating': rating_value,
+                            'is_flying': is_flying,
+                            'has_exposure_issue': has_exposure_issue,
+                            'is_focus_precise': is_focus_precise,
+                            'target_file': None,
+                            'adj_sharpness': None,
+                            'adj_topiq': None,
+                        }
+
+                if not v2_in_pool:
+                    self._update_stats(rating_value, is_flying, has_exposure_issue, is_focus_precise)
             
                 # V3.4: 确定要处理的目标文件（RAW 优先，没有则用 JPEG）
                 target_file_path = None
@@ -2494,7 +2563,7 @@ class PhotoProcessor:
                 
                     if os.path.exists(target_file_path):
                         birdid_title_targets = [target_file_path]
-                        queue_metadata({
+                        queue_star_metadata({
                             'file': target_file_path,
                             'rating': rating_value if rating_value >= 0 else 0,
                             'pick': pick,
@@ -2503,14 +2572,14 @@ class PhotoProcessor:
                             'label': label,
                             'focus_status': focus_status,
                             'caption': caption,
-                        })
+                        }, original_prefix, v2_in_pool)
                         # RAW+JPEG 时也写入当前 JPEG，便于单独查看 JPEG 时也有星级/题注（DNG/ARW/NEF 等同理）
                         # V4.0.5: 跳过临时预览文件 (tmp_*.jpg)，避免无用写入
                         filepath_basename = os.path.basename(filepath)
                         is_temp_file = filepath_basename.startswith('tmp_') or filepath_basename.startswith('tmp.')
                         if target_file_path != filepath and os.path.exists(filepath) and not is_temp_file:
                             birdid_title_targets.append(filepath)
-                            queue_metadata({
+                            queue_star_metadata({
                                 'file': filepath,
                                 'rating': rating_value if rating_value >= 0 else 0,
                                 'pick': pick,
@@ -2519,7 +2588,7 @@ class PhotoProcessor:
                                 'label': label,
                                 'focus_status': focus_status,
                                 'caption': caption,
-                            })
+                            }, original_prefix, v2_in_pool)
                     
                         # BirdID 异步提交（2星及以上）
                         # V4.6(rating-v2/T3): 识鸟门控从「星级≥2」改为硬门槛+锐度粗筛。
@@ -2559,7 +2628,7 @@ class PhotoProcessor:
                     target_extension = os.path.splitext(filename)[1]
                 
                     if os.path.exists(target_file_path):
-                        queue_metadata({
+                        queue_star_metadata({
                             'file': target_file_path,
                             'rating': rating_value if rating_value >= 0 else 0,
                             'pick': pick,
@@ -2568,7 +2637,7 @@ class PhotoProcessor:
                             'label': label,
                             'focus_status': focus_status,
                             'caption': caption,
-                        })
+                        }, original_prefix, v2_in_pool)
                         # BirdID 异步提交（2星及以上）
                         # V4.6(rating-v2/T3): 识鸟门控从「星级≥2」改为硬门槛+锐度粗筛。
                         # V2 定星延后到批处理末尾,循环中不再有即时星级可依赖;
@@ -2638,16 +2707,25 @@ class PhotoProcessor:
                     )
                     add_photo_stage('csv_update', (time.time() - csv_update_start) * 1000)
                 
-                    # 收集3星照片（V4.1: 使用调整后的值）
-                    if rating_value == 3 and adj_topiq_csv is not None:
-                        self.star_3_photos.append({
-                            'file': target_file_path,
-                            'nima': adj_topiq_csv,  # V4.1: 调整后美学
-                            'sharpness': adj_sharpness_csv  # V4.1: 调整后锐度
-                        })
-                
-                    # 记录评分（用于文件移动）- V4.0.4: 使用 original_prefix 确保匹配 NEF
-                    self.file_ratings[original_prefix] = rating_value
+                    # V4.6(rating-v2/T3b): 池内照片的 3星收集/评分记录延后到收尾定星;
+                    # 此处仅补齐终评所需的目标文件与调整后指标。
+                    # V4.6 (rating-v2/T3b): pool photos defer star-3 collection and
+                    # rating records to the post-pass; capture finalization inputs here.
+                    if v2_in_pool:
+                        v2_pending[original_prefix]['target_file'] = target_file_path
+                        v2_pending[original_prefix]['adj_sharpness'] = adj_sharpness_csv
+                        v2_pending[original_prefix]['adj_topiq'] = adj_topiq_csv
+                    else:
+                        # 收集3星照片（V4.1: 使用调整后的值）
+                        if rating_value == 3 and adj_topiq_csv is not None:
+                            self.star_3_photos.append({
+                                'file': target_file_path,
+                                'nima': adj_topiq_csv,  # V4.1: 调整后美学
+                                'sharpness': adj_sharpness_csv  # V4.1: 调整后锐度
+                            })
+
+                        # 记录评分（用于文件移动）- V4.0.4: 使用 original_prefix 确保匹配 NEF
+                        self.file_ratings[original_prefix] = rating_value
                 
                     # V4.0.1: 自动鸟种识别（移至共同路径，对 RAW 和纯 JPG 都执行）
                     # V4.0.5: 纯 JPEG 的识鸟已移到 EXIF 写入前，这里只处理 RAW 的后续操作
@@ -2729,7 +2807,63 @@ class PhotoProcessor:
             inference_pool.shutdown(wait=True)
         except Exception:
             pass
-        
+
+        # V4.6(rating-v2/T3b): 收尾统一定星——对排序池照片按批内配额分配星级,
+        # 回填挂起的 EXIF 条目(rating/caption 首行)、评分记录、统计与 DB。
+        # V4.6 (rating-v2/T3b): post-pass star assignment — quota-rank the pool,
+        # then back-fill parked EXIF items (rating + caption head line), rating
+        # records, stats, and the report DB.
+        if v2_enabled and v2_pending:
+            quota3 = get_quota3_for_skill(self.config.skill_level, self.config)
+            v2_results = assign_ratings_v2(
+                [p['metrics'] for p in v2_pending.values()],
+                quota3=quota3,
+                quota2=DEFAULT_QUOTA2,
+            )
+            v2_changed = 0
+            for prefix, pend in v2_pending.items():
+                res = v2_results.get(prefix)
+                if res is None:
+                    continue
+                final_rating = res.rating
+                if final_rating != pend['v1_rating']:
+                    v2_changed += 1
+                reason_final = self.i18n.t(res.reason_key, **res.reason_args)
+                for item in pend['items']:
+                    old_caption = item.get('caption')
+                    if old_caption:
+                        # caption 首行固定为 caption_final(星级+原因),按终评重写
+                        # The caption head line is always caption_final; rewrite it
+                        parts = old_caption.split('\n', 1)
+                        head = self.i18n.t("logs.caption_final",
+                                           rating=final_rating, reason=reason_final)
+                        item['caption'] = head + ('\n' + parts[1] if len(parts) > 1 else '')
+                    item['rating'] = final_rating
+                    queue_metadata(item)
+                self.file_ratings[prefix] = final_rating
+                self._update_stats(final_rating, pend['is_flying'],
+                                   pend['has_exposure_issue'], pend['is_focus_precise'])
+                if (final_rating == 3 and pend.get('adj_topiq') is not None
+                        and pend.get('target_file')):
+                    self.star_3_photos.append({
+                        'file': pend['target_file'],
+                        'nima': pend['adj_topiq'],
+                        'sharpness': pend['adj_sharpness'],
+                    })
+                if self.report_db:
+                    try:
+                        self.report_db.update_photo(prefix, {'rating': final_rating})
+                    except Exception:
+                        pass
+            self._log(self.i18n.t(
+                "logs.rating_v2_summary",
+                total=len(v2_pending),
+                three=sum(1 for p, r in v2_results.items()
+                          if p in v2_pending and r.rating == 3),
+                quota=int(quota3),
+                changed=v2_changed,
+            ))
+
         # 批量落盘 EXIF 队列（避免每张图一次写入）
         if metadata_batch:
             pending_with_caption = sum(1 for it in metadata_batch if it.get('caption'))

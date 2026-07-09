@@ -289,6 +289,7 @@
     "burst_consolidate_complete": "✅ 连拍合并完成: {groups} 组, 移动 {moved} 张照片到最高星级目录",
     "bird_species_identified": "识别到 {count} 种鸟: {species}",
     "caption_final": "最终评分: {rating}星 | {reason}",
+    "rating_v2_summary": "🎯 V2 定星完成: 排序池 {total} 张, 3星 {three} 张 (配额{quota}%), 与预估不同 {changed} 张",
     "caption_data": "[原始检测数据] AI置信度: {conf:.0%} | 头部锐度: {sharp} | TOPIQ美学: {nima} | 眼睛可见度: {vis:.0%}",
     "caption_factors": "[系数] 对焦锐度权重: {sharp_w:.2f} | 对焦美学权重: {aes_w:.2f} | 飞鸟: {flying}",
     "caption_adjusted": "[调整后] 锐度: {sharp:.2f} (阈值400) | 美学: {nima:.2f} (阈值5.0)",
@@ -1041,6 +1042,13 @@
     "visibility_suffix": "，眼睛可见度{val:.0%}",
     "flying_suffix": "，飞鸟加成",
     "reason_fmt": "{rating_name}照片（{base_reason}{exposure}{focus}{visibility}{flying}）"
+  },
+  "rating_v2": {
+    "top_quota": "优选（批内排序前{percent}%）",
+    "mid_quota": "良好（批内排序前{percent}%）",
+    "rest_quota": "普通（批内排序前{percent}%）",
+    "eye_capped": "良好（眼睛可见度低，封顶2星）",
+    "burst_capped": "良好（连拍组3星已满，降为2星）"
   },
   "cli": {
     "banner": "  🐦 SuperPicky CLI v{version} - 慧眼选鸟 (命令行版)",
