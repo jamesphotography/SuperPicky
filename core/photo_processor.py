@@ -570,7 +570,14 @@ class PhotoProcessor:
                 
             # 阶段8: 清理过期缓存 (V4.1)
             self._cleanup_expired_cache()
-            
+
+            # V4.5: 全部阶段（含识鸟收尾/精选/文件整理）完成后才发 100%，
+            # 与统一工作单元进度（封顶 99%）配套，杜绝「100% 后还在干活」。
+            # V4.5: Emit 100% only after every phase (BirdID drain / picks /
+            # organizing) finishes — pairs with the 99%-capped unit progress
+            # so the bar never claims completion while work remains.
+            self._progress(100)
+
             # 记录结束时间
             end_time = time.time()
             self.stats['end_time'] = end_time
@@ -1092,6 +1099,43 @@ class PhotoProcessor:
         birdid_executor = ThreadPoolExecutor(max_workers=_birdid_workers) if self.settings.auto_identify else None
         birdid_tasks = deque()
         identify_bird_fn = None
+
+        # V4.5: 统一工作单元进度——照片与识鸟任务同权重计入一个分数，
+        # 使循环结束后的 BirdID 收尾阶段进度条持续前进，而非停在 100%。
+        # V4.5: Unified work-unit progress — photos and BirdID tasks share one
+        # fraction so the bar keeps advancing during the post-loop BirdID
+        # drain instead of sitting at 100%.
+        progress_state = {
+            'photos_done': 0,       # 已处理照片数（display 口径，兼容续跑）/ photos done (display scale)
+            'birdid_submitted': 0,  # 已提交识鸟任务数 / BirdID tasks submitted
+            'birdid_done': 0,       # 已完成识鸟任务数 / BirdID tasks finished
+            'last_percent': 0,      # 单调钳位：进度只增不减 / monotonic clamp
+        }
+
+        def update_unit_progress():
+            """
+            按已完成工作单元更新进度条（封顶 99%，只增不减）。
+
+            单元 = 已处理照片 + 已完成识鸟任务；分母 = 照片总数 + 已提交识鸟
+            任务数。分母随任务提交增长，可能使分数瞬时回退，故用单调钳位；
+            100% 由 process() 在全部阶段（含文件整理）完成后单独发出。
+
+            Update the progress bar from completed work units (capped at 99%,
+            monotonic). Units = processed photos + finished BirdID tasks over
+            total photos + submitted BirdID tasks. The denominator grows as
+            tasks are submitted, so the monotonic clamp prevents regressions;
+            100% is emitted by process() only after every phase (including
+            file organizing) has finished.
+            """
+            total_units = total_files + progress_state['birdid_submitted']
+            if total_units <= 0:
+                return
+            done_units = progress_state['photos_done'] + progress_state['birdid_done']
+            percent = min(99, int(done_units * 100 / total_units))
+            if percent > progress_state['last_percent']:
+                progress_state['last_percent'] = percent
+                self._progress(percent)
+
         if self.settings.auto_identify:
             try:
                 from birdid.bird_identifier import identify_bird as identify_bird_fn
@@ -1128,6 +1172,7 @@ class PhotoProcessor:
                 )
                 self._perf_add_stage('birdid_submit', (time.time() - submit_start) * 1000)
                 birdid_tasks.append((future, file_prefix, list(title_targets), source_display))
+                progress_state['birdid_submitted'] += 1
             except Exception as e:
                 self._log(f"  ⚠️ Bird ID failed [{source_display}]: {e}", "warning")
         
@@ -1294,6 +1339,10 @@ class PhotoProcessor:
                     self._perf_add_stage('birdid_apply', (time.time() - birdid_apply_start) * 1000)
                 except Exception as e:
                     self._log(f"  ⚠️ Bird ID failed [{source_filename or file_prefix}]: {e}", "warning")
+                # 失败任务同样计入已完成单元，避免进度条卡在收尾阶段
+                # Failed tasks also count as done units so the bar never stalls
+                progress_state['birdid_done'] += 1
+                update_unit_progress()
         
         # 轻量 Job 调度：在 MPS 上默认关闭 YOLO 预取，避免与 TOPIQ 并发争用
         # 如需强制开启/关闭，可通过 SUPERPICKY_YOLO_PREFETCH 覆盖。
@@ -1757,11 +1806,12 @@ class PhotoProcessor:
                 preloaded_focus_result = None
                 focus_point_for_selection = None
             
-                # 更新进度
+                # 更新进度（统一工作单元口径：照片 + 识鸟任务）
+                # Update progress (unified work units: photos + BirdID tasks)
+                progress_state['photos_done'] = i
                 should_update = (i % 5 == 0 or i == total_files or i == 1)
                 if should_update:
-                    progress = int((i / total_files) * 100)
-                    self._progress(progress)
+                    update_unit_progress()
 
                 if i % _cache_interval == 0 and _torch_module is not None:
                     try:
