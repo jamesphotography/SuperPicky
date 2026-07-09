@@ -3058,7 +3058,8 @@ class PhotoProcessor:
         
         # 输出简化格式（只显示文件名,去掉目录前缀；3星行文件名之后染绿）
         display_name = os.path.basename(filename)
-        level = "photo_good" if rating >= 3 else "default"
+        # V4.6(rating-v2): rating=None(待定)按普通级别着色 / None (pending) uses default level
+        level = "photo_good" if (rating is not None and rating >= 3) else "default"
         self._log(f"[{index:03d}/{total}] {display_name} | {star_text} ({reason_short}) {flight_tag}| {time_text}", level)
     
     def _save_debug_crop(
