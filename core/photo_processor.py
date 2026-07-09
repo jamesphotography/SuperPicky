@@ -2118,9 +2118,16 @@ class PhotoProcessor:
                             scorer = get_iqa_scorer(device=get_best_device().type)
                             topiq_scorer = scorer
                     
-                        # V4.0.5: 复用已加载的原图，避免二次 JPEG 解码
-                        # orig_img 是 cv2.imread 已读取的 BGR numpy array
-                        if orig_img is not None:
+                        # V4.6(rating-v2/T2): TOPIQ 改打鸟裁剪区。整图分在鸟占画面
+                        # 小时实测≈给背景打分(与裁剪分相关性仅 0.24)，裁剪分才反映
+                        # 「这只鸟拍得好不好」；无裁剪时回退整图，保持向后兼容。
+                        # V4.6 (rating-v2/T2): score TOPIQ on the bird crop. When the
+                        # bird is small, whole-frame TOPIQ effectively rates the
+                        # background (r=0.24 vs crop, measured); fall back to the
+                        # whole image when no crop exists.
+                        if bird_crop_bgr is not None and bird_crop_bgr.size > 0:
+                            topiq = scorer.calculate_from_array(bird_crop_bgr)
+                        elif orig_img is not None:
                             topiq = scorer.calculate_from_array(orig_img)
                         else:
                             topiq = scorer.calculate_nima(filepath)
