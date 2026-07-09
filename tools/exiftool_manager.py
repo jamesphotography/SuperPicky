@@ -562,6 +562,34 @@ class ExifToolManager:
         """判断是否为 ARW 文件"""
         return Path(file_path).suffix.lower() == '.arw'
 
+    # exiftool 对无组前缀标签按内置优先级分组：以下裸标签名会落到 IPTC IIM。
+    # 写这些标签需要 UTF-8 字符集声明（见 set_metadata），未列出的冷门 IPTC
+    # 标签请显式写组前缀（如 'IPTC:FixtureIdentifier'）。
+    # exiftool assigns bare tag names to groups by built-in priority; these
+    # bare names resolve to IPTC IIM and need the UTF-8 charset declaration
+    # (see set_metadata). For uncommon IPTC tags not listed here, pass an
+    # explicit group prefix (e.g. 'IPTC:FixtureIdentifier').
+    _IPTC_BARE_TAGS = {
+        'caption-abstract', 'writer-editor', 'headline', 'keywords',
+        'object-name', 'city', 'sub-location', 'province-state',
+        'country-primarylocationname', 'country-primarylocationcode',
+        'by-line', 'by-linetitle', 'credit', 'source', 'copyrightnotice',
+        'specialinstructions', 'category', 'supplementalcategories',
+    }
+
+    @classmethod
+    def _is_iptc_tag(cls, tag_name: str) -> bool:
+        """
+        判断标签是否写入 IPTC IIM（需要 UTF-8 字符集声明）。
+
+        Whether the tag targets IPTC IIM (and therefore needs the UTF-8
+        charset declaration when written).
+        """
+        group, sep, bare = tag_name.partition(':')
+        if sep:
+            return group.strip().lower().startswith('iptc')
+        return tag_name.strip().lower() in cls._IPTC_BARE_TAGS
+
     def _write_metadata_subprocess(self, item: Dict[str, any], in_place: bool = False) -> bool:
         """写入元数据 (V4.0.6: 使用常驻进程)"""
         file_path = item.get('file')
@@ -854,6 +882,108 @@ class ExifToolManager:
         except Exception as e:
             print(f"❌ Error setting rating/pick: {e}")
             return False
+
+    def set_metadata(self, file_path: str, tags: Dict[str, str]) -> bool:
+        """
+        通用单文件元数据写入（V4.5，走 write 常驻进程）。
+
+        供 LR 插件服务器（birdid_server 的 /exif/write-title、/exif/write-caption）
+        和 birdid_cli 的 --write-exif 使用；此前两处调用的本方法并不存在（历史
+        重构中遗失），会抛 AttributeError 被上层 except 吞掉，功能一直失效。
+
+        写入策略与批量写路径保持一致：
+        - 全局 metadata_write_mode == "none" → 跳过写入并返回 True（用户配置意图）；
+        - ARW 或全局 sidecar 模式 → 只写 XMP 侧车，不动 RAW 本体；
+        - 所有值一律经 UTF-8 临时文件重定向（-TAG<=tmp.txt），满足仓库
+          「ExifTool 中文元数据必须走 UTF-8 临时文件」的硬性约定，
+          同时避免值中的换行破坏 -@ 参数流；
+        - 涉及 IPTC 标签（如 Caption-Abstract）时自动附加
+          -charset iptc=utf8 与 -CodedCharacterSet=UTF8，避免中文按
+          Latin-1 存储/误读（IPTC IIM 默认字符集陷阱）。
+
+        参数 / Parameters:
+            file_path (str): 目标文件路径 / target file path
+            tags (Dict[str, str]): 标签名→值，如 {'Title': '黑尾塍鹬 (Black-tailed Godwit)'}。
+                标签名可带组前缀（如 'XMP:Title'）；侧车模式下无组前缀自动补 XMP:。
+
+        返回 / Returns:
+            bool: 写入成功（或按配置跳过）为 True，失败为 False（不抛异常）。
+
+        Generic single-file metadata write routed to the persistent write
+        process. Used by the LR-plugin server endpoints and birdid_cli; this
+        method was previously missing (lost in a refactor) so those callers
+        always failed with a swallowed AttributeError. Policy matches the
+        batch path: honor metadata_write_mode "none", force XMP sidecar for
+        ARW / sidecar mode, and write every value via a UTF-8 temp file.
+        """
+        if not file_path or not os.path.exists(file_path) or not tags:
+            return False
+
+        global_mode = self._get_metadata_write_mode()
+        if global_mode == "none":
+            print(f"[ExifTool] metadata_write_mode=none, 跳过 set_metadata: {os.path.basename(file_path)}")
+            return True
+
+        # ARW 一律只写 XMP 侧车；全局 sidecar 模式下所有格式也走侧车
+        # ARW always goes to the XMP sidecar; global sidecar mode does too
+        use_sidecar = self._is_arw(file_path) or global_mode == "sidecar"
+
+        # 侧车只支持 XMP 组：IPTC 题注映射到 XMP:Description，无组前缀的标签补 XMP:
+        # Sidecars are XMP-only: map the IPTC caption tag to XMP:Description
+        # and add the XMP: group to bare tag names
+        sidecar_alias = {'caption-abstract': 'XMP:Description'}
+
+        target_path = os.path.splitext(file_path)[0] + '.xmp' if use_sidecar else file_path
+
+        args: List[str] = []
+        temp_files: List[str] = []
+        writes_iptc = False
+        try:
+            for tag, value in tags.items():
+                if value is None:
+                    continue
+                tag_name = str(tag).strip()
+                if use_sidecar:
+                    tag_name = sidecar_alias.get(tag_name.lower(), tag_name)
+                    if ':' not in tag_name:
+                        tag_name = f'XMP:{tag_name}'
+                elif self._is_iptc_tag(tag_name):
+                    writes_iptc = True
+                fd, tmp_path = tempfile.mkstemp(suffix='.txt', prefix='sp_tag_')
+                with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    f.write(str(value))
+                temp_files.append(tmp_path)
+                args.append(f'-{tag_name}<={tmp_path}')
+
+            if not args:
+                return False
+
+            # IPTC IIM 默认字符集是 Latin-1：写 IPTC 标签必须声明 UTF-8 并写入
+            # CodedCharacterSet 标记，否则中文按 Latin-1 存储变 '?'，或存成
+            # UTF-8 字节但被第三方软件（LR 等）按 Latin-1 误读（已实测验证）。
+            # XMP 原生 UTF-8，无此问题。
+            # IPTC IIM defaults to Latin-1: when writing IPTC tags we must both
+            # declare UTF-8 and write the CodedCharacterSet marker, otherwise
+            # Chinese becomes '?' (or unmarked UTF-8 bytes that third-party
+            # readers such as LR decode as Latin-1). Verified empirically.
+            # XMP is natively UTF-8 and unaffected.
+            if writes_iptc:
+                args = ['-charset', 'iptc=utf8', '-CodedCharacterSet=UTF8'] + args
+
+            # -overwrite_original_in_place 与其余写入路径一致（ExFAT 安全，保留 inode）
+            # Same flag as every other write path (ExFAT-safe, keeps the inode)
+            args.extend(['-overwrite_original_in_place', target_path])
+            return self._send_to_process(args, timeout=30)
+        except Exception as e:
+            print(f"❌ set_metadata error [{os.path.basename(file_path)}]: {e}")
+            return False
+        finally:
+            for tmp_path in temp_files:
+                try:
+                    if os.path.exists(tmp_path):
+                        os.remove(tmp_path)
+                except Exception:
+                    pass
 
     def batch_set_metadata(
         self,
