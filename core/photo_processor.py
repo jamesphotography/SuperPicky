@@ -2399,6 +2399,42 @@ class PhotoProcessor:
                         focus_status_en = "WORST"
             
                 # V3.9: 生成调试可视化图（仅对有鸟的照片）
+                # V4.6(rating-v2): 判定是否进入 V2 排序池(过全部硬门槛)。
+                # 前置到 debug 预览/日志之前:池内照片星级待收尾统一分配,
+                # 过程中预览与日志不显示星级,只显示指标/飞鸟/对焦。
+                # V4.6 (rating-v2): pool-membership check, moved before the debug
+                # preview/log — pool photos get stars in the post-pass, so the
+                # live preview/log show metrics/flight/focus instead of stars.
+                v2_in_pool = False
+                if v2_enabled and detected:
+                    _v2_exposure = is_overexposed or is_underexposed
+                    _v2_metrics = PhotoMetricsV2(
+                        key=original_prefix,
+                        detected=True,
+                        confidence=confidence,
+                        norm_sharpness=normalized_sharpness,
+                        topiq=topiq,
+                        best_eye=best_eye_visibility,
+                        beak_vis=beak_vis,
+                        is_flying=is_flying,
+                        focus_status=focus_status or "",
+                        has_exposure_issue=_v2_exposure,
+                        burst_id=self.burst_map.get(filepath) if self.burst_map else None,
+                    )
+                    if gate_photo_v2(_v2_metrics, min_confidence=confidence_threshold) is None:
+                        v2_in_pool = True
+                        v2_pending[original_prefix] = {
+                            'metrics': _v2_metrics,
+                            'items': [],
+                            'v1_rating': rating_value,
+                            'is_flying': is_flying,
+                            'has_exposure_issue': _v2_exposure,
+                            'is_focus_precise': focus_sharpness_weight > 1.0,
+                            'target_file': None,
+                            'adj_sharpness': None,
+                            'adj_topiq': None,
+                        }
+
                 should_build_debug = bool(self.callbacks.crop_preview or self.settings.save_crop)
                 if detected and should_build_debug and bird_crop_bgr is not None:
                     # 计算裁剪区域内的坐标
@@ -2448,7 +2484,7 @@ class PhotoProcessor:
                         )
                         # V4.2: 发送裁剪预览到 UI（同时传对焦状态供 dock 显示）
                         if debug_img is not None and self.callbacks.crop_preview:
-                            self.callbacks.crop_preview(debug_img, focus_status_en, rating_value)
+                            self.callbacks.crop_preview(debug_img, focus_status_en, None if v2_in_pool else rating_value)
                     except Exception as e:
                         print(f"  ⚠️ debug_crop 保存失败 [{filename}]: {e}")  # 调试图生成失败不影响主流程
                     add_photo_stage('debug_viz', (time.time() - debug_start) * 1000)
@@ -2456,45 +2492,19 @@ class PhotoProcessor:
                 # 计算真正总耗时并输出简化日志
                 photo_time_ms = (time.time() - photo_start_time) * 1000 + yolo_ms
                 has_exposure_issue = is_overexposed or is_underexposed
-                self._log_photo_result_simple(i, total_files, filename, rating_value, reason, photo_time_ms, is_flying, has_exposure_issue, focus_status)
+                if v2_in_pool:
+                    # V4.6(rating-v2): 池内照片星级待定,日志只报指标/飞鸟/对焦
+                    # V4.6 (rating-v2): pool photos log metrics only; stars come later
+                    pending_reason = self.i18n.t(
+                        "logs.pending_metrics",
+                        sharp=f"{normalized_sharpness:.0f}",
+                        nima=(f"{topiq:.1f}" if topiq is not None else "-"))
+                    self._log_photo_result_simple(i, total_files, filename, None, pending_reason, photo_time_ms, is_flying, has_exposure_issue, focus_status)
+                else:
+                    self._log_photo_result_simple(i, total_files, filename, rating_value, reason, photo_time_ms, is_flying, has_exposure_issue, focus_status)
 
                 # 记录统计（V4.2: 添加精焦判定）
                 is_focus_precise = focus_sharpness_weight > 1.0 if 'focus_sharpness_weight' in dir() else False
-
-                # V4.6(rating-v2/T3b): 判定是否进入 V2 排序池(过全部硬门槛)。
-                # 池内照片本轮 rating_value 仅为 v1 预估;星级相关的统计/EXIF/
-                # 评分记录挂起到 v2_pending,收尾按批内配额统一定星后回填。
-                # V4.6 (rating-v2/T3b): pool-membership check. Pool photos treat
-                # this iteration's rating_value as a provisional estimate; their
-                # star-dependent side effects are parked in v2_pending.
-                v2_in_pool = False
-                if v2_enabled and detected:
-                    _v2_metrics = PhotoMetricsV2(
-                        key=original_prefix,
-                        detected=True,
-                        confidence=confidence,
-                        norm_sharpness=normalized_sharpness,
-                        topiq=topiq,
-                        best_eye=best_eye_visibility,
-                        beak_vis=beak_vis,
-                        is_flying=is_flying,
-                        focus_status=focus_status or "",
-                        has_exposure_issue=has_exposure_issue,
-                        burst_id=self.burst_map.get(filepath) if self.burst_map else None,
-                    )
-                    if gate_photo_v2(_v2_metrics, min_confidence=confidence_threshold) is None:
-                        v2_in_pool = True
-                        v2_pending[original_prefix] = {
-                            'metrics': _v2_metrics,
-                            'items': [],
-                            'v1_rating': rating_value,
-                            'is_flying': is_flying,
-                            'has_exposure_issue': has_exposure_issue,
-                            'is_focus_precise': is_focus_precise,
-                            'target_file': None,
-                            'adj_sharpness': None,
-                            'adj_topiq': None,
-                        }
 
                 if not v2_in_pool:
                     self._update_stats(rating_value, is_flying, has_exposure_issue, is_focus_precise)
@@ -2799,6 +2809,14 @@ class PhotoProcessor:
         # then back-fill parked EXIF items (rating + caption head line), rating
         # records, stats, and the report DB.
         if v2_enabled and v2_pending:
+            # V4.6(rating-v2): 识鸟结果此刻已全部就绪(collect wait=True 在前),
+            # 填入 species 后配额将按鸟种分组执行;未识别/未开识鸟为 None(单组)。
+            # V4.6 (rating-v2): Bird ID results are all in by now; with species
+            # filled the quota runs per species (None = unknown / Bird ID off).
+            for prefix, pend in v2_pending.items():
+                info = self.file_bird_species.get(prefix)
+                if info:
+                    pend['metrics'].species = info.get('en_name') or info.get('cn_name')
             quota3 = get_quota3_for_skill(self.config.skill_level, self.config)
             v2_results = assign_ratings_v2(
                 [p['metrics'] for p in v2_pending.values()],
@@ -2852,6 +2870,28 @@ class PhotoProcessor:
                               * 100 / max(1, total_files)),
                 changed=v2_changed,
             ))
+            # 按鸟种打一行 3星/池内 分布(仅当存在识鸟结果时)
+            # Per-species "3-star / pool" breakdown (only when species exist)
+            if any(pend['metrics'].species for pend in v2_pending.values()):
+                is_zh = not self.i18n.current_lang.startswith('en')
+                unknown_label = "未识别" if is_zh else "unknown"
+                sp_stats: Dict[str, list] = {}
+                for prefix, pend in v2_pending.items():
+                    info = self.file_bird_species.get(prefix)
+                    if info:
+                        name = (info.get('cn_name') if is_zh else info.get('en_name')) \
+                            or info.get('en_name') or info.get('cn_name')
+                    else:
+                        name = unknown_label
+                    entry = sp_stats.setdefault(name, [0, 0])
+                    entry[1] += 1
+                    r = v2_results.get(prefix)
+                    if r is not None and r.rating == 3:
+                        entry[0] += 1
+                detail = " · ".join(
+                    f"{name} {c3}/{cn}" for name, (c3, cn) in
+                    sorted(sp_stats.items(), key=lambda kv: -kv[1][1]))
+                self._log(f"    {detail}")
 
         # 批量落盘 EXIF 队列（避免每张图一次写入）
         if metadata_batch:
@@ -2992,7 +3032,8 @@ class PhotoProcessor:
     ):
         """记录照片处理结果（简化版，单行输出）"""
         # Star text mapping - use short English format
-        star_map = {3: "3★", 2: "2★", 1: "1★", 0: "0★", -1: "-1★"}
+        # V4.6(rating-v2): rating=None 表示星级待收尾统一分配 / None = pending post-pass
+        star_map = {3: "3★", 2: "2★", 1: "1★", 0: "0★", -1: "-1★", None: "⏳"}
         star_text = star_map.get(rating, "?★")
         
         # V3.4: Flight tag

@@ -107,6 +107,41 @@ class TestQuotaAssignment(unittest.TestCase):
         self.assertEqual(qs, sorted(qs, reverse=True))
 
 
+class TestSpeciesQuota(unittest.TestCase):
+    def test_per_species_quota(self):
+        """识鸟开启时配额按鸟种独立执行 / quotas apply per species."""
+        # 80 张海鸥(高分) + 8 张塍鹬(低分):全局配额下塍鹬会全军覆没
+        gulls = [make_photo(f"g{i:02d}", sharp=800 - i, topiq=6.0, species="gull")
+                 for i in range(80)]
+        godwits = [make_photo(f"w{i}", sharp=400 - i, topiq=4.5, species="godwit")
+                   for i in range(8)]
+        res = assign_ratings(gulls + godwits, quota3=25, quota2=25)
+        gull3 = sum(1 for k, r in res.items() if k.startswith("g") and r.rating == 3)
+        godwit3 = sum(1 for k, r in res.items() if k.startswith("w") and r.rating == 3)
+        self.assertEqual(gull3, 20)    # ceil(80×25%)
+        self.assertEqual(godwit3, 2)   # ceil(8×25%) —— 不再与海鸥同池竞争
+        # 塍鹬进 3★ 的是种内 Q 最高者 / the godwit 3★s are its best shots
+        self.assertEqual(res["w0"].rating, 3)
+        self.assertEqual(res["w1"].rating, 3)
+
+    def test_rare_species_keeps_best_shot(self):
+        """小样本鸟种保底最好的 1 张(锐度兜底仍生效)/ singleton keeps its best."""
+        photos = [make_photo(f"g{i:02d}", sharp=800 - i, topiq=6.0, species="gull")
+                  for i in range(40)]
+        photos.append(make_photo("rare", sharp=350, topiq=4.2, species="rare_bird"))
+        photos.append(make_photo("rare_blurry", sharp=200, topiq=4.2, species="blurry_bird"))
+        res = assign_ratings(photos, quota3=20, quota2=25)
+        self.assertEqual(res["rare"].rating, 3)          # ceil(1×20%)=1 且过锐度兜底
+        self.assertLess(res["rare_blurry"].rating, 3)    # 锐度<300 兜底挡住
+
+    def test_no_species_falls_back_to_global(self):
+        """species 全为 None(未开识鸟)→ 单组,等价全局配额。"""
+        photos = [make_photo(f"p{i:03d}", sharp=800 - i * 5, topiq=6.5 - i * 0.02)
+                  for i in range(100)]
+        res = assign_ratings(photos, quota3=20, quota2=25)
+        self.assertEqual(sum(1 for r in res.values() if r.rating == 3), 20)
+
+
 class TestSkillQuota(unittest.TestCase):
     def test_mapping(self):
         self.assertEqual(get_quota3_for_skill("beginner"), 25.0)

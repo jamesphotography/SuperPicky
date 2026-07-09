@@ -69,6 +69,7 @@ class PhotoMetricsV2:
     focus_status: str = ""            # 'BEST'/'GOOD'/'BAD'/'WORST'/''(无数据)
     has_exposure_issue: bool = False
     burst_id: Optional[int] = None    # 连拍组 / burst group
+    species: Optional[str] = None     # 鸟种(识鸟结果;None=未识别/未开识鸟)/ species key
 
 
 @dataclass
@@ -192,28 +193,40 @@ def assign_ratings(
         ((compute_q(p, pct_sharp, pct_topiq), p) for p in pool),
         key=lambda x: -x[0])
 
-    n = len(scored)
-    cut3 = quota3 / 100.0
-    cut2 = (quota3 + quota2) / 100.0
+    # V4.6: 按鸟种分组执行配额——排序仍用全局 Q(小样本鸟种的种内百分位
+    # 噪声太大),但配额在组内切:每组 3★ 数 = ceil(组内张数 × quota3%),
+    # 小样本鸟种天然保底最好的 1 张(仍受锐度兜底/眼睛封顶约束)。
+    # 识鸟关闭或全部未识别时 species 均为 None → 单组,退化为全局配额。
+    # V4.6: quotas are applied per species — ranking still uses the global Q
+    # (within-species percentiles are too noisy for small groups), but each
+    # species gets ceil(group_size × quota3%) 3-star slots, so a rare species
+    # keeps its best shot (still subject to the sharpness floor / eye cap).
+    # With Bird ID off every species is None → one group → global quota.
+    groups: Dict[Optional[str], List[tuple]] = {}
+    for q, p in scored:  # scored 已按 Q 降序,组内顺序随之有序
+        groups.setdefault(p.species, []).append((q, p))
 
-    for idx, (q, p) in enumerate(scored):
-        frac = idx / n
-        if frac < cut3 and p.norm_sharpness >= QUOTA3_SHARP_FLOOR:
-            star = 3
-            reason_key = "rating_v2.top_quota"
-        elif frac < cut2:
-            star = 2
-            reason_key = "rating_v2.mid_quota"
-        else:
-            star = 1
-            reason_key = "rating_v2.rest_quota"
-        # 眼睛可见度封顶(保留现行降档精神)/ eye-visibility cap
-        if p.best_eye < EYE_CAP_THRESHOLD and star > 2:
-            star = 2
-            reason_key = "rating_v2.eye_capped"
-        results[p.key] = RatingV2Result(
-            star, q_score=q, reason_key=reason_key,
-            reason_args={"percent": math.ceil(max(frac, 1 / n) * 100)})
+    for members in groups.values():
+        gn = len(members)
+        c3 = math.ceil(gn * quota3 / 100.0)
+        c2 = math.ceil(gn * quota2 / 100.0)
+        for gidx, (q, p) in enumerate(members):
+            if gidx < c3 and p.norm_sharpness >= QUOTA3_SHARP_FLOOR:
+                star = 3
+                reason_key = "rating_v2.top_quota"
+            elif gidx < c3 + c2:
+                star = 2
+                reason_key = "rating_v2.mid_quota"
+            else:
+                star = 1
+                reason_key = "rating_v2.rest_quota"
+            # 眼睛可见度封顶(保留现行降档精神)/ eye-visibility cap
+            if p.best_eye < EYE_CAP_THRESHOLD and star > 2:
+                star = 2
+                reason_key = "rating_v2.eye_capped"
+            results[p.key] = RatingV2Result(
+                star, q_score=q, reason_key=reason_key,
+                reason_args={"percent": math.ceil((gidx + 1) * 100 / gn)})
 
     # 连拍组内 3★ 封顶:每组只留 Q 最高的前 N 张,其余降 2★
     # Per-burst 3-star cap: keep the top-N by Q, demote the rest to 2★
