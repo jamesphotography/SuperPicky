@@ -344,6 +344,40 @@ class SettingsCenter(QDialog):
         ai_row.addWidget(self._cull_ai_value_label)
         lay.addLayout(ai_row)
 
+        # V4.6(rating-v2/T4): v2 用单一「3星配额」滑块取代锐度/美学两个阈值滑块
+        # (星级=批内相对排序,阈值不再决定星级);v1 回滚开关下保留原两滑块。
+        # 范围 5-50 与 set_custom_quota3 的 clamp 一致(SSOT 约定)。
+        # V4.6 (rating-v2/T4): under v2 a single "3-star quota" slider replaces
+        # the sharpness/aesthetics threshold sliders (stars are batch-relative);
+        # the v1 rollback switch keeps the legacy sliders. Range 5-50 matches
+        # the set_custom_quota3 clamp (SSOT convention).
+        self._rating_v2 = cfg.rating_algorithm == "v2"
+        self._cull_quota = None
+        self._cull_sharp = None
+        self._cull_nima = None
+        if self._rating_v2:
+            from core.rating_quota import get_quota3_for_skill
+            quota_row = QHBoxLayout()
+            quota_label = QLabel(self.i18n.t("settings.culling_quota_label"))
+            quota_label.setStyleSheet(f"color:{COLORS['text_secondary']};font-size:12px;")
+            quota_label.setFixedWidth(160)
+            self._cull_quota = QSlider(Qt.Horizontal)
+            self._cull_quota.setRange(5, 50)
+            self._cull_quota.setValue(int(get_quota3_for_skill(self._current_skill_key, cfg)))
+            self._cull_quota_value_label = QLabel(f"{self._cull_quota.value()}%")
+            self._cull_quota_value_label.setFixedWidth(34)
+            self._cull_quota_value_label.setStyleSheet(
+                f"color:{COLORS['text_tertiary']};font-size:11px;"
+            )
+            self._cull_quota.valueChanged.connect(
+                lambda v: self._cull_quota_value_label.setText(f"{v}%")
+            )
+            self._cull_quota.valueChanged.connect(self._on_cull_threshold_changed)
+            quota_row.addWidget(quota_label)
+            quota_row.addWidget(self._cull_quota, 1)
+            quota_row.addWidget(self._cull_quota_value_label)
+            lay.addLayout(quota_row)
+
         # 锐度滑块 (200-600, int; 对应 min_sharpness)
         # Sharpness slider (200-600 integer; maps to min_sharpness)
         sharp_row = QHBoxLayout()
@@ -389,6 +423,16 @@ class SettingsCenter(QDialog):
         nima_row.addWidget(self._cull_nima, 1)
         nima_row.addWidget(self._cull_nima_value_label)
         lay.addLayout(nima_row)
+
+        # V4.6(rating-v2/T4): v2 下隐藏两个旧阈值滑块(仍构建,便于 v1 回滚与
+        # 既有测试),界面只显示上方的「3星配额」滑块。
+        # V4.6 (rating-v2/T4): under v2 hide the legacy threshold sliders (still
+        # constructed for the v1 rollback switch and existing tests); only the
+        # quota slider above is visible.
+        if self._rating_v2:
+            for w in (sharp_label, self._cull_sharp, self._cull_sharp_value_label,
+                      nima_label, self._cull_nima, self._cull_nima_value_label):
+                w.hide()
 
         # ── 检测开关区 / Detection section ───────────────────────────────────
         detect_title = QLabel(self.i18n.t("settings.culling_detect_section"))
@@ -894,6 +938,11 @@ class SettingsCenter(QDialog):
         th = get_skill_level_thresholds(level_key)
         self._suppress = True
         try:
+            # V4.6(rating-v2/T4): v2 下预设联动配额滑块;v1 联动旧阈值滑块
+            # V4.6 (rating-v2/T4): presets drive the quota slider under v2
+            if getattr(self, "_rating_v2", False) and self._cull_quota is not None:
+                from core.rating_quota import SKILL_QUOTA3, DEFAULT_QUOTA3
+                self._cull_quota.setValue(int(SKILL_QUOTA3.get(level_key, DEFAULT_QUOTA3)))
             self._cull_sharp.setValue(int(th[0]))
             self._cull_nima.setValue(int(round(th[1] * 10)))
         finally:
@@ -941,6 +990,10 @@ class SettingsCenter(QDialog):
         if self._current_skill_key == "custom":
             cfg.set_custom_sharpness(self._cull_sharp.value())
             cfg.set_custom_aesthetics(self._cull_nima.value() / 10.0)
+            # V4.6(rating-v2/T4): v2 自定义配额同步写回
+            # V4.6 (rating-v2/T4): persist the custom 3-star quota under v2
+            if getattr(self, "_rating_v2", False) and self._cull_quota is not None:
+                cfg.set_custom_quota3(self._cull_quota.value())
         cfg.save()
 
     # ── 输出页 / Output page ──────────────────────────────────────────────────

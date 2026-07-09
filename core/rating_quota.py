@@ -115,19 +115,27 @@ def compute_q(photo: PhotoMetricsV2, pct_sharp, pct_topiq) -> float:
     return q
 
 
-def gate_photo(photo: PhotoMetricsV2) -> Optional[RatingV2Result]:
+def gate_photo(
+    photo: PhotoMetricsV2,
+    min_confidence: float = MIN_CONFIDENCE,
+) -> Optional[RatingV2Result]:
     """
     硬门槛判定。返回 None 表示通过全部门槛(进入排序);否则返回终局结果。
 
+    参数:
+        photo: 照片指标
+        min_confidence: 置信度门槛(跟随用户 AI 置信度设置,默认 0.5)
+
     Hard-gate check. None means the photo passes every gate and enters the
-    ranking pool; otherwise the returned result is final.
+    ranking pool; otherwise the returned result is final. min_confidence
+    follows the user's AI-confidence setting.
     """
     if not photo.detected:
         return RatingV2Result(-1, reason_key="rating_engine.reject_no_bird")
-    if photo.confidence < MIN_CONFIDENCE:
+    if photo.confidence < min_confidence:
         return RatingV2Result(
             0, reason_key="rating_engine.low_confidence",
-            reason_args={"confidence": photo.confidence, "threshold": MIN_CONFIDENCE})
+            reason_args={"confidence": photo.confidence, "threshold": min_confidence})
     if photo.best_eye < KEYPOINT_VIS_MIN and photo.beak_vis < KEYPOINT_VIS_MIN:
         return RatingV2Result(1, reason_key="rating_engine.angle_poor")
     if photo.norm_sharpness < MIN_SHARPNESS:
@@ -146,6 +154,7 @@ def assign_ratings(
     quota3: float = DEFAULT_QUOTA3,
     quota2: float = DEFAULT_QUOTA2,
     burst_cap3: int = DEFAULT_BURST_CAP3,
+    min_confidence: float = MIN_CONFIDENCE,
 ) -> Dict[str, RatingV2Result]:
     """
     对一批照片统一定星(V2 主入口)。
@@ -167,7 +176,7 @@ def assign_ratings(
     pool: List[PhotoMetricsV2] = []
 
     for p in photos:
-        gated = gate_photo(p)
+        gated = gate_photo(p, min_confidence=min_confidence)
         if gated is not None:
             results[p.key] = gated
         else:

@@ -29,9 +29,11 @@
         →回填 EXIF(重写 caption 首行)/统计/DB rating→入队终批;i18n rating_v2.* 键
       - 已知留痕:循环中单张日志仍显示 v1 预估星级(收尾打 V2 汇总行);
         star2_reasons 仍按 v1 口径(2★子目录分类,待 T5/T6 时一并处理)
-- [ ] T4 skill_presets:阈值→配额映射(新手25/进阶20/大师10 + custom_quota3);
-      settings_center 精选页与首页快速面板滑块改配额语义(SSOT 约定:setter clamp=UI范围);
-      i18n 中英文案
+- [x] T4 配额 UI:设置中心精选页与首页快速面板均改「3星配额」单滑块(5-50,
+      与 set_custom_quota3 clamp 一致),v2 下隐藏旧阈值滑块(仍构建,供 v1 回滚
+      与既有测试);技能卡片联动配额;手动改配额→custom 档;i18n 中英已加。
+      顺带修复:硬门槛置信度改跟随用户 AI 置信度设置(gate_photo min_confidence
+      参数化,photo_processor 判池与终评均传 settings.ai_confidence)
 - [ ] T5 清偿口径不一致:DB adj_* = 评星实际输入(含ISO归一化);删 V3.8 加法加成残留
       (photo_processor:2178-2183,:2625 的 rating_sharpness/rating_topiq)
 - [ ] T6 结果浏览器改星联动:改星移动文件逻辑不变;重评星入口若用旧引擎需对齐(核查 rating_mover)

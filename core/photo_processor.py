@@ -2492,7 +2492,7 @@ class PhotoProcessor:
                         has_exposure_issue=has_exposure_issue,
                         burst_id=self.burst_map.get(filepath) if self.burst_map else None,
                     )
-                    if gate_photo_v2(_v2_metrics) is None:
+                    if gate_photo_v2(_v2_metrics, min_confidence=confidence_threshold) is None:
                         v2_in_pool = True
                         v2_pending[original_prefix] = {
                             'metrics': _v2_metrics,
@@ -2819,6 +2819,7 @@ class PhotoProcessor:
                 [p['metrics'] for p in v2_pending.values()],
                 quota3=quota3,
                 quota2=DEFAULT_QUOTA2,
+                min_confidence=self.settings.ai_confidence / 100.0,
             )
             v2_changed = 0
             for prefix, pend in v2_pending.items():
