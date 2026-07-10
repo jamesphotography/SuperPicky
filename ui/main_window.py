@@ -2991,7 +2991,6 @@ class SuperPickyMainWindow(QMainWindow):
         # stay constructed but hidden for the v1 rollback switch and tests.
         # Range 5-50 matches the set_custom_quota3 clamp (SSOT convention).
         from core.rating_quota import get_quota3_for_skill
-        self._rating_v2_ui = cfg.rating_algorithm == "v2"
         quota_layout = QHBoxLayout()
         quota_layout.setSpacing(16)
         quota_label = QLabel(self.i18n.t("labels.quota3_short"))
@@ -3012,13 +3011,13 @@ class SuperPickyMainWindow(QMainWindow):
         quota_layout.addWidget(self.quota_value)
         sliders_layout.addLayout(quota_layout)
 
-        if self._rating_v2_ui:
-            for w in (sharp_label, self.sharp_slider, self.sharp_value,
-                      nima_label, self.nima_slider, self.nima_value):
-                w.hide()
-        else:
-            for w in (quota_label, self.quota_slider, self.quota_value):
-                w.hide()
+        # V4.6(rating-v2/UI): 行控件存实例引用,供设置中心改算法后运行时切换
+        # V4.6 (rating-v2/UI): keep row-widget refs so visibility can be
+        # re-applied after the Settings Center changes the algorithm.
+        self._sharp_row_widgets = (sharp_label, self.sharp_slider, self.sharp_value)
+        self._nima_row_widgets = (nima_label, self.nima_slider, self.nima_value)
+        self._quota_row_widgets = (quota_label, self.quota_slider, self.quota_value)
+        self._apply_algo_visibility()
 
         params_layout.addLayout(sliders_layout)
         parent_layout.addWidget(params_frame)
@@ -3085,6 +3084,20 @@ class SuperPickyMainWindow(QMainWindow):
             return
         self.config.set_video_auto_process_in_main(bool(self.video_check.isChecked()))
 
+    def _apply_algo_visibility(self):
+        """
+        按 advanced_config.rating_algorithm 切换首页两组滑块可见性：
+        v2 显示「3星配额」行，v1 显示锐度/美学行，并同步 _rating_v2_ui。
+
+        Toggle the home quick-panel slider groups by rating_algorithm:
+        quota row under v2, legacy rows under v1; refresh _rating_v2_ui.
+        """
+        self._rating_v2_ui = self.config.rating_algorithm == "v2"
+        for w in self._quota_row_widgets:
+            w.setVisible(self._rating_v2_ui)
+        for w in self._sharp_row_widgets + self._nima_row_widgets:
+            w.setVisible(not self._rating_v2_ui)
+
     def _refresh_param_panel(self):
         """设置中心关闭后,从 advanced_config 刷新首页参数控件,保持两处一致(loading 守卫避免回写)。"""
         if not hasattr(self, "sharp_slider"):
@@ -3106,6 +3119,11 @@ class SuperPickyMainWindow(QMainWindow):
                 q = int(get_quota3_for_skill(cfg.skill_level, cfg))
                 self.quota_slider.setValue(q)
                 self.quota_value.setText(f"{q}%")
+            # V4.6(rating-v2/UI): 设置中心可能改了评星算法 → 重应用滑块可见性
+            # V4.6 (rating-v2/UI): the Settings Center may have switched the
+            # rating algorithm — re-apply slider-row visibility.
+            if hasattr(self, "_quota_row_widgets"):
+                self._apply_algo_visibility()
         finally:
             self._params_loading = False
 
