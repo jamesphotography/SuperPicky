@@ -142,6 +142,33 @@ class TestSpeciesQuota(unittest.TestCase):
         self.assertEqual(sum(1 for r in res.values() if r.rating == 3), 20)
 
 
+class TestPendingRatingLog(unittest.TestCase):
+    def test_log_photo_result_accepts_none_rating(self):
+        """
+        rating=None(星级待收尾分配)的日志路径不得抛异常。
+
+        回归:T9 曾漏改 _log_photo_result_simple 的着色分级比较
+        (rating >= 3),None 触发 TypeError 导致所有排序池照片被误标
+        「处理异常已跳过」。此测试钉住该路径。
+
+        Regression: the pending-rating (None) log path must not raise;
+        a missed `rating >= 3` comparison once knocked out every pool photo.
+        """
+        from core.photo_processor import PhotoProcessor
+        logs = []
+        proc = object.__new__(PhotoProcessor)
+        proc._log = lambda msg, level="default": logs.append((msg, level))
+        from tools.i18n import get_i18n
+        proc.i18n = get_i18n()
+        # 全星级 + None 都不得抛异常 / every rating incl. None must not raise
+        for rating in (3, 2, 1, 0, -1, None):
+            PhotoProcessor._log_photo_result_simple(
+                proc, 1, 10, "x.jpg", rating, "reason", 123.0, True, False, "BEST")
+        self.assertEqual(len(logs), 6)
+        self.assertIn("⏳", logs[-1][0])          # None → 待定符号
+        self.assertEqual(logs[-1][1], "default")  # None → 普通着色
+
+
 class TestSkillQuota(unittest.TestCase):
     def test_mapping(self):
         self.assertEqual(get_quota3_for_skill("beginner"), 25.0)
