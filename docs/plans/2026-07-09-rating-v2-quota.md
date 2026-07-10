@@ -47,6 +47,9 @@
       3星/池内 分布行
 - [x] T9 处理中显示去星级化(用户提议):池内照片星级待定,滚动日志显示
       「⏳ 锐度·美学」指标行(硬门槛终局照片照旧),右侧预览 rating 传 None
+- [x] T10 评星算法选择 UI(用户提议):设置中心精选页两张卡(V2 批内配额=默认推荐/
+      V1 绝对阈值=旧版),点卡即落盘+两处滑块可见性实时切换;
+      spec: docs/specs/2026-07-10-rating-algo-selector-design.md
 - [ ] T7 验证:单测全绿;同一目录 nightly vs dev 全流程对比(住处鸟片1 + Test-Superpicky);
       py_compile;中文 EXIF 写读回
 
