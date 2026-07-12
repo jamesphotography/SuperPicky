@@ -1112,10 +1112,21 @@ class ThumbnailGrid(QScrollArea):
 
     def keyPressEvent(self, event):
         key = event.key()
-        if key in (Qt.Key_Left, Qt.Key_Up):
+        if key == Qt.Key_Left:
             self._select_adjacent(-1)
-        elif key in (Qt.Key_Right, Qt.Key_Down):
+        elif key == Qt.Key_Right:
             self._select_adjacent(1)
+        elif key in (Qt.Key_Up, Qt.Key_Down):
+            # 键盘打星(Paul P0-3):Up/Down 交给宿主窗口的打星分支处理。
+            # 必须显式 ignore 并直接返回——不能落入 QScrollArea 默认滚动,
+            # 否则焦点在网格上时(点过缩略图后的常态)事件到不了窗口,
+            # 表现为「有时候打星不工作」(macOS 实测反馈)。
+            # Keyboard rating: hand Up/Down to the host window's rating
+            # branch. Explicitly ignore and return — falling through to
+            # QScrollArea's default scrolling would swallow the event
+            # whenever the grid has focus (the norm after clicking a tile),
+            # which surfaced as "rating keys sometimes don't work" on macOS.
+            event.ignore()
         else:
             super().keyPressEvent(event)
 

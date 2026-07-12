@@ -115,3 +115,41 @@ def test_rating_key_action_digits_and_arrows():
     assert _rating_key_action(Qt.Key_1, -1) == 1             # 数字键救回
     assert _rating_key_action(Qt.Key_F, 2) is None           # 无关键 / unrelated
     assert _rating_key_action(Qt.Key_2, None) == 2           # rating 缺失按 0 处理
+
+
+def test_grid_ignores_up_down_for_keyboard_rating():
+    """
+    回归钉(macOS Up/Down 打星失灵根因):ThumbnailGrid 曾把 Up/Down 消费为
+    「选相邻照片」,事件到不了宿主窗口的打星分支。修复后 Up/Down 必须
+    ignore 并冒泡,且不再移动选中;Left/Right 仍在网格内导航。
+
+    Regression pin for the macOS Up/Down rating bug: ThumbnailGrid used to
+    consume Up/Down as adjacent-selection so the host window's rating branch
+    never saw them. After the fix Up/Down must be ignored (bubbling to the
+    host) while Left/Right still navigate within the grid.
+    """
+    from PySide6.QtCore import Qt, QEvent
+    from PySide6.QtGui import QKeyEvent
+    from ui.thumbnail_grid import ThumbnailGrid
+
+    grid = ThumbnailGrid(get_i18n())
+    calls = []
+    grid._select_adjacent = lambda step: calls.append(step)
+
+    def _press(k):
+        ev = QKeyEvent(QEvent.KeyPress, k, Qt.NoModifier)
+        ev.setAccepted(True)  # 预置为已接受,检验 handler 是否显式 ignore
+        grid.keyPressEvent(ev)
+        return ev
+
+    # Up/Down: 必须 ignore(冒泡给宿主窗口打星),且不移动选中
+    for k in (Qt.Key_Up, Qt.Key_Down):
+        ev = _press(k)
+        assert not ev.isAccepted(), f"{k} should be ignored for host-window rating"
+    assert calls == [], "Up/Down must no longer move the selection"
+
+    # Left/Right: 仍然网格内导航
+    _press(Qt.Key_Left)
+    _press(Qt.Key_Right)
+    assert calls == [-1, 1]
+    grid.close()
