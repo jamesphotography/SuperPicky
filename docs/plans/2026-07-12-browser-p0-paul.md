@@ -31,7 +31,7 @@
 - Consumes: 既有 i18n 键 `browser.focus_state_best/good/bad`（zh: 精焦/合焦/失焦, en: Critical Focus/Good Focus/Soft）。
 - Produces: `_FOCUS_OPTIONS` 变为 3 元组 `(mode, statuses, color)`（去掉硬编码中文 label）；`FilterPanel._focus_checks[mode]` 的 checkbox 文本 = `i18n.t(f"browser.focus_state_{mode.lower()}")`。
 
-- [ ] **Step 1: 写失败测试（新建 test_browser_p0_paul.py）**
+- [x] **Step 1: 写失败测试（新建 test_browser_p0_paul.py）**
 
 ```python
 # -*- coding: utf-8 -*-
@@ -69,7 +69,7 @@ def test_focus_filter_labels_match_detail_panel_terms():
     panel.close()
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 ```bash
 cd /Users/jameszhenyu/Documents/JamesAPPS/SuperPicky2026
@@ -78,7 +78,7 @@ cd /Users/jameszhenyu/Documents/JamesAPPS/SuperPicky2026
 
 预期：FAIL（英文环境 `cb.text()=="BEST"`；中文环境硬编码值恰好相等也可能 PASS——若 PASS，改断言前先确认当前语言，本仓库默认 zh_CN 下硬编码「精焦」与 i18n 值一致会 PASS，此时直接进 Step 3 实现并保留测试作回归钉）。
 
-- [ ] **Step 3: 实现 `ui/filter_panel.py`**
+- [x] **Step 3: 实现 `ui/filter_panel.py`**
 
 3a. `_FOCUS_OPTIONS`（:55-60）去掉中文 label 字段：
 
@@ -115,7 +115,7 @@ _FOCUS_OPTIONS = [
             selected_focus = [s for _, statuses, _ in _FOCUS_OPTIONS for s in statuses]
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 ```bash
 .venv/bin/python -m pytest test_browser_p0_paul.py -v
@@ -123,7 +123,7 @@ _FOCUS_OPTIONS = [
 
 预期：PASS。
 
-- [ ] **Step 5: py_compile + 提交**
+- [x] **Step 5: py_compile + 提交**
 
 ```bash
 .venv/bin/python -m py_compile ui/filter_panel.py
@@ -144,7 +144,7 @@ git commit -m "fix(browser): 对焦筛选文案统一走 focus_state_* i18n,与�
 - Consumes: `_display_name(photo: dict) -> str`（保持原签名不变，仍被卡片使用）；detail_panel 既有控件 `self._val_species`（:418，自带点击复制）与既有 i18n 键 `browser.meta_species`（zh 鸟种/en Species，两语言包 :1227 均已存在）。
 - Produces: `thumbnail_grid._tile_label_text(photo: dict, burst_suffix: str = "") -> str`（模块级纯函数，返回 QLabel rich text：有鸟名两行、无鸟名单行）；detail_panel rows 中 `browser.meta_species` 行位于 `browser.meta_gbif_rarity` 之前。
 
-- [ ] **Step 1: 追加失败测试**
+- [x] **Step 1: 追加失败测试**
 
 ```python
 def test_tile_label_shows_species_and_filename():
@@ -185,7 +185,7 @@ def test_detail_panel_species_row_above_gbif():
 
 注意：`panel._meta_rows` 尚不存在——实现时把 rows 列表存成实例属性（`self._meta_rows = rows`），测试据此断言顺序。DetailPanel 构造函数若签名不同（先查 `class DetailPanel` 的 `__init__`），按实际调整测试构造行。
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 ```bash
 .venv/bin/python -m pytest test_browser_p0_paul.py -v -k "tile_label or species_row"
@@ -193,7 +193,7 @@ def test_detail_panel_species_row_above_gbif():
 
 预期：FAIL（`_tile_label_text` 未定义 / `_meta_rows` 无此属性）。
 
-- [ ] **Step 3: 实现 `ui/thumbnail_grid.py`**
+- [x] **Step 3: 实现 `ui/thumbnail_grid.py`**
 
 3a. 文件头 import 区加 `import html as _html`（放在现有 import 之后）。
 
@@ -240,7 +240,7 @@ def _tile_label_text(photo: dict, burst_suffix: str = "") -> str:
 
 （原 `fn = _display_name(photo)` / `if self.is_burst_group ...` 两行删除；`self.name_label` 后续 setAlignment/样式/MaxWidth 代码不变。）
 
-- [ ] **Step 4: 实现 `ui/detail_panel.py`**
+- [x] **Step 4: 实现 `ui/detail_panel.py`**
 
 4a. rows 注释与定义（:446-455）改为：
 
@@ -265,7 +265,7 @@ def _tile_label_text(photo: dict, burst_suffix: str = "") -> str:
         self._meta_rows = rows
 ```
 
-- [ ] **Step 5: 跑测试确认通过**
+- [x] **Step 5: 跑测试确认通过**
 
 ```bash
 .venv/bin/python -m pytest test_browser_p0_paul.py -v
@@ -273,7 +273,7 @@ def _tile_label_text(photo: dict, burst_suffix: str = "") -> str:
 
 预期：PASS（全部 3 个测试）。
 
-- [ ] **Step 6: py_compile + 提交**
+- [x] **Step 6: py_compile + 提交**
 
 ```bash
 .venv/bin/python -m py_compile ui/thumbnail_grid.py ui/detail_panel.py
@@ -294,7 +294,7 @@ git commit -m "feat(browser): 缩略图鸟名+文件名两行并显;详情面板
 - Consumes: 两个浏览器类各自已有的 `_on_rating_changed(photo_or_filename, new_rating)`（:1368 / :2463，全链路：DB+缩略图+EXIF+移动）；当前照片来源 `self._fullscreen._current_photo`（全屏）/ `self._detail_panel._current_photo`（网格）。
 - Produces: 模块级 `_rating_key_action(key: int, current_rating) -> Optional[int]`（None=与打星无关或星级无变化）；`FullscreenViewer.update_rating_display(photo: dict) -> None`（只刷新顶条星级/皇冠，不重载图片）。
 
-- [ ] **Step 1: 追加失败测试（纯函数）**
+- [x] **Step 1: 追加失败测试（纯函数）**
 
 ```python
 def test_rating_key_action_digits_and_arrows():
@@ -322,7 +322,7 @@ def test_rating_key_action_digits_and_arrows():
     assert _rating_key_action(Qt.Key_2, None) == 2           # rating 缺失按 0 处理
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 ```bash
 .venv/bin/python -m pytest test_browser_p0_paul.py::test_rating_key_action_digits_and_arrows -v
@@ -330,7 +330,7 @@ def test_rating_key_action_digits_and_arrows():
 
 预期：FAIL（`_rating_key_action` 未定义）。
 
-- [ ] **Step 3: 实现 `ui/results_browser_window.py` 模块级纯函数**
+- [x] **Step 3: 实现 `ui/results_browser_window.py` 模块级纯函数**
 
 放在 `_coerce_photo`（:56）之后：
 
@@ -375,7 +375,7 @@ def _rating_key_action(key: int, current_rating) -> Optional[int]:
 
 （文件头已有 `from typing import Optional` 则复用；没有则在 import 区补。）
 
-- [ ] **Step 4: 跑纯函数测试确认通过**
+- [x] **Step 4: 跑纯函数测试确认通过**
 
 ```bash
 .venv/bin/python -m pytest test_browser_p0_paul.py::test_rating_key_action_digits_and_arrows -v
@@ -383,7 +383,7 @@ def _rating_key_action(key: int, current_rating) -> Optional[int]:
 
 预期：PASS。
 
-- [ ] **Step 5: 接线 `ResultsBrowserWindow.keyPressEvent`（:1798）**
+- [x] **Step 5: 接线 `ResultsBrowserWindow.keyPressEvent`（:1798）**
 
 原 Up/Down 与 Left/Right 合并的两个分支拆开，并新增打星分支（方法整体结构保持）：
 
@@ -416,11 +416,11 @@ def _rating_key_action(key: int, current_rating) -> Optional[int]:
 
 （`elif key == Qt.Key_Tab:` 起既有分支不动。`_on_rating_changed` 已把新星级写回 `photo["rating"]`——它更新的是 `self._filtered_photos` 中的同一 dict 对象。）
 
-- [ ] **Step 6: 接线 `ResultsBrowserWidget.keyPressEvent`（:2897）**
+- [x] **Step 6: 接线 `ResultsBrowserWidget.keyPressEvent`（:2897）**
 
 该类结构与 Window 类同构（自查 :2897-2945 分支）；对 Up/Down/数字键做**完全相同**的改动：Left/Right 拆开保留翻图，`elif key in _RATING_KEYS:` 分支代码与 Step 5 相同（该类同样有 `self._fullscreen`、`self._detail_panel`、`self._on_rating_changed`，实现前用 grep 确认属性名一致，不一致则按该类实际属性调整）。
 
-- [ ] **Step 7: `ui/fullscreen_viewer.py` 移除 Up/Down 翻图 + 星级刷新方法**
+- [x] **Step 7: `ui/fullscreen_viewer.py` 移除 Up/Down 翻图 + 星级刷新方法**
 
 7a. `keyPressEvent`（:1359）：
 
@@ -464,7 +464,7 @@ def _rating_key_action(key: int, current_rating) -> Optional[int]:
         self.update_rating_display(photo)
 ```
 
-- [ ] **Step 8: 全量测试 + py_compile + GUI 冒烟**
+- [x] **Step 8: 全量测试 + py_compile + GUI 冒烟**
 
 ```bash
 .venv/bin/python -m pytest test_browser_p0_paul.py -v
@@ -473,7 +473,7 @@ def _rating_key_action(key: int, current_rating) -> Optional[int]:
 
 预期：4 测试全 PASS、编译通过。
 
-- [ ] **Step 9: 提交**
+- [x] **Step 9: 提交**
 
 ```bash
 git add ui/results_browser_window.py ui/fullscreen_viewer.py && git add -f test_browser_p0_paul.py
@@ -487,7 +487,7 @@ git commit -m "feat(browser): 键盘打星——数字键0-3直设,Up/Down星级
 **Files:**
 - Modify: 无新改动（验证与文档）
 
-- [ ] **Step 1: 相关测试全量回归**
+- [x] **Step 1: 相关测试全量回归**
 
 ```bash
 .venv/bin/python -m pytest test_browser_p0_paul.py test_settings_center.py test_main_window_settings_wiring.py test_rating_mover.py -v
@@ -495,11 +495,11 @@ git commit -m "feat(browser): 键盘打星——数字键0-3直设,Up/Down星级
 
 预期：全部 PASS。
 
-- [ ] **Step 2: 真实 GUI 冒烟（用户目录只读验证不可行时跳过移动验证）**
+- [x] **Step 2: 真实 GUI 冒烟（用户目录只读验证不可行时跳过移动验证）**
 
 用 Test-Superpicky 目录打开结果浏览器人工冒烟（用户执行）：英文界面对焦文案、缩略图两行标签、详情鸟种行、数字键/上下键改星并观察文件是否移动到对应星级目录。此步为用户验收项，代码侧完成后提醒用户。
 
-- [ ] **Step 3: 提交计划勾选状态**
+- [x] **Step 3: 提交计划勾选状态**
 
 ```bash
 git add docs/plans/2026-07-12-browser-p0-paul.md
