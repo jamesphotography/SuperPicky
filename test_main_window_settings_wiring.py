@@ -82,3 +82,33 @@ def test_refresh_skill_chip_method_exists():
         "_refresh_skill_chip method should exist for chip refresh"
     )
     w.close()
+
+
+def test_refresh_param_panel_switches_algo_slider_visibility():
+    """
+    验证设置中心改完评星算法后,首页 _refresh_param_panel 同步切换两组
+    滑块可见性(v1 显示锐度/美学,v2 显示配额)。只改内存配置不落盘。
+
+    Verify _refresh_param_panel swaps the two slider groups after the
+    Settings Center changes the rating algorithm (memory-only, no save).
+    """
+    from ui.main_window import SuperPickyMainWindow
+
+    w = SuperPickyMainWindow()
+    cfg = w.config
+    original = cfg.config.get("rating_algorithm", "v2")
+    try:
+        cfg.config["rating_algorithm"] = "v1"
+        w._refresh_param_panel()
+        assert w.quota_slider.isHidden()
+        assert not w.sharp_slider.isHidden() and not w.nima_slider.isHidden()
+        assert w._rating_v2_ui is False
+
+        cfg.config["rating_algorithm"] = "v2"
+        w._refresh_param_panel()
+        assert not w.quota_slider.isHidden()
+        assert w.sharp_slider.isHidden() and w.nima_slider.isHidden()
+        assert w._rating_v2_ui is True
+    finally:
+        cfg.config["rating_algorithm"] = original
+        w.close()

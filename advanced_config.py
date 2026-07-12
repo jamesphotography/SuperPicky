@@ -51,6 +51,10 @@ class AdvancedConfig:
         "custom_sharpness": 380,        # 自选模式下的锐度阈值
         "custom_aesthetics": 4.8,       # 自选模式下的美学阈值
 
+        # V4.6: 评星 V2(批内相对+配额) / Rating V2 (batch-relative + quota)
+        "rating_algorithm": "v2",       # "v1"(绝对阈值,回滚用) | "v2"(批内相对+配额)
+        "custom_quota3": 20,            # 自选模式下的 3★ 配额百分比 (5-50)
+
         # ARW 写入策略:
         #   sidecar: 只写 XMP 侧车，不修改 ARW（最安全，推荐）
         #   embedded: 直接写入 ARW
@@ -231,6 +235,25 @@ class AdvancedConfig:
         return self.config["min_nima"]
 
     # V3.2: 移除 max_brisque 属性
+
+    @property
+    def rating_algorithm(self) -> str:
+        """评星算法: "v2"=批内相对+配额(默认) | "v1"=绝对阈值(回滚开关)"""
+        value = self.config.get("rating_algorithm", "v2")
+        return value if value in ("v1", "v2") else "v2"
+
+    def set_rating_algorithm(self, value: str):
+        self.config["rating_algorithm"] = value if value in ("v1", "v2") else "v2"
+        self.save()
+
+    @property
+    def custom_quota3(self) -> float:
+        """自选模式下的 3★ 配额百分比 (clamp 5-50,与 UI 滑块范围一致)"""
+        return float(self.config.get("custom_quota3", 20))
+
+    def set_custom_quota3(self, value: float):
+        self.config["custom_quota3"] = max(5, min(50, int(value)))
+        self.save()
 
     @property
     def picked_top_percentage(self):

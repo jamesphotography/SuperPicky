@@ -16,7 +16,7 @@ import subprocess
 import sys
 from typing import Any, cast
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QStandardItem
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -112,6 +112,85 @@ _PAGE_TITLE_KEY: dict[str, str] = {
     "apps": "settings.nav_apps",
     "about": "settings.nav_about",
 }
+
+
+# ── 评星算法卡片 / Rating-algorithm card ─────────────────────────────────────
+
+
+class _AlgoCard(QFrame):
+    """
+    评星算法选择卡片（标题+描述+选中态），视觉样式与 SkillLevelCard 一致。
+    内容为任意标题/描述文本，不绑定 SKILL_PRESETS（故不复用 SkillLevelCard）。
+
+    Rating-algorithm selector card (title + description + selected state),
+    visually consistent with SkillLevelCard but content-agnostic (hence a
+    dedicated class instead of reusing the preset-bound SkillLevelCard).
+    """
+
+    clicked = Signal(str)  # 发射算法 key("v1"/"v2") / emits the algorithm key
+
+    def __init__(self, algo_key: str, title: str, desc: str,
+                 parent: QWidget | None = None) -> None:
+        """
+        参数 / Parameters:
+            algo_key (str): 算法 key，"v1" 或 "v2" / algorithm key.
+            title (str): 卡片标题 / card title.
+            desc (str): 卡片描述（自动换行）/ card description (word-wrapped).
+        """
+        super().__init__(parent)
+        self.algo_key = algo_key
+        self._selected = False
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedHeight(100)
+        self.setMinimumWidth(200)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(4)
+        layout.setAlignment(Qt.AlignCenter)
+
+        name_label = QLabel(title)
+        name_label.setAlignment(Qt.AlignCenter)
+        name_label.setStyleSheet(
+            f"color:{COLORS['text_primary']};font-size:14px;font-weight:600;"
+            "background:transparent;border:none;"
+        )
+        layout.addWidget(name_label)
+
+        desc_label = QLabel(desc)
+        desc_label.setAlignment(Qt.AlignCenter)
+        desc_label.setWordWrap(True)
+        desc_label.setStyleSheet(
+            f"color:{COLORS['text_tertiary']};font-size:11px;"
+            "background:transparent;border:none;"
+        )
+        layout.addWidget(desc_label)
+
+        self._update_style()
+
+    def set_selected(self, selected: bool) -> None:
+        """设置选中态并刷新样式 / Set selection state and refresh style."""
+        self._selected = selected
+        self._update_style()
+
+    def _update_style(self) -> None:
+        """按选中态应用边框/底色（与 SkillLevelCard 同款）。/ Apply style."""
+        if self._selected:
+            self.setStyleSheet(
+                f"QFrame {{background-color:{COLORS['accent']}20;"
+                f"border:2px solid {COLORS['accent']};border-radius:8px;}}"
+            )
+        else:
+            self.setStyleSheet(
+                f"QFrame {{background-color:{COLORS['bg_elevated']};"
+                f"border:2px solid {COLORS['border']};border-radius:8px;}}"
+                f"QFrame:hover {{border-color:{COLORS['accent']};}}"
+            )
+
+    def mousePressEvent(self, event) -> None:
+        """点击发射 clicked(algo_key) / Emit clicked(algo_key) on press."""
+        self.clicked.emit(self.algo_key)
+        super().mousePressEvent(event)
 
 
 # ── 主对话框 / Main Dialog ────────────────────────────────────────────────────
@@ -316,6 +395,35 @@ class SettingsCenter(QDialog):
         # 刷新初始选中态 / Refresh initial selection
         self._select_skill_radio(self._current_skill_key)
 
+        # ── 评星算法区 / Rating-algorithm section ────────────────────────────
+        # V4.6(rating-v2/UI): 暴露 rating_algorithm 为两张选择卡,默认 v2;
+        # 点卡即写盘、下次跑批生效,下方滑块可见性随算法实时切换。
+        # V4.6 (rating-v2/UI): expose rating_algorithm as two selector cards
+        # (default v2). Clicking persists immediately (takes effect next run)
+        # and swaps the slider rows below in real time.
+        self._rating_v2 = cfg.rating_algorithm == "v2"
+        algo_title = QLabel(self.i18n.t("settings.culling_algo_section"))
+        algo_title.setStyleSheet(
+            f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
+        )
+        lay.addWidget(algo_title)
+
+        algo_row = QHBoxLayout()
+        algo_row.setSpacing(8)
+        self._algo_cards: dict[str, _AlgoCard] = {}
+        for algo_key in ("v2", "v1"):
+            card = _AlgoCard(
+                algo_key,
+                self.i18n.t(f"settings.culling_algo_{algo_key}_title"),
+                self.i18n.t(f"settings.culling_algo_{algo_key}_desc"),
+            )
+            card.clicked.connect(self._on_algo_selected)
+            self._algo_cards[algo_key] = card
+            algo_row.addWidget(card)
+        algo_row.addStretch(1)
+        lay.addLayout(algo_row)
+        self._algo_cards["v2" if self._rating_v2 else "v1"].set_selected(True)
+
         # ── 阈值区 / Threshold section ────────────────────────────────────────
         thresh_title = QLabel(self.i18n.t("settings.culling_threshold_section"))
         thresh_title.setStyleSheet(
@@ -344,6 +452,36 @@ class SettingsCenter(QDialog):
         ai_row.addWidget(self._cull_ai_value_label)
         lay.addLayout(ai_row)
 
+        # V4.6(rating-v2/T4): v2 用单一「3星配额」滑块取代锐度/美学两个阈值滑块
+        # (星级=批内相对排序,阈值不再决定星级);v1 回滚开关下保留原两滑块。
+        # 范围 5-50 与 set_custom_quota3 的 clamp 一致(SSOT 约定)。
+        # V4.6 (rating-v2/T4): under v2 a single "3-star quota" slider replaces
+        # the sharpness/aesthetics threshold sliders (stars are batch-relative);
+        # the v1 rollback switch keeps the legacy sliders. Range 5-50 matches
+        # the set_custom_quota3 clamp (SSOT convention).
+        from core.rating_quota import get_quota3_for_skill
+        quota_row = QHBoxLayout()
+        quota_label = QLabel(self.i18n.t("settings.culling_quota_label"))
+        quota_label.setStyleSheet(f"color:{COLORS['text_secondary']};font-size:12px;")
+        quota_label.setFixedWidth(160)
+        self._cull_quota = QSlider(Qt.Horizontal)
+        self._cull_quota.setRange(5, 50)
+        self._cull_quota.setValue(int(get_quota3_for_skill(self._current_skill_key, cfg)))
+        self._cull_quota_value_label = QLabel(f"{self._cull_quota.value()}%")
+        self._cull_quota_value_label.setFixedWidth(34)
+        self._cull_quota_value_label.setStyleSheet(
+            f"color:{COLORS['text_tertiary']};font-size:11px;"
+        )
+        self._cull_quota.valueChanged.connect(
+            lambda v: self._cull_quota_value_label.setText(f"{v}%")
+        )
+        self._cull_quota.valueChanged.connect(self._on_cull_threshold_changed)
+        quota_row.addWidget(quota_label)
+        quota_row.addWidget(self._cull_quota, 1)
+        quota_row.addWidget(self._cull_quota_value_label)
+        lay.addLayout(quota_row)
+        self._quota_row_widgets = (quota_label, self._cull_quota, self._cull_quota_value_label)
+
         # 锐度滑块 (200-600, int; 对应 min_sharpness)
         # Sharpness slider (200-600 integer; maps to min_sharpness)
         sharp_row = QHBoxLayout()
@@ -366,6 +504,7 @@ class SettingsCenter(QDialog):
         sharp_row.addWidget(self._cull_sharp, 1)
         sharp_row.addWidget(self._cull_sharp_value_label)
         lay.addLayout(sharp_row)
+        self._sharp_row_widgets = (sharp_label, self._cull_sharp, self._cull_sharp_value_label)
 
         # 美学(NIMA)滑块 (40-70, 值/10 = NIMA; 对应 min_nima 4.0..7.0)
         # Aesthetics (NIMA) slider (40-70; value/10 = NIMA float; maps to min_nima 4.0..7.0)
@@ -389,6 +528,10 @@ class SettingsCenter(QDialog):
         nima_row.addWidget(self._cull_nima, 1)
         nima_row.addWidget(self._cull_nima_value_label)
         lay.addLayout(nima_row)
+        self._nima_row_widgets = (nima_label, self._cull_nima, self._cull_nima_value_label)
+
+        # 按当前算法应用滑块行可见性 / Apply slider-row visibility per algorithm
+        self._apply_algo_visibility()
 
         # ── 检测开关区 / Detection section ───────────────────────────────────
         detect_title = QLabel(self.i18n.t("settings.culling_detect_section"))
@@ -854,6 +997,41 @@ class SettingsCenter(QDialog):
 
     # ── 精选页协同逻辑 / Culling page coordination logic ──────────────────────
 
+    def _apply_algo_visibility(self) -> None:
+        """
+        按当前评星算法切换滑块行可见性：v2 显示「3星配额」行，v1 显示
+        锐度/美学阈值行（两套控件均常驻构建，只切显示）。
+
+        Toggle slider-row visibility by the current rating algorithm: the
+        quota row under v2, the legacy sharpness/aesthetics rows under v1
+        (both sets stay constructed; only visibility changes).
+        """
+        for w in self._quota_row_widgets:
+            w.setVisible(self._rating_v2)
+        for w in self._sharp_row_widgets + self._nima_row_widgets:
+            w.setVisible(not self._rating_v2)
+
+    def _on_algo_selected(self, algo_key: str) -> None:
+        """
+        评星算法卡片点击回调：立即持久化 rating_algorithm（下次跑批生效），
+        刷新卡片选中态并切换滑块行可见性。
+
+        Card click callback: persist rating_algorithm immediately (takes
+        effect on the next run), refresh card selection and slider rows.
+
+        参数 / Parameters:
+            algo_key (str): 被点击的算法 key（"v1"/"v2"）/ clicked key.
+        """
+        from advanced_config import get_advanced_config
+
+        cfg = get_advanced_config()
+        cfg.set_rating_algorithm(algo_key)
+        cfg.save()
+        self._rating_v2 = algo_key == "v2"
+        for key, card in self._algo_cards.items():
+            card.set_selected(key == algo_key)
+        self._apply_algo_visibility()
+
     def _select_skill_radio(self, level_key: str) -> None:
         """
         刷新技能等级卡片的选中状态。
@@ -894,6 +1072,11 @@ class SettingsCenter(QDialog):
         th = get_skill_level_thresholds(level_key)
         self._suppress = True
         try:
+            # V4.6(rating-v2/T4): v2 下预设联动配额滑块;v1 联动旧阈值滑块
+            # V4.6 (rating-v2/T4): presets drive the quota slider under v2
+            if getattr(self, "_rating_v2", False) and self._cull_quota is not None:
+                from core.rating_quota import SKILL_QUOTA3, DEFAULT_QUOTA3
+                self._cull_quota.setValue(int(SKILL_QUOTA3.get(level_key, DEFAULT_QUOTA3)))
             self._cull_sharp.setValue(int(th[0]))
             self._cull_nima.setValue(int(round(th[1] * 10)))
         finally:
@@ -941,6 +1124,10 @@ class SettingsCenter(QDialog):
         if self._current_skill_key == "custom":
             cfg.set_custom_sharpness(self._cull_sharp.value())
             cfg.set_custom_aesthetics(self._cull_nima.value() / 10.0)
+            # V4.6(rating-v2/T4): v2 自定义配额同步写回
+            # V4.6 (rating-v2/T4): persist the custom 3-star quota under v2
+            if getattr(self, "_rating_v2", False) and self._cull_quota is not None:
+                cfg.set_custom_quota3(self._cull_quota.value())
         cfg.save()
 
     # ── 输出页 / Output page ──────────────────────────────────────────────────

@@ -1,11 +1,39 @@
 # SuperPicky 4.5.0
 
 **4.5.0 is a focus release.** Building on the 4.3.0 LTS baseline, it
-concentrates on three things: making the core culling pipeline faster and more
-dependable, unifying all settings into a brand-new Settings Center, and
-streamlining the interface around the core workflow.
+concentrates on four things: a brand-new batch-relative star rating engine,
+making the core culling pipeline faster and more dependable, unifying all
+settings into a brand-new Settings Center, and streamlining the interface
+around the core workflow.
 
 ---
+
+## ⭐ Batch-Relative Star Rating (new)
+
+- Star ratings are now assigned **relative to the current batch** instead of
+  fixed absolute thresholds: photos that pass the hard gates (bird present,
+  minimum confidence / sharpness, visible keypoints) are ranked by a combined
+  quality score (sharpness + aesthetics percentiles, small bonuses for flight
+  and precise focus), and the best N% get 3 stars.
+- The 3-star quota is adjustable (5–50%, default 20%) and mapped to the skill
+  levels (Beginner 25% / Intermediate 20% / Master 8%); a single quota slider
+  replaces the sharpness / aesthetics threshold sliders on the home panel and
+  in the Settings Center.
+- With Bird ID enabled the quota is applied **per species** — every species
+  keeps its own best shots (a rare species keeps at least its single best
+  photo), so a long burst of one common bird no longer crowds out the others.
+  Note: the more species in a batch, the further the effective 3-star share
+  can round up above the quota value.
+- Aesthetic scoring (TOPIQ) now evaluates the bird crop instead of the whole
+  frame, so backgrounds no longer dominate the score.
+- Absolute floors remain: 3 stars still require a minimum normalized
+  sharpness, low eye visibility caps a photo at 2 stars, and burst groups
+  keep only a limited number of 3-star photos.
+- While processing, the log and preview show metrics only; final stars are
+  assigned in a single pass at the end — no more ratings jumping around
+  mid-run.
+- The legacy absolute-threshold algorithm is still available: Settings →
+  Culling → "Rating Algorithm" cards let you switch back to V1 (default V2).
 
 ## ⚡ Performance
 
@@ -112,10 +140,30 @@ codebase and may return in a future release.
 
 # SuperPicky 4.5.0（中文）
 
-**4.5.0 是一个聚焦版本。** 在 4.3.0 LTS 的基础上，集中做了三件事：让选鸟
-主流程更快更稳、把所有设置统一进全新的设置中心、并围绕核心工作流精简界面。
+**4.5.0 是一个聚焦版本。** 在 4.3.0 LTS 的基础上，集中做了四件事：全新的
+批内相对评星引擎、让选鸟主流程更快更稳、把所有设置统一进全新的设置中心、
+并围绕核心工作流精简界面。
 
 ---
+
+## ⭐ 批内相对评星（全新）
+
+- 星级改为**批内相对**分配，不再依赖固定绝对阈值：通过硬门槛（有鸟、
+  最低置信度/锐度、关键点可见）的照片按综合质量分排序（锐度+美学百分位，
+  飞行/精准对焦小幅加分），排名最好的前 N% 获得 3 星。
+- 3 星配额可调（5–50%，默认 20%），与摄影水平档位联动（新手 25% /
+  进阶 20% / 大师 8%）；首页与设置中心用单一「3星配额」滑块取代原来的
+  锐度/美学阈值双滑块。
+- 开启识鸟时配额**按鸟种分组**执行——每个鸟种都保住自己最好的照片
+  （罕见鸟至少保底 1 张），常见鸟的大连拍不再挤占其他鸟种的 3 星名额。
+  注意：一批照片鸟种越多，向上取整后的实际 3 星占比会越高于配额面值。
+- 美学评分（TOPIQ）改为针对鸟体裁剪区打分，背景不再干扰分数。
+- 绝对底线保留：3 星仍要求最低归一化锐度，眼睛不可见封顶 2 星，
+  连拍组内 3 星限量。
+- 处理过程中日志与预览只显示指标，星级在收尾阶段一次性统一分配，
+  不再出现处理中星级跳动。
+- 旧版绝对阈值算法仍可切换：设置中心 → 精选 →「评星算法」卡片可
+  切回 V1（默认 V2）。
 
 ## ⚡ 性能
 
