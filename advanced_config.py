@@ -170,6 +170,7 @@ class AdvancedConfig:
 
         # V4.4: 识鸟设置统一进 advanced_config(原 birdid_dock_settings.json)
         "birdid_auto_identify": False,
+        "birdid_write_keywords": True,  # 识别后写鸟名到 XMP-dc:Subject(LR 关键字,Paul P1-1)
         "birdid_use_ebird": True,
         "birdid_country_code": None,
         "birdid_selected_country": "自动检测 (GPS)",
@@ -763,6 +764,37 @@ class AdvancedConfig:
         bool: Whether auto bird identification is enabled.
         """
         return bool(self.config.get("birdid_auto_identify", False))
+
+    @property
+    def birdid_write_keywords(self) -> bool:
+        """
+        识别成功后是否把鸟名写入照片关键字(XMP-dc:Subject,Lightroom Keywords)。
+
+        返回:
+        bool: 是否写入关键字,默认 True
+
+        Whether to write the species name into the photo's keywords
+        (XMP-dc:Subject) after identification.
+
+        Return:
+        bool: Defaults to True.
+        """
+        return bool(self.config.get("birdid_write_keywords", True))
+
+    def set_birdid_write_keywords(self, value: bool):
+        """
+        设置「识别后写入关键字」开关并保存。
+
+        参数:
+        value (bool): 是否写入关键字
+
+        Set the write-keywords toggle and save.
+
+        Parameters:
+        value (bool): Whether to write species keywords.
+        """
+        self.config["birdid_write_keywords"] = bool(value)
+        self.save()
 
     @property
     def birdid_use_ebird(self) -> bool:

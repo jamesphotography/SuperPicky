@@ -72,3 +72,21 @@ def test_keywords_end_to_end_merge_and_idempotent():
 
         subjects = _exiftool_read_subject(jpg)
         assert subjects == ["UserKW", "白胸鸲鹟"], subjects
+
+
+def test_birdid_write_keywords_config_roundtrip():
+    """
+    开关默认 True;set 后落盘,重新加载读回 False。
+    Default True; persists to disk and reloads as False after set.
+    """
+    from advanced_config import AdvancedConfig
+
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+        tmp = f.name
+    try:
+        cfg = AdvancedConfig(config_file=tmp)
+        assert cfg.birdid_write_keywords is True          # 默认开 / default on
+        cfg.set_birdid_write_keywords(False)
+        assert AdvancedConfig(config_file=tmp).birdid_write_keywords is False
+    finally:
+        os.unlink(tmp)

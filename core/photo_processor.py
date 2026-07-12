@@ -1309,6 +1309,12 @@ class PhotoProcessor:
                             meta_item['iucn_category'] = iucn_category
                         if gbif_rarity_100 is not None:
                             meta_item['gbif_rarity_100'] = gbif_rarity_100
+                        # 鸟名关键字(Paul P1-1):开关开启时随 Title 一起 merge-add
+                        # 写入 XMP-dc:Subject(bird_title 已按界面语言选名)。
+                        # Species keyword (Paul P1-1): when enabled, merge-add
+                        # into XMP-dc:Subject alongside the Title write.
+                        if self.config.birdid_write_keywords:
+                            meta_item['keywords'] = [bird_title]
                         queue_metadata(meta_item)
             else:
                 # 低置信度：记日志，并将候选鸟名存入 file_bird_species 供 caption 使用
