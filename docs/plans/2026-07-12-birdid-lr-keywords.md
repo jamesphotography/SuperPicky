@@ -33,7 +33,7 @@
   - 模块级 `merge_keyword_lists(existing: List[str], additions: List[str]) -> Optional[List[str]]`（None=无新增；否则返回合并后完整列表，现有在前保序）。
   - `ExifToolManager._keywords_args(self, item: Dict, read_target: str, temp_files: List[str]) -> List[str]`（item 无 `keywords` 或无新增时返回 `[]`；否则返回 `['-sep', ';;', '-XMP-dc:Subject<=<tmp>']` 并把 tmp 路径挂入 temp_files 由调用方清理）。
 
-- [ ] **Step 1: 写失败测试（新建 test_birdid_lr_keywords.py）**
+- [x] **Step 1: 写失败测试（新建 test_birdid_lr_keywords.py）**
 
 ```python
 # -*- coding: utf-8 -*-
@@ -112,7 +112,7 @@ def test_keywords_end_to_end_merge_and_idempotent():
         assert subjects == ["UserKW", "白胸鸲鹟"], subjects
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 ```bash
 cd /Users/jameszhenyu/Documents/JamesAPPS/SuperPicky2026
@@ -121,7 +121,7 @@ cd /Users/jameszhenyu/Documents/JamesAPPS/SuperPicky2026
 
 预期：两个测试均 FAIL/ERROR（`merge_keyword_lists` 未定义）。
 
-- [ ] **Step 3: 实现 `tools/exiftool_manager.py`**
+- [x] **Step 3: 实现 `tools/exiftool_manager.py`**
 
 3a. 模块级纯函数（放在文件顶部工具函数区、类定义之前）：
 
@@ -239,7 +239,7 @@ def merge_keyword_lists(existing: List[str], additions: List[str]) -> Optional[L
 
 （复用该路径既有的 `caption_temp_files` 清理列表。）
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 ```bash
 .venv/bin/python -m pytest test_birdid_lr_keywords.py -v
@@ -247,7 +247,7 @@ def merge_keyword_lists(existing: List[str], additions: List[str]) -> Optional[L
 
 预期：2 passed（端到端用真实 exiftool + 常驻进程）。
 
-- [ ] **Step 5: py_compile + 提交**
+- [x] **Step 5: py_compile + 提交**
 
 ```bash
 .venv/bin/python -m py_compile tools/exiftool_manager.py
@@ -268,7 +268,7 @@ git commit -m "feat(birdid): exiftool_manager 支持 keywords merge-add 写入(X
 - Consumes: Task 1 的 `keywords` 字段语义。
 - Produces: `AdvancedConfig.birdid_write_keywords -> bool`（默认 True）、`set_birdid_write_keywords(value: bool)`（内部调 save，跟随 birdid_* 惯例）。
 
-- [ ] **Step 1: 追加失败测试**
+- [x] **Step 1: 追加失败测试**
 
 ```python
 def test_birdid_write_keywords_config_roundtrip():
@@ -289,7 +289,7 @@ def test_birdid_write_keywords_config_roundtrip():
         os.unlink(tmp)
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 ```bash
 .venv/bin/python -m pytest test_birdid_lr_keywords.py::test_birdid_write_keywords_config_roundtrip -v
@@ -297,7 +297,7 @@ def test_birdid_write_keywords_config_roundtrip():
 
 预期：FAIL（`AttributeError: birdid_write_keywords`）。
 
-- [ ] **Step 3: 实现 `advanced_config.py`**
+- [x] **Step 3: 实现 `advanced_config.py`**
 
 3a. `DEFAULT_CONFIG` birdid 段（`"birdid_auto_identify"` 行附近）加：
 
@@ -335,7 +335,7 @@ def test_birdid_write_keywords_config_roundtrip():
         self.save()
 ```
 
-- [ ] **Step 4: 接线 `core/photo_processor.py`（:1300-1312 高置信度写 Title 处）**
+- [x] **Step 4: 接线 `core/photo_processor.py`（:1300-1312 高置信度写 Title 处）**
 
 `meta_item` 构建后、`queue_metadata(meta_item)` 之前加：
 
@@ -348,7 +348,7 @@ def test_birdid_write_keywords_config_roundtrip():
                             meta_item['keywords'] = [bird_title]
 ```
 
-- [ ] **Step 5: 跑测试 + py_compile + 提交**
+- [x] **Step 5: 跑测试 + py_compile + 提交**
 
 ```bash
 .venv/bin/python -m pytest test_birdid_lr_keywords.py -v
@@ -372,7 +372,7 @@ git commit -m "feat(birdid): 识鸟收尾按开关写鸟名关键字(birdid_writ
 - Consumes: Task 2 的 `birdid_write_keywords` property / `set_birdid_write_keywords`。
 - Produces: `SettingsCenter._bid_keywords: QCheckBox`。
 
-- [ ] **Step 1: 追加失败测试**
+- [x] **Step 1: 追加失败测试**
 
 ```python
 def test_settings_center_keywords_checkbox_saves():
@@ -409,7 +409,7 @@ def test_settings_center_keywords_checkbox_saves():
 
 注意：`_save_birdid` 若实际方法名不同（grep `def _save_birdid` 确认；:957 上下文所在方法），按实际名调整测试与实现。
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 ```bash
 .venv/bin/python -m pytest test_birdid_lr_keywords.py::test_settings_center_keywords_checkbox_saves -v
@@ -417,7 +417,7 @@ def test_settings_center_keywords_checkbox_saves():
 
 预期：FAIL（`_bid_keywords` 不存在）。
 
-- [ ] **Step 3: i18n 键（`birdid_auto_label` 行之后插入，两文件同位置）**
+- [x] **Step 3: i18n 键（`birdid_auto_label` 行之后插入，两文件同位置）**
 
 `locales/zh_CN.json`：
 
@@ -433,7 +433,7 @@ def test_settings_center_keywords_checkbox_saves():
 
 （插入后 `python -c "import json; ..."` 校验两文件合法。）
 
-- [ ] **Step 4: 实现 `ui/settings_center.py`**
+- [x] **Step 4: 实现 `ui/settings_center.py`**
 
 4a. 识鸟页 `self._bid_auto` 之后（:638 `lay.addWidget(self._bid_auto)` 后）加：
 
@@ -452,7 +452,7 @@ def test_settings_center_keywords_checkbox_saves():
         cfg.set_birdid_write_keywords(self._bid_keywords.isChecked())
 ```
 
-- [ ] **Step 5: 跑全部测试 + py_compile + JSON 校验 + 提交**
+- [x] **Step 5: 跑全部测试 + py_compile + JSON 校验 + 提交**
 
 ```bash
 .venv/bin/python -m pytest test_birdid_lr_keywords.py -v
@@ -471,7 +471,7 @@ git commit -m "feat(birdid): 设置中心识鸟页「写入关键字」开关(�
 **Files:**
 - Modify: 无新改动（验证与文档）
 
-- [ ] **Step 1: 相关测试全量回归**
+- [x] **Step 1: 相关测试全量回归**
 
 ```bash
 .venv/bin/python -m pytest test_birdid_lr_keywords.py test_settings_center.py test_exiftool_set_metadata.py test_browser_p0_paul.py -v
@@ -479,13 +479,13 @@ git commit -m "feat(birdid): 设置中心识鸟页「写入关键字」开关(�
 
 预期：全部 PASS（`test_exiftool_set_metadata.py` 覆盖既有元数据写入不被 keywords 改动破坏）。
 
-- [ ] **Step 2: 用户验收提示**
+- [x] **Step 2: 用户验收提示**
 
 提醒用户：跑一次带识鸟的小目录，在 Lightroom 里确认关键字面板出现鸟名、
 用户已有关键字未丢失；重跑同目录关键字不重复。ARW 验证 .xmp 侧车中
 `<dc:subject>` 列表。
 
-- [ ] **Step 3: 计划勾选 + 提交**
+- [x] **Step 3: 计划勾选 + 提交**
 
 ```bash
 git add docs/plans/2026-07-12-birdid-lr-keywords.md
