@@ -54,3 +54,39 @@ def test_focus_filter_labels_use_i18n_in_english_ui():
         cb = panel._focus_checks[mode]
         assert cb.text() == f"<browser.focus_state_{mode.lower()}>", cb.text()
     panel.close()
+
+
+def test_tile_label_shows_species_and_filename():
+    """
+    有鸟种时卡片标签两行并显(鸟名+文件名),无鸟种时只显示文件名。
+    With a species the tile label carries both species and filename;
+    without a species it falls back to the filename only.
+    """
+    from ui.thumbnail_grid import _tile_label_text
+
+    photo = {"filename": "DSC01234.ARW",
+             "bird_species_cn": "白胸鸲鹟", "bird_species_en": "White-breasted Robin"}
+    text = _tile_label_text(photo)
+    assert "DSC01234.ARW" in text
+    assert ("白胸鸲鹟" in text) or ("White-breasted Robin" in text)
+
+    no_species = {"filename": "DSC09999.NEF"}
+    assert _tile_label_text(no_species) == "DSC09999.NEF"
+
+    # 连拍后缀跟在第一行(鸟名)之后 / burst suffix stays on the first line
+    text2 = _tile_label_text(photo, " (5)")
+    assert "(5)" in text2.split("<br/>")[0]
+
+
+def test_detail_panel_species_row_above_gbif():
+    """
+    详情面板 rows 中鸟种行存在且位于全球罕见度行之前(Paul 截图诉求)。
+    The species row exists in the detail panel and sits above GBIF rarity.
+    """
+    from ui.detail_panel import DetailPanel
+
+    panel = DetailPanel(get_i18n())
+    keys = [k for k, _ in panel._meta_rows]
+    assert "browser.meta_species" in keys
+    assert keys.index("browser.meta_species") < keys.index("browser.meta_gbif_rarity")
+    panel.close()

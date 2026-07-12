@@ -6,6 +6,7 @@ ThumbnailCard: 单张照片卡片（评分角标 + 对焦指示点）
 ThumbnailLoader: QThread 后台加载缩略图
 """
 
+import html as _html
 import os
 import threading
 from collections import OrderedDict
@@ -31,6 +32,33 @@ def _display_name(photo: dict) -> str:
     else:
         species = photo.get("bird_species_cn") or photo.get("bird_species_en")
     return species or photo.get("filename", "")
+
+
+def _tile_label_text(photo: dict, burst_suffix: str = "") -> str:
+    """
+    卡片底部标签文本:有鸟种时两行 rich text(第一行鸟名+连拍后缀,第二行
+    文件名小一号灰字),无鸟种时返回纯文件名单行(Paul 反馈 P0-2)。
+
+    Tile label text: with a species, two rich-text lines (species + burst
+    suffix, then the filename in smaller muted type); otherwise just the
+    plain filename.
+
+    参数 / Parameters:
+        photo (dict): 照片记录 / photo record.
+        burst_suffix (str): 连拍数量后缀,如 " (5)" / burst-count suffix.
+
+    返回 / Returns:
+        str: QLabel 文本(含 HTML 时 QLabel 自动按 rich text 渲染)。
+    """
+    primary = _display_name(photo)
+    filename = photo.get("filename", "")
+    if primary and primary != filename:
+        return (
+            f"{_html.escape(primary + burst_suffix)}<br/>"
+            f"<span style='font-size:9px;color:{COLORS['text_muted']};'>"
+            f"{_html.escape(filename)}</span>"
+        )
+    return primary + burst_suffix
 
 
 # 对焦状态指示颜色（WORST 不显示圆点）
@@ -394,12 +422,12 @@ class ThumbnailCard(QFrame):
         self.img_label.setText("") 
         layout.addWidget(self.img_label)
 
-        # 卡片底部:默认显示鸟种(无则文件名);悬停整张卡显示文件名
-        fn = _display_name(photo)
-        if self.is_burst_group and self.burst_count > 1:
-            fn = f"{fn} ({self.burst_count})"
+        # 卡片底部:鸟种+文件名两行并显(无鸟种时单行文件名);悬停显示文件名
+        # Tile footer: species + filename on two lines (filename only when
+        # no species); the tooltip still shows the filename.
+        burst_suffix = f" ({self.burst_count})" if (self.is_burst_group and self.burst_count > 1) else ""
         self.setToolTip(photo.get("filename", ""))
-        self.name_label = QLabel(fn)
+        self.name_label = QLabel(_tile_label_text(photo, burst_suffix))
         self.name_label.setAlignment(Qt.AlignCenter)
         self.name_label.setStyleSheet(f"""
             QLabel {{
