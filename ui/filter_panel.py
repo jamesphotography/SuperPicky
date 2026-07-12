@@ -50,12 +50,15 @@ _RATING_OPTIONS = [
 # photographers typically review first.
 _DEFAULT_RATINGS = {"3", "2"}
 
-# 对焦按钮配置 (mode_key, label, statuses_list, color_key)
-# statuses_list 是传给 DB 的 focus_status 列表
+# 对焦按钮配置 (mode_key, statuses_list, color_key)
+# statuses_list 是传给 DB 的 focus_status 列表;显示文案统一走
+# browser.focus_state_* i18n 键,与右侧详情面板同词(Paul 反馈 P0-1)。
+# Focus filter config (mode_key, statuses, color). Labels come from the
+# browser.focus_state_* i18n keys so both panel sides use the same terms.
 _FOCUS_OPTIONS = [
-    ("BEST",  "精焦", ["BEST"],         COLORS['focus_best']),
-    ("GOOD",  "合焦", ["GOOD"],         COLORS['focus_good']),
-    ("BAD",   "失焦", ["BAD", "WORST"], COLORS['focus_bad']),   # 失焦 = BAD + WORST 合并
+    ("BEST", ["BEST"],         COLORS['focus_best']),
+    ("GOOD", ["GOOD"],         COLORS['focus_good']),
+    ("BAD",  ["BAD", "WORST"], COLORS['focus_bad']),   # 失焦 = BAD + WORST 合并
 ]
 _DEFAULT_FOCUS = "BEST"
 
@@ -350,9 +353,7 @@ class FilterPanel(QWidget):
     # ------------------------------------------------------------------
 
     def _build_focus_checkboxes(self) -> QWidget:
-        """3个对焦多选 checkbox（精焦/合焦/失焦），默认全选。"""
-        _is_zh = not getattr(self.i18n, 'current_lang', 'zh_CN').startswith('en')
-
+        """3个对焦多选 checkbox（精焦/合焦/失焦），默认全选。文案走 i18n，与详情面板同词。"""
         w = QWidget()
         w.setStyleSheet("background: transparent;")
         row = QHBoxLayout(w)
@@ -362,8 +363,8 @@ class FilterPanel(QWidget):
         # 默认勾选全部对焦状态，避免 burst 结果被默认 focus 再过滤一次
         _defaults = set(_DEFAULT_CHECKED_FOCUS)
 
-        for mode, label_zh, statuses, color in _FOCUS_OPTIONS:
-            label = label_zh if _is_zh else mode
+        for mode, statuses, color in _FOCUS_OPTIONS:
+            label = self.i18n.t(f"browser.focus_state_{mode.lower()}")
             cb = QCheckBox(label)
             cb.setChecked(mode in _defaults)
             cb.setStyleSheet(
@@ -470,13 +471,13 @@ class FilterPanel(QWidget):
 
         # 对焦：所有勾选的 checkbox 对应的 statuses 合并
         selected_focus = []
-        for mode, label_zh, statuses, color in _FOCUS_OPTIONS:
+        for mode, statuses, color in _FOCUS_OPTIONS:
             cb = self._focus_checks.get(mode)
             if cb and cb.isChecked():
                 selected_focus.extend(statuses)
         if not selected_focus:
             # 全取消时降级为全选，避免空结果
-            selected_focus = [s for _, _, statuses, _ in _FOCUS_OPTIONS for s in statuses]
+            selected_focus = [s for _, statuses, _ in _FOCUS_OPTIONS for s in statuses]
 
         # 飞行
         is_flying = [v for v, cb in self._flight_cbs.items() if cb.isChecked()]
