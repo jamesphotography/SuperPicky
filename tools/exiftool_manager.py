@@ -21,6 +21,32 @@ import queue
 import atexit
 
 
+def merge_keyword_lists(existing: List[str], additions: List[str]) -> Optional[List[str]]:
+    """
+    合并关键字列表(merge-add 语义):保留 existing 全量与顺序,追加
+    additions 中缺失项(输入自身去重);无新增返回 None(调用方跳过写入)。
+
+    Merge keyword lists (merge-add): keep all of `existing` in order,
+    append items from `additions` not yet present (deduping the input);
+    return None when nothing new needs writing.
+
+    参数 / Parameters:
+        existing (List[str]): 文件中已有关键字 / keywords already on file.
+        additions (List[str]): 需确保存在的关键字 / keywords to ensure.
+
+    返回 / Returns:
+        Optional[List[str]]: 合并后完整列表;None=无需写入。
+    """
+    merged = list(existing)
+    seen = set(existing)
+    for kw in additions:
+        kw = (kw or "").strip()
+        if kw and kw not in seen:
+            merged.append(kw)
+            seen.add(kw)
+    return merged if len(merged) != len(existing) else None
+
+
 class _ExifToolProcess:
     """
     单个 exiftool -stay_open 常驻进程的封装（进程句柄 + stdout 读取线程 + 锁）。
@@ -623,6 +649,9 @@ class ExifToolManager:
             args.append(f'-XMP-iptcExt:Event={item["gbif_rarity_100"]:.2f}')
         temp_files: List[str] = []
 
+        # 鸟名关键字(merge-add,Paul P1-1) / species keywords (merge-add)
+        args.extend(self._keywords_args(item, file_path, temp_files))
+
         title = item.get('title')
         if title is not None:
             try:
@@ -668,6 +697,59 @@ class ExifToolManager:
                 except Exception:
                     pass
 
+    def _read_subject_list(self, file_path: str) -> List[str]:
+        """
+        读取文件现有 XMP-dc:Subject 关键字列表(经常驻读进程)。
+        文件不存在/无标签/读取失败均返回空列表。
+
+        Read the current XMP-dc:Subject list via the resident read
+        process; returns [] when missing/absent/unreadable.
+        """
+        if not file_path or not os.path.exists(file_path):
+            return []
+        try:
+            data = self.read_metadata(file_path, extra_args=['-XMP-dc:Subject']) or {}
+        except Exception:
+            return []
+        subj = data.get('Subject')
+        if subj is None:
+            return []
+        return [subj] if isinstance(subj, str) else [str(s) for s in subj]
+
+    def _keywords_args(self, item: Dict[str, any], read_target: str,
+                       temp_files: List[str]) -> List[str]:
+        """
+        为 item['keywords'](若有)生成 merge-add 写入参数。
+
+        读 read_target 现有关键字 → merge_keyword_lists 合并 → 无新增返回 [];
+        有新增则把完整列表以 ";;" 连接写入 UTF-8 临时文件,返回
+        ['-sep', ';;', '-XMP-dc:Subject<=<tmp>'](临时文件挂入 temp_files
+        由调用方统一清理)。整表赋值经临时文件,符合中文 UTF-8 铁律;
+        exiftool 不支持 '+=<file' 追加(2026-07-12 实验验证),故用
+        读-合并-整表回写实现幂等追加。
+
+        Build merge-add write args for item['keywords']: read the current
+        list from read_target, merge, and when something new is needed
+        write the full ";;"-joined list through a UTF-8 temp file
+        (-sep ';;' -XMP-dc:Subject<=tmp). exiftool has no '+=<file'
+        append form (verified 2026-07-12), hence read-merge-rewrite.
+        """
+        keywords = item.get('keywords')
+        if not keywords:
+            return []
+        merged = merge_keyword_lists(self._read_subject_list(read_target), keywords)
+        if merged is None:
+            return []
+        try:
+            fd, tmp_path = tempfile.mkstemp(suffix='.txt', prefix='sp_keywords_')
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                f.write(';;'.join(merged))
+            temp_files.append(tmp_path)
+            return ['-sep', ';;', f'-XMP-dc:Subject<={tmp_path}']
+        except Exception as e:
+            print(f"⚠️ Keywords temp file failed: {e}, skip keywords write")
+            return []
+
     def _write_metadata_xmp_sidecar(self, item: Dict[str, any]) -> bool:
         """写入 XMP 侧车文件 (V4.0.6: 使用常驻进程)"""
         file_path = item.get('file')
@@ -696,6 +778,12 @@ class ExifToolManager:
         if item.get('gbif_rarity_100') is not None:
             args.append(f'-XMP-iptcExt:Event={item["gbif_rarity_100"]:.2f}')
         temp_files: List[str] = []
+
+        # 鸟名关键字:侧车存在读侧车,否则读文件本体(LR 惯例侧车优先)
+        # Species keywords: read the sidecar when present, else the file
+        # itself (LR gives sidecars precedence for proprietary RAW).
+        kw_read_target = xmp_path if os.path.exists(xmp_path) else file_path
+        args.extend(self._keywords_args(item, kw_read_target, temp_files))
 
         # UTF-8 temp file for Title/Caption
         title = item.get('title')
@@ -1086,6 +1174,9 @@ class ExifToolManager:
             if item.get('focus_status') is not None:
                 args_list.append(f'-XMP:Country={item["focus_status"]}')
                 
+            # 鸟名关键字(merge-add,Paul P1-1) / species keywords (merge-add)
+            args_list.extend(self._keywords_args(item, file_path, caption_temp_files))
+
             # Title（使用临时 UTF-8 文件，与 Caption 保持一致，避免非 ASCII 编码风险）
             if item.get('title') is not None:
                 try:

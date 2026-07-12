@@ -1,0 +1,74 @@
+# -*- coding: utf-8 -*-
+"""
+识鸟结果写入 Lightroom 关键字(XMP-dc:Subject)的测试:纯合并逻辑 +
+真实 exiftool 端到端(含中文/幂等/保留用户关键字)。
+
+Tests for writing Bird ID results into Lightroom keywords: pure merge
+logic plus a real-exiftool end-to-end roundtrip (Chinese values,
+idempotency, preservation of user keywords).
+"""
+import os
+import subprocess
+import tempfile
+
+import pytest
+
+
+def test_merge_keyword_lists_semantics():
+    """
+    合并语义:保留已有、追加缺失、去重、无新增返回 None、中文正常。
+    Merge semantics: keep existing, append missing, dedup, None when
+    nothing to add, Chinese values handled.
+    """
+    from tools.exiftool_manager import merge_keyword_lists
+
+    assert merge_keyword_lists([], ["白胸鸲鹟"]) == ["白胸鸲鹟"]
+    assert merge_keyword_lists(["UserKW"], ["白胸鸲鹟"]) == ["UserKW", "白胸鸲鹟"]
+    assert merge_keyword_lists(["白胸鸲鹟"], ["白胸鸲鹟"]) is None      # 已存在
+    assert merge_keyword_lists(["A", "B"], ["B", "A"]) is None          # 全存在
+    assert merge_keyword_lists(["A"], ["B", "B"]) == ["A", "B"]         # 输入去重
+    assert merge_keyword_lists([], []) is None                          # 空输入
+
+
+def _exiftool_read_subject(path: str):
+    out = subprocess.run(
+        ["exiftool", "-j", "-XMP-dc:Subject", path],
+        capture_output=True, text=True, encoding="utf-8",
+    ).stdout
+    import json
+    data = json.loads(out)[0]
+    subj = data.get("Subject", [])
+    return [subj] if isinstance(subj, str) else subj
+
+
+@pytest.mark.skipif(
+    subprocess.run(["which", "exiftool"], capture_output=True).returncode != 0,
+    reason="exiftool not on PATH",
+)
+def test_keywords_end_to_end_merge_and_idempotent():
+    """
+    端到端:临时 JPG 预置用户关键字 → manager 写鸟名关键字 → 读回含两者;
+    重复写第二次不产生重复(幂等)。
+
+    End-to-end: seed a user keyword on a temp JPG, write the species
+    keyword through the manager, read back both; a second write adds no
+    duplicates (idempotent).
+    """
+    from PIL import Image
+    from tools.exiftool_manager import get_exiftool_manager
+
+    with tempfile.TemporaryDirectory() as td:
+        jpg = os.path.join(td, "kw_test.jpg")
+        Image.new("RGB", (8, 8), (200, 120, 40)).save(jpg, "JPEG")
+        subprocess.run(
+            ["exiftool", "-overwrite_original", "-XMP-dc:Subject=UserKW", jpg],
+            capture_output=True, check=True,
+        )
+
+        mgr = get_exiftool_manager()
+        for _ in range(2):  # 第二次验证幂等 / second pass proves idempotency
+            stats = mgr.batch_set_metadata([{"file": jpg, "keywords": ["白胸鸲鹟"]}])
+            assert stats["failed"] == 0
+
+        subjects = _exiftool_read_subject(jpg)
+        assert subjects == ["UserKW", "白胸鸲鹟"], subjects
