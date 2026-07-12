@@ -593,6 +593,7 @@
     "culling_burst_fps_label": "连拍速度 (张/秒)",
     "birdid_section_auto": "自动识鸟",
     "birdid_auto_label": "自动识别鸟种（2星及以上照片）",
+    "birdid_keywords_label": "识别后写入照片关键字（Lightroom Keywords）",
     "birdid_section_conf": "置信度阈值",
     "birdid_conf_label": "识别置信度",
     "birdid_section_source": "数据源",

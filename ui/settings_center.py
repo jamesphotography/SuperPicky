@@ -638,6 +638,12 @@ class SettingsCenter(QDialog):
         self._bid_auto.setStyleSheet(self._checkbox_qss())
         lay.addWidget(self._bid_auto)
 
+        # 写入关键字开关(Paul P1-1) / write-keywords toggle
+        self._bid_keywords = QCheckBox(self.i18n.t("settings.birdid_keywords_label"))
+        self._bid_keywords.setChecked(cfg.birdid_write_keywords)
+        self._bid_keywords.setStyleSheet(self._checkbox_qss())
+        lay.addWidget(self._bid_keywords)
+
         # ── 置信度滑块 / Confidence slider (range 30-95, mirrors set_birdid_confidence clamp) ──
         conf_title = QLabel(self.i18n.t("settings.birdid_section_conf"))
         conf_title.setStyleSheet(
@@ -955,6 +961,9 @@ class SettingsCenter(QDialog):
 
         # 自动识鸟开关 / Auto-identify toggle
         cfg.set_birdid_auto_identify(self._bid_auto.isChecked())
+
+        # 写入关键字开关 / write-keywords toggle
+        cfg.set_birdid_write_keywords(self._bid_keywords.isChecked())
 
         # 置信度(set_birdid_confidence 不内部 save，此处显式补调，确保值持久化)
         # Confidence (set_birdid_confidence doesn't call save internally; call it explicitly here)

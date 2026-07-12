@@ -593,6 +593,7 @@
     "culling_burst_fps_label": "Burst Speed (fps)",
     "birdid_section_auto": "Auto Bird ID",
     "birdid_auto_label": "Automatically identify bird species (2-star and above)",
+    "birdid_keywords_label": "Write species to photo keywords (Lightroom)",
     "birdid_section_conf": "Confidence Threshold",
     "birdid_conf_label": "Identification Confidence",
     "birdid_section_source": "Data Source",
