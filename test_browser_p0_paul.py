@@ -90,3 +90,28 @@ def test_detail_panel_species_row_above_gbif():
     assert "browser.meta_species" in keys
     assert keys.index("browser.meta_species") < keys.index("browser.meta_gbif_rarity")
     panel.close()
+
+
+def test_rating_key_action_digits_and_arrows():
+    """
+    键盘打星决策:数字键 0-3 直设,Up/Down ±1 钳制 0-3;-1 可经 Up/数字键
+    救回(Up 从 -1 → 0);星级无变化返回 None;无关键返回 None。
+
+    Keyboard rating decisions: digits set directly, Up/Down step within
+    0-3, -1 recovers via Up (to 0) or digits, no-op returns None.
+    """
+    from PySide6.QtCore import Qt
+    from ui.results_browser_window import _rating_key_action
+
+    assert _rating_key_action(Qt.Key_2, 0) == 2
+    assert _rating_key_action(Qt.Key_0, 3) == 0
+    assert _rating_key_action(Qt.Key_3, 3) is None          # 无变化 / no-op
+    assert _rating_key_action(Qt.Key_Up, 1) == 2
+    assert _rating_key_action(Qt.Key_Up, 3) is None          # 顶格 / ceiling
+    assert _rating_key_action(Qt.Key_Up, -1) == 0            # 救回 / recover
+    assert _rating_key_action(Qt.Key_Down, 2) == 1
+    assert _rating_key_action(Qt.Key_Down, 0) is None        # 到 0 为止 / floor
+    assert _rating_key_action(Qt.Key_Down, -1) is None       # -1 不再降 / stays
+    assert _rating_key_action(Qt.Key_1, -1) == 1             # 数字键救回
+    assert _rating_key_action(Qt.Key_F, 2) is None           # 无关键 / unrelated
+    assert _rating_key_action(Qt.Key_2, None) == 2           # rating 缺失按 0 处理

@@ -67,6 +67,44 @@ def _coerce_photo(photo_or_filename, photo_pool: list, fallback_photo: Optional[
     return fallback_photo if isinstance(fallback_photo, dict) else (matches[0] if matches else None)
 
 
+# 键盘打星键集(数字 0-3 + 上下箭头) / keys handled by keyboard rating
+_RATING_KEYS = (Qt.Key_0, Qt.Key_1, Qt.Key_2, Qt.Key_3, Qt.Key_Up, Qt.Key_Down)
+
+
+def _rating_key_action(key: int, current_rating) -> Optional[int]:
+    """
+    键盘打星决策(Paul 反馈 P0-3):数字键 0-3 直接设星;Up/Down 星级 ±1,
+    钳制 0-3——-1★(无鸟)可经 Up(→0)或数字键救回,Down 减到 0 为止。
+
+    Decide the new star rating for a key press: digits 0-3 set directly;
+    Up/Down step by one within 0-3 (-1 recovers via Up→0 or digits; Down
+    never goes below 0).
+
+    参数 / Parameters:
+        key (int): Qt 键码 / Qt key code.
+        current_rating: 当前星级(可能为 None/-1..3) / current rating.
+
+    返回 / Returns:
+        Optional[int]: 新星级;None 表示与打星无关或星级无变化。
+    """
+    digit_map = {Qt.Key_0: 0, Qt.Key_1: 1, Qt.Key_2: 2, Qt.Key_3: 3}
+    try:
+        cur = int(current_rating) if current_rating is not None else 0
+    except (TypeError, ValueError):
+        cur = 0
+    if key in digit_map:
+        new = digit_map[key]
+    elif key == Qt.Key_Up:
+        new = 0 if cur < 0 else min(3, cur + 1)
+    elif key == Qt.Key_Down:
+        if cur <= 0:
+            return None
+        new = cur - 1
+    else:
+        return None
+    return new if new != cur else None
+
+
 def _parse_capture_time(value) -> Optional[datetime]:
     if not value:
         return None
@@ -1799,16 +1837,29 @@ class ResultsBrowserWindow(QMainWindow):
         key = event.key()
         in_fullscreen = (self._stack.currentIndex() == 1)
 
-        if key in (Qt.Key_Left, Qt.Key_Up):
+        if key == Qt.Key_Left:
             if in_fullscreen:
                 self._fullscreen_prev()
             else:
                 self._prev_photo()
-        elif key in (Qt.Key_Right, Qt.Key_Down):
+        elif key == Qt.Key_Right:
             if in_fullscreen:
                 self._fullscreen_next()
             else:
                 self._next_photo()
+        elif key in _RATING_KEYS:
+            # 键盘打星(Paul P0-3):Up/Down 由翻图改为星级±1,数字键 0-3 直设。
+            # Keyboard rating: Up/Down now step the rating; digits set it.
+            photo = (getattr(self._fullscreen, "_current_photo", None) if in_fullscreen
+                     else getattr(self._detail_panel, "_current_photo", None))
+            if photo:
+                new_rating = _rating_key_action(key, photo.get("rating"))
+                if new_rating is not None:
+                    self._on_rating_changed(photo, new_rating)
+                    if in_fullscreen:
+                        self._fullscreen.update_rating_display(photo)
+                    else:
+                        self._detail_panel.show_photo(photo)
         elif key == Qt.Key_Tab:
             # Tab: 开关右侧详情面板
             self._detail_panel.setVisible(not self._detail_panel.isVisible())
@@ -2898,16 +2949,29 @@ class ResultsBrowserWidget(QWidget):
         key = event.key()
         in_fullscreen = (self._stack.currentIndex() == 1)
 
-        if key in (Qt.Key_Left, Qt.Key_Up):
+        if key == Qt.Key_Left:
             if in_fullscreen:
                 self._fullscreen_prev()
             else:
                 self._prev_photo()
-        elif key in (Qt.Key_Right, Qt.Key_Down):
+        elif key == Qt.Key_Right:
             if in_fullscreen:
                 self._fullscreen_next()
             else:
                 self._next_photo()
+        elif key in _RATING_KEYS:
+            # 键盘打星(Paul P0-3):Up/Down 由翻图改为星级±1,数字键 0-3 直设。
+            # Keyboard rating: Up/Down now step the rating; digits set it.
+            photo = (getattr(self._fullscreen, "_current_photo", None) if in_fullscreen
+                     else getattr(self._detail_panel, "_current_photo", None))
+            if photo:
+                new_rating = _rating_key_action(key, photo.get("rating"))
+                if new_rating is not None:
+                    self._on_rating_changed(photo, new_rating)
+                    if in_fullscreen:
+                        self._fullscreen.update_rating_display(photo)
+                    else:
+                        self._detail_panel.show_photo(photo)
         elif key == Qt.Key_Tab:
             self._detail_panel.setVisible(not self._detail_panel.isVisible())
         elif key == Qt.Key_Plus or key == Qt.Key_Equal:

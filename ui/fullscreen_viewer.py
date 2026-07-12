@@ -1115,6 +1115,26 @@ class FullscreenViewer(QWidget):
             if self._preload_worker.isRunning():
                 self._preload_worker.wait(1000)
 
+    def update_rating_display(self, photo: dict) -> None:
+        """
+        仅刷新顶条星级/皇冠显示,不重载图片(外部键盘改星后调用)。
+
+        Refresh only the top-strip rating/crown without reloading the image
+        (called by the host window after a keyboard rating change).
+
+        参数 / Parameters:
+            photo (dict): 照片记录,读取 rating/picked / photo record.
+        """
+        rating = photo.get("rating", 0)
+        if photo.get("picked"):
+            self._rating_label.setPixmap(
+                load_tinted_icon("crown.svg", COLORS['star_gold'], 18).pixmap(QSize(18, 18))
+            )
+        elif isinstance(rating, int) and rating >= 1:
+            self._rating_label.setPixmap(stars_pixmap(rating, COLORS['star_gold'], size=16))
+        else:
+            self._rating_label.setText("")
+
     def show_photo(self, photo: dict):
         """
         展示一张照片。流程：
@@ -1162,15 +1182,7 @@ class FullscreenViewer(QWidget):
 
         self._update_burst_info(photo)
 
-        rating = photo.get("rating", 0)
-        if photo.get("picked"):
-            self._rating_label.setPixmap(
-                load_tinted_icon("crown.svg", COLORS['star_gold'], 18).pixmap(QSize(18, 18))
-            )
-        elif isinstance(rating, int) and rating >= 1:
-            self._rating_label.setPixmap(stars_pixmap(rating, COLORS['star_gold'], size=16))
-        else:
-            self._rating_label.setText("")
+        self.update_rating_display(photo)
 
         # 1. 立即显示缩略图缓存
         try:
@@ -1359,10 +1371,18 @@ class FullscreenViewer(QWidget):
     def keyPressEvent(self, event):
         from PySide6.QtCore import Qt as _Qt
         key = event.key()
-        if key in (_Qt.Key_Left, _Qt.Key_Up):
+        if key == _Qt.Key_Left:
             self.prev_requested.emit()
-        elif key in (_Qt.Key_Right, _Qt.Key_Down):
+        elif key == _Qt.Key_Right:
             self.next_requested.emit()
+        elif key in (_Qt.Key_Up, _Qt.Key_Down,
+                     _Qt.Key_0, _Qt.Key_1, _Qt.Key_2, _Qt.Key_3):
+            # 键盘打星交给宿主窗口处理(Paul P0-3):忽略事件让其冒泡到
+            # ResultsBrowserWindow/Widget.keyPressEvent 的打星分支。
+            # Keyboard rating is handled by the host window — ignore the
+            # event so it bubbles up to the host's rating branch.
+            event.ignore()
+            super().keyPressEvent(event)
         elif key == _Qt.Key_F:
             self.toggle_focus()
         elif key == _Qt.Key_Z:
