@@ -347,6 +347,7 @@
     "topiq_weight_unexpected": "  ⚠️  未预期的键: {count}",
     "topiq_loaded": "✅ TOPIQ 权重加载完成",
     "exif_batch_submit": "📝 正在提交 EXIF 批量写入: {count} 条, 其中 {caption_count} 条带 caption",
+    "video_skip_flat": "📁 平铺模式：跳过视频自动归类（文件不移动）",
     "exif_queue_wait": "⏳ 正在等待 EXIF 写入队列完成 ({batches} 个批次)...",
     "exif_thread_wait": "⏳ 正在等待 EXIF 写入线程完成...",
     "cache_path_save_failed": "  ⚠️  保存临时路径失败 {prefix}: {e}",

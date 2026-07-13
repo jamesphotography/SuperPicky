@@ -215,6 +215,16 @@ class WorkerThread(threading.Thread):
             )
             return
 
+        # V4.6(Paul P1): 平铺布局下跳过视频自动归类——视频处理的落地产物
+        # 就是移动+改名(组织器无 no-op 模式),不移动则无产出,整体跳过并留日志。
+        # V4.6 (Paul P1): under the flat layout skip video auto-organize —
+        # its only durable output is the move+rename, so skip entirely.
+        from core.folder_layout import LAYOUT_FLAT
+        if cfg.folder_layout == LAYOUT_FLAT:
+            from tools.i18n import get_i18n
+            self.signals.log.emit(get_i18n().t("logs.video_skip_flat"), "info")
+            return
+
         # 实例化批量引擎 / Build batch engine
         from core.video_batch_engine import VideoBatchEngine
         engine = VideoBatchEngine(
@@ -514,9 +524,14 @@ class WorkerThread(threading.Thread):
             from advanced_config import get_advanced_config
             adv_config = get_advanced_config()
 
+            # V4.6(Paul P1): 平铺布局 → 识别评分但不移动文件(Lightroom 友好)
+            # V4.6 (Paul P1): flat layout — rate in place, no file moves.
+            from core.folder_layout import LAYOUT_FLAT
+            _organize_enabled = adv_config.folder_layout != LAYOUT_FLAT
+
             try:
                 result = processor.process(
-                    organize_files=True,
+                    organize_files=_organize_enabled,
                     cleanup_temp=not adv_config.keep_temp_files,
                     resume=self.resume
                 )
@@ -602,9 +617,14 @@ class WorkerThread(threading.Thread):
                 )
                 self._active_processor = processor
 
+                # V4.6(Paul P1): 平铺布局 → 识别评分但不移动文件
+                # V4.6 (Paul P1): flat layout — rate in place, no file moves.
+                from core.folder_layout import LAYOUT_FLAT
+                _organize_enabled = adv_config.folder_layout != LAYOUT_FLAT
+
                 try:
                     result = processor.process(
-                        organize_files=True,
+                        organize_files=_organize_enabled,
                         cleanup_temp=not adv_config.keep_temp_files,
                         resume=self.resume
                     )

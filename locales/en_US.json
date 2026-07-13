@@ -347,6 +347,7 @@
     "topiq_weight_unexpected": "  ⚠️  Unexpected keys: {count}",
     "topiq_loaded": "✅ TOPIQ weights loaded",
     "exif_batch_submit": "📝 Submitting EXIF batch: {count} items, {caption_count} with caption",
+    "video_skip_flat": "📁 Flat layout: skipping video auto-organize (files stay in place)",
     "exif_queue_wait": "⏳ Waiting for EXIF write queue ({batches} batches)...",
     "exif_thread_wait": "⏳ Waiting for EXIF write thread...",
     "cache_path_save_failed": "  ⚠️  Failed to save temp path {prefix}: {e}",

@@ -66,3 +66,19 @@ def test_burst_group_folders_config_roundtrip():
         assert AdvancedConfig(config_file=tmp).burst_group_folders is False
     finally:
         os.unlink(tmp)
+
+
+def test_main_window_organize_files_follows_layout():
+    """
+    main_window 不再写死 organize_files=True,而是按 folder_layout 计算
+    (源检查:offscreen 全构造跑批不可行,以调用点文本断言钉住接线)。
+
+    main_window must derive organize_files from folder_layout instead of
+    hard-coding True (source-level pin; a full offscreen batch run is not
+    feasible in unit tests).
+    """
+    import io
+    src = io.open("ui/main_window.py", encoding="utf-8").read()
+    assert "organize_files=True" not in src, "organize_files 仍有写死 True 的调用点"
+    assert src.count("organize_files=_organize_enabled") == 2, \
+        "两处 processor.process 调用点都应使用 _organize_enabled"
