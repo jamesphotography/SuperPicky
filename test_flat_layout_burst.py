@@ -82,3 +82,44 @@ def test_main_window_organize_files_follows_layout():
     assert "organize_files=True" not in src, "organize_files 仍有写死 True 的调用点"
     assert src.count("organize_files=_organize_enabled") == 2, \
         "两处 processor.process 调用点都应使用 _organize_enabled"
+
+
+def test_settings_center_flat_option_and_burst_checkbox():
+    """
+    输出页布局下拉含 flat 第三项且保存往返;精选页连拍子目录复选框保存往返。
+    Output page combo carries the flat option and round-trips; the culling
+    page burst-subfolder checkbox round-trips too.
+    """
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    _ = QApplication.instance() or QApplication([])
+
+    import advanced_config as _ac_mod
+    from advanced_config import AdvancedConfig
+    from ui.settings_center import SettingsCenter
+    from tools.i18n import get_i18n
+
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+        tmp = f.name
+    _orig = _ac_mod.get_advanced_config
+    try:
+        cfg = AdvancedConfig(config_file=tmp)
+        _ac_mod.get_advanced_config = lambda: cfg
+        w = SettingsCenter(get_i18n())
+
+        # 输出页:第三项 flat / output page: third option is flat
+        idx = w._folder_layout_combo.findData("flat")
+        assert idx >= 0, "combo 缺 flat 项"
+        w._folder_layout_combo.setCurrentIndex(idx)
+        w._save_output()
+        assert cfg.folder_layout == "flat"
+
+        # 精选页:连拍子目录复选框 / culling page: burst-subfolder checkbox
+        assert w._cull_burst_folders.isChecked() is True   # 默认开
+        w._cull_burst_folders.setChecked(False)
+        w._save_culling()
+        assert cfg.burst_group_folders is False
+        w.close()
+    finally:
+        _ac_mod.get_advanced_config = _orig
+        os.unlink(tmp)

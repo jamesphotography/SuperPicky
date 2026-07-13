@@ -592,6 +592,7 @@
     "culling_flight_label": "飞鸟检测",
     "culling_burst_label": "连拍检测",
     "culling_burst_fps_label": "连拍速度 (张/秒)",
+    "culling_burst_folders_label": "连拍归入独立子文件夹",
     "birdid_section_auto": "自动识鸟",
     "birdid_auto_label": "自动识别鸟种（2星及以上照片）",
     "birdid_keywords_label": "识别后写入照片关键字（Lightroom Keywords）",
@@ -710,6 +711,7 @@
     "folder_layout_label": "组织方式",
     "folder_layout_rating_first": "先星级 → 鸟种 (3星_优选/白胸鸲鹟/)",
     "folder_layout_species_first": "先鸟种 → 星级 (白胸鸲鹟/3星_优选/)",
+    "folder_layout_flat": "平铺——识别评分但不移动文件（Lightroom 友好）",
     "folder_layout_hint": "1星/0星/-1星 统一归到「其他鸟类」目录（不按鸟种分散），便于整体处理。仅影响新跑批，已有目录结构不变。"
   },
   "normalization_modes": {

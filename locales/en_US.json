@@ -592,6 +592,7 @@
     "culling_flight_label": "Flight Detection",
     "culling_burst_label": "Burst Detection",
     "culling_burst_fps_label": "Burst Speed (fps)",
+    "culling_burst_folders_label": "Group bursts into subfolders",
     "birdid_section_auto": "Auto Bird ID",
     "birdid_auto_label": "Automatically identify bird species (2-star and above)",
     "birdid_keywords_label": "Write species to photo keywords (Lightroom)",
@@ -710,6 +711,7 @@
     "folder_layout_label": "Organize by",
     "folder_layout_rating_first": "Rating → Species (3star_excellent/White-breasted_Robin/)",
     "folder_layout_species_first": "Species → Rating (White-breasted_Robin/3star_excellent/)",
+    "folder_layout_flat": "Flat — rate in place, no file moves (Lightroom-friendly)",
     "folder_layout_hint": "1-star / 0-star / -1-star photos always go into the \"Other Birds\" folder (not split by species) so the rejected pile stays consolidated. Only affects new runs; existing directory structures are untouched."
   },
   "normalization_modes": {
