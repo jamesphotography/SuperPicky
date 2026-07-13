@@ -552,6 +552,13 @@ class SettingsCenter(QDialog):
         self._cull_burst.setStyleSheet(self._checkbox_qss())
         lay.addWidget(self._cull_burst)
 
+        # 连拍子目录开关(Paul P1):关=连拍照片按星级/鸟种常规归档
+        # Burst-subfolder toggle (Paul P1): off = bursts filed normally.
+        self._cull_burst_folders = QCheckBox(self.i18n.t("settings.culling_burst_folders_label"))
+        self._cull_burst_folders.setChecked(cfg.burst_group_folders)
+        self._cull_burst_folders.setStyleSheet(self._checkbox_qss())
+        lay.addWidget(self._cull_burst_folders)
+
         # 连拍速度 / Burst FPS
         fps_row = QHBoxLayout()
         fps_label = QLabel(self.i18n.t("settings.culling_burst_fps_label"))
@@ -637,6 +644,12 @@ class SettingsCenter(QDialog):
         self._bid_auto.setChecked(cfg.birdid_auto_identify)
         self._bid_auto.setStyleSheet(self._checkbox_qss())
         lay.addWidget(self._bid_auto)
+
+        # 写入关键字开关(Paul P1-1) / write-keywords toggle
+        self._bid_keywords = QCheckBox(self.i18n.t("settings.birdid_keywords_label"))
+        self._bid_keywords.setChecked(cfg.birdid_write_keywords)
+        self._bid_keywords.setStyleSheet(self._checkbox_qss())
+        lay.addWidget(self._bid_keywords)
 
         # ── 置信度滑块 / Confidence slider (range 30-95, mirrors set_birdid_confidence clamp) ──
         conf_title = QLabel(self.i18n.t("settings.birdid_section_conf"))
@@ -956,6 +969,9 @@ class SettingsCenter(QDialog):
         # 自动识鸟开关 / Auto-identify toggle
         cfg.set_birdid_auto_identify(self._bid_auto.isChecked())
 
+        # 写入关键字开关 / write-keywords toggle
+        cfg.set_birdid_write_keywords(self._bid_keywords.isChecked())
+
         # 置信度(set_birdid_confidence 不内部 save，此处显式补调，确保值持久化)
         # Confidence (set_birdid_confidence doesn't call save internally; call it explicitly here)
         cfg.set_birdid_confidence(self._bid_conf.value())
@@ -1118,6 +1134,7 @@ class SettingsCenter(QDialog):
         cfg.set_burst_fps(self._cull_burst_fps.value())
         cfg.set_flight_check(self._cull_flight.isChecked())
         cfg.set_burst_check(self._cull_burst.isChecked())
+        cfg.set_burst_group_folders(self._cull_burst_folders.isChecked())
         cfg.set_skill_level(self._current_skill_key)
         # 当处于自定义档时同步写回 custom_* 字段，避免 CLI 路径读到陈旧值。
         # When in custom mode, also persist custom_* fields so CLI path reads fresh values.
@@ -1194,6 +1211,10 @@ class SettingsCenter(QDialog):
         )
         self._folder_layout_combo.addItem(
             self.i18n.t("advanced_settings.folder_layout_species_first"), "species-first"
+        )
+        # V4.6(Paul P1): 平铺——识别评分但不移动文件 / flat: rate in place
+        self._folder_layout_combo.addItem(
+            self.i18n.t("advanced_settings.folder_layout_flat"), "flat"
         )
         # 恢复已保存的布局选项 / Restore saved folder layout
         fl_idx = self._folder_layout_combo.findData(cfg.folder_layout)

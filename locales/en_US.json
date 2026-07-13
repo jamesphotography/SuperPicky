@@ -5,8 +5,9 @@
     "version": "4.2.0"
   },
   "xmp_labels": {
-    "flight": "Green",
-    "focus": "Red"
+    "flight": "Blue",
+    "focus": "Green",
+    "defocus": "Red"
   },
   "app": {
     "title": "SuperPicky - AI Bird Photo Culling Tool v{version} ({hash})",
@@ -347,6 +348,7 @@
     "topiq_weight_unexpected": "  ⚠️  Unexpected keys: {count}",
     "topiq_loaded": "✅ TOPIQ weights loaded",
     "exif_batch_submit": "📝 Submitting EXIF batch: {count} items, {caption_count} with caption",
+    "video_skip_flat": "📁 Flat layout: skipping video auto-organize (files stay in place)",
     "exif_queue_wait": "⏳ Waiting for EXIF write queue ({batches} batches)...",
     "exif_thread_wait": "⏳ Waiting for EXIF write thread...",
     "cache_path_save_failed": "  ⚠️  Failed to save temp path {prefix}: {e}",
@@ -591,8 +593,10 @@
     "culling_flight_label": "Flight Detection",
     "culling_burst_label": "Burst Detection",
     "culling_burst_fps_label": "Burst Speed (fps)",
+    "culling_burst_folders_label": "Group bursts into subfolders",
     "birdid_section_auto": "Auto Bird ID",
     "birdid_auto_label": "Automatically identify bird species (2-star and above)",
+    "birdid_keywords_label": "Write species to photo keywords (Lightroom)",
     "birdid_section_conf": "Confidence Threshold",
     "birdid_conf_label": "Identification Confidence",
     "birdid_section_source": "Data Source",
@@ -708,6 +712,7 @@
     "folder_layout_label": "Organize by",
     "folder_layout_rating_first": "Rating → Species (3star_excellent/White-breasted_Robin/)",
     "folder_layout_species_first": "Species → Rating (White-breasted_Robin/3star_excellent/)",
+    "folder_layout_flat": "Flat — rate in place, no file moves (Lightroom-friendly)",
     "folder_layout_hint": "1-star / 0-star / -1-star photos always go into the \"Other Birds\" folder (not split by species) so the rejected pile stays consolidated. Only affects new runs; existing directory structures are untouched."
   },
   "normalization_modes": {

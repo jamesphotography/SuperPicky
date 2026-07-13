@@ -1,10 +1,10 @@
 # SuperPicky 4.5.0
 
 **4.5.0 is a focus release.** Building on the 4.3.0 LTS baseline, it
-concentrates on four things: a brand-new batch-relative star rating engine,
-making the core culling pipeline faster and more dependable, unifying all
-settings into a brand-new Settings Center, and streamlining the interface
-around the core workflow.
+concentrates on five things: a brand-new batch-relative star rating engine,
+a Lightroom-friendly flat workflow, making the core culling pipeline faster
+and more dependable, unifying all settings into a brand-new Settings Center,
+and streamlining the interface around the core workflow.
 
 ---
 
@@ -34,6 +34,46 @@ around the core workflow.
   mid-run.
 - The legacy absolute-threshold algorithm is still available: Settings →
   Culling → "Rating Algorithm" cards let you switch back to V1 (default V2).
+
+## 🗂 Flat Layout & Burst Control (new)
+
+- **New "Flat" folder layout — rate in place, no file moves.** Settings →
+  Output → Folder layout now offers a third option: photos are detected,
+  rated and tagged as usual (EXIF ratings, keywords, picks, XMP sidecars for
+  Sony RAW), but **no files are moved** — your Lightroom folder references
+  stay intact. Browsing and filtering by stars / species / focus / burst in
+  the Results Browser works exactly the same (it reads the app's own
+  database, not the folder structure). Rating or species changes made in the
+  browser also leave files in place under this layout.
+- **Burst detection decoupled from burst subfolders.** A new toggle
+  (Settings → Culling → "Group bursts into subfolders", default on) lets you
+  keep burst detection — grouping in the browser, per-burst 3-star cap —
+  while filing burst shots like normal photos instead of `burst_NNN`
+  subfolders.
+
+## 🏷 Color Labels — New Defaults (please note)
+
+The default XMP color-label mapping is now intuitive — green means good,
+red means bad:
+
+| Condition | Old label | New label |
+|---|---|---|
+| Bird in flight | Green | **Blue** |
+| Critical focus | Red | **Green** |
+| Soft / out of focus | (none) | **Red** |
+| Good focus / no bird | (none) | (none) |
+
+A photo carries one label; flight takes priority. **If you built Lightroom
+smart collections on "green = flying", update them to blue.**
+
+## 🔑 Species Keywords (new)
+
+- High-confidence Bird ID results are now written to the photo's standard
+  keywords (`XMP-dc:Subject`) as well as the Title, so you can filter by
+  species in Lightroom's keyword panel. Writes are merge-add: your own
+  keywords are never touched, and re-running a folder never duplicates.
+  Toggle: Settings → Bird ID → "Write species to photo keywords" (default
+  on).
 
 ## ⚡ Performance
 
@@ -105,6 +145,15 @@ around the core workflow.
   full-screen view gains a Photoshop-style left toolbar.
 - Fixed thumbnails not refreshing their badges after pick/rating changes;
   burst badges are merged into a single indicator.
+- **Keyboard rating**: press 0–3 to set a photo's stars directly, Up/Down to
+  step the rating by one (Left/Right still navigate). Works in grid and
+  full-screen view.
+- Thumbnails show the species name **and** the filename (two lines) instead
+  of replacing one with the other; the detail panel gains a species row just
+  above GBIF Rarity (click to copy the name).
+- Focus terms are now consistent on both sides of the browser: Critical
+  Focus / Good Focus / Soft (the filter chips previously showed raw
+  BEST/GOOD/BAD in the English UI).
 
 ## 🧹 Reset & Organization
 
@@ -140,9 +189,9 @@ codebase and may return in a future release.
 
 # SuperPicky 4.5.0（中文）
 
-**4.5.0 是一个聚焦版本。** 在 4.3.0 LTS 的基础上，集中做了四件事：全新的
-批内相对评星引擎、让选鸟主流程更快更稳、把所有设置统一进全新的设置中心、
-并围绕核心工作流精简界面。
+**4.5.0 是一个聚焦版本。** 在 4.3.0 LTS 的基础上，集中做了五件事：全新的
+批内相对评星引擎、Lightroom 友好的平铺工作流、让选鸟主流程更快更稳、
+把所有设置统一进全新的设置中心、并围绕核心工作流精简界面。
 
 ---
 
@@ -164,6 +213,39 @@ codebase and may return in a future release.
   不再出现处理中星级跳动。
 - 旧版绝对阈值算法仍可切换：设置中心 → 精选 →「评星算法」卡片可
   切回 V1（默认 V2）。
+
+## 🗂 平铺布局与连拍控制（全新）
+
+- **新增「平铺」目录布局——识别评分但不移动文件。** 设置中心 → 输出 →
+  分类目录布局新增第三项：照片照常检测、评星、打标签（EXIF 星级、关键字、
+  精选旗标，索尼 RAW 走 XMP 侧车），但**所有文件留在原地**——Lightroom
+  已导入目录的引用不受影响。结果浏览器按星级/鸟种/对焦/连拍的浏览筛选
+  完全不变（它读应用自己的数据库，不依赖目录结构）；平铺下在浏览器里
+  改星/改鸟种同样不移动文件。
+- **连拍检测与子目录归档解耦。** 精选页新增开关「连拍归入独立子文件夹」
+  （默认开）：关闭后保留连拍检测——浏览器分组、连拍组内 3 星限量照常——
+  但连拍照片按各自星级/鸟种正常归档，不再产生 `burst_NNN` 子目录。
+
+## 🏷 颜色标签——新默认映射（请注意）
+
+XMP 色标默认映射改为符合直觉——绿=好、红=差：
+
+| 条件 | 旧色标 | 新色标 |
+|---|---|---|
+| 飞鸟 | 绿色 | **蓝色** |
+| 精准合焦 | 红色 | **绿色** |
+| 脱焦/失焦 | （无） | **红色** |
+| 普通合焦 / 无鸟 | （无） | （无） |
+
+一张照片只有一种色标，飞鸟优先。**如果你在 Lightroom 建过「绿色=飞鸟」
+的智能收藏夹，请改为蓝色。**
+
+## 🔑 鸟种关键字（全新）
+
+- 高置信度识鸟结果除写 Title 外，同步写入标准关键字（`XMP-dc:Subject`），
+  Lightroom 关键字面板可直接按鸟种筛选。写入为合并追加：你自己打的关键字
+  绝不会被动，重跑同一目录也不会产生重复。开关：设置中心 → 识鸟 →
+  「识别后写入照片关键字」（默认开）。
 
 ## ⚡ 性能
 
@@ -216,6 +298,12 @@ codebase and may return in a future release.
 - 界面图标全面 SVG 化（星级/筛选筹码/工具栏/对焦状态），大图模式改为
   PS 风格左侧工具栏。
 - 修复精选/改星后缩略图角标不刷新；连拍角标合并显示。
+- **键盘打星**：数字键 0-3 直接设星，Up/Down 星级 ±1（Left/Right 仍为
+  翻图）；网格与大图模式均可用。
+- 缩略图**同时显示鸟名与文件名**（两行），不再互相替换；右侧详情面板
+  在全球罕见度上方新增鸟种行（点击可复制鸟名）。
+- 浏览器左右两侧对焦用语统一：精焦 / 合焦 / 失焦（英文界面此前左侧
+  显示的是原始枚举 BEST/GOOD/BAD）。
 
 ## 🧹 重置与整理
 

@@ -22,13 +22,19 @@ from constants import get_rating_folder_name
 # 布局策略 / Layout strategy identifiers
 LAYOUT_RATING_FIRST = "rating-first"
 LAYOUT_SPECIES_FIRST = "species-first"
+# V4.6(Paul P1): 平铺——识别评分但不移动文件(Lightroom 友好);
+# organize 阶段整体跳过,此常量供 GUI 判断 organize_files 传值。
+# V4.6 (Paul P1): flat — rate in place, no file moves (Lightroom-friendly).
+# The organize stage is skipped entirely; GUI uses this to derive
+# the organize_files argument.
+LAYOUT_FLAT = "flat"
 # V4.3 Phase 4: 默认改 species-first 以兼容视频集成
 # 视频不分星，species-first 让视频和照片自然共享同一个鸟种目录
 # V4.3 Phase 4: default switched to species-first so videos (no star rating)
 # can naturally live alongside photos in the same species folder.
 DEFAULT_LAYOUT = LAYOUT_SPECIES_FIRST
 
-VALID_LAYOUTS = {LAYOUT_RATING_FIRST, LAYOUT_SPECIES_FIRST}
+VALID_LAYOUTS = {LAYOUT_RATING_FIRST, LAYOUT_SPECIES_FIRST, LAYOUT_FLAT}
 
 
 def compute_target_folder(
@@ -43,7 +49,7 @@ def compute_target_folder(
     Args:
         rating: 星级（-1/0/1/2/3）
         bird_name: 鸟种名（None 或空字符串表示未识别/低置信度）
-        layout: LAYOUT_RATING_FIRST 或 LAYOUT_SPECIES_FIRST
+        layout: LAYOUT_RATING_FIRST / LAYOUT_SPECIES_FIRST / LAYOUT_FLAT
         other_birds_label: 「其他鸟类」目录的本地化名称
 
     Returns:
@@ -53,6 +59,7 @@ def compute_target_folder(
           - rating-first  + 未识别 / 低星 →  "3星_优选/其他鸟类"
           - species-first + 未识别 / 低星 →  "其他鸟类/3星_优选"
           - 任何 layout + 1星              →  "[layout 决定]/其他鸟类"
+          - flat + 任意                    →  ""（留在根目录,不分目录）
 
     Rules:
     - 1星 / 0星 / -1星 永远走「其他鸟类」分支（即使识别到鸟种）
@@ -61,6 +68,12 @@ def compute_target_folder(
     - 2星 / 3星 + 鸟种识别 → 按 layout 决定 rating 和 species 谁外层
     - 2星 / 3星 + 未识别 → 走「其他鸟类」分支，仍按 layout 切换内外
     """
+    # 平铺:不分目录,留在根(防御性——organize gate 下正常不会走到这里)
+    # Flat: no subfolders, stay in root (defensive; the organize gate
+    # normally prevents this from being called at all).
+    if layout == LAYOUT_FLAT:
+        return ""
+
     base = get_rating_folder_name(rating)
 
     # 低星 (< 2) 强制走「其他鸟类」分支，即使有 bird_name 也忽略

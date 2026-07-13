@@ -5,8 +5,9 @@
     "version": "4.0.6"
   },
   "xmp_labels": {
-    "flight": "绿色",
-    "focus": "红色"
+    "flight": "蓝色",
+    "focus": "绿色",
+    "defocus": "红色"
   },
   "app": {
     "title": "慧眼选鸟 by 詹姆斯于震 V{version} ({hash})",
@@ -347,6 +348,7 @@
     "topiq_weight_unexpected": "  ⚠️  未预期的键: {count}",
     "topiq_loaded": "✅ TOPIQ 权重加载完成",
     "exif_batch_submit": "📝 正在提交 EXIF 批量写入: {count} 条, 其中 {caption_count} 条带 caption",
+    "video_skip_flat": "📁 平铺模式：跳过视频自动归类（文件不移动）",
     "exif_queue_wait": "⏳ 正在等待 EXIF 写入队列完成 ({batches} 个批次)...",
     "exif_thread_wait": "⏳ 正在等待 EXIF 写入线程完成...",
     "cache_path_save_failed": "  ⚠️  保存临时路径失败 {prefix}: {e}",
@@ -591,8 +593,10 @@
     "culling_flight_label": "飞鸟检测",
     "culling_burst_label": "连拍检测",
     "culling_burst_fps_label": "连拍速度 (张/秒)",
+    "culling_burst_folders_label": "连拍归入独立子文件夹",
     "birdid_section_auto": "自动识鸟",
     "birdid_auto_label": "自动识别鸟种（2星及以上照片）",
+    "birdid_keywords_label": "识别后写入照片关键字（Lightroom Keywords）",
     "birdid_section_conf": "置信度阈值",
     "birdid_conf_label": "识别置信度",
     "birdid_section_source": "数据源",
@@ -708,6 +712,7 @@
     "folder_layout_label": "组织方式",
     "folder_layout_rating_first": "先星级 → 鸟种 (3星_优选/白胸鸲鹟/)",
     "folder_layout_species_first": "先鸟种 → 星级 (白胸鸲鹟/3星_优选/)",
+    "folder_layout_flat": "平铺——识别评分但不移动文件（Lightroom 友好）",
     "folder_layout_hint": "1星/0星/-1星 统一归到「其他鸟类」目录（不按鸟种分散），便于整体处理。仅影响新跑批，已有目录结构不变。"
   },
   "normalization_modes": {
