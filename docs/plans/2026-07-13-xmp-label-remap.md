@@ -29,7 +29,7 @@
 **Interfaces:**
 - Produces: `compute_xmp_label(is_flying: bool, focus_status: Optional[str], translate) -> Optional[str]`（`translate` 为 `i18n.t` 同签名可调用）。
 
-- [ ] **Step 1: 写失败测试（新建 test_xmp_label_remap.py）**
+- [x] **Step 1: 写失败测试（新建 test_xmp_label_remap.py）**
 
 ```python
 # -*- coding: utf-8 -*-
@@ -83,7 +83,7 @@ def test_locale_label_color_names():
     assert en == {"flight": "Blue", "focus": "Green", "defocus": "Red"}
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 ```bash
 cd /Users/jameszhenyu/Documents/JamesAPPS/SuperPicky2026
@@ -92,7 +92,7 @@ cd /Users/jameszhenyu/Documents/JamesAPPS/SuperPicky2026
 
 预期：3 个全 FAIL（函数未定义 / locales 仍旧值）。
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 3a. `core/photo_processor.py` 模块级（import 区之后、类定义之前的工具函数区）：
 
@@ -160,7 +160,7 @@ en_US.json：
   },
 ```
 
-- [ ] **Step 4: 跑测试确认通过 + 回归**
+- [x] **Step 4: 跑测试确认通过 + 回归**
 
 ```bash
 .venv/bin/python -m pytest test_xmp_label_remap.py test_rating_quota.py -v
@@ -170,7 +170,7 @@ en_US.json：
 
 预期：全 PASS。注意调用点原位置在 `focus_status` 赋值（:2396-2410）之后——替换前确认变量已就绪（是，:2538 在 :2410 之后）。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add core/photo_processor.py locales/zh_CN.json locales/en_US.json && git add -f test_xmp_label_remap.py
