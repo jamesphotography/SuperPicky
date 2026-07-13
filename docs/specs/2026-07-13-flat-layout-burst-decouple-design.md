@@ -38,8 +38,11 @@
 4. **平铺语义**：所有照片（含无鸟/0星）留原地；EXIF 星级/关键字/精选旗标
    照写；DB `current_path` 保持根目录相对路径；不写
    `.superpicky_manifest.json`（reset 现有语义容忍：只清 EXIF/DB）。
-5. **主界面视频自动归类**：平铺模式下同样跳过视频文件移动（接入点在
-   实施计划阶段核实后加同一判断；视频分析/SRT 生成不受影响）。
+5. **主界面视频自动归类**：平铺模式下**整体跳过**视频自动处理并写日志
+   `logs.video_skip_flat`（实施时修正：组织器 OrganizeOptions 仅有
+   move/copy 无 no-op 模式，且分析结果除归类改名外无落地产物，"只分析
+   不归类"没有产出，故整体跳过；接入点 `main_window._process_videos`
+   的 flat gate）。
 6. **边界回归钉**（无代码改动，测试锁定既有行为）：rating_mover 根目录
    照片跳过移动；浏览器筛选不依赖目录。
 

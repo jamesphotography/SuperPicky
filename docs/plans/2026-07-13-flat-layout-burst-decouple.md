@@ -29,7 +29,7 @@
 - Consumes: 现有 `compute_target_folder(rating, bird_name, layout, other_birds_label) -> str`、`normalize_layout`、`VALID_LAYOUTS`。
 - Produces: `LAYOUT_FLAT = "flat"`（模块常量，Task 3 的 main_window 导入使用）；`VALID_LAYOUTS` 含 flat；`compute_target_folder(..., layout="flat")` 返回 `""`。
 
-- [ ] **Step 1: 写失败测试（新建 test_flat_layout_burst.py）**
+- [x] **Step 1: 写失败测试（新建 test_flat_layout_burst.py）**
 
 ```python
 # -*- coding: utf-8 -*-
@@ -81,7 +81,7 @@ def test_rating_mover_skips_root_photos():
 
 注意：`move_photo_on_metadata_change` 的实际形参名以 `core/rating_mover.py:62` 定义为准（写测试前先读签名，i18n/db 若为必填则传最小桩）。
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 ```bash
 cd /Users/jameszhenyu/Documents/JamesAPPS/SuperPicky2026
@@ -90,7 +90,7 @@ cd /Users/jameszhenyu/Documents/JamesAPPS/SuperPicky2026
 
 预期：第一个 FAIL（`ImportError: LAYOUT_FLAT`）；第二个视签名可能需按 Step 1 注意事项修正后再跑。
 
-- [ ] **Step 3: 实现 `core/folder_layout.py`**
+- [x] **Step 3: 实现 `core/folder_layout.py`**
 
 3a. 常量区（:22-31）：
 
@@ -125,7 +125,7 @@ VALID_LAYOUTS = {LAYOUT_RATING_FIRST, LAYOUT_SPECIES_FIRST, LAYOUT_FLAT}
 
 （docstring 的 Args/Returns 补一行 flat 说明。）
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 ```bash
 .venv/bin/python -m pytest test_flat_layout_burst.py -v
@@ -133,7 +133,7 @@ VALID_LAYOUTS = {LAYOUT_RATING_FIRST, LAYOUT_SPECIES_FIRST, LAYOUT_FLAT}
 
 预期：2 passed。
 
-- [ ] **Step 5: py_compile + 提交**
+- [x] **Step 5: py_compile + 提交**
 
 ```bash
 .venv/bin/python -m py_compile core/folder_layout.py
@@ -154,7 +154,7 @@ git commit -m "feat(organize): folder_layout 新增 flat 平铺布局 + rating_m
 - Consumes: 无（独立于 Task 1）。
 - Produces: `AdvancedConfig.burst_group_folders -> bool`（默认 True）、`set_burst_group_folders(value: bool)`（不内部 save，跟随 set_folder_layout 惯例）。
 
-- [ ] **Step 1: 追加失败测试**
+- [x] **Step 1: 追加失败测试**
 
 ```python
 def test_burst_group_folders_config_roundtrip():
@@ -176,7 +176,7 @@ def test_burst_group_folders_config_roundtrip():
         os.unlink(tmp)
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 ```bash
 .venv/bin/python -m pytest test_flat_layout_burst.py::test_burst_group_folders_config_roundtrip -v
@@ -184,7 +184,7 @@ def test_burst_group_folders_config_roundtrip():
 
 预期：FAIL（AttributeError）。
 
-- [ ] **Step 3: 实现 `advanced_config.py`**
+- [x] **Step 3: 实现 `advanced_config.py`**
 
 3a. `DEFAULT_CONFIG`（`"folder_layout": "species-first"` 行 :88 附近）加：
 
@@ -224,7 +224,7 @@ def test_burst_group_folders_config_roundtrip():
         self.config["burst_group_folders"] = bool(value)
 ```
 
-- [ ] **Step 4: 实现 `core/photo_processor.py` gate（:558）**
+- [x] **Step 4: 实现 `core/photo_processor.py` gate（:558）**
 
 原：
 
@@ -243,7 +243,7 @@ def test_burst_group_folders_config_roundtrip():
                     and self.config.burst_group_folders):
 ```
 
-- [ ] **Step 5: 跑测试 + py_compile + 提交**
+- [x] **Step 5: 跑测试 + py_compile + 提交**
 
 ```bash
 .venv/bin/python -m pytest test_flat_layout_burst.py -v
@@ -266,7 +266,7 @@ git commit -m "feat(organize): burst_group_folders 开关——连拍检测与�
 - Consumes: Task 1 的 `LAYOUT_FLAT`。
 - Produces: 无新接口（行为变更）。
 
-- [ ] **Step 1: 追加失败测试（源检查——两处调用点不再写死 True）**
+- [x] **Step 1: 追加失败测试（源检查——两处调用点不再写死 True）**
 
 ```python
 def test_main_window_organize_files_follows_layout():
@@ -285,7 +285,7 @@ def test_main_window_organize_files_follows_layout():
         "两处 processor.process 调用点都应使用 _organize_enabled"
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 ```bash
 .venv/bin/python -m pytest test_flat_layout_burst.py::test_main_window_organize_files_follows_layout -v
@@ -293,7 +293,7 @@ def test_main_window_organize_files_follows_layout():
 
 预期：FAIL（存在 organize_files=True）。
 
-- [ ] **Step 3: 实现 `ui/main_window.py` 两处照片跑批调用点**
+- [x] **Step 3: 实现 `ui/main_window.py` 两处照片跑批调用点**
 
 两处（:519 与 :607 各自的 `processor.process(` 之前）——每处在既有
 `adv_config = get_advanced_config()`（第一处 :515 已有；第二处若无则同样取一次）之后加：
@@ -313,7 +313,7 @@ def test_main_window_organize_files_follows_layout():
 
 （两处都改；第二处上下文变量名以实际为准——若该作用域用 `cfg`/`adv_config` 命名不同，跟随现名。）
 
-- [ ] **Step 4: 实现 `_process_videos` 平铺跳过（:212 `if not cfg.video_auto_process_in_main:` gate 之后）**
+- [x] **Step 4: 实现 `_process_videos` 平铺跳过（:212 `if not cfg.video_auto_process_in_main:` gate 之后）**
 
 ```python
         # V4.6(Paul P1): 平铺布局下跳过视频自动归类——视频处理的落地产物
@@ -329,7 +329,7 @@ def test_main_window_organize_files_follows_layout():
 
 （`get_i18n` 若该作用域未导入则局部导入；i18n 键在 Step 5 添加。）
 
-- [ ] **Step 5: i18n 键（logs 段，两语言包）**
+- [x] **Step 5: i18n 键（logs 段，两语言包）**
 
 `locales/zh_CN.json`（logs 段）：
 
@@ -343,7 +343,7 @@ def test_main_window_organize_files_follows_layout():
     "video_skip_flat": "📁 Flat layout: skipping video auto-organize (files stay in place)",
 ```
 
-- [ ] **Step 6: 跑测试 + py_compile + JSON 校验 + 提交**
+- [x] **Step 6: 跑测试 + py_compile + JSON 校验 + 提交**
 
 ```bash
 .venv/bin/python -m pytest test_flat_layout_burst.py -v
@@ -368,7 +368,7 @@ git commit -m "feat(organize): GUI 接线平铺布局——organize_files 按布
 - Consumes: Task 1 `LAYOUT_FLAT`、Task 2 `burst_group_folders`/`set_burst_group_folders`。
 - Produces: `SettingsCenter._cull_burst_folders: QCheckBox`；输出页下拉含 data=`"flat"` 的第三项。
 
-- [ ] **Step 1: 追加失败测试**
+- [x] **Step 1: 追加失败测试**
 
 ```python
 def test_settings_center_flat_option_and_burst_checkbox():
@@ -412,7 +412,7 @@ def test_settings_center_flat_option_and_burst_checkbox():
         os.unlink(tmp)
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 ```bash
 .venv/bin/python -m pytest test_flat_layout_burst.py::test_settings_center_flat_option_and_burst_checkbox -v
@@ -420,7 +420,7 @@ def test_settings_center_flat_option_and_burst_checkbox():
 
 预期：FAIL（combo 无 flat 项）。
 
-- [ ] **Step 3: i18n 键**
+- [x] **Step 3: i18n 键**
 
 `locales/zh_CN.json` `advanced_settings` 段（`folder_layout_species_first` :711 之后）：
 
@@ -444,7 +444,7 @@ def test_settings_center_flat_option_and_burst_checkbox():
     "culling_burst_folders_label": "Group bursts into subfolders",
 ```
 
-- [ ] **Step 4: 实现 `ui/settings_center.py`**
+- [x] **Step 4: 实现 `ui/settings_center.py`**
 
 4a. 输出页 combo（:1205 `species-first` addItem 之后）：
 
@@ -476,7 +476,7 @@ def test_settings_center_flat_option_and_burst_checkbox():
         cfg.set_burst_group_folders(self._cull_burst_folders.isChecked())
 ```
 
-- [ ] **Step 5: 跑全部测试 + py_compile + JSON 校验 + 提交**
+- [x] **Step 5: 跑全部测试 + py_compile + JSON 校验 + 提交**
 
 ```bash
 .venv/bin/python -m pytest test_flat_layout_burst.py test_settings_center.py -v
@@ -495,7 +495,7 @@ git commit -m "feat(organize): 设置中心——输出页平铺布局第三项 
 **Files:**
 - Modify: `docs/specs/2026-07-13-flat-layout-burst-decouple-design.md`（视频条款按 Task 3 实现修正）
 
-- [ ] **Step 1: 相关测试全量回归**
+- [x] **Step 1: 相关测试全量回归**
 
 ```bash
 .venv/bin/python -m pytest test_flat_layout_burst.py test_settings_center.py test_rating_mover.py test_rating_quota.py test_browser_p0_paul.py -v
@@ -503,18 +503,18 @@ git commit -m "feat(organize): 设置中心——输出页平铺布局第三项 
 
 预期：全部 PASS。
 
-- [ ] **Step 2: spec 视频条款修正**
+- [x] **Step 2: spec 视频条款修正**
 
 spec「A.5 主界面视频自动归类」改为：平铺模式下整体跳过视频自动处理并写日志
 `logs.video_skip_flat`（组织器无 no-op 模式，分析结果除归类外无落地产物）。
 
-- [ ] **Step 3: 用户验收提示**
+- [x] **Step 3: 用户验收提示**
 
 提醒用户实测：①设 flat 跑一个小目录——文件全留原地、EXIF/侧车照写、结果
 浏览器筛选/改星正常且不移动文件；②普通布局关掉「连拍归入独立子文件夹」
 跑连拍目录——无 burst_NNN 子目录、连拍照片按星级归档、浏览器连拍角标仍在。
 
-- [ ] **Step 4: 提交收尾**
+- [x] **Step 4: 提交收尾**
 
 ```bash
 git add docs/specs/2026-07-13-flat-layout-burst-decouple-design.md docs/plans/2026-07-13-flat-layout-burst-decouple.md
