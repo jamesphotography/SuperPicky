@@ -47,3 +47,22 @@ def test_rating_mover_skips_root_photos():
         assert moved is False                     # 根目录 → 跳过 / root → skip
         assert os.path.exists(raw)                # 文件未动 / file untouched
         assert sorted(os.listdir(td)) == ["DSC0001.NEF"]
+
+
+def test_burst_group_folders_config_roundtrip():
+    """
+    开关默认 True;set False 后经 save 落盘,重载读回 False。
+    Defaults to True; persists False after set + save.
+    """
+    from advanced_config import AdvancedConfig
+
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+        tmp = f.name
+    try:
+        cfg = AdvancedConfig(config_file=tmp)
+        assert cfg.burst_group_folders is True
+        cfg.set_burst_group_folders(False)
+        cfg.save()   # setter 不内部 save(跟随 set_folder_layout 惯例)
+        assert AdvancedConfig(config_file=tmp).burst_group_folders is False
+    finally:
+        os.unlink(tmp)

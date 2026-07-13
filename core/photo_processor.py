@@ -555,7 +555,12 @@ class PhotoProcessor:
                 self._move_files_to_rating_folders(raw_dict)
             
             # 阶段6: V4.0.4 跨目录连拍合并（在文件整理完成后）
-            if self.settings.detect_burst and self.burst_map and organize_files:
+            # V4.6(Paul P1): burst_group_folders 关闭时连拍不聚子目录,
+            # 照片按星级/鸟种常规归档(检测与整理解耦)。
+            # V4.6 (Paul P1): with burst_group_folders off, burst shots are
+            # filed normally instead of into burst_NNN subfolders.
+            if (self.settings.detect_burst and self.burst_map and organize_files
+                    and self.config.burst_group_folders):
                 burst_stats = self._consolidate_burst_groups(raw_dict)
                 self.stats['burst_groups'] = burst_stats.get('groups', 0)
                 self.stats['burst_moved'] = burst_stats.get('moved', 0)

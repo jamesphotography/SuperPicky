@@ -86,6 +86,7 @@ class AdvancedConfig:
         # 1星/0星/-1星 永远聚到「其他鸟类」分支，与本设置无关
         # V4.3 Phase 4: 默认改为 species-first，让视频和照片共享鸟种目录
         "folder_layout": "species-first",
+        "burst_group_folders": True,  # 连拍归入 burst_NNN 子目录(关=按星级/鸟种常规归档,Paul P1)
 
         # 外部编辑应用（右键菜单 "用 X 打开"）
         # 每项格式：{"name": "显示名称", "path": "/Applications/...app"}
@@ -452,9 +453,37 @@ class AdvancedConfig:
         return normalize_layout(self.config.get("folder_layout"))
 
     def set_folder_layout(self, value: str) -> None:
-        """设置分目录布局: rating-first (默认) 或 species-first。"""
+        """设置分目录布局: rating-first / species-first / flat(平铺,不移动文件)。"""
         from core.folder_layout import VALID_LAYOUTS, DEFAULT_LAYOUT
         self.config["folder_layout"] = value if value in VALID_LAYOUTS else DEFAULT_LAYOUT
+
+    @property
+    def burst_group_folders(self) -> bool:
+        """
+        连拍照片是否归入独立 burst_NNN 子目录(默认 True=现状)。
+        关闭后连拍照片按各自星级/鸟种走常规归档;连拍检测、DB burst 列、
+        评分阶段连拍 3★ 封顶均不受影响。
+
+        Whether burst groups get their own burst_NNN subfolder (default
+        True). When off, burst shots are filed like normal photos; burst
+        detection, DB columns and the 3-star burst cap are unaffected.
+        """
+        return bool(self.config.get("burst_group_folders", True))
+
+    def set_burst_group_folders(self, value: bool) -> None:
+        """
+        设置「连拍归入独立子文件夹」开关(不内部 save,由设置页统一保存)。
+
+        参数:
+        value (bool): 是否分子文件夹
+
+        Set the burst-subfolder toggle (no internal save; the settings
+        page persists via its own cfg.save()).
+
+        Parameters:
+        value (bool): Whether to group bursts into subfolders.
+        """
+        self.config["burst_group_folders"] = bool(value)
 
     # 外部应用配置 getter/setter
     def get_external_apps(self) -> list:
