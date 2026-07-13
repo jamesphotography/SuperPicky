@@ -98,6 +98,38 @@ class ProcessingCancelled(RuntimeError):
     """Raised when processing is cancelled by the caller."""
 
 
+def compute_xmp_label(is_flying: bool, focus_status: Optional[str], translate) -> Optional[str]:
+    """
+    计算 XMP:Label 颜色名(B+ 默认映射,Paul P2):
+    飞鸟=蓝(优先) > 精焦 BEST=绿 > 脱焦 BAD/WORST=红;GOOD/无鸟不打标签。
+    Lightroom 按本地化字符串匹配标签色,语言包缺 key 时回退英文色名,
+    绝不把 key 串写进 LR(4.3.0 白框陷阱防御)。
+
+    Compute the XMP:Label color name (B+ default mapping): flying=Blue
+    (highest priority) > BEST=Green > BAD/WORST=Red; GOOD or no bird gets
+    no label. Falls back to English color names when the language pack
+    lacks a key (LR matches labels by localized string).
+
+    参数 / Parameters:
+        is_flying (bool): 是否飞鸟 / whether the bird is flying.
+        focus_status (Optional[str]): BEST/GOOD/BAD/WORST 或 None。
+        translate: i18n.t 同签名的翻译函数 / i18n.t-compatible callable.
+
+    返回 / Returns:
+        Optional[str]: 本地化颜色名;None=不写标签。
+    """
+    if is_flying:
+        label = translate("xmp_labels.flight")
+        return "Blue" if label == "xmp_labels.flight" else label
+    if focus_status == "BEST":
+        label = translate("xmp_labels.focus")
+        return "Green" if label == "xmp_labels.focus" else label
+    if focus_status in ("BAD", "WORST"):
+        label = translate("xmp_labels.defocus")
+        return "Red" if label == "xmp_labels.defocus" else label
+    return None
+
+
 class PhotoProcessor:
     """
     核心照片处理器
@@ -2526,24 +2558,16 @@ class PhotoProcessor:
             
                 # V4.0: 标签、对焦状态、详细评分说明（RAW 与纯 JPEG 共用，纯 JPEG 也写入 EXIF 题注/星级）
                 # V4.3.0: 色标文字跟随界面语言写入 xmp:Label。
-                # Lightroom 色标按「当前色标集的本地化名称」精确匹配文字：英文版默认集
-                # 是 Red/Green，中文版是 红色/绿色，跨语言文字对不上会显示为白框。
-                # 故按 i18n 语言写对应颜色名（飞鸟=绿色/Green，头部精焦=红色/Red），
-                # 假设用户慧眼与 Lightroom 语言一致（覆盖绝大多数场景）。
-                # 兜底：若语言包缺 key（t() 原样返回 key），退回英文，绝不把 key 串写进 LR。
-                # V4.3.0: Localize the xmp:Label text by UI language. Lightroom matches the
-                # label string against the active label set's localized names (Red/Green vs
-                # 红色/绿色); a cross-language mismatch renders as a white frame. Fall back
-                # to English if the language pack lacks the key.
-                label = None
-                if is_flying:
-                    label = self.i18n.t("xmp_labels.flight")
-                    if label == "xmp_labels.flight":
-                        label = 'Green'
-                elif focus_sharpness_weight > 1.0:  # 头部对焦 (1.1) / head in focus
-                    label = self.i18n.t("xmp_labels.focus")
-                    if label == "xmp_labels.focus":
-                        label = 'Red'
+                # Lightroom 色标按「当前色标集的本地化名称」精确匹配文字：跨语言
+                # 文字对不上会显示为白框，故按 i18n 语言写对应颜色名，语言包缺
+                # key 时回退英文（详见 compute_xmp_label docstring）。
+                # V4.6(Paul P2/B+): 蓝=飞鸟 > 绿=精焦(BEST) > 红=脱焦(BAD/WORST),
+                # GOOD 无标签。
+                # V4.3.0: Localize the xmp:Label text by UI language (LR matches
+                # labels by localized string; fallback to English on missing keys).
+                # V4.6 (Paul P2/B+): Blue=flying > Green=BEST > Red=BAD/WORST;
+                # GOOD gets no label.
+                label = compute_xmp_label(is_flying, focus_status, self.i18n.t)
             
                 caption_lines = []
                 caption_lines.append(self.i18n.t("logs.caption_final", rating=rating_value, reason=reason))

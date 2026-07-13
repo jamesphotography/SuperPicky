@@ -5,8 +5,9 @@
     "version": "4.0.6"
   },
   "xmp_labels": {
-    "flight": "绿色",
-    "focus": "红色"
+    "flight": "蓝色",
+    "focus": "绿色",
+    "defocus": "红色"
   },
   "app": {
     "title": "慧眼选鸟 by 詹姆斯于震 V{version} ({hash})",

@@ -5,8 +5,9 @@
     "version": "4.2.0"
   },
   "xmp_labels": {
-    "flight": "Green",
-    "focus": "Red"
+    "flight": "Blue",
+    "focus": "Green",
+    "defocus": "Red"
   },
   "app": {
     "title": "SuperPicky - AI Bird Photo Culling Tool v{version} ({hash})",
