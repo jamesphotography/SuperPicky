@@ -54,10 +54,36 @@
 
         .rc-table th,
         .rc-table td {
-            padding: 16px 20px;
+            padding: 18px 22px;
             text-align: left;
             border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-            vertical-align: top;
+            vertical-align: middle;
+        }
+
+        /* 全局 lang 切换默认 display:block——链接/注释/表格内需 inline,
+           否则「大陆镜像」等 span 被顶到下一行(错位根源)。
+           The global lang toggle uses display:block; force inline inside
+           links, notes and tables to prevent the misaligned line breaks. */
+        .dl-link .lang-cn,
+        .dl-link .lang-en,
+        .pkg-note .lang-cn,
+        .pkg-note .lang-en,
+        .label-table .lang-cn,
+        .label-table .lang-en,
+        .rc-table th .lang-cn,
+        .rc-table th .lang-en {
+            display: none;
+        }
+
+        [data-lang="cn"] .dl-link .lang-cn,
+        [data-lang="cn"] .pkg-note .lang-cn,
+        [data-lang="cn"] .label-table .lang-cn,
+        [data-lang="cn"] .rc-table th .lang-cn,
+        [data-lang="en"] .dl-link .lang-en,
+        [data-lang="en"] .pkg-note .lang-en,
+        [data-lang="en"] .label-table .lang-en,
+        [data-lang="en"] .rc-table th .lang-en {
+            display: inline;
         }
 
         .rc-table th {
@@ -81,20 +107,30 @@
         }
 
         .dl-link {
-            display: inline-block;
-            margin: 2px 10px 2px 0;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            margin: 4px 8px 4px 0;
+            padding: 7px 16px;
+            border: 1px solid rgba(76, 175, 80, 0.35);
+            border-radius: 999px;
+            background: rgba(76, 175, 80, 0.06);
             color: #4CAF50;
             text-decoration: none;
+            font-size: 0.92em;
+            white-space: nowrap;
+            transition: background 0.2s, border-color 0.2s;
         }
 
         .dl-link:hover {
-            text-decoration: underline;
+            background: rgba(76, 175, 80, 0.16);
+            border-color: #4CAF50;
         }
 
         .dl-link::before {
             content: "↓";
-            margin-right: 4px;
-            font-size: 0.8em;
+            font-size: 0.85em;
+            opacity: 0.8;
         }
 
         .whatsnew {
