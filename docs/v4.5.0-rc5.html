@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-lang="cn">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SuperPicky 4.5.0 RC5 - SuperPicky.APP</title>
+    <link rel="stylesheet" href="css/style.css?v=20260325">
+    <link rel="icon" href="img/icon.png" type="image/png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        .rc-container {
+            max-width: 1100px;
+            margin: 120px auto 60px;
+            padding: 0 24px;
+        }
+
+        .rc-header {
+            margin-bottom: 32px;
+            text-align: center;
+        }
+
+        .rc-banner {
+            background: rgba(255, 200, 0, 0.08);
+            border: 1px solid rgba(255, 200, 0, 0.35);
+            border-radius: 12px;
+            padding: 16px 20px;
+            margin: 0 auto 40px;
+            max-width: 820px;
+            font-size: 0.95em;
+            line-height: 1.7;
+        }
+
+        .rc-banner a {
+            color: #f0a500;
+        }
+
+        .rc-table-wrapper {
+            background: rgba(26, 26, 26, 0.8);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            overflow-x: auto;
+            backdrop-filter: blur(10px);
+            margin-bottom: 56px;
+        }
+
+        .rc-table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 760px;
+        }
+
+        .rc-table th,
+        .rc-table td {
+            padding: 16px 20px;
+            text-align: left;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            vertical-align: top;
+        }
+
+        .rc-table th {
+            background: rgba(255, 255, 255, 0.05);
+            font-weight: 700;
+            color: rgba(255, 255, 255, 0.9);
+        }
+
+        .pkg-cell {
+            font-weight: 700;
+            white-space: nowrap;
+        }
+
+        .pkg-note {
+            display: block;
+            font-size: 0.8em;
+            font-weight: 400;
+            color: rgba(255, 255, 255, 0.4);
+            margin-top: 4px;
+            white-space: normal;
+        }
+
+        .dl-link {
+            display: inline-block;
+            margin: 2px 10px 2px 0;
+            color: #4CAF50;
+            text-decoration: none;
+        }
+
+        .dl-link:hover {
+            text-decoration: underline;
+        }
+
+        .dl-link::before {
+            content: "↓";
+            margin-right: 4px;
+            font-size: 0.8em;
+        }
+
+        .whatsnew {
+            max-width: 860px;
+            margin: 0 auto;
+        }
+
+        .whatsnew h2 {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+
+        .feature-block {
+            background: rgba(26, 26, 26, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 12px;
+            padding: 22px 26px;
+            margin-bottom: 18px;
+            line-height: 1.75;
+        }
+
+        .feature-block h3 {
+            margin: 0 0 10px;
+            color: #4CAF50;
+            font-size: 1.05em;
+        }
+
+        .label-table {
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+
+        .label-table th,
+        .label-table td {
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            padding: 6px 14px;
+            font-size: 0.9em;
+        }
+
+        .thanks {
+            text-align: center;
+            margin: 48px auto 0;
+            max-width: 720px;
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 0.95em;
+            line-height: 1.7;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="grain"></div>
+
+    <header>
+        <div class="header-inner">
+            <a href="index.html" class="logo">
+                <img src="img/icon.png" alt="SuperPicky">
+                <span>SuperPicky.APP</span>
+            </a>
+            <div class="lang-switch">
+                <button class="lang-btn active" onclick="setLang('cn')">中</button>
+                <button class="lang-btn" onclick="setLang('en')">EN</button>
+            </div>
+        </div>
+    </header>
+
+    <div class="rc-container">
+        <div class="rc-header">
+            <h1>SuperPicky 4.5.0 RC5</h1>
+            <p>
+                <span class="lang-cn">最新测试版（候选发布）· 2026-07-13</span>
+                <span class="lang-en">Latest Beta (Release Candidate) · 2026-07-13</span>
+            </p>
+        </div>
+
+        <div class="rc-banner">
+            <span class="lang-cn">
+                这是 4.5.0 的候选发布版本，供愿意尝鲜的用户测试。日常使用推荐
+                <a href="index.html#download-beta">4.3.0 LTS 稳定版</a>。
+                遇到问题欢迎到 <a href="https://github.com/jamesphotography/SuperPicky/issues"
+                    target="_blank">GitHub Issues</a> 反馈。
+            </span>
+            <span class="lang-en">
+                This is a release candidate for 4.5.0, offered for early testing. For
+                day-to-day use we recommend the
+                <a href="index.html#download-beta">4.3.0 LTS stable build</a>.
+                Please report issues on <a href="https://github.com/jamesphotography/SuperPicky/issues"
+                    target="_blank">GitHub Issues</a>.
+            </span>
+        </div>
+
+        <div class="rc-table-wrapper">
+            <table class="rc-table">
+                <thead>
+                    <tr>
+                        <th>
+                            <span class="lang-cn">安装包</span>
+                            <span class="lang-en">Package</span>
+                        </th>
+                        <th>
+                            <span class="lang-cn">下载渠道</span>
+                            <span class="lang-en">Downloads</span>
+                        </th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td class="pkg-cell">macOS (Apple&nbsp;Silicon)
+                            <span class="pkg-note">≈ 800 MB</span>
+                        </td>
+                        <td>
+                            <a class="dl-link" target="_blank"
+                                href="https://github.com/jamesphotography/SuperPicky/releases/download/v4.5.0-rc5/SuperPicky_v4.5.0RC5_arm64_e20290a.dmg">GitHub</a>
+                            <a class="dl-link" target="_blank"
+                                href="https://gh-proxy.com/https://github.com/jamesphotography/SuperPicky/releases/download/v4.5.0-rc5/SuperPicky_v4.5.0RC5_arm64_e20290a.dmg"><span
+                                    class="lang-cn">大陆镜像</span><span class="lang-en">CN Mirror</span></a>
+                            <a class="dl-link" target="_blank"
+                                href="https://drive.google.com/file/d/1MwQhhZc5MkQrXV69xZe5kSB3aLWxDNxz/view?usp=sharing">Google
+                                Drive</a>
+                            <a class="dl-link" target="_blank"
+                                href="https://pan.baidu.com/s/1ocNgvF50qLIe3aH2IM5ZPA?pwd=renc">Baidu (renc)</a>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="pkg-cell">Windows Lite
+                            <span class="pkg-note">
+                                <span class="lang-cn">≈ 200 MB，首启自动下载模型</span>
+                                <span class="lang-en">≈ 200 MB, models fetched on first launch</span>
+                            </span>
+                        </td>
+                        <td>
+                            <a class="dl-link" target="_blank"
+                                href="https://github.com/jamesphotography/SuperPicky/releases/download/v4.5.0-rc5/SuperPicky_Setup_Lite_Win64_v4.5.0RC5_e20290a.exe">GitHub</a>
+                            <a class="dl-link" target="_blank"
+                                href="https://gh-proxy.com/https://github.com/jamesphotography/SuperPicky/releases/download/v4.5.0-rc5/SuperPicky_Setup_Lite_Win64_v4.5.0RC5_e20290a.exe"><span
+                                    class="lang-cn">大陆镜像</span><span class="lang-en">CN Mirror</span></a>
+                            <a class="dl-link" target="_blank"
+                                href="https://drive.google.com/file/d/1PifoOPUSpJLmrAXCAt_FNu20ECdh2-8M/view?usp=sharing">Google
+                                Drive</a>
+                            <a class="dl-link" target="_blank"
+                                href="https://pan.baidu.com/s/1pNvuthjCXIRQ5MhVRelAkQ?pwd=zjaf">Baidu (zjaf)</a>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="pkg-cell">Windows Full (CPU)
+                            <span class="pkg-note">
+                                <span class="lang-cn">≈ 750 MB，模型全内置</span>
+                                <span class="lang-en">≈ 750 MB, models bundled</span>
+                            </span>
+                        </td>
+                        <td>
+                            <a class="dl-link" target="_blank"
+                                href="https://github.com/jamesphotography/SuperPicky/releases/download/v4.5.0-rc5/SuperPicky_Setup_Full_Win64_v4.5.0RC5_e20290a.exe">GitHub</a>
+                            <a class="dl-link" target="_blank"
+                                href="https://gh-proxy.com/https://github.com/jamesphotography/SuperPicky/releases/download/v4.5.0-rc5/SuperPicky_Setup_Full_Win64_v4.5.0RC5_e20290a.exe"><span
+                                    class="lang-cn">大陆镜像</span><span class="lang-en">CN Mirror</span></a>
+                            <a class="dl-link" target="_blank"
+                                href="https://drive.google.com/file/d/1omDwHujIkdTLlWAeasw4jYNiq4NJmqpf/view?usp=sharing">Google
+                                Drive</a>
+                            <a class="dl-link" target="_blank"
+                                href="https://pan.baidu.com/s/1eSbC4Vp0Vgck78FyFcsR8A?pwd=mijt">Baidu (mijt)</a>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="pkg-cell">Windows Full CUDA
+                            <span class="pkg-note">
+                                <span class="lang-cn">≈ 2.1 GB，NVIDIA GPU 加速</span>
+                                <span class="lang-en">≈ 2.1 GB, NVIDIA GPU acceleration</span>
+                            </span>
+                        </td>
+                        <td>
+                            <a class="dl-link" target="_blank"
+                                href="https://drive.google.com/file/d/19I-4j6VXrgLN7Wgy8p0gJjVIAgaKTshm/view?usp=sharing">Google
+                                Drive</a>
+                            <a class="dl-link" target="_blank"
+                                href="https://pan.baidu.com/s/1CojGF34uZsKvtBweRkGw5g?pwd=knw4">Baidu (knw4)</a>
+                            <span class="pkg-note">
+                                <span class="lang-cn">体积超 GitHub 附件限制，仅网盘分发</span>
+                                <span class="lang-en">Exceeds GitHub asset size limit — cloud drives only</span>
+                            </span>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="whatsnew">
+            <h2>
+                <span class="lang-cn">自 4.3.0 以来的变化</span>
+                <span class="lang-en">What's New since 4.3.0</span>
+            </h2>
+
+            <div class="feature-block">
+                <h3>
+                    <span class="lang-cn">评星算法全新升级：批内相对 + 配额</span>
+                    <span class="lang-en">Batch-Relative Star Rating</span>
+                </h3>
+                <span class="lang-cn">
+                    星级不再依赖固定阈值——<strong>3 星 = 本批照片里最好的前 N%</strong>（默认 20%，5–50%
+                    可调，与摄影水平档位联动）。开启识鸟时配额<strong>按鸟种分配</strong>：每种鸟都保住自己最好的照片，
+                    罕见鸟至少保底 1 张，常见鸟的大连拍不再霸榜。美学评分改为只看鸟体裁剪区，背景不再干扰。
+                    想用旧的绝对阈值算法？设置中心一键切回。
+                </span>
+                <span class="lang-en">
+                    <strong>Star ratings are now batch-relative</strong>: the best N% of each batch
+                    get 3 stars (default 20%, adjustable 5–50%, mapped to skill levels). With Bird ID
+                    on, the quota is applied <strong>per species</strong> — rare birds always keep
+                    their best shot, and a long burst of one common bird no longer crowds out the
+                    others. Aesthetics now scores the bird crop instead of the whole frame. The
+                    legacy threshold algorithm remains available in Settings.
+                </span>
+            </div>
+
+            <div class="feature-block">
+                <h3>
+                    <span class="lang-cn">平铺模式：不移动任何文件（Lightroom 用户必看）</span>
+                    <span class="lang-en">Flat Layout — Zero File Moves (Lightroom users, read this)</span>
+                </h3>
+                <span class="lang-cn">
+                    新增「平铺」目录布局：照常检测、评星、写关键字和色标，但<strong>所有文件留在原地</strong>——
+                    Lightroom 已导入目录的引用不会断。连拍也可以只检测不分子文件夹。
+                </span>
+                <span class="lang-en">
+                    <strong>New "Flat" folder layout — rate in place, no file moves.</strong> Photos
+                    are detected, rated and tagged as usual, but every file stays exactly where it
+                    was — your Lightroom folder references never break. Burst detection can now also
+                    skip creating subfolders.
+                </span>
+            </div>
+
+            <div class="feature-block">
+                <h3>
+                    <span class="lang-cn">鸟种写入 Lightroom 关键字</span>
+                    <span class="lang-en">Species Keywords</span>
+                </h3>
+                <span class="lang-cn">
+                    识鸟结果同步写入标准关键字（XMP Subject），LR 关键字面板直接按鸟种筛选；只增不删，
+                    你自己的关键字绝不会被动，重跑也不会产生重复。
+                </span>
+                <span class="lang-en">
+                    <strong>Species names are written to standard keywords</strong> (XMP Subject) —
+                    filter by species right in Lightroom. Merge-only: your own keywords are never
+                    touched, and re-runs never duplicate.
+                </span>
+            </div>
+
+            <div class="feature-block">
+                <h3>
+                    <span class="lang-cn">色标新含义（老用户请注意）</span>
+                    <span class="lang-en">New Color-Label Defaults (please note)</span>
+                </h3>
+                <table class="label-table">
+                    <tr>
+                        <th><span class="lang-cn">含义</span><span class="lang-en">Meaning</span></th>
+                        <th><span class="lang-cn">旧</span><span class="lang-en">Old</span></th>
+                        <th><span class="lang-cn">新</span><span class="lang-en">New</span></th>
+                    </tr>
+                    <tr>
+                        <td><span class="lang-cn">飞鸟</span><span class="lang-en">Bird in flight</span></td>
+                        <td><span class="lang-cn">绿</span><span class="lang-en">Green</span></td>
+                        <td><strong><span class="lang-cn">蓝</span><span class="lang-en">Blue</span></strong></td>
+                    </tr>
+                    <tr>
+                        <td><span class="lang-cn">精准合焦</span><span class="lang-en">Critical focus</span></td>
+                        <td><span class="lang-cn">红</span><span class="lang-en">Red</span></td>
+                        <td><strong><span class="lang-cn">绿</span><span class="lang-en">Green</span></strong></td>
+                    </tr>
+                    <tr>
+                        <td><span class="lang-cn">脱焦</span><span class="lang-en">Soft / out of focus</span></td>
+                        <td><span class="lang-cn">无</span><span class="lang-en">none</span></td>
+                        <td><strong><span class="lang-cn">红</span><span class="lang-en">Red</span></strong></td>
+                    </tr>
+                </table>
+                <span class="lang-cn" style="display:block; margin-top:10px;">
+                    如果你在 LR 建过「绿=飞鸟」的智能收藏夹，请改为蓝色。
+                </span>
+                <span class="lang-en" style="display:block; margin-top:10px;">
+                    If you built Lightroom smart collections on "green = flying", update them to blue.
+                </span>
+            </div>
+
+            <div class="feature-block">
+                <h3>
+                    <span class="lang-cn">全新设置中心 &amp; 浏览器增强</span>
+                    <span class="lang-en">Settings Center &amp; Results Browser</span>
+                </h3>
+                <span class="lang-cn">
+                    所有设置统一进带左侧导航的设置中心，首页保留快捷面板双向同步。结果浏览器支持
+                    <strong>键盘打星</strong>（数字键 0–3 直接设星，↑/↓ 加减星），缩略图同时显示鸟名 +
+                    文件名，「精选」皇冠角标，可直接修改鸟种。
+                </span>
+                <span class="lang-en">
+                    All settings unified into one Settings Center with sidebar navigation. The
+                    Results Browser adds <strong>keyboard rating</strong> (0–3 to set stars, arrows
+                    to step), species + filename shown together, crown badges for picks, and
+                    in-browser species editing.
+                </span>
+            </div>
+
+            <div class="feature-block">
+                <h3>
+                    <span class="lang-cn">更快、更稳</span>
+                    <span class="lang-en">Faster &amp; More Reliable</span>
+                </h3>
+                <span class="lang-cn">
+                    ExifTool 读写分离双常驻进程，消除每约 30 张卡顿 3 秒的问题（152 张实测总耗时
+                    75.5s → 62.1s）；识鸟驻留服务秒级就绪，Lightroom 插件不再等待十几秒；大量稳定性修复。
+                    另：4.5.0 起应用内不再检测在线更新，新版本请关注本站或
+                    <a href="https://github.com/jamesphotography/SuperPicky/releases" target="_blank">GitHub Releases</a>。
+                </span>
+                <span class="lang-en">
+                    ExifTool now runs as dedicated read/write resident processes — no more periodic
+                    stalls (152-photo test: 75.5s → 62.1s). The Bird ID service is ready within
+                    seconds; many stability fixes. Note: in-app update checking is retired as of
+                    4.5.0 — watch this site or
+                    <a href="https://github.com/jamesphotography/SuperPicky/releases" target="_blank">GitHub Releases</a>.
+                </span>
+            </div>
+
+            <p style="text-align:center; margin-top:28px;">
+                <a class="dl-link" target="_blank"
+                    href="https://github.com/jamesphotography/SuperPicky/blob/v4.5.0-rc5/ChangeLog.md">
+                    <span class="lang-cn">完整变更明细（ChangeLog）</span>
+                    <span class="lang-en">Full ChangeLog</span>
+                </a>
+            </p>
+        </div>
+
+        <div class="thanks">
+            <span class="lang-cn">
+                特别感谢 <strong>Paul Gregory</strong> 的细致测试与反馈——本版的平铺模式、鸟种关键字、
+                键盘打星与色标新默认值均源自他的建议。
+            </span>
+            <span class="lang-en">
+                Special thanks to <strong>Paul Gregory</strong> for his thorough testing and
+                feedback — the flat layout, species keywords, keyboard rating and new color-label
+                defaults all grew out of his suggestions.
+            </span>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <div class="footer-inner">
+                <div class="footer-brand">
+                    <img src="img/icon.png" alt="SuperPicky">
+                    <div class="footer-brand-text">
+                        <span>SuperPicky</span>
+                        <span class="footer-author">by James Yu (詹姆斯·于震)</span>
+                    </div>
+                </div>
+                <div class="footer-links">
+                    <a href="tutorial/430/index.html">
+                        <span class="lang-cn">使用教程</span>
+                        <span class="lang-en">Tutorial</span>
+                    </a>
+                    <a href="faq.html">
+                        <span class="lang-cn">常见问题</span>
+                        <span class="lang-en">FAQ</span>
+                    </a>
+                    <a href="sponsors.html">
+                        <span class="lang-cn">赞助者</span>
+                        <span class="lang-en">Sponsors</span>
+                    </a>
+                    <a href="https://github.com/jamesphotography/SuperPicky">GitHub</a>
+                    <a href="mailto:james@jamesphotography.com.au">
+                        <span class="lang-cn">联系</span>
+                        <span class="lang-en">Contact</span>
+                    </a>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p class="copyright">
+                    © 2024-2026 James Yu · <a href="LICENSE" target="_blank"
+                        style="color: inherit; text-decoration: underline;">AGPL-3.0 License</a>
+                </p>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Language Toggle Script -->
+    <script>
+        function setLang(lang) {
+            document.documentElement.setAttribute('data-lang', lang);
+            document.querySelectorAll('.lang-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            event.target.classList.add('active');
+            localStorage.setItem('lang', lang);
+        }
+
+        // Load saved language
+        const savedLang = localStorage.getItem('lang') || 'cn';
+        document.documentElement.setAttribute('data-lang', savedLang);
+        document.addEventListener('DOMContentLoaded', () => {
+            document.querySelectorAll('.lang-btn').forEach(btn => {
+                const isCN = btn.textContent.includes('中');
+                if ((savedLang === 'cn' && isCN) || (savedLang === 'en' && !isCN)) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            });
+        });
+    </script>
+</body>
+
+</html>
