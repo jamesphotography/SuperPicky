@@ -139,3 +139,6 @@ docs/superpowers/
 # 含发布脚本 publish_wechat.py（从环境变量读 AppSecret，无硬编码）、
 # 草稿状态 .draft_state.json、文章 HTML 与配图等私密/体积较大内容。
 docs/Promotion/
+
+# Codex 本地环境配置 / local codex env
+.codex/
