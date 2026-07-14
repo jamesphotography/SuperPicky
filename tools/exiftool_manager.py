@@ -20,6 +20,227 @@ import queue
 
 import atexit
 
+
+def merge_keyword_lists(existing: List[str], additions: List[str]) -> Optional[List[str]]:
+    """
+    合并关键字列表(merge-add 语义):保留 existing 全量与顺序,追加
+    additions 中缺失项(输入自身去重);无新增返回 None(调用方跳过写入)。
+
+    Merge keyword lists (merge-add): keep all of `existing` in order,
+    append items from `additions` not yet present (deduping the input);
+    return None when nothing new needs writing.
+
+    参数 / Parameters:
+        existing (List[str]): 文件中已有关键字 / keywords already on file.
+        additions (List[str]): 需确保存在的关键字 / keywords to ensure.
+
+    返回 / Returns:
+        Optional[List[str]]: 合并后完整列表;None=无需写入。
+    """
+    merged = list(existing)
+    seen = set(existing)
+    for kw in additions:
+        kw = (kw or "").strip()
+        if kw and kw not in seen:
+            merged.append(kw)
+            seen.add(kw)
+    return merged if len(merged) != len(existing) else None
+
+
+class _ExifToolProcess:
+    """
+    单个 exiftool -stay_open 常驻进程的封装（进程句柄 + stdout 读取线程 + 锁）。
+
+    读写分离：ExifToolManager 持有 read/write 两个实例，读操作（read_metadata/
+    extract_binary/对焦点读取等）与写操作（batch_set_metadata 等）各走一个进程，
+    互不阻塞。此前读写共用一个进程和一把锁，批量写 64 个文件会持锁约 3 秒，
+    导致主流程的对焦点/ISO 读取被卡住（表现为每约 30 张照片停顿 3 秒）。
+
+    A wrapper around one exiftool -stay_open persistent process (process handle
+    + stdout reader thread + lock). ExifToolManager keeps two instances
+    (read/write) so read calls are never queued behind a long batch write,
+    which previously stalled the main pipeline ~3s every ~30 photos because
+    both paths shared one process and one lock.
+    """
+
+    def __init__(self, exiftool_path: str, cwd: str, role: str):
+        """
+        参数 / Parameters:
+            exiftool_path (str): exiftool 可执行文件路径 / exiftool executable path
+            cwd (str): 进程工作目录（Windows 需在 exiftool 目录下运行）/ working dir
+            role (str): 'read' 或 'write'，仅用于日志标识 / log label only
+        """
+        self.exiftool_path = exiftool_path
+        self._cwd = cwd
+        self.role = role
+        # RLock：批量写方法需要在持锁期间调用 start()/read_until_ready()
+        # RLock: batch writers call start()/read_until_ready() while holding it
+        self.lock = threading.RLock()
+        self.process = None
+        self._stdout_queue = None
+        self._reader_thread = None
+
+    @staticmethod
+    def _read_stdout_to_queue(out_pipe, q):
+        """后台线程读取 stdout / Background thread draining stdout into a queue"""
+        try:
+            for line in iter(out_pipe.readline, b''):
+                q.put(line)
+        except:
+            pass
+        finally:
+            try:
+                out_pipe.close()
+            except:
+                pass
+
+    def is_alive(self) -> bool:
+        """进程是否存活 / Whether the process is running"""
+        return self.process is not None and self.process.poll() is None
+
+    def start(self):
+        """启动常驻 ExifTool 进程（幂等）/ Start the persistent process (idempotent)"""
+        with self.lock:
+            if self.is_alive():
+                return
+
+            try:
+                # 启动命令（不在此处使用 -fast/-ignoreMinorErrors，避免 ARW 写入后 Image Edge Viewer 无法打开）
+                # 旧版 SuperPickyOsk 写入时未使用这两项，ARW 在 Sony 软件中可正常查看
+                cmd = [
+                    self.exiftool_path,
+                    '-stay_open', 'True',
+                    '-@', '-',
+                    '-common_args',
+                    '-charset', 'utf8',
+                    '-overwrite_original_in_place',  # 保留文件 Birth Time（inode 不变）
+                ]
+
+                creationflags = subprocess.CREATE_NO_WINDOW if sys.platform.startswith('win') else 0
+
+                # 将 stderr 合并到 stdout，避免 stderr 缓冲区塞满导致死锁
+                self.process = subprocess.Popen(
+                    cmd,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    cwd=self._cwd,
+                    creationflags=creationflags
+                )
+
+                # 启动读取线程
+                self._stdout_queue = queue.Queue()
+                self._reader_thread = threading.Thread(
+                    target=self._read_stdout_to_queue,
+                    args=(self.process.stdout, self._stdout_queue),
+                    daemon=True
+                )
+                self._reader_thread.start()
+
+                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 🚀 ExifTool persistent process started ({self.role}, PID: {self.process.pid}, threaded read)")
+            except Exception as e:
+                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ❌ Failed to start ExifTool process ({self.role}): {e}")
+                self.process = None
+
+    def stop(self):
+        """停止常驻进程 / Stop the persistent process"""
+        with self.lock:
+            if not self.process:
+                return
+
+            process = self.process
+            reader_thread = self._reader_thread
+            pid = process.pid
+            try:
+                if process.poll() is None and process.stdin:
+                    process.stdin.write(b'-stay_open\nFalse\n')
+                    process.stdin.flush()
+                    process.wait(timeout=2)
+                    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ✅ ExifTool process ({self.role}, PID: {pid}) stopped gracefully")
+            except Exception as e:
+                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ⚠️  ExifTool process ({self.role}, PID: {pid}) stop failed: {e}")
+            finally:
+                if process.poll() is None:
+                    try:
+                        process.kill()
+                        process.wait(timeout=2)
+                        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ✅ ExifTool process ({self.role}, PID: {pid}) killed")
+                    except Exception as e:
+                        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ⚠️  ExifTool process ({self.role}, PID: {pid}) kill failed: {e}")
+                for pipe_name in ('stdin', 'stdout', 'stderr'):
+                    pipe = getattr(process, pipe_name, None)
+                    if pipe is None:
+                        continue
+                    try:
+                        pipe.close()
+                    except Exception:
+                        pass
+                if reader_thread is not None and reader_thread.is_alive():
+                    try:
+                        reader_thread.join(timeout=2)
+                    except Exception:
+                        pass
+                self.process = None
+                self._stdout_queue = None
+                self._reader_thread = None
+
+    def read_until_ready(self, timeout=10.0) -> bytes:
+        """从队列读取直到 {ready}，支持超时 / Read stdout lines until {ready} or timeout"""
+        if not self._stdout_queue:
+            return b""
+
+        output = b""
+        start_time = time.time()
+
+        while True:
+            # 计算剩余时间
+            elapsed = time.time() - start_time
+            remaining = timeout - elapsed
+
+            if remaining <= 0:
+                raise TimeoutError(f"ExifTool timeout ({timeout}s)")
+
+            try:
+                line = self._stdout_queue.get(timeout=remaining)
+                output += line
+                if b'{ready}' in line:
+                    return output
+            except queue.Empty:
+                raise TimeoutError(f"ExifTool timeout ({timeout}s)")
+
+    def send_command(self, args: List[str], timeout=30.0) -> bytes:
+        """
+        发送一条命令（单个 -execute）到常驻进程并返回输出。
+        出错时打印日志、停止进程（下次调用自动重启）并抛出异常。
+
+        Send one command (single -execute) to the persistent process and return
+        its output. On failure: log, stop the process (auto-restart on next
+        call), and re-raise.
+        """
+        with self.lock:
+            self.start()
+            if not self.process:
+                raise RuntimeError(f"ExifTool process not available ({self.role})")
+
+            try:
+                # 确保命令以 -execute 结尾
+                if '-execute' not in args:
+                    cmd_str = '\n'.join(args) + '\n-execute\n'
+                else:
+                    cmd_str = '\n'.join(args) + '\n'
+
+                self.process.stdin.write(cmd_str.encode('utf-8'))
+                self.process.stdin.flush()
+
+                # 读取直到 {ready}
+                return self.read_until_ready(timeout)
+            except (TimeoutError, Exception) as e:
+                # 记录错误并停止进程，下次会自动重新启动
+                print(f"❌ ExifTool persistent error ({self.role}): {e}")
+                self.stop()
+                raise
+
+
 class ExifToolManager:
     """ExifTool管理器 - 使用本地打包的exiftool"""
 
@@ -36,11 +257,15 @@ class ExifToolManager:
 
         print(f"✅ ExifTool loaded: {self.exiftool_path}")
         
-        # V4.0.5: 常驻进程对象
-        self._process = None
-        self._stdout_queue = None
-        self._reader_thread = None
-        self._lock = threading.RLock()
+        # V4.5: 读写分离的两个常驻进程。读操作（对焦点/ISO/GPS/预览提取）走
+        # read 进程，写操作（星级/题注批量写入）走 write 进程，读延迟不再受
+        # 批量写持锁时长影响（原共用进程时每 ~30 张照片主流程停顿 ~3 秒）。
+        # V4.5: Two persistent processes, one for reads (focus point / ISO /
+        # GPS / preview extraction) and one for writes (rating/caption
+        # batches), so read latency no longer depends on batch-write duration
+        # (sharing one process used to stall the pipeline ~3s every ~30 photos).
+        self._read_proc = _ExifToolProcess(self.exiftool_path, self._exiftool_cwd, 'read')
+        self._write_proc = _ExifToolProcess(self.exiftool_path, self._exiftool_cwd, 'write')
         self._session_lock = threading.Lock()
         self._persistent_session_count = 0
         self._shutdown_lock = threading.Lock()
@@ -196,106 +421,16 @@ class ExifToolManager:
             print(f"   ❌ ExifTool error: {type(e).__name__}: {e}")
             return False
 
-    @staticmethod
-    def _read_stdout_to_queue(out_pipe, q):
-        """后台线程读取 stdout"""
-        try:
-            for line in iter(out_pipe.readline, b''):
-                q.put(line)
-        except:
-            pass
-        finally:
-            try:
-                out_pipe.close()
-            except:
-                pass
-
     def _start_process(self):
-        """启动常驻 ExifTool 进程 (V4.0.5)"""
-        with self._lock:
-            if self._process is not None and self._process.poll() is None:
-                return
-
-            try:
-                # 启动命令（不在此处使用 -fast/-ignoreMinorErrors，避免 ARW 写入后 Image Edge Viewer 无法打开）
-                # 旧版 SuperPickyOsk 写入时未使用这两项，ARW 在 Sony 软件中可正常查看
-                cmd = [
-                    self.exiftool_path,
-                    '-stay_open', 'True',
-                    '-@', '-',
-                    '-common_args',
-                    '-charset', 'utf8',
-                    '-overwrite_original_in_place',  # 保留文件 Birth Time（inode 不变）
-                ]
-                
-                creationflags = subprocess.CREATE_NO_WINDOW if sys.platform.startswith('win') else 0
-                
-                # 将 stderr 合并到 stdout，避免 stderr 缓冲区塞满导致死锁
-                self._process = subprocess.Popen(
-                    cmd,
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    cwd=self._exiftool_cwd,
-                    creationflags=creationflags
-                )
-                
-                # 启动读取线程
-                self._stdout_queue = queue.Queue()
-                self._reader_thread = threading.Thread(
-                    target=self._read_stdout_to_queue,
-                    args=(self._process.stdout, self._stdout_queue),
-                    daemon=True
-                )
-                self._reader_thread.start()
-                
-                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 🚀 ExifTool persistent process started (PID: {self._process.pid}, threaded read)")
-            except Exception as e:
-                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ❌ Failed to start ExifTool process: {e}")
-                self._process = None
+        """启动读/写两个常驻 ExifTool 进程 / Start both persistent processes"""
+        self._read_proc.start()
+        self._write_proc.start()
 
     def _stop_process(self):
-        """停止常驻进程"""
-        with self._lock:
-            if not self._process:
-                return
+        """停止读/写两个常驻进程 / Stop both persistent processes"""
+        self._read_proc.stop()
+        self._write_proc.stop()
 
-            process = self._process
-            reader_thread = self._reader_thread
-            pid = process.pid
-            try:
-                if process.poll() is None and process.stdin:
-                    process.stdin.write(b'-stay_open\nFalse\n')
-                    process.stdin.flush()
-                    process.wait(timeout=2)
-                    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ✅ ExifTool process (PID: {pid}) stopped gracefully")
-            except Exception as e:
-                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ⚠️  ExifTool process (PID: {pid}) stop failed: {e}")
-            finally:
-                if process.poll() is None:
-                    try:
-                        process.kill()
-                        process.wait(timeout=2)
-                        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ✅ ExifTool process (PID: {pid}) killed")
-                    except Exception as e:
-                        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ⚠️  ExifTool process (PID: {pid}) kill failed: {e}")
-                for pipe_name in ('stdin', 'stdout', 'stderr'):
-                    pipe = getattr(process, pipe_name, None)
-                    if pipe is None:
-                        continue
-                    try:
-                        pipe.close()
-                    except Exception:
-                        pass
-                if reader_thread is not None and reader_thread.is_alive():
-                    try:
-                        reader_thread.join(timeout=2)
-                    except Exception:
-                        pass
-                self._process = None
-                self._stdout_queue = None
-                self._reader_thread = None
-    
     def shutdown(self):
         """关闭ExifTool管理器，停止所有相关进程"""
         global exiftool_manager
@@ -330,7 +465,7 @@ class ExifToolManager:
             return
 
         self._start_process()
-        if self._process is None or self._process.poll() is not None:
+        if not (self._read_proc.is_alive() and self._write_proc.is_alive()):
             with self._session_lock:
                 self._persistent_session_count = max(0, self._persistent_session_count - 1)
             owner_suffix = f" ({owner})" if owner else ""
@@ -348,59 +483,22 @@ class ExifToolManager:
         if should_stop:
             self._stop_process()
 
-    def _read_until_ready(self, timeout=10.0) -> bytes:
-        """从队列读取直到 {ready}，支持超时"""
-        if not self._stdout_queue:
-            return b""
-            
-        output = b""
-        start_time = time.time()
-        
-        while True:
-            # 计算剩余时间
-            elapsed = time.time() - start_time
-            remaining = timeout - elapsed
-            
-            if remaining <= 0:
-                raise TimeoutError(f"ExifTool timeout ({timeout}s)")
-            
-            try:
-                line = self._stdout_queue.get(timeout=remaining)
-                output += line
-                if b'{ready}' in line:
-                    return output
-            except queue.Empty:
-                raise TimeoutError(f"ExifTool timeout ({timeout}s)")
-
     def _send_command(self, args: List[str], timeout=30.0) -> bytes:
-        """发送原始命令到常驻进程并返回输出 (V4.0.6)"""
-        with self._lock:
-            self._start_process()
-            if not self._process:
-                raise RuntimeError("ExifTool process not available")
+        """
+        发送只读命令到 read 常驻进程并返回输出 (V4.5: 读写分离)。
+        仅供读取类方法（read_metadata/extract_binary/_read_arw_structure）使用，
+        写入类方法请走 _send_to_process（write 进程）。
 
-            try:
-                # 确保命令以 -execute 结尾
-                if '-execute' not in args:
-                    cmd_str = '\n'.join(args) + '\n-execute\n'
-                else:
-                    cmd_str = '\n'.join(args) + '\n'
-                
-                self._process.stdin.write(cmd_str.encode('utf-8'))
-                self._process.stdin.flush()
-                
-                # 读取直到 {ready}
-                return self._read_until_ready(timeout)
-            except (TimeoutError, Exception) as e:
-                # 记录错误并停止进程，下次会自动重新启动
-                print(f"❌ ExifTool persistent error: {e}")
-                self._stop_process()
-                raise
+        Send a read-only command to the persistent read process (V4.5 split).
+        For read-style methods only; write-style methods must use
+        _send_to_process (write process).
+        """
+        return self._read_proc.send_command(args, timeout)
 
     def _send_to_process(self, args: List[str], timeout=30.0) -> bool:
-        """发送命令到常驻进程并等待结果，返回成功标志"""
+        """发送写入命令到 write 常驻进程并等待结果，返回成功标志"""
         try:
-            output = self._send_command(args, timeout)
+            output = self._write_proc.send_command(args, timeout)
             decoded = output.decode('utf-8', errors='replace')
             # 通过 exiftool 的实际更新计数判断成功，避免路径名含"Error"或
             # 同时出现 Warning+Error 时的误判
@@ -490,6 +588,34 @@ class ExifToolManager:
         """判断是否为 ARW 文件"""
         return Path(file_path).suffix.lower() == '.arw'
 
+    # exiftool 对无组前缀标签按内置优先级分组：以下裸标签名会落到 IPTC IIM。
+    # 写这些标签需要 UTF-8 字符集声明（见 set_metadata），未列出的冷门 IPTC
+    # 标签请显式写组前缀（如 'IPTC:FixtureIdentifier'）。
+    # exiftool assigns bare tag names to groups by built-in priority; these
+    # bare names resolve to IPTC IIM and need the UTF-8 charset declaration
+    # (see set_metadata). For uncommon IPTC tags not listed here, pass an
+    # explicit group prefix (e.g. 'IPTC:FixtureIdentifier').
+    _IPTC_BARE_TAGS = {
+        'caption-abstract', 'writer-editor', 'headline', 'keywords',
+        'object-name', 'city', 'sub-location', 'province-state',
+        'country-primarylocationname', 'country-primarylocationcode',
+        'by-line', 'by-linetitle', 'credit', 'source', 'copyrightnotice',
+        'specialinstructions', 'category', 'supplementalcategories',
+    }
+
+    @classmethod
+    def _is_iptc_tag(cls, tag_name: str) -> bool:
+        """
+        判断标签是否写入 IPTC IIM（需要 UTF-8 字符集声明）。
+
+        Whether the tag targets IPTC IIM (and therefore needs the UTF-8
+        charset declaration when written).
+        """
+        group, sep, bare = tag_name.partition(':')
+        if sep:
+            return group.strip().lower().startswith('iptc')
+        return tag_name.strip().lower() in cls._IPTC_BARE_TAGS
+
     def _write_metadata_subprocess(self, item: Dict[str, any], in_place: bool = False) -> bool:
         """写入元数据 (V4.0.6: 使用常驻进程)"""
         file_path = item.get('file')
@@ -522,6 +648,9 @@ class ExifToolManager:
         if item.get('gbif_rarity_100') is not None:
             args.append(f'-XMP-iptcExt:Event={item["gbif_rarity_100"]:.2f}')
         temp_files: List[str] = []
+
+        # 鸟名关键字(merge-add,Paul P1-1) / species keywords (merge-add)
+        args.extend(self._keywords_args(item, file_path, temp_files))
 
         title = item.get('title')
         if title is not None:
@@ -568,6 +697,59 @@ class ExifToolManager:
                 except Exception:
                     pass
 
+    def _read_subject_list(self, file_path: str) -> List[str]:
+        """
+        读取文件现有 XMP-dc:Subject 关键字列表(经常驻读进程)。
+        文件不存在/无标签/读取失败均返回空列表。
+
+        Read the current XMP-dc:Subject list via the resident read
+        process; returns [] when missing/absent/unreadable.
+        """
+        if not file_path or not os.path.exists(file_path):
+            return []
+        try:
+            data = self.read_metadata(file_path, extra_args=['-XMP-dc:Subject']) or {}
+        except Exception:
+            return []
+        subj = data.get('Subject')
+        if subj is None:
+            return []
+        return [subj] if isinstance(subj, str) else [str(s) for s in subj]
+
+    def _keywords_args(self, item: Dict[str, any], read_target: str,
+                       temp_files: List[str]) -> List[str]:
+        """
+        为 item['keywords'](若有)生成 merge-add 写入参数。
+
+        读 read_target 现有关键字 → merge_keyword_lists 合并 → 无新增返回 [];
+        有新增则把完整列表以 ";;" 连接写入 UTF-8 临时文件,返回
+        ['-sep', ';;', '-XMP-dc:Subject<=<tmp>'](临时文件挂入 temp_files
+        由调用方统一清理)。整表赋值经临时文件,符合中文 UTF-8 铁律;
+        exiftool 不支持 '+=<file' 追加(2026-07-12 实验验证),故用
+        读-合并-整表回写实现幂等追加。
+
+        Build merge-add write args for item['keywords']: read the current
+        list from read_target, merge, and when something new is needed
+        write the full ";;"-joined list through a UTF-8 temp file
+        (-sep ';;' -XMP-dc:Subject<=tmp). exiftool has no '+=<file'
+        append form (verified 2026-07-12), hence read-merge-rewrite.
+        """
+        keywords = item.get('keywords')
+        if not keywords:
+            return []
+        merged = merge_keyword_lists(self._read_subject_list(read_target), keywords)
+        if merged is None:
+            return []
+        try:
+            fd, tmp_path = tempfile.mkstemp(suffix='.txt', prefix='sp_keywords_')
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                f.write(';;'.join(merged))
+            temp_files.append(tmp_path)
+            return ['-sep', ';;', f'-XMP-dc:Subject<={tmp_path}']
+        except Exception as e:
+            print(f"⚠️ Keywords temp file failed: {e}, skip keywords write")
+            return []
+
     def _write_metadata_xmp_sidecar(self, item: Dict[str, any]) -> bool:
         """写入 XMP 侧车文件 (V4.0.6: 使用常驻进程)"""
         file_path = item.get('file')
@@ -596,6 +778,12 @@ class ExifToolManager:
         if item.get('gbif_rarity_100') is not None:
             args.append(f'-XMP-iptcExt:Event={item["gbif_rarity_100"]:.2f}')
         temp_files: List[str] = []
+
+        # 鸟名关键字:侧车存在读侧车,否则读文件本体(LR 惯例侧车优先)
+        # Species keywords: read the sidecar when present, else the file
+        # itself (LR gives sidecars precedence for proprietary RAW).
+        kw_read_target = xmp_path if os.path.exists(xmp_path) else file_path
+        args.extend(self._keywords_args(item, kw_read_target, temp_files))
 
         # UTF-8 temp file for Title/Caption
         title = item.get('title')
@@ -783,6 +971,108 @@ class ExifToolManager:
             print(f"❌ Error setting rating/pick: {e}")
             return False
 
+    def set_metadata(self, file_path: str, tags: Dict[str, str]) -> bool:
+        """
+        通用单文件元数据写入（V4.5，走 write 常驻进程）。
+
+        供 LR 插件服务器（birdid_server 的 /exif/write-title、/exif/write-caption）
+        和 birdid_cli 的 --write-exif 使用；此前两处调用的本方法并不存在（历史
+        重构中遗失），会抛 AttributeError 被上层 except 吞掉，功能一直失效。
+
+        写入策略与批量写路径保持一致：
+        - 全局 metadata_write_mode == "none" → 跳过写入并返回 True（用户配置意图）；
+        - ARW 或全局 sidecar 模式 → 只写 XMP 侧车，不动 RAW 本体；
+        - 所有值一律经 UTF-8 临时文件重定向（-TAG<=tmp.txt），满足仓库
+          「ExifTool 中文元数据必须走 UTF-8 临时文件」的硬性约定，
+          同时避免值中的换行破坏 -@ 参数流；
+        - 涉及 IPTC 标签（如 Caption-Abstract）时自动附加
+          -charset iptc=utf8 与 -CodedCharacterSet=UTF8，避免中文按
+          Latin-1 存储/误读（IPTC IIM 默认字符集陷阱）。
+
+        参数 / Parameters:
+            file_path (str): 目标文件路径 / target file path
+            tags (Dict[str, str]): 标签名→值，如 {'Title': '黑尾塍鹬 (Black-tailed Godwit)'}。
+                标签名可带组前缀（如 'XMP:Title'）；侧车模式下无组前缀自动补 XMP:。
+
+        返回 / Returns:
+            bool: 写入成功（或按配置跳过）为 True，失败为 False（不抛异常）。
+
+        Generic single-file metadata write routed to the persistent write
+        process. Used by the LR-plugin server endpoints and birdid_cli; this
+        method was previously missing (lost in a refactor) so those callers
+        always failed with a swallowed AttributeError. Policy matches the
+        batch path: honor metadata_write_mode "none", force XMP sidecar for
+        ARW / sidecar mode, and write every value via a UTF-8 temp file.
+        """
+        if not file_path or not os.path.exists(file_path) or not tags:
+            return False
+
+        global_mode = self._get_metadata_write_mode()
+        if global_mode == "none":
+            print(f"[ExifTool] metadata_write_mode=none, 跳过 set_metadata: {os.path.basename(file_path)}")
+            return True
+
+        # ARW 一律只写 XMP 侧车；全局 sidecar 模式下所有格式也走侧车
+        # ARW always goes to the XMP sidecar; global sidecar mode does too
+        use_sidecar = self._is_arw(file_path) or global_mode == "sidecar"
+
+        # 侧车只支持 XMP 组：IPTC 题注映射到 XMP:Description，无组前缀的标签补 XMP:
+        # Sidecars are XMP-only: map the IPTC caption tag to XMP:Description
+        # and add the XMP: group to bare tag names
+        sidecar_alias = {'caption-abstract': 'XMP:Description'}
+
+        target_path = os.path.splitext(file_path)[0] + '.xmp' if use_sidecar else file_path
+
+        args: List[str] = []
+        temp_files: List[str] = []
+        writes_iptc = False
+        try:
+            for tag, value in tags.items():
+                if value is None:
+                    continue
+                tag_name = str(tag).strip()
+                if use_sidecar:
+                    tag_name = sidecar_alias.get(tag_name.lower(), tag_name)
+                    if ':' not in tag_name:
+                        tag_name = f'XMP:{tag_name}'
+                elif self._is_iptc_tag(tag_name):
+                    writes_iptc = True
+                fd, tmp_path = tempfile.mkstemp(suffix='.txt', prefix='sp_tag_')
+                with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    f.write(str(value))
+                temp_files.append(tmp_path)
+                args.append(f'-{tag_name}<={tmp_path}')
+
+            if not args:
+                return False
+
+            # IPTC IIM 默认字符集是 Latin-1：写 IPTC 标签必须声明 UTF-8 并写入
+            # CodedCharacterSet 标记，否则中文按 Latin-1 存储变 '?'，或存成
+            # UTF-8 字节但被第三方软件（LR 等）按 Latin-1 误读（已实测验证）。
+            # XMP 原生 UTF-8，无此问题。
+            # IPTC IIM defaults to Latin-1: when writing IPTC tags we must both
+            # declare UTF-8 and write the CodedCharacterSet marker, otherwise
+            # Chinese becomes '?' (or unmarked UTF-8 bytes that third-party
+            # readers such as LR decode as Latin-1). Verified empirically.
+            # XMP is natively UTF-8 and unaffected.
+            if writes_iptc:
+                args = ['-charset', 'iptc=utf8', '-CodedCharacterSet=UTF8'] + args
+
+            # -overwrite_original_in_place 与其余写入路径一致（ExFAT 安全，保留 inode）
+            # Same flag as every other write path (ExFAT-safe, keeps the inode)
+            args.extend(['-overwrite_original_in_place', target_path])
+            return self._send_to_process(args, timeout=30)
+        except Exception as e:
+            print(f"❌ set_metadata error [{os.path.basename(file_path)}]: {e}")
+            return False
+        finally:
+            for tmp_path in temp_files:
+                try:
+                    if os.path.exists(tmp_path):
+                        os.remove(tmp_path)
+                except Exception:
+                    pass
+
     def batch_set_metadata(
         self,
         files_metadata: List[Dict[str, any]]
@@ -884,6 +1174,9 @@ class ExifToolManager:
             if item.get('focus_status') is not None:
                 args_list.append(f'-XMP:Country={item["focus_status"]}')
                 
+            # 鸟名关键字(merge-add,Paul P1-1) / species keywords (merge-add)
+            args_list.extend(self._keywords_args(item, file_path, caption_temp_files))
+
             # Title（使用临时 UTF-8 文件，与 Caption 保持一致，避免非 ASCII 编码风险）
             if item.get('title') is not None:
                 try:
@@ -940,24 +1233,30 @@ class ExifToolManager:
         
         num_executes = 0
         total_timeout = 30.0
+        # V4.5: 批量写只占用 write 进程；read 进程保持空闲，主流程的
+        # 对焦点/ISO/GPS 读取不再被整批写入持锁阻塞。
+        # V4.5: The batch only occupies the write process; the read process
+        # stays free so focus/ISO/GPS reads are no longer blocked for the
+        # whole batch duration.
+        wp = self._write_proc
         try:
-            with self._lock:
-                self._start_process()
-                if not self._process:
+            with wp.lock:
+                wp.start()
+                if not wp.process:
                     raise Exception("Process not started")
-                    
+
                 cmd_str = '\n'.join(args_list) + '\n' # 注意这里不加 -execute，因为 args_list 里已经包含了 N 个 -execute
-                
+
                 # 写入大量数据
-                self._process.stdin.write(cmd_str.encode('utf-8'))
-                self._process.stdin.flush()
-                
+                wp.process.stdin.write(cmd_str.encode('utf-8'))
+                wp.process.stdin.flush()
+
                 # 读取输出：我们需要读取 N 次 {ready}
                 num_executes = args_list.count('-execute')
                 # 按文件数线性放大超时
                 total_timeout = max(30.0, num_executes * 5.0)
                 start_time = time.time()
-                
+
                 error_count = 0
                 for _ in range(num_executes):
                     elapsed = time.time() - start_time
@@ -966,7 +1265,7 @@ class ExifToolManager:
                         raise TimeoutError(f"Batch timeout after {total_timeout}s")
 
                     # 读取一次 {ready}
-                    output = self._read_until_ready(timeout=remaining)
+                    output = wp.read_until_ready(timeout=remaining)
 
                     # 简单的错误检测 (累积)
                     decoded = output.decode('utf-8', errors='replace')
@@ -975,14 +1274,14 @@ class ExifToolManager:
 
                 stats['success'] += num_executes - error_count
                 stats['failed'] += error_count
-                    
+
         except TimeoutError:
             print(f"❌ Batch ExifTool timeout (>{total_timeout}s)")
-            self._stop_process()
+            wp.stop()
             stats['failed'] += num_executes
         except Exception as e:
             print(f"❌ Batch persistent error: {e}")
-            self._stop_process()
+            wp.stop()
             stats['failed'] += num_executes
         finally:
             for tmp_path in caption_temp_files:
@@ -1278,17 +1577,20 @@ class ExifToolManager:
             batch_args.append('-execute')
 
             try:
-                with self._lock:
-                    self._start_process()
-                    if not self._process:
+                # V4.5: 批量重置走 write 进程，与批量写入同一路由
+                # V4.5: Batch reset uses the write process, same route as batch writes
+                wp = self._write_proc
+                with wp.lock:
+                    wp.start()
+                    if not wp.process:
                         raise RuntimeError("Process not started")
 
                     cmd_str = '\n'.join(batch_args) + '\n'
-                    self._process.stdin.write(cmd_str.encode('utf-8'))
-                    self._process.stdin.flush()
+                    wp.process.stdin.write(cmd_str.encode('utf-8'))
+                    wp.process.stdin.flush()
 
                     # 单次 -execute，读一次 {ready} / Single -execute, one {ready} read.
-                    output = self._read_until_ready(timeout=60)
+                    output = wp.read_until_ready(timeout=60)
                     decoded = output.decode('utf-8', errors='replace')
 
                 # 锁已释放，再做日志和统计，不阻塞其他 ExifTool 调用。
@@ -1315,7 +1617,7 @@ class ExifToolManager:
 
             except Exception as e:
                 stats['failed'] += len(valid_files)
-                self._stop_process()
+                self._write_proc.stop()
                 if i18n:
                     log(f"  ❌ {i18n.t('logs.batch_error', start=batch_start+1, end=batch_end, error=str(e))}")
                 else:

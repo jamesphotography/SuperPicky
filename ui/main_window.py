@@ -215,6 +215,16 @@ class WorkerThread(threading.Thread):
             )
             return
 
+        # V4.6(Paul P1): 平铺布局下跳过视频自动归类——视频处理的落地产物
+        # 就是移动+改名(组织器无 no-op 模式),不移动则无产出,整体跳过并留日志。
+        # V4.6 (Paul P1): under the flat layout skip video auto-organize —
+        # its only durable output is the move+rename, so skip entirely.
+        from core.folder_layout import LAYOUT_FLAT
+        if cfg.folder_layout == LAYOUT_FLAT:
+            from tools.i18n import get_i18n
+            self.signals.log.emit(get_i18n().t("logs.video_skip_flat"), "info")
+            return
+
         # 实例化批量引擎 / Build batch engine
         from core.video_batch_engine import VideoBatchEngine
         engine = VideoBatchEngine(
@@ -514,9 +524,14 @@ class WorkerThread(threading.Thread):
             from advanced_config import get_advanced_config
             adv_config = get_advanced_config()
 
+            # V4.6(Paul P1): 平铺布局 → 识别评分但不移动文件(Lightroom 友好)
+            # V4.6 (Paul P1): flat layout — rate in place, no file moves.
+            from core.folder_layout import LAYOUT_FLAT
+            _organize_enabled = adv_config.folder_layout != LAYOUT_FLAT
+
             try:
                 result = processor.process(
-                    organize_files=True,
+                    organize_files=_organize_enabled,
                     cleanup_temp=not adv_config.keep_temp_files,
                     resume=self.resume
                 )
@@ -602,9 +617,14 @@ class WorkerThread(threading.Thread):
                 )
                 self._active_processor = processor
 
+                # V4.6(Paul P1): 平铺布局 → 识别评分但不移动文件
+                # V4.6 (Paul P1): flat layout — rate in place, no file moves.
+                from core.folder_layout import LAYOUT_FLAT
+                _organize_enabled = adv_config.folder_layout != LAYOUT_FLAT
+
                 try:
                     result = processor.process(
-                        organize_files=True,
+                        organize_files=_organize_enabled,
                         cleanup_temp=not adv_config.keep_temp_files,
                         resume=self.resume
                     )
@@ -2983,6 +3003,42 @@ class SuperPickyMainWindow(QMainWindow):
         nima_layout.addWidget(self.nima_value)
         sliders_layout.addLayout(nima_layout)
 
+        # V4.6(rating-v2/T4): 「3星配额」滑块(批内相对评星)。v2 下只显示
+        # 配额滑块,旧阈值滑块隐藏(仍构建,供 v1 回滚与既有测试);范围 5-50
+        # 与 set_custom_quota3 clamp 一致(SSOT 约定),与设置中心精选页协同。
+        # V4.6 (rating-v2/T4): "3-star quota" slider (batch-relative rating).
+        # Under v2 only the quota slider is visible; legacy threshold sliders
+        # stay constructed but hidden for the v1 rollback switch and tests.
+        # Range 5-50 matches the set_custom_quota3 clamp (SSOT convention).
+        from core.rating_quota import get_quota3_for_skill
+        quota_layout = QHBoxLayout()
+        quota_layout.setSpacing(16)
+        quota_label = QLabel(self.i18n.t("labels.quota3_short"))
+        quota_label.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 13px; min-width: 80px;")
+        quota_layout.addWidget(quota_label)
+        self.quota_slider = QSlider(Qt.Orientation.Horizontal)
+        self.quota_slider.setRange(5, 50)
+        self.quota_slider.setSingleStep(5)
+        self.quota_slider.setPageStep(5)
+        self.quota_slider.setValue(int(get_quota3_for_skill(cfg.skill_level, cfg)))  # 初值在 connect 之前
+        self.quota_slider.valueChanged.connect(self._on_quota_changed)
+        quota_layout.addWidget(self.quota_slider)
+        self.quota_value = QLabel(f"{self.quota_slider.value()}%")
+        self.quota_value.setStyleSheet(VALUE_STYLE)
+        self.quota_value.setFixedWidth(50)
+        self.quota_value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        quota_layout.addWidget(self.quota_value)
+        sliders_layout.addLayout(quota_layout)
+
+        # V4.6(rating-v2/UI): 行控件存实例引用,供设置中心改算法后运行时切换
+        # V4.6 (rating-v2/UI): keep row-widget refs so visibility can be
+        # re-applied after the Settings Center changes the algorithm.
+        self._sharp_row_widgets = (sharp_label, self.sharp_slider, self.sharp_value)
+        self._nima_row_widgets = (nima_label, self.nima_slider, self.nima_value)
+        self._quota_row_widgets = (quota_label, self.quota_slider, self.quota_value)
+        self._apply_algo_visibility()
+
         params_layout.addLayout(sliders_layout)
         parent_layout.addWidget(params_frame)
 
@@ -3001,6 +3057,22 @@ class SuperPickyMainWindow(QMainWindow):
             return
         self.config.set_min_nima(value / 10.0)
         self._mark_custom_skill()
+
+    def _on_quota_changed(self, value):
+        """
+        3星配额滑块(V2):更新显示 + 写 custom_quota3 并转自定义档。
+
+        3-star quota slider (V2): update the label, persist custom_quota3,
+        and switch the skill level to "custom" (consistent with the culling page).
+        """
+        self.quota_value.setText(f"{value}%")
+        if getattr(self, "_params_loading", False):
+            return
+        cfg = self.config
+        cfg.set_custom_quota3(value)
+        if cfg.skill_level != "custom":
+            cfg.set_skill_level("custom")
+        self._refresh_skill_chip()
 
     def _mark_custom_skill(self):
         """手动改阈值 → 技能档转「自定义」并同步 custom_*,与设置中心精选页协同一致。"""
@@ -3032,6 +3104,20 @@ class SuperPickyMainWindow(QMainWindow):
             return
         self.config.set_video_auto_process_in_main(bool(self.video_check.isChecked()))
 
+    def _apply_algo_visibility(self):
+        """
+        按 advanced_config.rating_algorithm 切换首页两组滑块可见性：
+        v2 显示「3星配额」行，v1 显示锐度/美学行，并同步 _rating_v2_ui。
+
+        Toggle the home quick-panel slider groups by rating_algorithm:
+        quota row under v2, legacy rows under v1; refresh _rating_v2_ui.
+        """
+        self._rating_v2_ui = self.config.rating_algorithm == "v2"
+        for w in self._quota_row_widgets:
+            w.setVisible(self._rating_v2_ui)
+        for w in self._sharp_row_widgets + self._nima_row_widgets:
+            w.setVisible(not self._rating_v2_ui)
+
     def _refresh_param_panel(self):
         """设置中心关闭后,从 advanced_config 刷新首页参数控件,保持两处一致(loading 守卫避免回写)。"""
         if not hasattr(self, "sharp_slider"):
@@ -3046,6 +3132,18 @@ class SuperPickyMainWindow(QMainWindow):
             self.birdid_check.setChecked(bool(cfg.birdid_auto_identify))
             self.sharp_value.setText(str(int(cfg.min_sharpness)))
             self.nima_value.setText(f"{cfg.min_nima:.1f}")
+            # V4.6(rating-v2/T4): 同步配额滑块(设置中心改过技能档/配额后刷新)
+            # V4.6 (rating-v2/T4): refresh the quota slider after Settings Center edits
+            if hasattr(self, "quota_slider"):
+                from core.rating_quota import get_quota3_for_skill
+                q = int(get_quota3_for_skill(cfg.skill_level, cfg))
+                self.quota_slider.setValue(q)
+                self.quota_value.setText(f"{q}%")
+            # V4.6(rating-v2/UI): 设置中心可能改了评星算法 → 重应用滑块可见性
+            # V4.6 (rating-v2/UI): the Settings Center may have switched the
+            # rating algorithm — re-apply slider-row visibility.
+            if hasattr(self, "_quota_row_widgets"):
+                self._apply_algo_visibility()
         finally:
             self._params_loading = False
 

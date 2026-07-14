@@ -51,6 +51,10 @@ class AdvancedConfig:
         "custom_sharpness": 380,        # 自选模式下的锐度阈值
         "custom_aesthetics": 4.8,       # 自选模式下的美学阈值
 
+        # V4.6: 评星 V2(批内相对+配额) / Rating V2 (batch-relative + quota)
+        "rating_algorithm": "v2",       # "v1"(绝对阈值,回滚用) | "v2"(批内相对+配额)
+        "custom_quota3": 20,            # 自选模式下的 3★ 配额百分比 (5-50)
+
         # ARW 写入策略:
         #   sidecar: 只写 XMP 侧车，不修改 ARW（最安全，推荐）
         #   embedded: 直接写入 ARW
@@ -82,6 +86,7 @@ class AdvancedConfig:
         # 1星/0星/-1星 永远聚到「其他鸟类」分支，与本设置无关
         # V4.3 Phase 4: 默认改为 species-first，让视频和照片共享鸟种目录
         "folder_layout": "species-first",
+        "burst_group_folders": True,  # 连拍归入 burst_NNN 子目录(关=按星级/鸟种常规归档,Paul P1)
 
         # 外部编辑应用（右键菜单 "用 X 打开"）
         # 每项格式：{"name": "显示名称", "path": "/Applications/...app"}
@@ -166,6 +171,7 @@ class AdvancedConfig:
 
         # V4.4: 识鸟设置统一进 advanced_config(原 birdid_dock_settings.json)
         "birdid_auto_identify": False,
+        "birdid_write_keywords": True,  # 识别后写鸟名到 XMP-dc:Subject(LR 关键字,Paul P1-1)
         "birdid_use_ebird": True,
         "birdid_country_code": None,
         "birdid_selected_country": "自动检测 (GPS)",
@@ -231,6 +237,25 @@ class AdvancedConfig:
         return self.config["min_nima"]
 
     # V3.2: 移除 max_brisque 属性
+
+    @property
+    def rating_algorithm(self) -> str:
+        """评星算法: "v2"=批内相对+配额(默认) | "v1"=绝对阈值(回滚开关)"""
+        value = self.config.get("rating_algorithm", "v2")
+        return value if value in ("v1", "v2") else "v2"
+
+    def set_rating_algorithm(self, value: str):
+        self.config["rating_algorithm"] = value if value in ("v1", "v2") else "v2"
+        self.save()
+
+    @property
+    def custom_quota3(self) -> float:
+        """自选模式下的 3★ 配额百分比 (clamp 5-50,与 UI 滑块范围一致)"""
+        return float(self.config.get("custom_quota3", 20))
+
+    def set_custom_quota3(self, value: float):
+        self.config["custom_quota3"] = max(5, min(50, int(value)))
+        self.save()
 
     @property
     def picked_top_percentage(self):
@@ -428,9 +453,37 @@ class AdvancedConfig:
         return normalize_layout(self.config.get("folder_layout"))
 
     def set_folder_layout(self, value: str) -> None:
-        """设置分目录布局: rating-first (默认) 或 species-first。"""
+        """设置分目录布局: rating-first / species-first / flat(平铺,不移动文件)。"""
         from core.folder_layout import VALID_LAYOUTS, DEFAULT_LAYOUT
         self.config["folder_layout"] = value if value in VALID_LAYOUTS else DEFAULT_LAYOUT
+
+    @property
+    def burst_group_folders(self) -> bool:
+        """
+        连拍照片是否归入独立 burst_NNN 子目录(默认 True=现状)。
+        关闭后连拍照片按各自星级/鸟种走常规归档;连拍检测、DB burst 列、
+        评分阶段连拍 3★ 封顶均不受影响。
+
+        Whether burst groups get their own burst_NNN subfolder (default
+        True). When off, burst shots are filed like normal photos; burst
+        detection, DB columns and the 3-star burst cap are unaffected.
+        """
+        return bool(self.config.get("burst_group_folders", True))
+
+    def set_burst_group_folders(self, value: bool) -> None:
+        """
+        设置「连拍归入独立子文件夹」开关(不内部 save,由设置页统一保存)。
+
+        参数:
+        value (bool): 是否分子文件夹
+
+        Set the burst-subfolder toggle (no internal save; the settings
+        page persists via its own cfg.save()).
+
+        Parameters:
+        value (bool): Whether to group bursts into subfolders.
+        """
+        self.config["burst_group_folders"] = bool(value)
 
     # 外部应用配置 getter/setter
     def get_external_apps(self) -> list:
@@ -740,6 +793,37 @@ class AdvancedConfig:
         bool: Whether auto bird identification is enabled.
         """
         return bool(self.config.get("birdid_auto_identify", False))
+
+    @property
+    def birdid_write_keywords(self) -> bool:
+        """
+        识别成功后是否把鸟名写入照片关键字(XMP-dc:Subject,Lightroom Keywords)。
+
+        返回:
+        bool: 是否写入关键字,默认 True
+
+        Whether to write the species name into the photo's keywords
+        (XMP-dc:Subject) after identification.
+
+        Return:
+        bool: Defaults to True.
+        """
+        return bool(self.config.get("birdid_write_keywords", True))
+
+    def set_birdid_write_keywords(self, value: bool):
+        """
+        设置「识别后写入关键字」开关并保存。
+
+        参数:
+        value (bool): 是否写入关键字
+
+        Set the write-keywords toggle and save.
+
+        Parameters:
+        value (bool): Whether to write species keywords.
+        """
+        self.config["birdid_write_keywords"] = bool(value)
+        self.save()
 
     @property
     def birdid_use_ebird(self) -> bool:

@@ -98,6 +98,38 @@ class ProcessingCancelled(RuntimeError):
     """Raised when processing is cancelled by the caller."""
 
 
+def compute_xmp_label(is_flying: bool, focus_status: Optional[str], translate) -> Optional[str]:
+    """
+    计算 XMP:Label 颜色名(B+ 默认映射,Paul P2):
+    飞鸟=蓝(优先) > 精焦 BEST=绿 > 脱焦 BAD/WORST=红;GOOD/无鸟不打标签。
+    Lightroom 按本地化字符串匹配标签色,语言包缺 key 时回退英文色名,
+    绝不把 key 串写进 LR(4.3.0 白框陷阱防御)。
+
+    Compute the XMP:Label color name (B+ default mapping): flying=Blue
+    (highest priority) > BEST=Green > BAD/WORST=Red; GOOD or no bird gets
+    no label. Falls back to English color names when the language pack
+    lacks a key (LR matches labels by localized string).
+
+    参数 / Parameters:
+        is_flying (bool): 是否飞鸟 / whether the bird is flying.
+        focus_status (Optional[str]): BEST/GOOD/BAD/WORST 或 None。
+        translate: i18n.t 同签名的翻译函数 / i18n.t-compatible callable.
+
+    返回 / Returns:
+        Optional[str]: 本地化颜色名;None=不写标签。
+    """
+    if is_flying:
+        label = translate("xmp_labels.flight")
+        return "Blue" if label == "xmp_labels.flight" else label
+    if focus_status == "BEST":
+        label = translate("xmp_labels.focus")
+        return "Green" if label == "xmp_labels.focus" else label
+    if focus_status in ("BAD", "WORST"):
+        label = translate("xmp_labels.defocus")
+        return "Red" if label == "xmp_labels.defocus" else label
+    return None
+
+
 class PhotoProcessor:
     """
     核心照片处理器
@@ -158,7 +190,6 @@ class PhotoProcessor:
         
         # 内部状态
         self.file_ratings = {}
-        self.star2_reasons = {}  # 记录2星原因: 'sharpness' 或 'nima'
         self.star_3_photos = []
         # V4.5: 处理异常被跳过的照片文件名，供最终汇总提示（这些照片未评分/未整理）
         # V4.5: Filenames skipped by per-photo error handling, surfaced in the
@@ -556,7 +587,12 @@ class PhotoProcessor:
                 self._move_files_to_rating_folders(raw_dict)
             
             # 阶段6: V4.0.4 跨目录连拍合并（在文件整理完成后）
-            if self.settings.detect_burst and self.burst_map and organize_files:
+            # V4.6(Paul P1): burst_group_folders 关闭时连拍不聚子目录,
+            # 照片按星级/鸟种常规归档(检测与整理解耦)。
+            # V4.6 (Paul P1): with burst_group_folders off, burst shots are
+            # filed normally instead of into burst_NNN subfolders.
+            if (self.settings.detect_burst and self.burst_map and organize_files
+                    and self.config.burst_group_folders):
                 burst_stats = self._consolidate_burst_groups(raw_dict)
                 self.stats['burst_groups'] = burst_stats.get('groups', 0)
                 self.stats['burst_moved'] = burst_stats.get('moved', 0)
@@ -570,7 +606,14 @@ class PhotoProcessor:
                 
             # 阶段8: 清理过期缓存 (V4.1)
             self._cleanup_expired_cache()
-            
+
+            # V4.5: 全部阶段（含识鸟收尾/精选/文件整理）完成后才发 100%，
+            # 与统一工作单元进度（封顶 99%）配套，杜绝「100% 后还在干活」。
+            # V4.5: Emit 100% only after every phase (BirdID drain / picks /
+            # organizing) finishes — pairs with the 99%-capped unit progress
+            # so the bar never claims completion while work remains.
+            self._progress(100)
+
             # 记录结束时间
             end_time = time.time()
             self.stats['end_time'] = end_time
@@ -1059,6 +1102,20 @@ class PhotoProcessor:
             metadata_batch.append(item)
             if len(metadata_batch) >= metadata_batch_size:
                 flush_metadata_batch()
+
+        def queue_star_metadata(item: Dict, original_prefix: str, in_pool: bool):
+            """
+            星级相关 EXIF 条目的路由:V2 排序池内的照片先挂起,收尾统一定星
+            后回填 rating/caption 再入队;其余照片(硬门槛终局)直接入队。
+
+            Route star-dependent EXIF items: photos in the V2 ranking pool are
+            parked until the post-pass finalizes their rating/caption; photos
+            finalized by hard gates are queued immediately.
+            """
+            if in_pool and original_prefix in v2_pending:
+                v2_pending[original_prefix]['items'].append(item)
+            else:
+                queue_metadata(item)
         
         # UI设置转为列表格式
         ui_settings = [
@@ -1092,6 +1149,61 @@ class PhotoProcessor:
         birdid_executor = ThreadPoolExecutor(max_workers=_birdid_workers) if self.settings.auto_identify else None
         birdid_tasks = deque()
         identify_bird_fn = None
+
+        # V4.5: 统一工作单元进度——照片与识鸟任务同权重计入一个分数，
+        # 使循环结束后的 BirdID 收尾阶段进度条持续前进，而非停在 100%。
+        # V4.5: Unified work-unit progress — photos and BirdID tasks share one
+        # fraction so the bar keeps advancing during the post-loop BirdID
+        # drain instead of sitting at 100%.
+        progress_state = {
+            'photos_done': 0,       # 已处理照片数（display 口径，兼容续跑）/ photos done (display scale)
+            'birdid_submitted': 0,  # 已提交识鸟任务数 / BirdID tasks submitted
+            'birdid_done': 0,       # 已完成识鸟任务数 / BirdID tasks finished
+            'last_percent': 0,      # 单调钳位：进度只增不减 / monotonic clamp
+        }
+
+        def update_unit_progress():
+            """
+            按已完成工作单元更新进度条（封顶 99%，只增不减）。
+
+            单元 = 已处理照片 + 已完成识鸟任务；分母 = 照片总数 + 已提交识鸟
+            任务数。分母随任务提交增长，可能使分数瞬时回退，故用单调钳位；
+            100% 由 process() 在全部阶段（含文件整理）完成后单独发出。
+
+            Update the progress bar from completed work units (capped at 99%,
+            monotonic). Units = processed photos + finished BirdID tasks over
+            total photos + submitted BirdID tasks. The denominator grows as
+            tasks are submitted, so the monotonic clamp prevents regressions;
+            100% is emitted by process() only after every phase (including
+            file organizing) has finished.
+            """
+            total_units = total_files + progress_state['birdid_submitted']
+            if total_units <= 0:
+                return
+            done_units = progress_state['photos_done'] + progress_state['birdid_done']
+            percent = min(99, int(done_units * 100 / total_units))
+            if percent > progress_state['last_percent']:
+                progress_state['last_percent'] = percent
+                self._progress(percent)
+
+        # V4.6(rating-v2/T3b): 两遍定星状态。循环内只做硬门槛判定与指标采集;
+        # 过硬门槛(进入排序池)照片的星级相关 EXIF/统计/评分记录全部挂起在
+        # v2_pending,收尾阶段用 core.rating_quota.assign_ratings 按批内配额
+        # 统一定星后回填。循环中日志显示的星级为 v1 预估,最终以收尾为准。
+        # V4.6 (rating-v2/T3b): two-pass rating state. During the loop, photos
+        # passing every hard gate only collect metrics; their star-dependent
+        # EXIF items / stats / rating records are parked in v2_pending and
+        # finalized in the post-pass via assign_ratings (batch quota).
+        from core.rating_quota import (
+            PhotoMetricsV2,
+            assign_ratings as assign_ratings_v2,
+            gate_photo as gate_photo_v2,
+            get_quota3_for_skill,
+            DEFAULT_QUOTA2,
+        )
+        v2_enabled = self.config.rating_algorithm == "v2"
+        v2_pending: Dict[str, Dict] = {}
+
         if self.settings.auto_identify:
             try:
                 from birdid.bird_identifier import identify_bird as identify_bird_fn
@@ -1128,6 +1240,7 @@ class PhotoProcessor:
                 )
                 self._perf_add_stage('birdid_submit', (time.time() - submit_start) * 1000)
                 birdid_tasks.append((future, file_prefix, list(title_targets), source_display))
+                progress_state['birdid_submitted'] += 1
             except Exception as e:
                 self._log(f"  ⚠️ Bird ID failed [{source_display}]: {e}", "warning")
         
@@ -1233,6 +1346,12 @@ class PhotoProcessor:
                             meta_item['iucn_category'] = iucn_category
                         if gbif_rarity_100 is not None:
                             meta_item['gbif_rarity_100'] = gbif_rarity_100
+                        # 鸟名关键字(Paul P1-1):开关开启时随 Title 一起 merge-add
+                        # 写入 XMP-dc:Subject(bird_title 已按界面语言选名)。
+                        # Species keyword (Paul P1-1): when enabled, merge-add
+                        # into XMP-dc:Subject alongside the Title write.
+                        if self.config.birdid_write_keywords:
+                            meta_item['keywords'] = [bird_title]
                         queue_metadata(meta_item)
             else:
                 # 低置信度：记日志，并将候选鸟名存入 file_bird_species 供 caption 使用
@@ -1294,6 +1413,10 @@ class PhotoProcessor:
                     self._perf_add_stage('birdid_apply', (time.time() - birdid_apply_start) * 1000)
                 except Exception as e:
                     self._log(f"  ⚠️ Bird ID failed [{source_filename or file_prefix}]: {e}", "warning")
+                # 失败任务同样计入已完成单元，避免进度条卡在收尾阶段
+                # Failed tasks also count as done units so the bar never stalls
+                progress_state['birdid_done'] += 1
+                update_unit_progress()
         
         # 轻量 Job 调度：在 MPS 上默认关闭 YOLO 预取，避免与 TOPIQ 并发争用
         # 如需强制开启/关闭，可通过 SUPERPICKY_YOLO_PREFETCH 覆盖。
@@ -1757,11 +1880,12 @@ class PhotoProcessor:
                 preloaded_focus_result = None
                 focus_point_for_selection = None
             
-                # 更新进度
+                # 更新进度（统一工作单元口径：照片 + 识鸟任务）
+                # Update progress (unified work units: photos + BirdID tasks)
+                progress_state['photos_done'] = i
                 should_update = (i % 5 == 0 or i == total_files or i == 1)
                 if should_update:
-                    progress = int((i / total_files) * 100)
-                    self._progress(progress)
+                    update_unit_progress()
 
                 if i % _cache_interval == 0 and _torch_module is not None:
                     try:
@@ -2068,9 +2192,16 @@ class PhotoProcessor:
                             scorer = get_iqa_scorer(device=get_best_device().type)
                             topiq_scorer = scorer
                     
-                        # V4.0.5: 复用已加载的原图，避免二次 JPEG 解码
-                        # orig_img 是 cv2.imread 已读取的 BGR numpy array
-                        if orig_img is not None:
+                        # V4.6(rating-v2/T2): TOPIQ 改打鸟裁剪区。整图分在鸟占画面
+                        # 小时实测≈给背景打分(与裁剪分相关性仅 0.24)，裁剪分才反映
+                        # 「这只鸟拍得好不好」；无裁剪时回退整图，保持向后兼容。
+                        # V4.6 (rating-v2/T2): score TOPIQ on the bird crop. When the
+                        # bird is small, whole-frame TOPIQ effectively rates the
+                        # background (r=0.24 vs crop, measured); fall back to the
+                        # whole image when no crop exists.
+                        if bird_crop_bgr is not None and bird_crop_bgr.size > 0:
+                            topiq = scorer.calculate_from_array(bird_crop_bgr)
+                        elif orig_img is not None:
                             topiq = scorer.calculate_from_array(orig_img)
                         else:
                             topiq = scorer.calculate_nima(filepath)
@@ -2122,15 +2253,6 @@ class PhotoProcessor:
                     except Exception as e:
                         pass  # 曝光检测失败不影响处理
                     add_photo_stage('exposure', (time.time() - exposure_start) * 1000)
-            
-                # V3.8: 飞版加成（仅当 confidence >= 0.5 且 is_flying 时）
-                # 锐度+100，美学+0.5，加成后的值用于评分
-                rating_sharpness = head_sharpness
-                rating_topiq = topiq
-                if is_flying and confidence >= 0.5:
-                    rating_sharpness = head_sharpness + 100
-                    if topiq is not None:
-                        rating_topiq = topiq + 0.5
             
                 # V4.3: ISO 锐度归一化 - 高 ISO 噪点会虚高锐度值，需要补偿
                 # 从 RAW 或 JPEG 读取 ISO 值并计算归一化系数
@@ -2320,6 +2442,42 @@ class PhotoProcessor:
                         focus_status_en = "WORST"
             
                 # V3.9: 生成调试可视化图（仅对有鸟的照片）
+                # V4.6(rating-v2): 判定是否进入 V2 排序池(过全部硬门槛)。
+                # 前置到 debug 预览/日志之前:池内照片星级待收尾统一分配,
+                # 过程中预览与日志不显示星级,只显示指标/飞鸟/对焦。
+                # V4.6 (rating-v2): pool-membership check, moved before the debug
+                # preview/log — pool photos get stars in the post-pass, so the
+                # live preview/log show metrics/flight/focus instead of stars.
+                v2_in_pool = False
+                if v2_enabled and detected:
+                    _v2_exposure = is_overexposed or is_underexposed
+                    _v2_metrics = PhotoMetricsV2(
+                        key=original_prefix,
+                        detected=True,
+                        confidence=confidence,
+                        norm_sharpness=normalized_sharpness,
+                        topiq=topiq,
+                        best_eye=best_eye_visibility,
+                        beak_vis=beak_vis,
+                        is_flying=is_flying,
+                        focus_status=focus_status or "",
+                        has_exposure_issue=_v2_exposure,
+                        burst_id=self.burst_map.get(filepath) if self.burst_map else None,
+                    )
+                    if gate_photo_v2(_v2_metrics, min_confidence=confidence_threshold) is None:
+                        v2_in_pool = True
+                        v2_pending[original_prefix] = {
+                            'metrics': _v2_metrics,
+                            'items': [],
+                            'v1_rating': rating_value,
+                            'is_flying': is_flying,
+                            'has_exposure_issue': _v2_exposure,
+                            'is_focus_precise': focus_sharpness_weight > 1.0,
+                            'target_file': None,
+                            'adj_sharpness': None,
+                            'adj_topiq': None,
+                        }
+
                 should_build_debug = bool(self.callbacks.crop_preview or self.settings.save_crop)
                 if detected and should_build_debug and bird_crop_bgr is not None:
                     # 计算裁剪区域内的坐标
@@ -2369,7 +2527,7 @@ class PhotoProcessor:
                         )
                         # V4.2: 发送裁剪预览到 UI（同时传对焦状态供 dock 显示）
                         if debug_img is not None and self.callbacks.crop_preview:
-                            self.callbacks.crop_preview(debug_img, focus_status_en, rating_value)
+                            self.callbacks.crop_preview(debug_img, focus_status_en, None if v2_in_pool else rating_value)
                     except Exception as e:
                         print(f"  ⚠️ debug_crop 保存失败 [{filename}]: {e}")  # 调试图生成失败不影响主流程
                     add_photo_stage('debug_viz', (time.time() - debug_start) * 1000)
@@ -2377,11 +2535,22 @@ class PhotoProcessor:
                 # 计算真正总耗时并输出简化日志
                 photo_time_ms = (time.time() - photo_start_time) * 1000 + yolo_ms
                 has_exposure_issue = is_overexposed or is_underexposed
-                self._log_photo_result_simple(i, total_files, filename, rating_value, reason, photo_time_ms, is_flying, has_exposure_issue, focus_status)
-            
+                if v2_in_pool:
+                    # V4.6(rating-v2): 池内照片星级待定,日志只报指标/飞鸟/对焦
+                    # V4.6 (rating-v2): pool photos log metrics only; stars come later
+                    pending_reason = self.i18n.t(
+                        "logs.pending_metrics",
+                        sharp=f"{normalized_sharpness:.0f}",
+                        nima=(f"{topiq:.1f}" if topiq is not None else "-"))
+                    self._log_photo_result_simple(i, total_files, filename, None, pending_reason, photo_time_ms, is_flying, has_exposure_issue, focus_status)
+                else:
+                    self._log_photo_result_simple(i, total_files, filename, rating_value, reason, photo_time_ms, is_flying, has_exposure_issue, focus_status)
+
                 # 记录统计（V4.2: 添加精焦判定）
                 is_focus_precise = focus_sharpness_weight > 1.0 if 'focus_sharpness_weight' in dir() else False
-                self._update_stats(rating_value, is_flying, has_exposure_issue, is_focus_precise)
+
+                if not v2_in_pool:
+                    self._update_stats(rating_value, is_flying, has_exposure_issue, is_focus_precise)
             
                 # V3.4: 确定要处理的目标文件（RAW 优先，没有则用 JPEG）
                 target_file_path = None
@@ -2389,24 +2558,16 @@ class PhotoProcessor:
             
                 # V4.0: 标签、对焦状态、详细评分说明（RAW 与纯 JPEG 共用，纯 JPEG 也写入 EXIF 题注/星级）
                 # V4.3.0: 色标文字跟随界面语言写入 xmp:Label。
-                # Lightroom 色标按「当前色标集的本地化名称」精确匹配文字：英文版默认集
-                # 是 Red/Green，中文版是 红色/绿色，跨语言文字对不上会显示为白框。
-                # 故按 i18n 语言写对应颜色名（飞鸟=绿色/Green，头部精焦=红色/Red），
-                # 假设用户慧眼与 Lightroom 语言一致（覆盖绝大多数场景）。
-                # 兜底：若语言包缺 key（t() 原样返回 key），退回英文，绝不把 key 串写进 LR。
-                # V4.3.0: Localize the xmp:Label text by UI language. Lightroom matches the
-                # label string against the active label set's localized names (Red/Green vs
-                # 红色/绿色); a cross-language mismatch renders as a white frame. Fall back
-                # to English if the language pack lacks the key.
-                label = None
-                if is_flying:
-                    label = self.i18n.t("xmp_labels.flight")
-                    if label == "xmp_labels.flight":
-                        label = 'Green'
-                elif focus_sharpness_weight > 1.0:  # 头部对焦 (1.1) / head in focus
-                    label = self.i18n.t("xmp_labels.focus")
-                    if label == "xmp_labels.focus":
-                        label = 'Red'
+                # Lightroom 色标按「当前色标集的本地化名称」精确匹配文字：跨语言
+                # 文字对不上会显示为白框，故按 i18n 语言写对应颜色名，语言包缺
+                # key 时回退英文（详见 compute_xmp_label docstring）。
+                # V4.6(Paul P2/B+): 蓝=飞鸟 > 绿=精焦(BEST) > 红=脱焦(BAD/WORST),
+                # GOOD 无标签。
+                # V4.3.0: Localize the xmp:Label text by UI language (LR matches
+                # labels by localized string; fallback to English on missing keys).
+                # V4.6 (Paul P2/B+): Blue=flying > Green=BEST > Red=BAD/WORST;
+                # GOOD gets no label.
+                label = compute_xmp_label(is_flying, focus_status, self.i18n.t)
             
                 caption_lines = []
                 caption_lines.append(self.i18n.t("logs.caption_final", rating=rating_value, reason=reason))
@@ -2415,7 +2576,12 @@ class PhotoProcessor:
                 caption_lines.append(self.i18n.t("logs.caption_data", conf=confidence, sharp=sharpness_str, nima=topiq_str, vis=best_eye_visibility))
                 flying_str = self.i18n.t("logs.flying_yes") if is_flying else self.i18n.t("logs.flying_no")
                 caption_lines.append(self.i18n.t("logs.caption_factors", sharp_w=focus_sharpness_weight, aes_w=focus_topiq_weight, flying=flying_str))
-                adj_sharpness = head_sharpness * focus_sharpness_weight if head_sharpness else 0
+                # V4.6(rating-v2/T5): adj 值统一用 ISO 归一化后的锐度(评星实际
+                # 输入口径),修复 DB/EXIF 存的 adj 与评分依据不一致的旧漂移。
+                # V4.6 (rating-v2/T5): adjusted values use the ISO-normalized
+                # sharpness (the actual rating input), fixing the old drift
+                # between stored adj_* and what the rating actually saw.
+                adj_sharpness = normalized_sharpness * focus_sharpness_weight if normalized_sharpness else 0
                 if is_flying and head_sharpness:
                     adj_sharpness = adj_sharpness * 1.2
                 adj_topiq_val = 0.0
@@ -2437,7 +2603,7 @@ class PhotoProcessor:
                 
                     if os.path.exists(target_file_path):
                         birdid_title_targets = [target_file_path]
-                        queue_metadata({
+                        queue_star_metadata({
                             'file': target_file_path,
                             'rating': rating_value if rating_value >= 0 else 0,
                             'pick': pick,
@@ -2446,14 +2612,14 @@ class PhotoProcessor:
                             'label': label,
                             'focus_status': focus_status,
                             'caption': caption,
-                        })
+                        }, original_prefix, v2_in_pool)
                         # RAW+JPEG 时也写入当前 JPEG，便于单独查看 JPEG 时也有星级/题注（DNG/ARW/NEF 等同理）
                         # V4.0.5: 跳过临时预览文件 (tmp_*.jpg)，避免无用写入
                         filepath_basename = os.path.basename(filepath)
                         is_temp_file = filepath_basename.startswith('tmp_') or filepath_basename.startswith('tmp.')
                         if target_file_path != filepath and os.path.exists(filepath) and not is_temp_file:
                             birdid_title_targets.append(filepath)
-                            queue_metadata({
+                            queue_star_metadata({
                                 'file': filepath,
                                 'rating': rating_value if rating_value >= 0 else 0,
                                 'pick': pick,
@@ -2462,10 +2628,23 @@ class PhotoProcessor:
                                 'label': label,
                                 'focus_status': focus_status,
                                 'caption': caption,
-                            })
+                            }, original_prefix, v2_in_pool)
                     
                         # BirdID 异步提交（2星及以上）
-                        if self.settings.auto_identify and rating_value >= 2:
+                        # V4.6(rating-v2/T3): 识鸟门控从「星级≥2」改为硬门槛+锐度粗筛。
+                        # V2 定星延后到批处理末尾,循环中不再有即时星级可依赖;
+                        # 粗筛挡掉明显进不了 2★ 的样本,控制识鸟任务量(约+25%)。
+                        # V4.6 (rating-v2/T3): gate BirdID on hard gates + a coarse
+                        # sharpness screen instead of "rating >= 2" — V2 assigns
+                        # stars in the post-pass, so no instant rating exists here.
+                        if self.settings.auto_identify and (
+                            rating_value >= 2 or (
+                                detected
+                                and confidence >= 0.5
+                                and not all_keypoints_hidden
+                                and normalized_sharpness >= 250
+                            )
+                        ):
                             _birdid_crop_pil = None
                             if bird_crop_bgr is not None:
                                 try:
@@ -2489,7 +2668,7 @@ class PhotoProcessor:
                     target_extension = os.path.splitext(filename)[1]
                 
                     if os.path.exists(target_file_path):
-                        queue_metadata({
+                        queue_star_metadata({
                             'file': target_file_path,
                             'rating': rating_value if rating_value >= 0 else 0,
                             'pick': pick,
@@ -2498,9 +2677,22 @@ class PhotoProcessor:
                             'label': label,
                             'focus_status': focus_status,
                             'caption': caption,
-                        })
+                        }, original_prefix, v2_in_pool)
                         # BirdID 异步提交（2星及以上）
-                        if self.settings.auto_identify and rating_value >= 2:
+                        # V4.6(rating-v2/T3): 识鸟门控从「星级≥2」改为硬门槛+锐度粗筛。
+                        # V2 定星延后到批处理末尾,循环中不再有即时星级可依赖;
+                        # 粗筛挡掉明显进不了 2★ 的样本,控制识鸟任务量(约+25%)。
+                        # V4.6 (rating-v2/T3): gate BirdID on hard gates + a coarse
+                        # sharpness screen instead of "rating >= 2" — V2 assigns
+                        # stars in the post-pass, so no instant rating exists here.
+                        if self.settings.auto_identify and (
+                            rating_value >= 2 or (
+                                detected
+                                and confidence >= 0.5
+                                and not all_keypoints_hidden
+                                and normalized_sharpness >= 250
+                            )
+                        ):
                             _birdid_crop_pil = None
                             if bird_crop_bgr is not None:
                                 try:
@@ -2522,7 +2714,7 @@ class PhotoProcessor:
                 # V3.4: 以下操作对 RAW 和纯 JPEG 都执行
                 if target_file_path and os.path.exists(target_file_path):
                     # V4.1: 计算调整后锐度（用于 CSV，保证重新评星一致性）
-                    adj_sharpness_csv = head_sharpness * focus_sharpness_weight if head_sharpness else 0
+                    adj_sharpness_csv = normalized_sharpness * focus_sharpness_weight if normalized_sharpness else 0
                     if is_flying and head_sharpness:
                         adj_sharpness_csv = adj_sharpness_csv * 1.2
                     adj_topiq_csv = topiq * focus_topiq_weight if topiq else None
@@ -2555,31 +2747,30 @@ class PhotoProcessor:
                     )
                     add_photo_stage('csv_update', (time.time() - csv_update_start) * 1000)
                 
-                    # 收集3星照片（V4.1: 使用调整后的值）
-                    if rating_value == 3 and adj_topiq_csv is not None:
-                        self.star_3_photos.append({
-                            'file': target_file_path,
-                            'nima': adj_topiq_csv,  # V4.1: 调整后美学
-                            'sharpness': adj_sharpness_csv  # V4.1: 调整后锐度
-                        })
-                
-                    # 记录评分（用于文件移动）- V4.0.4: 使用 original_prefix 确保匹配 NEF
-                    self.file_ratings[original_prefix] = rating_value
+                    # V4.6(rating-v2/T3b): 池内照片的 3星收集/评分记录延后到收尾定星;
+                    # 此处仅补齐终评所需的目标文件与调整后指标。
+                    # V4.6 (rating-v2/T3b): pool photos defer star-3 collection and
+                    # rating records to the post-pass; capture finalization inputs here.
+                    if v2_in_pool:
+                        v2_pending[original_prefix]['target_file'] = target_file_path
+                        v2_pending[original_prefix]['adj_sharpness'] = adj_sharpness_csv
+                        v2_pending[original_prefix]['adj_topiq'] = adj_topiq_csv
+                    else:
+                        # 收集3星照片（V4.1: 使用调整后的值）
+                        if rating_value == 3 and adj_topiq_csv is not None:
+                            self.star_3_photos.append({
+                                'file': target_file_path,
+                                'nima': adj_topiq_csv,  # V4.1: 调整后美学
+                                'sharpness': adj_sharpness_csv  # V4.1: 调整后锐度
+                            })
+
+                        # 记录评分（用于文件移动）- V4.0.4: 使用 original_prefix 确保匹配 NEF
+                        self.file_ratings[original_prefix] = rating_value
                 
                     # V4.0.1: 自动鸟种识别（移至共同路径，对 RAW 和纯 JPG 都执行）
                     # V4.0.5: 纯 JPEG 的识鸟已移到 EXIF 写入前，这里只处理 RAW 的后续操作
                     # 注意：对于 RAW 文件，在上面的分支中已经执行过
                 
-                    # 记录2星原因（用于分目录）（V3.8: 使用加成后的值）
-                    if rating_value == 2:
-                        sharpness_ok = rating_sharpness >= self.settings.sharpness_threshold
-                        topiq_ok = rating_topiq is not None and rating_topiq >= self.settings.nima_threshold
-                        if sharpness_ok and not topiq_ok:
-                            self.star2_reasons[file_prefix] = 'sharpness'
-                        elif topiq_ok and not sharpness_ok:
-                            self.star2_reasons[file_prefix] = 'nima'  # 保留原字段名兼容
-                        else:
-                            self.star2_reasons[file_prefix] = 'both'
                 else:
                     # 目标文件不存在时仍写入路径字段，确保 DB 记录不丢失
                     # Write path fields even when the target file is missing to keep DB record intact
@@ -2646,7 +2837,97 @@ class PhotoProcessor:
             inference_pool.shutdown(wait=True)
         except Exception:
             pass
-        
+
+        # V4.6(rating-v2/T3b): 收尾统一定星——对排序池照片按批内配额分配星级,
+        # 回填挂起的 EXIF 条目(rating/caption 首行)、评分记录、统计与 DB。
+        # V4.6 (rating-v2/T3b): post-pass star assignment — quota-rank the pool,
+        # then back-fill parked EXIF items (rating + caption head line), rating
+        # records, stats, and the report DB.
+        if v2_enabled and v2_pending:
+            # V4.6(rating-v2): 识鸟结果此刻已全部就绪(collect wait=True 在前),
+            # 填入 species 后配额将按鸟种分组执行;未识别/未开识鸟为 None(单组)。
+            # V4.6 (rating-v2): Bird ID results are all in by now; with species
+            # filled the quota runs per species (None = unknown / Bird ID off).
+            for prefix, pend in v2_pending.items():
+                info = self.file_bird_species.get(prefix)
+                if info:
+                    pend['metrics'].species = info.get('en_name') or info.get('cn_name')
+            quota3 = get_quota3_for_skill(self.config.skill_level, self.config)
+            v2_results = assign_ratings_v2(
+                [p['metrics'] for p in v2_pending.values()],
+                quota3=quota3,
+                quota2=DEFAULT_QUOTA2,
+                min_confidence=self.settings.ai_confidence / 100.0,
+            )
+            v2_changed = 0
+            for prefix, pend in v2_pending.items():
+                res = v2_results.get(prefix)
+                if res is None:
+                    continue
+                final_rating = res.rating
+                if final_rating != pend['v1_rating']:
+                    v2_changed += 1
+                reason_final = self.i18n.t(res.reason_key, **res.reason_args)
+                for item in pend['items']:
+                    old_caption = item.get('caption')
+                    if old_caption:
+                        # caption 首行固定为 caption_final(星级+原因),按终评重写
+                        # The caption head line is always caption_final; rewrite it
+                        parts = old_caption.split('\n', 1)
+                        head = self.i18n.t("logs.caption_final",
+                                           rating=final_rating, reason=reason_final)
+                        item['caption'] = head + ('\n' + parts[1] if len(parts) > 1 else '')
+                    item['rating'] = final_rating
+                    queue_metadata(item)
+                self.file_ratings[prefix] = final_rating
+                self._update_stats(final_rating, pend['is_flying'],
+                                   pend['has_exposure_issue'], pend['is_focus_precise'])
+                if (final_rating == 3 and pend.get('adj_topiq') is not None
+                        and pend.get('target_file')):
+                    self.star_3_photos.append({
+                        'file': pend['target_file'],
+                        'nima': pend['adj_topiq'],
+                        'sharpness': pend['adj_sharpness'],
+                    })
+                if self.report_db:
+                    try:
+                        self.report_db.update_photo(prefix, {'rating': final_rating})
+                    except Exception:
+                        pass
+            self._log(self.i18n.t(
+                "logs.rating_v2_summary",
+                total=len(v2_pending),
+                three=sum(1 for p, r in v2_results.items()
+                          if p in v2_pending and r.rating == 3),
+                quota=int(quota3),
+                overall=round(sum(1 for pfx, r in v2_results.items()
+                                  if pfx in v2_pending and r.rating == 3)
+                              * 100 / max(1, total_files)),
+                changed=v2_changed,
+            ))
+            # 按鸟种打一行 3星/池内 分布(仅当存在识鸟结果时)
+            # Per-species "3-star / pool" breakdown (only when species exist)
+            if any(pend['metrics'].species for pend in v2_pending.values()):
+                is_zh = not self.i18n.current_lang.startswith('en')
+                unknown_label = "未识别" if is_zh else "unknown"
+                sp_stats: Dict[str, list] = {}
+                for prefix, pend in v2_pending.items():
+                    info = self.file_bird_species.get(prefix)
+                    if info:
+                        name = (info.get('cn_name') if is_zh else info.get('en_name')) \
+                            or info.get('en_name') or info.get('cn_name')
+                    else:
+                        name = unknown_label
+                    entry = sp_stats.setdefault(name, [0, 0])
+                    entry[1] += 1
+                    r = v2_results.get(prefix)
+                    if r is not None and r.rating == 3:
+                        entry[0] += 1
+                detail = " · ".join(
+                    f"{name} {c3}/{cn}" for name, (c3, cn) in
+                    sorted(sp_stats.items(), key=lambda kv: -kv[1][1]))
+                self._log(f"    {detail}")
+
         # 批量落盘 EXIF 队列（避免每张图一次写入）
         if metadata_batch:
             pending_with_caption = sum(1 for it in metadata_batch if it.get('caption'))
@@ -2786,7 +3067,8 @@ class PhotoProcessor:
     ):
         """记录照片处理结果（简化版，单行输出）"""
         # Star text mapping - use short English format
-        star_map = {3: "3★", 2: "2★", 1: "1★", 0: "0★", -1: "-1★"}
+        # V4.6(rating-v2): rating=None 表示星级待收尾统一分配 / None = pending post-pass
+        star_map = {3: "3★", 2: "2★", 1: "1★", 0: "0★", -1: "-1★", None: "⏳"}
         star_text = star_map.get(rating, "?★")
         
         # V3.4: Flight tag
@@ -2811,7 +3093,8 @@ class PhotoProcessor:
         
         # 输出简化格式（只显示文件名,去掉目录前缀；3星行文件名之后染绿）
         display_name = os.path.basename(filename)
-        level = "photo_good" if rating >= 3 else "default"
+        # V4.6(rating-v2): rating=None(待定)按普通级别着色 / None (pending) uses default level
+        level = "photo_good" if (rating is not None and rating >= 3) else "default"
         self._log(f"[{index:03d}/{total}] {display_name} | {star_text} ({reason_short}) {flight_tag}| {time_text}", level)
     
     def _save_debug_crop(

@@ -1,173 +1,332 @@
-# SuperPicky 4.3.0 LTS
+# SuperPicky 4.5.0
 
-**4.3.0 is a Long-Term Support (LTS) release** — the new stable baseline that
-consolidates every major improvement made since 4.1.0. If you're on an older
-build, this is the recommended version to settle on.
-
----
-
-## 🎬 New in 4.3.0
-
-**Video Bird Analysis** *(headline feature)*
-- Analyze birds directly in video footage, not just stills
-- Automatic per-species grouping, with synchronized SRT subtitle handling
-- New dedicated "Video Processing" tab in Settings
-
-**Global Rarity Index** *(new GBIF-based scoring)*
-- Every identified bird now gets a 0–100 global rarity score derived from GBIF
-  occurrence data (3 billion+ records), with an IUCN-status floor
-- Shown in the detail panel as a 5-tier glyph (○ ◔ ◑ ◕ ●) — Common / Occasional /
-  Uncommon / Rare / Legendary — and written to a dedicated EXIF field
-- Batch runs print a rarity-tier distribution summary, so the standout shots are
-  easy to spot
-- Replaces the previous rarity source with an open, citable GBIF-derived system
-
-**More Reliable First Launch (rewritten download & runtime pipeline)**
-- Faster, sturdier first-run setup: parallel mirror probing, multi-strategy
-  downloads with automatic fallback and resume-on-interrupt
-- Switched the packaged Python toolchain to `uv` for much faster, more reliable
-  AI-runtime installation — a big improvement for mainland-China and slow networks
-
-**Completion Sound**
-- Optional sound when a batch finishes, so you can step away during long runs
-
-**Streamlined Updates**
-- In-app update checking is now turned off across all builds — to upgrade, download the new version from the official download page. This replaces the previous in-app auto-update and sidesteps stale-patch issues after upgrades.
-- Windows installers now wipe old program files before installing; a new Uninstaller tool is provided for switching between Lite and Full builds.
-
-**Reset & Organization**
-- New **Advanced Reset**: when a folder has no manifest (older or cross-version
-  directories, or the new species-first layout), Reset offers to recognize
-  SuperPicky's species / rating / burst folders and move every photo back to the
-  selected directory — move-only, never overwriting same-named files, and your
-  own folders are left untouched.
-- Reset is now strictly non-destructive: same-name conflicts are skipped (never
-  overwritten) and folders are only removed once empty.
-- Burst (連拍) grouping now works correctly under the new species-first layout.
-- Video species names and SRT subtitles now follow the interface language
-  (an English UI shows English names); video organization is reversible via Reset.
-
-**Polish**
-- Browse now opens at the currently selected directory (falls back to Pictures).
-- macOS installer (.pkg in .dmg) is signed and notarized through a more reliable
-  CI signing path.
-
-**Intel Mac Is Back on the Latest (4.3.0)**
-- Intel Macs now default to CPU (FP32). The legacy MPS path on old AMD dGPUs was
-  actually slower — running FP16 poorly and falling back to CPU for YOLO anyway.
-  Forcing CPU restores smooth performance beyond the 4.1.0 baseline, so Intel
-  users can move up from 4.2.1.
+**4.5.0 is a focus release.** Building on the 4.3.0 LTS baseline, it
+concentrates on five things: a brand-new batch-relative star rating engine,
+a Lightroom-friendly flat workflow, making the core culling pipeline faster
+and more dependable, unifying all settings into a brand-new Settings Center,
+and streamlining the interface around the core workflow.
 
 ---
 
-## Highlights since 4.1.0 (the 4.2.x line)
+## ⭐ Batch-Relative Star Rating (new)
 
-- **Smart first-run wizard** with automatic AI-runtime selection (CUDA for NVIDIA, CPU otherwise)
-- **Windows Lite installer** (~190 MB) + a separate CUDA GPU package
-- **One-click in-app updates** with background download and integrity check *(replaced in 4.3.0 — updates now go through the official website; see "Streamlined Updates" above)*
-- **Environment Repair** in Settings — re-run model prep without reinstalling
-- **ExifTool 13.55** — better RAW support for the latest cameras
-- **Smarter mirror selection** — optimized routing for China, official sources overseas
-- **IOC bird-name search** — standalone CN/EN lookup
-- **Keypoint model slimmed** ~283 MB → ~95 MB for faster loading
-- **Recursive subfolder batch processing** in both CLI and GUI; directory switching + recent history
-- **Star-rating sync** back to the original file's EXIF Rating
-- **macOS**: fixed memory pressure on long batches — thousands of photos stay steady throughout
-- Many stability fixes: Chinese-path compatibility, Windows console encoding, macOS packaging paths, ExifTool process cleanup
+- Star ratings are now assigned **relative to the current batch** instead of
+  fixed absolute thresholds: photos that pass the hard gates (bird present,
+  minimum confidence / sharpness, visible keypoints) are ranked by a combined
+  quality score (sharpness + aesthetics percentiles, small bonuses for flight
+  and precise focus), and the best N% get 3 stars.
+- The 3-star quota is adjustable (5–50%, default 20%) and mapped to the skill
+  levels (Beginner 25% / Intermediate 20% / Master 8%); a single quota slider
+  replaces the sharpness / aesthetics threshold sliders on the home panel and
+  in the Settings Center.
+- With Bird ID enabled the quota is applied **per species** — every species
+  keeps its own best shots (a rare species keeps at least its single best
+  photo), so a long burst of one common bird no longer crowds out the others.
+  Note: the more species in a batch, the further the effective 3-star share
+  can round up above the quota value.
+- Aesthetic scoring (TOPIQ) now evaluates the bird crop instead of the whole
+  frame, so backgrounds no longer dominate the score.
+- Absolute floors remain: 3 stars still require a minimum normalized
+  sharpness, low eye visibility caps a photo at 2 stars, and burst groups
+  keep only a limited number of 3-star photos.
+- While processing, the log and preview show metrics only; final stars are
+  assigned in a single pass at the end — no more ratings jumping around
+  mid-run.
+- The legacy absolute-threshold algorithm is still available: Settings →
+  Culling → "Rating Algorithm" cards let you switch back to V1 (default V2).
+
+## 🗂 Flat Layout & Burst Control (new)
+
+- **New "Flat" folder layout — rate in place, no file moves.** Settings →
+  Output → Folder layout now offers a third option: photos are detected,
+  rated and tagged as usual (EXIF ratings, keywords, picks, XMP sidecars for
+  Sony RAW), but **no files are moved** — your Lightroom folder references
+  stay intact. Browsing and filtering by stars / species / focus / burst in
+  the Results Browser works exactly the same (it reads the app's own
+  database, not the folder structure). Rating or species changes made in the
+  browser also leave files in place under this layout.
+- **Burst detection decoupled from burst subfolders.** A new toggle
+  (Settings → Culling → "Group bursts into subfolders", default on) lets you
+  keep burst detection — grouping in the browser, per-burst 3-star cap —
+  while filing burst shots like normal photos instead of `burst_NNN`
+  subfolders.
+
+## 🏷 Color Labels — New Defaults (please note)
+
+The default XMP color-label mapping is now intuitive — green means good,
+red means bad:
+
+| Condition | Old label | New label |
+|---|---|---|
+| Bird in flight | Green | **Blue** |
+| Critical focus | Red | **Green** |
+| Soft / out of focus | (none) | **Red** |
+| Good focus / no bird | (none) | (none) |
+
+A photo carries one label; flight takes priority. **If you built Lightroom
+smart collections on "green = flying", update them to blue.**
+
+## 🔑 Species Keywords (new)
+
+- High-confidence Bird ID results are now written to the photo's standard
+  keywords (`XMP-dc:Subject`) as well as the Title, so you can filter by
+  species in Lightroom's keyword panel. Writes are merge-add: your own
+  keywords are never touched, and re-running a folder never duplicates.
+  Toggle: Settings → Bird ID → "Write species to photo keywords" (default
+  on).
+
+## ⚡ Performance
+
+- **ExifTool now runs as two dedicated persistent processes (read / write).**
+  Batch metadata writes no longer block reads, eliminating a recurring
+  ~3-second stall every ~30 photos (real-world test, 152 photos: total time
+  75.5 s → 62.1 s).
+- Aesthetic scoring (TOPIQ) uses a new two-stage downscale — noticeably faster
+  on large images.
+- Fixed a side effect where importing the detection stack limited OpenCV to a
+  single thread; 45 MP image decoding is back to full speed.
+- Reduced repeated image decoding and debug I/O in the main pipeline.
+- The Bird ID resident service now lazy-loads its model stack — the service
+  port is ready within seconds of app launch, so the Lightroom plugin no
+  longer waits 10+ seconds to connect.
+
+## 🐦 Core Culling Pipeline
+
+- Fixed a batch of stability/accuracy issues in the main culling flow and
+  hardened model-file integrity checks.
+- A photo that fails processing is no longer mistakenly marked as completed —
+  it is counted as failed and will be retried on resume.
+- Fixed aesthetic-score pre-scaling on extreme aspect ratios (downscale only,
+  never upscale).
+- Intel Macs now default to CPU, sidestepping MPS pitfalls on older AMD GPUs.
+- The completion report uses a consistent timing definition and now shows
+  start and finish wall-clock times, so the total can be verified against a
+  clock.
+- Main-window position and state persist across sessions, including after
+  restoring from the system tray (community PRs #104 / #105 — thank you!).
+
+## 🔎 Bird ID & Lightroom Plugin
+
+- GPS coordinates of exactly 0.0 (equator / prime meridian) are no longer
+  treated as "no GPS".
+- GPS / RAW preview extraction goes through the shared ExifTool persistent
+  process — fixes console-window flashing on Windows.
+- Closing the main window now hides it to the tray as a true resident app,
+  fixing "Lightroom plugin can't reach the resident service".
+- Fixed the plugin's write-bird-name / write-caption to EXIF, which had been
+  silently broken; also fixed an IPTC encoding trap where Chinese text could
+  be stored or read back as Latin-1 garbage.
+- Bird ID panel: restored the data-source / country / region quick controls;
+  unified rarity-icon sizing and cleaner region display.
+
+## ⚙️ Settings Center (new)
+
+- All scattered settings dialogs are unified into a single Settings Center
+  with left-side navigation: Culling / Bird ID / Output / External Apps /
+  About.
+- One single source of truth for every setting; the home-page Quick Adjust
+  panel (sharpness & aesthetics sliders + flight / burst / Bird ID toggles)
+  stays in two-way sync with the Settings Center.
+- Skill level and thresholds are linked — manually editing a threshold
+  switches to "Custom" automatically.
+- The Settings entry now lives in the Settings menu, with a new shortcut:
+  Cmd+, (macOS) / Ctrl+, (Windows).
+- Fixed radio-button selection being invisible in Windows dark mode.
+- Fixed a light-mode background glitch in the Settings Center; the aesthetics
+  threshold is now correctly labeled TOPIQ.
+
+## 🖼 Results Browser
+
+- Change a photo's species directly in the browser — files move to the
+  matching species folder automatically.
+- Changing a star rating moves the files to the matching rating folder.
+- "Picked" is now a persistent flag with a crown badge on thumbnails.
+- Full SVG iconography (stars, filter chips, toolbars, focus status), and the
+  full-screen view gains a Photoshop-style left toolbar.
+- Fixed thumbnails not refreshing their badges after pick/rating changes;
+  burst badges are merged into a single indicator.
+- **Keyboard rating**: press 0–3 to set a photo's stars directly, Up/Down to
+  step the rating by one (Left/Right still navigate). Works in grid and
+  full-screen view.
+- Thumbnails show the species name **and** the filename (two lines) instead
+  of replacing one with the other; the detail panel gains a species row just
+  above GBIF Rarity (click to copy the name).
+- Focus terms are now consistent on both sides of the browser: Critical
+  Focus / Good Focus / Soft (the filter chips previously showed raw
+  BEST/GOOD/BAD in the English UI).
+
+## 🧹 Reset & Organization
+
+- Reset ignores hidden files and OS metadata leftovers.
+- Fixed burst-folder members being left behind under the species-first
+  layout; Reset now ends with an unconditional flatten pass as a safety net.
+
+## ✂️ Streamlined Interface
+
+To keep the app focused on the core culling workflow, this release removes
+the UI entry points for several non-core features: in-app update checks,
+smart enhance, crop suggestions, video analysis, and correction submission.
+If you used Video Bird Analysis in 4.3.0, its menu is intentionally absent in
+4.5.0 — this is not a bug. The underlying implementations remain in the
+codebase and may return in a future release.
 
 ---
 
 ## Distribution Notes
-- **Apple Silicon Mac**: single full installer (`.dmg`) — see Release assets
-- **Intel Mac**: a dedicated **v4.3.0** full installer (`.dmg`) is now available.
-  It runs on CPU (FP32); we removed the legacy MPS/AMD-dGPU path that was actually
-  slower, restoring smooth performance beyond the 4.1.0 baseline. Intel users no
-  longer need to stay on 4.2.1.
-- **Windows** — we recommend the **Full** builds (bundled AI runtime, works out of
-  the box, no first-run download):
+
+- **Apple Silicon Mac**: single full installer (`.dmg`) — see Release assets.
+- **Intel Mac**: dedicated full installer (`.dmg`), running on CPU (FP32).
+- **Windows** — we recommend the **Full** builds (bundled AI runtime, works
+  out of the box, no first-run download):
   - **CPU Full** — runs on any PC.
-  - **GPU (CUDA) Full** — for NVIDIA GPUs; distributed via Google Drive / Baidu
-    Netdisk due to its large size.
-  - The **Lite** installer (~190 MB) still covers all configurations, downloading
-    the AI runtime on first launch — fine when your network is reliable.
+  - **GPU (CUDA) Full** — for NVIDIA GPUs; distributed via Google Drive /
+    Baidu Netdisk due to its large size.
+  - The **Lite** installer (~190 MB) still covers all configurations,
+    downloading the AI runtime on first launch — fine when your network is
+    reliable.
 
 ---
 
-# SuperPicky 4.3.0 LTS（中文）
+# SuperPicky 4.5.0（中文）
 
-**4.3.0 是长期支持（LTS）稳定版** —— 汇总了自 4.1.0 以来的所有重要改进，作为新的稳定基线。仍在旧版本的用户，建议升级到此版本长期使用。
-
----
-
-## 🎬 4.3.0 全新功能
-
-**视频鸟类分析**（核心新功能）
-- 不再局限于静态照片，可直接分析视频中的鸟类
-- 自动按鸟种归类，并同步处理 SRT 字幕
-- 设置中新增独立的「视频处理」标签页
-
-**全球罕见度指数**（全新 GBIF 评分）
-- 每只识别出的鸟现在都有一个 0–100 的全球罕见度分数，基于 GBIF 全球观察数据（30 亿+ 记录），并以 IUCN 濒危等级兜底
-- 详情面板以 5 级图标呈现（○ ◔ ◑ ◕ ●）：常见 / 能见 / 少见 / 罕见 / 传奇，并写入独立的 EXIF 字段
-- 跑批结束输出罕见度分级分布统计，一眼挑出最难得的那张
-- 从旧的罕见度来源全面切换到开放、可引用的 GBIF 派生体系
-
-**更可靠的首次启动（下载与运行时链路重写）**
-- 首启准备更快更稳：并行镜像探测、多策略下载、自动回退与中断续传
-- 打包的 Python 工具链改用 `uv`，AI 运行时安装显著更快更稳 —— 对中国大陆与慢速网络改善明显
-
-**完成提示音**
-- 批量处理完成时可选播放提示音，长任务期间可放心离开
-
-**简化的升级方式**
-- 所有版本均已关闭应用内更新检测 —— 升级请前往官网下载页获取新版本。这取代了原先的应用内自动更新，并规避了升级后旧补丁覆盖新代码的问题。
-- Windows 安装包升级时会先清空旧程序文件；并新增卸载工具，用于在 Lite 与 Full 之间切换。
-
-**重置与整理**
-- 全新**高级重置**：当文件夹没有 manifest（较旧或跨版本目录，或新的鸟种优先布局）
-  时，重置会尝试识别 SuperPicky 的鸟种 / 评级 / 连拍文件夹，并把每张照片移回所选
-  目录 —— 仅移动、绝不覆盖同名文件，你自己的文件夹保持不动。
-- 重置现严格非破坏性：同名冲突一律跳过（绝不覆盖），文件夹仅在清空后才删除。
-- 连拍（連拍）分组在新的鸟种优先布局下也能正确工作。
-- 视频鸟种名称与 SRT 字幕现跟随界面语言（英文界面显示英文名）；视频整理可通过
-  重置可逆复原。
-
-**细节打磨**
-- 浏览现在会定位到当前所选目录（无则回退到「图片」文件夹）。
-- macOS 安装器（.dmg 内的 .pkg）通过更可靠的 CI 签名链路完成签名与公证。
-
-**Intel Mac 重回最新版（4.3.0）**
-- Intel Mac 现默认走 CPU（FP32）运行。此前在老款 AMD 独显上误用 MPS 反而更慢
-  （FP16 表现差、YOLO 还得回退 CPU 重算），改为强制 CPU 后性能恢复并超过 4.1.0
-  水平，Intel 用户可从 4.2.1 升级上来。
+**4.5.0 是一个聚焦版本。** 在 4.3.0 LTS 的基础上，集中做了五件事：全新的
+批内相对评星引擎、Lightroom 友好的平铺工作流、让选鸟主流程更快更稳、
+把所有设置统一进全新的设置中心、并围绕核心工作流精简界面。
 
 ---
 
-## 自 4.1.0 以来的重点更新（4.2.x 系列）
+## ⭐ 批内相对评星（全新）
 
-- **智能首启向导**，自动选择 AI 运行引擎（NVIDIA 走 CUDA，其余走 CPU）
-- **Windows Lite 安装包**（约 190 MB）+ 独立的 CUDA GPU 包
-- **一键应用内升级**：后台下载 + 完整性校验 *（4.3.0 起已改为前往官网手动更新，详见上方「简化的升级方式」）*
-- **环境修复**：设置内一键重跑模型准备，无需重装
-- **ExifTool 13.55**：更好支持最新相机的 RAW
-- **更智能的镜像选择**：大陆优化路由，海外走官方源
-- **IOC 鸟名检索**：独立的中英文鸟名查询
-- **关键点模型瘦身** 约 283 MB → 95 MB，加载更快
-- **子目录递归批处理**（CLI 与 GUI 均支持）；浏览器支持目录切换与最近目录历史
-- **星级同步**：评分修改写回原始文件的 EXIF Rating
-- **macOS**：修复长批量处理的内存压力 —— 数千张照片全程稳定
-- 大量稳定性修复：中文路径兼容、Windows 控制台编码、macOS 打包路径、ExifTool 进程清理
+- 星级改为**批内相对**分配，不再依赖固定绝对阈值：通过硬门槛（有鸟、
+  最低置信度/锐度、关键点可见）的照片按综合质量分排序（锐度+美学百分位，
+  飞行/精准对焦小幅加分），排名最好的前 N% 获得 3 星。
+- 3 星配额可调（5–50%，默认 20%），与摄影水平档位联动（新手 25% /
+  进阶 20% / 大师 8%）；首页与设置中心用单一「3星配额」滑块取代原来的
+  锐度/美学阈值双滑块。
+- 开启识鸟时配额**按鸟种分组**执行——每个鸟种都保住自己最好的照片
+  （罕见鸟至少保底 1 张），常见鸟的大连拍不再挤占其他鸟种的 3 星名额。
+  注意：一批照片鸟种越多，向上取整后的实际 3 星占比会越高于配额面值。
+- 美学评分（TOPIQ）改为针对鸟体裁剪区打分，背景不再干扰分数。
+- 绝对底线保留：3 星仍要求最低归一化锐度，眼睛不可见封顶 2 星，
+  连拍组内 3 星限量。
+- 处理过程中日志与预览只显示指标，星级在收尾阶段一次性统一分配，
+  不再出现处理中星级跳动。
+- 旧版绝对阈值算法仍可切换：设置中心 → 精选 →「评星算法」卡片可
+  切回 V1（默认 V2）。
+
+## 🗂 平铺布局与连拍控制（全新）
+
+- **新增「平铺」目录布局——识别评分但不移动文件。** 设置中心 → 输出 →
+  分类目录布局新增第三项：照片照常检测、评星、打标签（EXIF 星级、关键字、
+  精选旗标，索尼 RAW 走 XMP 侧车），但**所有文件留在原地**——Lightroom
+  已导入目录的引用不受影响。结果浏览器按星级/鸟种/对焦/连拍的浏览筛选
+  完全不变（它读应用自己的数据库，不依赖目录结构）；平铺下在浏览器里
+  改星/改鸟种同样不移动文件。
+- **连拍检测与子目录归档解耦。** 精选页新增开关「连拍归入独立子文件夹」
+  （默认开）：关闭后保留连拍检测——浏览器分组、连拍组内 3 星限量照常——
+  但连拍照片按各自星级/鸟种正常归档，不再产生 `burst_NNN` 子目录。
+
+## 🏷 颜色标签——新默认映射（请注意）
+
+XMP 色标默认映射改为符合直觉——绿=好、红=差：
+
+| 条件 | 旧色标 | 新色标 |
+|---|---|---|
+| 飞鸟 | 绿色 | **蓝色** |
+| 精准合焦 | 红色 | **绿色** |
+| 脱焦/失焦 | （无） | **红色** |
+| 普通合焦 / 无鸟 | （无） | （无） |
+
+一张照片只有一种色标，飞鸟优先。**如果你在 Lightroom 建过「绿色=飞鸟」
+的智能收藏夹，请改为蓝色。**
+
+## 🔑 鸟种关键字（全新）
+
+- 高置信度识鸟结果除写 Title 外，同步写入标准关键字（`XMP-dc:Subject`），
+  Lightroom 关键字面板可直接按鸟种筛选。写入为合并追加：你自己打的关键字
+  绝不会被动，重跑同一目录也不会产生重复。开关：设置中心 → 识鸟 →
+  「识别后写入照片关键字」（默认开）。
+
+## ⚡ 性能
+
+- **ExifTool 读写分离为两个专属常驻进程。** 批量写元数据不再阻塞读取，
+  消除了每约 30 张照片卡顿 3 秒的问题（152 张实测：总耗时 75.5 秒 →
+  62.1 秒）。
+- 美学评分（TOPIQ）接入两段式缩放预降，大图打分明显提速。
+- 修复检测组件导入后 OpenCV 被限制为单线程的副作用，4500 万像素大图解码
+  速度恢复。
+- 减少主流程中重复的图像解码与调试 I/O。
+- 识鸟驻留服务改为懒加载，应用启动后端口秒级就绪，Lightroom 插件不再等待
+  十几秒。
+
+## 🐦 选鸟主流程
+
+- 修复选鸟主流程一批稳定性/准确性问题，并加固模型文件完整性校验。
+- 单张照片处理异常不再被误标为「已完成」：计入失败统计，续跑可重试。
+- 修复极端长宽比图片美学评分预缩放方向错误（只降不升）。
+- Intel Mac 强制走 CPU，绕开老 AMD 显卡 MPS 的兼容陷阱。
+- 完成报告计时口径统一，并显示开始/结束时间，总耗时可对表自验。
+- 主窗口位置与状态持久化，从托盘重新显示后位置保存正常
+  （社区 PR #104 / #105，特此致谢）。
+
+## 🔎 识鸟 / Lightroom 插件
+
+- 修复 GPS 坐标恰好为 0.0（赤道/本初子午线）被误判为无 GPS。
+- GPS / RAW 预览提取统一走 ExifTool 常驻进程，修复 Windows 下控制台窗口
+  闪烁。
+- 关闭主窗口改为隐藏到托盘真驻留，修复 Lightroom 插件连不上驻留服务。
+- 修复插件写鸟名/描述到 EXIF 长期静默失效的问题；并修复 IPTC 中文被按
+  Latin-1 存储/误读的编码陷阱。
+- 识鸟面板恢复数据源/国家/区域快速控件；罕见度图标大小统一、地区显示优化。
+
+## ⚙️ 设置中心（全新）
+
+- 分散的设置窗口统一为设置中心：精选 / 识鸟 / 输出 / 外部应用 / 关于
+  五页，左侧导航。
+- 所有设置单一存储源；首页「快速调整」面板（锐度/美学滑块 + 飞行/连拍/识鸟
+  开关）与设置中心双向同步。
+- 技能等级与阈值联动，手动改阈值自动切换为「自定义」。
+- 设置入口固定在设置菜单，新增 Cmd+,（macOS）/ Ctrl+,（Windows）快捷键。
+- 修复 Windows 深色界面下单选按钮选中状态不可见。
+- 修复浅色模式下设置中心背景露灰；美学阈值标注更正为 TOPIQ。
+
+## 🖼 选鸟结果浏览器
+
+- 支持直接修改鸟种，文件联动移动到对应鸟种目录。
+- 修改星级后文件自动移动到对应星级目录。
+- 「精选」改为持久化旗标，缩略图显示皇冠角标。
+- 界面图标全面 SVG 化（星级/筛选筹码/工具栏/对焦状态），大图模式改为
+  PS 风格左侧工具栏。
+- 修复精选/改星后缩略图角标不刷新；连拍角标合并显示。
+- **键盘打星**：数字键 0-3 直接设星，Up/Down 星级 ±1（Left/Right 仍为
+  翻图）；网格与大图模式均可用。
+- 缩略图**同时显示鸟名与文件名**（两行），不再互相替换；右侧详情面板
+  在全球罕见度上方新增鸟种行（点击可复制鸟名）。
+- 浏览器左右两侧对焦用语统一：精焦 / 合焦 / 失焦（英文界面此前左侧
+  显示的是原始枚举 BEST/GOOD/BAD）。
+
+## 🧹 重置与整理
+
+- 重置时忽略系统隐藏文件与 OS 元数据残留。
+- 修复「按鸟种优先」布局下连拍目录成员残留，重置末尾补摊平兜底。
+
+## ✂️ 界面精简
+
+为聚焦核心选鸟工作流，本版本移除了若干非核心功能的界面入口：应用内更新
+检查、智能修图、裁剪建议、视频分析、纠错提交。如果你在 4.3.0 用过
+「视频选鸟」，其菜单在 4.5.0 中是有意移除的，并非 bug。相关功能实现仍
+保留在代码中，未来版本可能重新开放。
 
 ---
 
 ## 分发说明
-- **Apple Silicon Mac**：单一完整安装包（`.dmg`），见 Release 资产
-- **Intel Mac**：现已提供 **v4.3.0** 完整安装包（`.dmg`）。该版本走 CPU（FP32）
-  运行，我们移除了反而更慢的老款 MPS/AMD 独显路径，性能恢复并超过 4.1.0 水平。
-  Intel 用户无需再停留在 4.2.1。
-- **Windows**：推荐下载**完整版（Full）**（内置 AI 运行时，开箱即用，无需首启下载）：
+
+- **Apple Silicon Mac**：单一完整安装包（`.dmg`），见 Release 资产。
+- **Intel Mac**：独立完整安装包（`.dmg`），走 CPU（FP32）运行。
+- **Windows**：推荐下载**完整版（Full）**（内置 AI 运行时，开箱即用，无需
+  首启下载）：
   - **CPU 完整版** —— 适用于所有电脑。
-  - **GPU（CUDA）完整版** —— 面向 NVIDIA 显卡；因体积较大，通过 Google Drive /
-    百度网盘分发。
-  - **Lite** 安装包（约 190 MB）仍覆盖所有配置，首次启动时在线下载 AI 运行时，
-    网络良好时适用。
+  - **GPU（CUDA）完整版** —— 面向 NVIDIA 显卡；因体积较大，通过
+    Google Drive / 百度网盘分发。
+  - **Lite** 安装包（约 190 MB）仍覆盖所有配置，首次启动时在线下载 AI
+    运行时，网络良好时适用。

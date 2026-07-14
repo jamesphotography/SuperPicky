@@ -443,12 +443,15 @@ class DetailPanel(QWidget):
         self._val_caption.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px; font-family: {FONTS['mono']}; background: transparent;")
         self._val_caption.setWordWrap(True)
 
-        # 鸟种、文件名不在此显示(已移至大图顶条:鸟种居中 / 文件名右侧),避免重复。
-        # Species & filename are shown in the big-image top strip instead (centered species
-        # / right-aligned filename), so they are intentionally omitted here.
+        # 文件名仍只在大图顶条显示;鸟种行按用户反馈(Paul P0-2)加回详情面板,
+        # 置于全球罕见度上方,点击可复制鸟名(复用 _val_species 既有行为)。
+        # The filename stays in the big-image top strip only; the species row
+        # returns to the panel (above GBIF rarity) per user feedback, keeping
+        # the existing click-to-copy behavior of _val_species.
         rows = [
-            # V4.2.7: 鸟类信息 3 行连续（鸟种 → 全球罕见度 → IUCN）
-            # V4.2.7: Three bird-related rows kept adjacent for natural reading.
+            # 鸟类信息 3 行连续（鸟种 → 全球罕见度 → IUCN）
+            # Three bird-related rows kept adjacent for natural reading.
+            ("browser.meta_species",    self._val_species),
             ("browser.meta_gbif_rarity", self._val_gbif_rarity),
             ("browser.meta_iucn",       self._val_iucn),
             ("browser.meta_focus",      self._val_focus),
@@ -464,6 +467,8 @@ class DetailPanel(QWidget):
             ("browser.meta_filesize",   self._val_filesize),
             ("browser.meta_datetime",   self._val_datetime),
         ]
+        # 供测试断言行序 / kept for tests asserting row order
+        self._meta_rows = rows
         for key, val_widget in rows:
             form.addRow(_lbl(key), val_widget)
 

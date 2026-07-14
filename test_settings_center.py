@@ -570,3 +570,55 @@ def test_custom_skill_writes_custom_fields(monkeypatch):
         w.close()
     finally:
         os.unlink(tmp_path)
+
+
+def test_algo_cards_switch_config_and_slider_visibility():
+    """
+    验证评星算法卡片:v2 初始态配额行可见/旧滑块隐藏;点 v1 卡后配置落盘为
+    v1、旧滑块可见/配额行隐藏、卡片选中态切换;点 v2 卡恢复。
+
+    Verify the rating-algorithm cards: under v2 the quota row is visible and the
+    legacy sliders are hidden; clicking the v1 card persists "v1", swaps slider
+    visibility and card selection; clicking v2 restores everything.
+    """
+    import tempfile
+    import advanced_config as _ac_mod
+    from advanced_config import AdvancedConfig
+    from ui.settings_center import SettingsCenter
+    from tools.i18n import get_i18n
+
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+        tmp_path = f.name
+    _orig_get = _ac_mod.get_advanced_config
+    try:
+        cfg = AdvancedConfig(config_file=tmp_path)
+        assert cfg.rating_algorithm == "v2"  # 默认 v2 / default stays v2
+        # settings_center 内部均为方法内局部 import,调用时解析到补丁后的符号
+        # settings_center uses in-method imports, resolved at call time
+        _ac_mod.get_advanced_config = lambda: cfg
+
+        w = SettingsCenter(get_i18n())
+        w.show_page("culling")
+
+        # v2 初始:配额行可见,旧阈值滑块隐藏 / v2 initial state
+        assert not w._cull_quota.isHidden()
+        assert w._cull_sharp.isHidden() and w._cull_nima.isHidden()
+        assert w._algo_cards["v2"]._selected and not w._algo_cards["v1"]._selected
+
+        # 点 v1 卡 → 落盘 + 可见性互换 / click v1 card
+        w._on_algo_selected("v1")
+        assert cfg.rating_algorithm == "v1"
+        assert AdvancedConfig(config_file=tmp_path).rating_algorithm == "v1"  # 已写盘
+        assert w._cull_quota.isHidden()
+        assert not w._cull_sharp.isHidden() and not w._cull_nima.isHidden()
+        assert w._algo_cards["v1"]._selected and not w._algo_cards["v2"]._selected
+
+        # 点 v2 卡 → 恢复 / click v2 card restores
+        w._on_algo_selected("v2")
+        assert cfg.rating_algorithm == "v2"
+        assert not w._cull_quota.isHidden()
+        assert w._cull_sharp.isHidden() and w._cull_nima.isHidden()
+        w.close()
+    finally:
+        _ac_mod.get_advanced_config = _orig_get
+        os.unlink(tmp_path)
