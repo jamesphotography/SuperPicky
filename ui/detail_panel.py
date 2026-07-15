@@ -411,6 +411,9 @@ class DetailPanel(QWidget):
         # V4.2.7: GBIF 全球罕见度（0-100 分制，AWS Open Data 2026-05 snapshot 派生）
         # V4.2.7: GBIF-derived global rarity (0-100, from AWS Open Data snapshot)
         self._val_gbif_rarity = _make_value_label()
+        # iRateBird 鸟种颜值标签（0-100 分制，独立于逐张 TOPIQ 美学分）
+        # iRateBird species-beauty label (0-100, distinct from the per-photo TOPIQ aesthetic score)
+        self._val_species_beauty = _make_value_label()
         self._val_focus = _make_value_label()
         self._val_sharpness = _make_value_label()
         self._val_aesthetic = _make_value_label()
@@ -479,6 +482,7 @@ class DetailPanel(QWidget):
             # Three bird-related rows kept adjacent for natural reading.
             ("browser.meta_species",    species_row),
             ("browser.meta_gbif_rarity", self._val_gbif_rarity),
+            ("browser.meta_species_beauty", self._val_species_beauty),
             ("browser.meta_iucn",       self._val_iucn),
             ("browser.meta_focus",      self._val_focus),
             ("browser.meta_sharpness",  self._val_sharpness),
@@ -575,6 +579,7 @@ class DetailPanel(QWidget):
         self._img_label.set_pixmap(QPixmap())
         for val in (
             self._val_gbif_rarity,
+            self._val_species_beauty,
             self._val_focus, self._val_sharpness,
             self._val_aesthetic, self._val_flying, self._val_species,
             self._val_iucn,
@@ -897,6 +902,20 @@ class DetailPanel(QWidget):
         else:
             self._val_gbif_rarity.setText(_unknown)
             self._val_gbif_rarity.setStyleSheet(
+                f"color: {COLORS['text_primary']}; font-size: 12px; background: transparent;"
+            )
+
+        # iRateBird 鸟种颜值（0–100，无数据显示占位）
+        # iRateBird species beauty (0–100, placeholder when missing)
+        beauty = p.get("aesthetic_index")
+        if beauty is not None:
+            self._val_species_beauty.setText(f"{beauty:.0f}/100")
+            self._val_species_beauty.setStyleSheet(
+                f"color: {COLORS['text_primary']}; font-size: 13px; font-weight: 600; background: transparent;"
+            )
+        else:
+            self._val_species_beauty.setText(_unknown)
+            self._val_species_beauty.setStyleSheet(
                 f"color: {COLORS['text_primary']}; font-size: 12px; background: transparent;"
             )
 
