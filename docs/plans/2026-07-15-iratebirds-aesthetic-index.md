@@ -771,7 +771,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ### Task 5: 识鸟链路查分 + photo_processor 落库
 
 **Files:**
-- Modify: `birdid/bird_identifier.py`（`_build_results` ~L948-967，罕见度查询旁加颜值查询 + result dict 加键）
+- Modify: `birdid/bird_identifier.py`（`predict_bird` 内，~L948-967，罕见度查询旁加颜值查询 + result dict 加键）
 - Modify: `core/photo_processor.py`（~L1265 取值、~L1311 db_updates、~L1347 meta_item，镜像 gbif_rarity_100 三处）
 - Test: `test_aesthetic_wiring.py`（仓库根目录）
 
@@ -779,44 +779,60 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Consumes: Task 3 的 `get_aesthetic_by_class_id`
 - Produces: 识别结果 dict 新增键 `"aesthetic_index"`；`report.db` 逐张 `aesthetic_index` 有值
 
-- [ ] **Step 1: 写失败测试（验证 _build_results 注入颜值键）**
+**背景（实现者必读）：** 结果组装逻辑不是独立函数，而是**内联在 `predict_bird(image, top_k, species_class_ids, is_yolo_cropped, name_format, photo_country_code)`**（`birdid/bird_identifier.py:860`）的候选循环里。该函数内部用 `get_classifier()` 跑真实分类器、`get_database_manager()` 取库。测试用 monkeypatch 打桩模型（返回定值 logits）+ 假 DB，避开真实模型与真实库。
+
+- [ ] **Step 1: 写失败测试（打桩模型+假DB，断言 predict_bird 输出含颜值键）**
 
 ```python
 """
-识鸟结果注入颜值键单测：用假 db_manager 验证 _build_results 输出含 aesthetic_index。
-Verify _build_results injects the aesthetic_index key from db_manager.
+predict_bird 注入颜值键单测：monkeypatch 打桩分类器+假 db_manager，
+断言返回结果含 aesthetic_index 且值来自 db_manager，避开真实模型/库。
+Verify predict_bird injects aesthetic_index via a stubbed classifier + fake DB.
 """
 import pytest
+import torch
+from PIL import Image
 
 import birdid.bird_identifier as bi
 
 
+class _StubModel:
+    """返回定值 logits：class_id 100 极高，其余 0。"""
+    def __call__(self, x):
+        v = torch.zeros(1, 10964)
+        v[0, 100] = 10.0
+        return v
+
+
 class _FakeDB:
+    def get_bird_by_class_id(self, cid):
+        return {"english_name": "Stub Bird", "scientific_name": "Stubus avis",
+                "chinese_simplified": "桩鸟", "ebird_code": "stub",
+                "short_description_zh": ""}
     def get_gbif_rarity_by_class_id(self, cid, cc=None): return 50.0
     def get_iucn_by_class_id(self, cid): return None
     def get_aesthetic_by_class_id(self, cid): return 88.5
     def get_avilist_names_by_class_id(self, cid): return None
-    # 依据 _build_results 实际调用补齐其余被调方法（读源码确认）
 
 
-def test_build_results_has_aesthetic(monkeypatch):
-    """_build_results 每条结果应带 aesthetic_index。"""
-    # 读 birdid/bird_identifier.py 的 _build_results 签名后，构造最小入参调用。
-    # 断言：返回的每个 dict 均含键 'aesthetic_index' 且值来自 db_manager。
-    ...  # 见 Step 2 说明：先读源码补全调用
+def test_predict_bird_injects_aesthetic(monkeypatch):
+    monkeypatch.setattr(bi, "get_classifier", lambda: _StubModel())
+    monkeypatch.setattr(bi, "get_database_manager", lambda: _FakeDB())
+    out = bi.predict_bird(Image.new("RGB", (224, 224)), top_k=1)
+    assert out, "predict_bird 应返回至少一个候选"
+    assert out[0]["aesthetic_index"] == 88.5
 ```
 
-**说明（重要）：** `_build_results` 是内部函数，入参较多（class 分数、name_format、species_class_ids、photo_country_code、db_manager 等）。Step 2 前**先读 `birdid/bird_identifier.py:863-972` 完整签名与循环体**，据此把上面的 `test_build_results_has_aesthetic` 补成可运行的最小调用（构造一两个候选 class_id、传 `_FakeDB()`），断言结果含 `aesthetic_index == 88.5`。`_FakeDB` 按实际被调方法补齐。
+**说明：** 若本环境下打桩推理路径因 `CLASSIFIER_DEVICE`/transform 设置报错（而非因缺 `aesthetic_index` 而失败），先读 `predict_bird` 顶部（L868-888）确认 `get_classifier` 是唯一模型入口、`_FakeDB` 被调方法是否齐全，微调桩至能跑通「RED=无 aesthetic_index 键」。此桩不触真实模型/库。
 
-- [ ] **Step 2: 补全并跑测试确认失败**
+- [ ] **Step 2: 跑测试确认失败**
 
-读源码补全测试后：
 Run: `.venv/bin/python -m pytest test_aesthetic_wiring.py -v`
-Expected: FAIL — 结果 dict 无 `aesthetic_index` 键（KeyError 或断言失败）
+Expected: FAIL — `KeyError: 'aesthetic_index'`（结果 dict 尚无该键）
 
 - [ ] **Step 3: bird_identifier 注入颜值**
 
-在 `birdid/bird_identifier.py` 的 `_build_results`，紧接 `gbif_rarity_100 = (...)` 赋值块（~L948-952）之后加：
+在 `birdid/bird_identifier.py` 的 `predict_bird` 候选循环里，紧接 `gbif_rarity_100 = (...)` 赋值块（~L948-952）之后加：
 
 ```python
         # iRateBird 鸟种美学(颜值)分（0–100，与照片无关的物种级指标）
