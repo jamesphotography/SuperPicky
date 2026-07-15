@@ -64,3 +64,18 @@ def test_invalid_threshold_maintains_verdict(bad_threshold):
     weights, arbitrated = arbitrate_focus_weights((0.5, 0.8), 683.0, bad_threshold)
     assert weights == (0.5, 0.8)
     assert arbitrated is False
+
+
+import json
+from pathlib import Path
+
+
+@pytest.mark.parametrize("locale_file", ["locales/zh_CN.json", "locales/en_US.json"])
+def test_focus_arbitrated_log_key_exists_and_formats(locale_file):
+    """仲裁日志键在中英locale都存在，且能用orig/sharp/thr格式化"""
+    data = json.loads(Path(locale_file).read_text(encoding="utf-8"))
+    template = data["logs"]["focus_arbitrated"]
+    rendered = template.format(orig=0.5, sharp=683.0, thr=400)
+    assert "0.5" in rendered
+    assert "683" in rendered
+    assert "400" in rendered

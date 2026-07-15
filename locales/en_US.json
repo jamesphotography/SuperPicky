@@ -295,6 +295,7 @@
     "rating_v2_summary": "🎯 Rating V2 done: pool {total}, 3-star {three} (quota {quota}%, {overall}% of all photos), {changed} differ from estimate",
     "caption_data": "[Data] AI Conf: {conf:.0%} | Head Sharp: {sharp} | Aesthetics: {nima} | Eye Vis: {vis:.0%}",
     "caption_factors": "[Factors] Focus Sharp Weight: {sharp_w:.2f} | Focus Aes Weight: {aes_w:.2f} | Flying: {flying}",
+    "focus_arbitrated": "[Focus Arbitration] metadata weight {orig:.2f}, but measured head sharpness {sharp:.0f} >= threshold {thr:.0f} -> upgraded to GOOD",
     "caption_adjusted": "[Adjusted] Sharpness: {sharp:.2f} | Aesthetics: {nima:.2f}",
     "caption_vis_weight": "[Visibility] Weight: {weight:.2f}",
     "flying_yes": "Yes (ranking bonus)",
