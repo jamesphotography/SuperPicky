@@ -1911,8 +1911,8 @@ class PhotoProcessor:
                     mark_resume_completed(original_prefix)
                     continue
             
-                # V4.2: 解构 AI 结果（现在有 9 个返回值，包含 bird_count）
-                detected, _, confidence, sharpness, _, bird_bbox, img_dims, bird_mask, bird_count = result
+                # V4.2: 解构 AI 结果（现在有 10 个返回值，包含 bird_count 和 rescued）
+                detected, _, confidence, sharpness, _, bird_bbox, img_dims, bird_mask, bird_count, rescued = result
             
                 # 多鸟场景才补读对焦点，并在需要时做一次 YOLO 复选（避免全量样本都读 RAW 对焦）
                 if detected and bird_count > 1 and can_read_focus_raw:
@@ -1934,7 +1934,7 @@ class PhotoProcessor:
                                 yolo_item.get('decoded_image'),
                             )
                             if refined_result is not None:
-                                detected, _, confidence, sharpness, _, bird_bbox, img_dims, bird_mask, bird_count = refined_result
+                                detected, _, confidence, sharpness, _, bird_bbox, img_dims, bird_mask, bird_count, rescued = refined_result
                         except Exception:
                             pass
                         add_photo_stage('yolo_refine', (time.time() - refine_start) * 1000)
@@ -1943,7 +1943,13 @@ class PhotoProcessor:
                 # V4.1/V4.2: Mark no-bird/low-confidence photos as rejected first;
                 # detail-metadata settings decide whether the processor can exit early.
                 confidence_threshold = self.settings.ai_confidence / 100.0
-                rejected_by_detection = not detected or (detected and confidence < confidence_threshold)
+                # V4.6: 救回照片已经过两因子核验(YOLO候选+鸟种分类器)，豁免二次
+                # 置信度门槛——否则弱候选救回(conf≈0.3)会被默认0.5阈值再杀一遍。
+                # V4.6: Rescued photos passed two-factor verification (YOLO
+                # candidate + species classifier); exempt them from this gate,
+                # otherwise the default 0.5 threshold would re-kill weak rescues.
+                rejected_by_detection = not detected or (
+                    detected and not rescued and confidence < confidence_threshold)
                 needs_expensive_rejected_detail = (
                     detail_metadata_for_rejected
                     and detected
