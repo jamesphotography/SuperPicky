@@ -195,6 +195,39 @@ class BirdDatabaseManager:
             # gbif_rarity_100 表也不存在（旧版数据库），静默降级
             return None
 
+    def get_aesthetic_by_class_id(self, class_id: int) -> Optional[float]:
+        """
+        根据模型类别ID获取鸟种美学（颜值）默认分（0–100）。
+
+        Args:
+            class_id: 鸟类类别ID（model_class_id）
+
+        Returns:
+            iRateBird 颜值分 (0–100, 越大越好看; None=未匹配或缺数据)
+
+        Fetch the iRateBird species aesthetic score (0–100). Returns None on
+        miss or when the iratebirds_aesthetic table is absent (older DB).
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                try:
+                    cursor.execute(
+                        "SELECT aesthetic_100 FROM iratebirds_aesthetic "
+                        "WHERE model_class_id = ? AND aesthetic_100 IS NOT NULL LIMIT 1",
+                        (class_id,),
+                    )
+                    row = cursor.fetchone()
+                    if row and row[0] is not None:
+                        return float(row[0])
+                except sqlite3.OperationalError:
+                    # 表不存在（旧库）→ 容错返 None
+                    # Missing table (older DB) → tolerate, return None
+                    return None
+        except sqlite3.Error:
+            return None
+        return None
+
     def get_iucn_by_class_id(self, class_id: int) -> Optional[str]:
         """
         根据模型类别ID获取 IUCN 红色名录保护级别
