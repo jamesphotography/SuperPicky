@@ -364,6 +364,13 @@ class AIConfig:
     CENTER_THRESHOLD: float = 0.15
     SHARPNESS_NORMALIZATION: Optional[str] = None
 
+    # V4.6: 无鸟补救扫描参数 / No-bird rescue scan parameters
+    RESCUE_IMGSZ: int = 1024      # 补救重扫推理分辨率 / rescue rescan imgsz
+    RESCUE_CONF: float = 0.05     # 补救重扫置信度地板 / rescue conf floor
+    # COCO 中飞鸟常被误认的类别 / COCO classes birds in flight are mistaken for
+    RESCUE_CONFUSABLE_CLASS_IDS: dict = field(
+        default_factory=lambda: {4: "airplane", 33: "kite"})
+
     def get_model_path(self) -> str:
         """
         返回主模型的实际可访问路径 / Return the actual accessible path to the main model.
