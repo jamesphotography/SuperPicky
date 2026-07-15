@@ -295,6 +295,7 @@
     "rating_v2_summary": "🎯 V2 定星完成: 排序池 {total} 张, 3星 {three} 张 (配额{quota}%, 占全部 {overall}%), 与预估不同 {changed} 张",
     "caption_data": "[原始检测数据] AI置信度: {conf:.0%} | 头部锐度: {sharp} | TOPIQ美学: {nima} | 眼睛可见度: {vis:.0%}",
     "caption_factors": "[修正] 对焦锐度权重: {sharp_w:.2f} | 对焦美学权重: {aes_w:.2f} | 飞鸟: {flying}",
+    "focus_arbitrated": "[对焦仲裁] 元数据判权重 {orig:.2f}，但鸟头实测锐度 {sharp:.0f} ≥ 阈值 {thr:.0f} → 升为 GOOD",
     "caption_adjusted": "[调整后] 锐度: {sharp:.2f} | 美学: {nima:.2f}",
     "caption_vis_weight": "[可见度] 权重: {weight:.2f}",
     "flying_yes": "是 (排序加分)",

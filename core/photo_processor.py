@@ -41,7 +41,7 @@ from core.rating_engine import RatingEngine, create_rating_engine_from_config
 from core.keypoint_detector import KeypointDetector, get_keypoint_detector
 from core.flight_detector import FlightDetector, get_flight_detector, FlightResult
 from core.exposure_detector import ExposureDetector, get_exposure_detector, ExposureResult
-from core.focus_point_detector import get_focus_detector, verify_focus_in_bbox
+from core.focus_point_detector import get_focus_detector, verify_focus_in_bbox, arbitrate_focus_weights
 
 from constants import RATING_FOLDER_NAMES, RAW_EXTENSIONS, JPG_EXTENSIONS, HEIF_EXTENSIONS, get_rating_folder_names
 
@@ -2404,6 +2404,27 @@ class PhotoProcessor:
                             else:
                                 focus_sharpness_weight = 0.7
                                 focus_topiq_weight = 0.9
+                    # V4.7(issue#107): 锐度仲裁——BAD/WORST(权重<0.9)且鸟头实测锐度
+                    # 达标(≥用户阈值,与评星硬门槛同源)时升为GOOD(0.9/1.0)。
+                    # 像素证据优先于EXIF对焦点元数据;真糊照片锐度不达标维持原判。
+                    # V4.7 (issue #107): sharpness arbitration — when the verdict
+                    # is BAD/WORST (weight < 0.9) and the measured head sharpness
+                    # meets the user threshold (same source as the rating hard
+                    # gate), upgrade to GOOD (0.9/1.0). Pixel evidence beats EXIF
+                    # focus-point metadata; truly-blurred shots keep the verdict.
+                    _orig_focus_w = focus_sharpness_weight
+                    (focus_sharpness_weight, focus_topiq_weight), _focus_arbitrated = arbitrate_focus_weights(
+                        (focus_sharpness_weight, focus_topiq_weight),
+                        normalized_sharpness,
+                        float(self.settings.sharpness_threshold),
+                    )
+                    if _focus_arbitrated:
+                        self._log(self.i18n.t(
+                            "logs.focus_arbitrated",
+                            orig=_orig_focus_w,
+                            sharp=normalized_sharpness,
+                            thr=float(self.settings.sharpness_threshold),
+                        ))
                 add_photo_stage('focus', (time.time() - focus_start) * 1000)
             
                 # V4.0: 最终评分计算（传入对焦权重和飞鸟状态）
