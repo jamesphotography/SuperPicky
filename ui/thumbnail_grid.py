@@ -14,13 +14,13 @@ from typing import Optional
 
 from PySide6.QtWidgets import (
     QScrollArea, QWidget, QGridLayout, QLabel, QFrame,
-    QVBoxLayout, QSizePolicy, QGraphicsOpacityEffect
+    QVBoxLayout, QHBoxLayout, QToolButton, QSizePolicy, QGraphicsOpacityEffect
 )
 from PySide6.QtCore import Qt, Signal, QThread, QObject, Slot, QSize, QTimer, QPoint, QRect, QEasingCurve, QPropertyAnimation
 from PySide6.QtGui import QPixmap, QColor, QPainter, QPen, QFont, QBrush, QImage
 
 from ui.styles import COLORS, FONTS
-from ui.icon_utils import render_tinted_image, ICON_DANGER
+from ui.icon_utils import render_tinted_image, load_tinted_icon, ICON_DANGER
 from tools.i18n import get_i18n
 
 
@@ -375,6 +375,9 @@ class ThumbnailCard(QFrame):
     clicked = Signal(dict)
     double_clicked = Signal(dict)
     context_menu_requested = Signal(dict, object)  # C4 右键菜单
+    # issue #106: 点击鸟名旁铅笔 → 编辑/补录鸟种(复用既有弹窗)
+    # issue #106: pencil next to the species name → edit/assign species
+    species_edit_requested = Signal(dict)
 
     # V5: Add badge clicked signal
     badge_clicked = Signal(dict)
@@ -436,8 +439,34 @@ class ThumbnailCard(QFrame):
                 background: transparent;
             }}
         """)
-        self.name_label.setMaximumWidth(thumb_size + 4)
-        layout.addWidget(self.name_label)
+        self.name_label.setMaximumWidth(thumb_size - 16)
+
+        # issue #106: 鸟名右侧常驻小铅笔 → 编辑/补录鸟种(无鸟种照片也显示,
+        # 允许人工补录);点击复用浏览器既有的鸟种编辑弹窗与目录移动逻辑。
+        # issue #106: an always-visible pencil next to the name opens the
+        # existing species-edit dialog (also shown for species-less photos
+        # so users can assign a name manually).
+        self._edit_btn = QToolButton()
+        self._edit_btn.setIcon(load_tinted_icon("square-pen.svg", COLORS['text_muted'], size=12))
+        self._edit_btn.setIconSize(QSize(12, 12))
+        self._edit_btn.setFixedSize(16, 16)
+        self._edit_btn.setCursor(Qt.PointingHandCursor)
+        self._edit_btn.setFocusPolicy(Qt.NoFocus)
+        self._edit_btn.setToolTip(get_i18n().t("fullscreen.tb_species"))
+        self._edit_btn.setStyleSheet(f"""
+            QToolButton {{ border: none; background: transparent; }}
+            QToolButton:hover {{ background: {COLORS['accent_dim']}; border-radius: 4px; }}
+        """)
+        self._edit_btn.clicked.connect(lambda: self.species_edit_requested.emit(self.photo))
+
+        footer = QHBoxLayout()
+        footer.setContentsMargins(0, 0, 0, 0)
+        footer.setSpacing(2)
+        footer.addStretch(1)
+        footer.addWidget(self.name_label)
+        footer.addWidget(self._edit_btn)
+        footer.addStretch(1)
+        layout.addLayout(footer)
 
     def set_pixmap(self, image: QImage):
         try:
@@ -663,6 +692,9 @@ class ThumbnailGrid(QScrollArea):
     photo_double_clicked = Signal(dict)
     multi_selection_changed = Signal(list)   # C3 多选信号
     burst_badge_clicked = Signal(int)        # V5: Burst badge click signal
+    # issue #106: 转发卡片铅笔点击 → 浏览器打开鸟种编辑弹窗
+    # issue #106: relay the card pencil click to the browser's edit dialog
+    species_edit_requested = Signal(dict)
 
     def __init__(self, i18n, parent=None):
         super().__init__(parent)
@@ -892,6 +924,7 @@ class ThumbnailGrid(QScrollArea):
             card.double_clicked.connect(lambda p: self.photo_double_clicked.emit(p))
             card.context_menu_requested.connect(self._on_context_menu_requested)
             card.badge_clicked.connect(self._on_badge_clicked)
+            card.species_edit_requested.connect(self.species_edit_requested.emit)
             photo_key = _photo_key(photo)
             self._cards[photo_key] = card
             self._grid.addWidget(card, row, col)

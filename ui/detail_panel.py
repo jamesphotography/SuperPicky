@@ -448,10 +448,36 @@ class DetailPanel(QWidget):
         # The filename stays in the big-image top strip only; the species row
         # returns to the panel (above GBIF rarity) per user feedback, keeping
         # the existing click-to-copy behavior of _val_species.
+        # issue #106: 鸟名右侧加铅笔按钮 → 发射 species_edit_requested,
+        # 由浏览器窗口打开鸟种编辑弹窗(改名/补录 + 移动目录)。
+        # issue #106: a pencil button next to the species emits
+        # species_edit_requested; the browser opens the edit dialog.
+        self._species_edit_btn = QToolButton()
+        self._species_edit_btn.setIcon(
+            load_tinted_icon("square-pen.svg", COLORS['text_muted'], size=13))
+        self._species_edit_btn.setIconSize(QSize(13, 13))
+        self._species_edit_btn.setFixedSize(18, 18)
+        self._species_edit_btn.setCursor(Qt.PointingHandCursor)
+        self._species_edit_btn.setFocusPolicy(Qt.NoFocus)
+        self._species_edit_btn.setToolTip(self.i18n.t("fullscreen.tb_species"))
+        self._species_edit_btn.setStyleSheet(f"""
+            QToolButton {{ border: none; background: transparent; }}
+            QToolButton:hover {{ background: {COLORS['accent_dim']}; border-radius: 4px; }}
+        """)
+        self._species_edit_btn.clicked.connect(self._on_species_edit_clicked)
+
+        species_row = QWidget()
+        species_row_lay = QHBoxLayout(species_row)
+        species_row_lay.setContentsMargins(0, 0, 0, 0)
+        species_row_lay.setSpacing(4)
+        species_row_lay.addWidget(self._val_species)
+        species_row_lay.addWidget(self._species_edit_btn)
+        species_row_lay.addStretch(1)
+
         rows = [
             # 鸟类信息 3 行连续（鸟种 → 全球罕见度 → IUCN）
             # Three bird-related rows kept adjacent for natural reading.
-            ("browser.meta_species",    self._val_species),
+            ("browser.meta_species",    species_row),
             ("browser.meta_gbif_rarity", self._val_gbif_rarity),
             ("browser.meta_iucn",       self._val_iucn),
             ("browser.meta_focus",      self._val_focus),
@@ -682,6 +708,17 @@ class DetailPanel(QWidget):
         self._val_species.setText(self.i18n.t("browser.species_copied"))
         self._val_species.setToolTip(self.i18n.t("browser.species_copied"))
         QTimer.singleShot(1500, self._restore_species_text)
+
+    def _on_species_edit_clicked(self):
+        """
+        点击鸟名旁铅笔 → 发射 species_edit_requested(issue #106)。
+        浏览器窗口接线到既有 _on_species_edit_requested 打开编辑弹窗。
+
+        Pencil next to the species emits species_edit_requested (issue
+        #106); the browser window opens the existing edit dialog.
+        """
+        if self._current_photo:
+            self.species_edit_requested.emit(dict(self._current_photo))
 
     def _restore_species_text(self):
         """1.5s 后把鸟种行文本恢复（仅当用户没切换照片）。"""
