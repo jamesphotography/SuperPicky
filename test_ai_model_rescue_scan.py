@@ -69,3 +69,23 @@ def test_kite_candidate_gate_reject(monkeypatch):
 def test_no_candidate_returns_none():
     model = FakeModel([[10, 10, 60, 60]], [0.9], [0])  # person
     assert ai_model._rescue_scan(model, IMG, 0.5, 10, ".", None) is None
+
+
+def test_detect_returns_10_tuple_no_bird(tmp_path, monkeypatch):
+    """空检测 + 补救关闭 → 10 元组，末位 rescued=False。
+    Empty detections with rescue disabled → 10-tuple ending rescued=False."""
+    import cv2
+
+    jpg = str(tmp_path / "t.jpg")
+    cv2.imwrite(jpg, np.zeros((64, 64, 3), dtype=np.uint8))
+
+    class _Cfg:
+        rescue_scan_enabled = False
+        rescue_birdid_gate = 10
+
+    monkeypatch.setattr(ai_model, "get_advanced_config", lambda: _Cfg())
+    model = FakeModel(np.zeros((0, 4)), [], [])
+    result = ai_model.detect_and_draw_birds(
+        jpg, model, None, str(tmp_path), [50, 300, 5.0, False], None)
+    assert len(result) == 10
+    assert result[0] is False and result[9] is False

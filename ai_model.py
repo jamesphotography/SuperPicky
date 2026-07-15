@@ -262,8 +262,9 @@ def detect_and_draw_birds(
         decoded_image: 复用上游已解码的 BGR 图像，减少重复 JPEG 解码
     
     Returns:
-        元组 (found_bird, bird_result, confidence, sharpness, nima_score, bird_bbox, img_dims, bird_mask, bird_count)
+        10-tuple (found_bird, bird_result, confidence, sharpness, nima_score, bird_bbox, img_dims, bird_mask, bird_count, rescued)
         bird_count: 检测到的鸟的数量（V4.2 新增）
+        rescued: 是否经补救扫描救回（V4.6 新增）/ whether rescued by the rescue scan (V4.6 new)
     """
     # V3.1: 从 ui_settings 获取参数
     ai_confidence = ui_settings[0] / 100  # AI置信度：50-100 -> 0.5-1.0（仅用于过滤）
@@ -343,7 +344,7 @@ def detect_and_draw_birds(
             }
             if report_db:
                 report_db.insert_photo(data)
-            return found_bird, bird_result, 0.0, 0.0, None, None, None, None, 0  # V4.2: 9 values including bird_count
+            return found_bird, bird_result, 0.0, 0.0, None, None, None, None, 0, False  # V4.6: 10 values with rescued
 
     yolo_time = (time.time() - step_start) * 1000
     # V3.3: 简化日志，移除步骤详情
@@ -378,7 +379,34 @@ def detect_and_draw_birds(
             })
     
     bird_count = len(all_birds)
-    
+
+    # V4.6: 无鸟补救扫描——第一遍低于 UI 阈值时触发 1024px 重扫 + 识鸟守门
+    # V4.6: No-bird rescue scan — when pass-1 falls below the UI threshold,
+    # rescan at 1024px with the BirdID classifier as gatekeeper.
+    rescued = False
+    _best_pass1 = max((b['conf'] for b in all_birds), default=0.0)
+    if _best_pass1 < ai_confidence:
+        _adv = get_advanced_config()
+        if _adv.rescue_scan_enabled:
+            _rescue = _rescue_scan(model, image, ai_confidence,
+                                   _adv.rescue_birdid_gate, dir, i18n)
+            if _rescue is not None:
+                # 用救回候选覆盖第一遍解析结果，后续裁剪/画框/入库全部复用
+                # Overwrite the pass-1 parse with the rescued candidate; the
+                # rest of the pipeline (crop/draw/DB) is reused unchanged.
+                detections = np.array([_rescue["xyxy"]], dtype=np.float64)
+                confidences = np.array([_rescue["conf"]], dtype=np.float64)
+                class_ids = np.array([float(config.ai.BIRD_CLASS_ID)])
+                masks = (_rescue["mask"][None, ...]
+                         if _rescue["mask"] is not None else None)
+                all_birds = [{
+                    'idx': 0,
+                    'conf': _rescue["conf"],
+                    'bbox': tuple(int(v) for v in _rescue["xyxy"]),
+                }]
+                bird_count = 1
+                rescued = True
+
     # V4.2: 鸟选择策略
     bird_idx = -1
     if bird_count == 1:
@@ -434,7 +462,7 @@ def detect_and_draw_birds(
         }
         if report_db:
             report_db.insert_photo(data)
-        return found_bird, bird_result, 0.0, 0.0, None, None, None, None, 0  # V4.2: 9 values including bird_count
+        return found_bird, bird_result, 0.0, 0.0, None, None, None, None, 0, False  # V4.6: 10 values with rescued
     # V3.2: 移除 NIMA 计算（现在由 photo_processor 在裁剪区域上计算）
     # nima_score 设为 None，photo_processor 会重新计算
     nima_score = None
@@ -608,4 +636,4 @@ def detect_and_draw_birds(
             # Mask processing failed, ignore
             pass
 
-    return found_bird, bird_result, bird_confidence, bird_sharpness, nima_score, bird_bbox, img_dims, bird_mask, bird_count
+    return found_bird, bird_result, bird_confidence, bird_sharpness, nima_score, bird_bbox, img_dims, bird_mask, bird_count, rescued
