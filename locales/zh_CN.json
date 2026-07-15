@@ -596,6 +596,7 @@
     "culling_burst_label": "连拍检测",
     "culling_burst_fps_label": "连拍速度 (张/秒)",
     "culling_burst_folders_label": "连拍归入独立子文件夹",
+    "culling_rescue_label": "无鸟补救扫描（更慢但更少漏检）",
     "birdid_section_auto": "自动识鸟",
     "birdid_auto_label": "自动识别鸟种（2星及以上照片）",
     "birdid_keywords_label": "识别后写入照片关键字（Lightroom Keywords）",

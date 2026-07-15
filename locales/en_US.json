@@ -596,6 +596,7 @@
     "culling_burst_label": "Burst Detection",
     "culling_burst_fps_label": "Burst Speed (fps)",
     "culling_burst_folders_label": "Group bursts into subfolders",
+    "culling_rescue_label": "Rescue scan for missed birds (slower, fewer misses)",
     "birdid_section_auto": "Auto Bird ID",
     "birdid_auto_label": "Automatically identify bird species (2-star and above)",
     "birdid_keywords_label": "Write species to photo keywords (Lightroom)",
