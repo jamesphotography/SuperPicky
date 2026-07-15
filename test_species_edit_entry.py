@@ -80,6 +80,64 @@ def test_detail_panel_pencil_emits_with_current_photo():
     panel.close()
 
 
+def _card_line_texts(card):
+    """取候选卡片两行文本(主行, 次行);缺行返回 None。"""
+    primary = getattr(card, "primary_label", None)
+    secondary = getattr(card, "secondary_label", None)
+    return (primary.text() if primary else None,
+            secondary.text() if secondary else None)
+
+
+def test_result_card_lines_follow_ui_language(monkeypatch):
+    """
+    候选卡片两行随界面语言(issue #106 追加反馈):
+    英文界面=英文名+拉丁名(斜体),中文界面=中文名+英文名。
+    测试自钉 locale,不依赖运行环境语言(项目既有教训)。
+
+    Candidate card lines follow the UI language: EN UI shows
+    English + Latin (italic); the Chinese UI keeps Chinese + English.
+    The locale is pinned inside the test.
+    """
+    import ui.birdname_search_widget as bsw
+
+    bird = {"chinese_name": "红脚鹬", "english_name": "Common Redshank",
+            "latin_name": "Tringa totanus"}
+
+    class _FakeI18n:
+        def __init__(self, lang):
+            self.current_lang = lang
+
+        def t(self, key, **kw):
+            return key
+
+    # 英文界面 / English UI
+    monkeypatch.setattr(bsw, "get_i18n", lambda: _FakeI18n("en_US"))
+    card_en = bsw.BirdResultCard(dict(bird))
+    p, s = _card_line_texts(card_en)
+    assert p == "Common Redshank"
+    assert s == "Tringa totanus"
+    assert "italic" in card_en.secondary_label.styleSheet()
+    card_en.close()
+
+    # 中文界面保持原样 / Chinese UI unchanged
+    monkeypatch.setattr(bsw, "get_i18n", lambda: _FakeI18n("zh_CN"))
+    card_zh = bsw.BirdResultCard(dict(bird))
+    p, s = _card_line_texts(card_zh)
+    assert p == "红脚鹬"
+    assert s == "Common Redshank"
+    assert "italic" not in card_zh.secondary_label.styleSheet()
+    card_zh.close()
+
+    # 英文界面但库里缺英文名 → 回退中文名,拉丁名仍在次行
+    # EN UI with missing English name falls back to Chinese.
+    monkeypatch.setattr(bsw, "get_i18n", lambda: _FakeI18n("en_US"))
+    card_fb = bsw.BirdResultCard({"chinese_name": "红脚鹬",
+                                  "latin_name": "Tringa totanus"})
+    p, s = _card_line_texts(card_fb)
+    assert p == "红脚鹬" and s == "Tringa totanus"
+    card_fb.close()
+
+
 def test_detail_panel_species_row_order_still_holds():
     """包装鸟种行后,行序断言(Paul P0-2)仍成立。"""
     from ui.detail_panel import DetailPanel
