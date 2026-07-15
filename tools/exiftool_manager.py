@@ -647,6 +647,14 @@ class ExifToolManager:
         # "Event" field, invisible in LR/C1 main panels, rarely used in the wild.
         if item.get('gbif_rarity_100') is not None:
             args.append(f'-XMP-iptcExt:Event={item["gbif_rarity_100"]:.2f}')
+        # iRateBird 鸟种颜值 0-100。借用 XMP-iptcExt:AdditionalModelInformation
+        # （IPTC Extension 附加模特信息字段，LR/C1 主面板不显示，几乎无人手动写入），
+        # 与罕见度 Event 同命名空间的冷门扁平文本字段。
+        # iRateBird species beauty 0-100 in XMP-iptcExt:AdditionalModelInformation —
+        # an obscure flat IPTC Extension text field, invisible in LR/C1 main panels,
+        # same namespace family as the rarity Event borrowing.
+        if item.get('aesthetic_index') is not None:
+            args.append(f'-XMP-iptcExt:AdditionalModelInformation={item["aesthetic_index"]:.2f}')
         temp_files: List[str] = []
 
         # 鸟名关键字(merge-add,Paul P1-1) / species keywords (merge-add)
@@ -777,6 +785,15 @@ class ExifToolManager:
         # V4.2.7: GBIF 罕见度同样写入侧车 / GBIF rarity mirrored into sidecar
         if item.get('gbif_rarity_100') is not None:
             args.append(f'-XMP-iptcExt:Event={item["gbif_rarity_100"]:.2f}')
+        # iRateBird 鸟种颜值 0-100，同样写入侧车。借用 XMP-iptcExt:AdditionalModelInformation
+        # （IPTC Extension 附加模特信息字段，LR/C1 主面板不显示，几乎无人手动写入），
+        # 与罕见度 Event 同命名空间的冷门扁平文本字段。
+        # iRateBird species beauty 0-100 mirrored into sidecar, using
+        # XMP-iptcExt:AdditionalModelInformation — an obscure flat IPTC Extension
+        # text field, invisible in LR/C1 main panels, same namespace family as
+        # the rarity Event borrowing.
+        if item.get('aesthetic_index') is not None:
+            args.append(f'-XMP-iptcExt:AdditionalModelInformation={item["aesthetic_index"]:.2f}')
         temp_files: List[str] = []
 
         # 鸟名关键字:侧车存在读侧车,否则读文件本体(LR 惯例侧车优先)
@@ -1173,7 +1190,29 @@ class ExifToolManager:
             # Focus Status -> XMP:Country
             if item.get('focus_status') is not None:
                 args_list.append(f'-XMP:Country={item["focus_status"]}')
-                
+
+            # V4.2.7: IUCN 红色名录等级。借用 XMP-iptcCore:IntellectualGenre（同上，
+            # 与 _write_metadata_subprocess/_write_metadata_xmp_sidecar 保持一致）。
+            # 补丁说明：本内联批量路径（默认 embedded 模式下非 ARW 文件的实际写入路径）
+            # 此前遗漏了 iucn/gbif/aesthetic 三个字段，导致这些值从未写入默认模式下
+            # 大多数照片（非 ARW）的 XMP，现补齐与另外两处写入路径一致。
+            # V4.2.7: IUCN Red List category in XMP-iptcCore:IntellectualGenre —
+            # kept consistent with _write_metadata_subprocess/_write_metadata_xmp_sidecar.
+            # Patch note: this inlined batch path (the actual write path for non-ARW
+            # files under the default "embedded" mode) previously omitted the
+            # iucn/gbif/aesthetic fields entirely, so they never reached XMP for most
+            # photos; now aligned with the other two write paths.
+            if item.get('iucn_category'):
+                args_list.append(f'-XMP-iptcCore:IntellectualGenre={item["iucn_category"]}')
+            # V4.2.7: GBIF 全球罕见度 0-100 -> XMP-iptcExt:Event
+            # V4.2.7: GBIF global rarity 0-100 -> XMP-iptcExt:Event
+            if item.get('gbif_rarity_100') is not None:
+                args_list.append(f'-XMP-iptcExt:Event={item["gbif_rarity_100"]:.2f}')
+            # iRateBird 鸟种颜值 0-100 -> XMP-iptcExt:AdditionalModelInformation
+            # iRateBird species beauty 0-100 -> XMP-iptcExt:AdditionalModelInformation
+            if item.get('aesthetic_index') is not None:
+                args_list.append(f'-XMP-iptcExt:AdditionalModelInformation={item["aesthetic_index"]:.2f}')
+
             # 鸟名关键字(merge-add,Paul P1-1) / species keywords (merge-add)
             args_list.extend(self._keywords_args(item, file_path, caption_temp_files))
 

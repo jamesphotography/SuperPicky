@@ -478,8 +478,9 @@ class DetailPanel(QWidget):
         species_row_lay.addStretch(1)
 
         rows = [
-            # 鸟类信息 3 行连续（鸟种 → 全球罕见度 → IUCN）
-            # Three bird-related rows kept adjacent for natural reading.
+            # 鸟类信息 4 行连续（鸟种 → 全球罕见度 → 鸟种颜值 → IUCN）
+            # Four bird-related rows kept adjacent for natural reading
+            # (species -> global rarity -> species beauty -> IUCN).
             ("browser.meta_species",    species_row),
             ("browser.meta_gbif_rarity", self._val_gbif_rarity),
             ("browser.meta_species_beauty", self._val_species_beauty),

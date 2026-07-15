@@ -6,7 +6,6 @@ Builder tests using synthetic CSV fixtures — no real figshare data needed.
 import csv
 import os
 import sqlite3
-import tempfile
 
 import pytest
 

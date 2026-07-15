@@ -4,7 +4,6 @@ Runtime aesthetic-lookup tests against a temp DB.
 """
 import os
 import sqlite3
-import tempfile
 
 import pytest
 
