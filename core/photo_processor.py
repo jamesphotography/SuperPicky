@@ -1263,7 +1263,8 @@ class PhotoProcessor:
             en_name = top_result.get('en_name', '')
             iucn_category = top_result.get('iucn_category')  # IUCN 等级 (LC/NT/VU/EN/CR/...)，可能为 None
             gbif_rarity_100 = top_result.get('gbif_rarity_100')  # GBIF 全球罕见度 (0-100)，可能为 None
-            
+            aesthetic_index = top_result.get('aesthetic_index')  # iRateBird 颜值 (0-100)，可能为 None
+
             if birdid_confidence >= self.settings.birdid_confidence_threshold:
                 if self.i18n.current_lang.startswith('en'):
                     bird_log = en_name or cn_name
@@ -1310,6 +1311,8 @@ class PhotoProcessor:
                             db_updates['iucn_category'] = iucn_category
                         if gbif_rarity_100 is not None:
                             db_updates['gbif_rarity_100'] = gbif_rarity_100
+                        if aesthetic_index is not None:
+                            db_updates['aesthetic_index'] = aesthetic_index
                         self.report_db.update_photo(file_prefix, db_updates)
                         # 将鸟种 + IUCN 追加到已生成的 DB caption 最前面
                         # Prepend species + IUCN lines to the DB caption.
@@ -1346,6 +1349,8 @@ class PhotoProcessor:
                             meta_item['iucn_category'] = iucn_category
                         if gbif_rarity_100 is not None:
                             meta_item['gbif_rarity_100'] = gbif_rarity_100
+                        if aesthetic_index is not None:
+                            meta_item['aesthetic_index'] = aesthetic_index
                         # 鸟名关键字(Paul P1-1):开关开启时随 Title 一起 merge-add
                         # 写入 XMP-dc:Subject(bird_title 已按界面语言选名)。
                         # Species keyword (Paul P1-1): when enabled, merge-add
