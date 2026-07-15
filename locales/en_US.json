@@ -359,7 +359,9 @@
     "caption_alt_species": "Alt. species: {name}? (confidence {confidence}%)",
     "file_deleted": "  ✅ Deleted: {name}",
     "tmp_jpeg_found": "  Found {count} temp JPEG file(s) (tmp_*.jpg), deleting...",
-    "tmp_jpeg_done": "  ✅ Temp JPEG cleanup done: {count} succeeded"
+    "tmp_jpeg_done": "  ✅ Temp JPEG cleanup done: {count} succeeded",
+    "rescue_direct": "  Rescue scan: high-res rescan found a bird (conf {conf})",
+    "rescue_confirmed": "  Rescue scan: {source} candidate confirmed as {species} ({conf}%) → bird"
   },
   "server": {
     "server_already_running": "✅ Server already running on port {port}",
@@ -594,6 +596,7 @@
     "culling_burst_label": "Burst Detection",
     "culling_burst_fps_label": "Burst Speed (fps)",
     "culling_burst_folders_label": "Group bursts into subfolders",
+    "culling_rescue_label": "Rescue scan for missed birds (slower, fewer misses)",
     "birdid_section_auto": "Auto Bird ID",
     "birdid_auto_label": "Automatically identify bird species (2-star and above)",
     "birdid_keywords_label": "Write species to photo keywords (Lightroom)",

@@ -359,7 +359,9 @@
     "caption_alt_species": "备选鸟种：{name}？（把握度 {confidence}%）",
     "file_deleted": "  ✅ 已删除: {name}",
     "tmp_jpeg_found": "  发现 {count} 个临时JPEG文件（tmp_*.jpg），正在删除...",
-    "tmp_jpeg_done": "  ✅ 临时JPEG删除完成: {count} 成功"
+    "tmp_jpeg_done": "  ✅ 临时JPEG删除完成: {count} 成功",
+    "rescue_direct": "  补救扫描: 高分辨率重扫检出鸟 (置信度 {conf})",
+    "rescue_confirmed": "  补救扫描: {source} 候选经识鸟确认为 {species} ({conf}%) → 判有鸟"
   },
   "server": {
     "server_already_running": "✅ 服务器已在端口 {port} 运行",
@@ -594,6 +596,7 @@
     "culling_burst_label": "连拍检测",
     "culling_burst_fps_label": "连拍速度 (张/秒)",
     "culling_burst_folders_label": "连拍归入独立子文件夹",
+    "culling_rescue_label": "无鸟补救扫描（更慢但更少漏检）",
     "birdid_section_auto": "自动识鸟",
     "birdid_auto_label": "自动识别鸟种（2星及以上照片）",
     "birdid_keywords_label": "识别后写入照片关键字（Lightroom Keywords）",
