@@ -89,3 +89,35 @@ def test_detect_returns_10_tuple_no_bird(tmp_path, monkeypatch):
         jpg, model, None, str(tmp_path), [50, 300, 5.0, False], None)
     assert len(result) == 10
     assert result[0] is False and result[9] is False
+
+
+def test_detect_rescue_success_path(tmp_path, monkeypatch):
+    """补救成功 → rescued=True，bbox 来自救回候选，bird_count=1。
+    Rescue success → rescued=True, bbox from rescued candidate, bird_count=1."""
+    import cv2
+
+    jpg = str(tmp_path / "t.jpg")
+    cv2.imwrite(jpg, np.zeros((64, 64, 3), dtype=np.uint8))
+
+    class _Cfg:
+        rescue_scan_enabled = True
+        rescue_birdid_gate = 10
+
+    monkeypatch.setattr(ai_model, "get_advanced_config", lambda: _Cfg())
+    monkeypatch.setattr(ai_model, "_rescue_scan",
+                        lambda *a, **k: {
+                            "xyxy": np.array([4.0, 5.0, 40.0, 50.0]),
+                            "conf": 0.31, "mask": None,
+                            "source": "kite", "species": "红脚鹬",
+                            "species_conf": 81.7,
+                        })
+    model = FakeModel(np.zeros((0, 4)), [], [])  # 第一遍无任何检测
+    result = ai_model.detect_and_draw_birds(
+        jpg, model, None, str(tmp_path), [50, 300, 5.0, False], None)
+    assert len(result) == 10
+    assert result[0] is True          # found_bird
+    assert result[9] is True          # rescued
+    assert result[8] == 1             # bird_count
+    x, y, w, h = result[5]            # bbox (x, y, w, h)
+    assert (x, y) == (4, 5) and (w, h) == (36, 45)
+    assert abs(result[2] - 0.31) < 1e-6  # confidence 来自救回候选
