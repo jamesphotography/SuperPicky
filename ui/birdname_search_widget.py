@@ -148,26 +148,43 @@ class BirdResultCard(QFrame):
         text_col.setContentsMargins(0, 0, 0, 0)
         text_col.setSpacing(2)
 
-        cn_name = bird_data.get("chinese_name", "")
-        if cn_name:
-            cn_color = COLORS["text_primary"]
-            self.cn_label = ClickableLabel(cn_name, cn_color)
-            self.cn_label.setStyleSheet(
-                f"color: {cn_color}; font-size: 13px; font-weight: 500; "
+        # 名称两行随界面语言(issue #106 追加反馈):英文界面「英文名 + 拉丁名
+        # (斜体)」;中文界面保持「中文名 + 英文名」。两行都保留点击复制行为。
+        # Name lines follow the UI language (issue #106 follow-up): the
+        # English UI shows the English name first with the Latin name in
+        # italics below; the Chinese UI keeps Chinese-first + English below.
+        # Both lines keep the click-to-copy behavior.
+        is_en_ui = get_i18n().current_lang.startswith("en")
+        if is_en_ui:
+            primary = (bird_data.get("english_name") or
+                       bird_data.get("chinese_name") or "")
+            secondary = (bird_data.get("latin_name") or "").strip()
+            secondary_italic = True
+        else:
+            primary = bird_data.get("chinese_name", "")
+            secondary = bird_data.get("english_name", "")
+            secondary_italic = False
+
+        if primary:
+            primary_color = COLORS["text_primary"]
+            self.primary_label = ClickableLabel(primary, primary_color)
+            self.primary_label.setStyleSheet(
+                f"color: {primary_color}; font-size: 13px; font-weight: 500; "
                 f"background: transparent;"
             )
-            self.cn_label.clicked.connect(lambda: self._copy_text(cn_name))
-            text_col.addWidget(self.cn_label)
+            self.primary_label.clicked.connect(lambda: self._copy_text(primary))
+            text_col.addWidget(self.primary_label)
 
-        en_name = bird_data.get("english_name", "")
-        if en_name:
-            en_color = COLORS["text_secondary"]
-            self.en_label = ClickableLabel(en_name, en_color)
-            self.en_label.setStyleSheet(
-                f"color: {en_color}; font-size: 11px; background: transparent;"
+        if secondary:
+            secondary_color = COLORS["text_secondary"]
+            italic_css = "font-style: italic; " if secondary_italic else ""
+            self.secondary_label = ClickableLabel(secondary, secondary_color)
+            self.secondary_label.setStyleSheet(
+                f"color: {secondary_color}; font-size: 11px; {italic_css}"
+                f"background: transparent;"
             )
-            self.en_label.clicked.connect(lambda: self._copy_text(en_name))
-            text_col.addWidget(self.en_label)
+            self.secondary_label.clicked.connect(lambda: self._copy_text(secondary))
+            text_col.addWidget(self.secondary_label)
 
         root.addLayout(text_col, 1)
 

@@ -758,6 +758,9 @@ class ResultsBrowserWindow(QMainWindow):
         self._thumb_grid.photo_double_clicked.connect(self._enter_fullscreen)
         self._thumb_grid.multi_selection_changed.connect(self._on_multi_selection_changed)
         self._thumb_grid.burst_badge_clicked.connect(self._toggle_burst)
+        # issue #106: grid 卡片铅笔 → 复用既有鸟种编辑弹窗
+        # issue #106: grid pencil reuses the existing species-edit dialog
+        self._thumb_grid.species_edit_requested.connect(self._on_species_edit_requested)
         center_layout.addWidget(self._thumb_grid, 1)
 
         main_h.addWidget(center_widget, 1)
@@ -2017,6 +2020,9 @@ class ResultsBrowserWidget(QWidget):
         self._thumb_grid.photo_double_clicked.connect(self._enter_fullscreen)
         self._thumb_grid.multi_selection_changed.connect(self._on_multi_selection_changed)
         self._thumb_grid.burst_badge_clicked.connect(self._toggle_burst)
+        # issue #106: grid 卡片铅笔 → 复用既有鸟种编辑弹窗
+        # issue #106: grid pencil reuses the existing species-edit dialog
+        self._thumb_grid.species_edit_requested.connect(self._on_species_edit_requested)
         center_layout.addWidget(self._thumb_grid, 1)
 
         main_h.addWidget(center_widget, 1)
