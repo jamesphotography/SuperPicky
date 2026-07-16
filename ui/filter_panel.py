@@ -263,7 +263,11 @@ class FilterPanel(QWidget):
         w.setStyleSheet("background: transparent;")
         row = QHBoxLayout(w)
         row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(4)
+        # 间距 3px:5 个筹码最小总宽须 ≤204px(面板 236 - 左右 margin 16×2),
+        # 4px 时为 205px 会溢出 1px 并裁掉最右的 0★ 筹码。
+        # 3px spacing: the 5 chips must fit within 204px (236 panel - 16×2 margins);
+        # at 4px they need 205px, overflowing by 1px and clipping the rightmost 0★ chip.
+        row.setSpacing(3)
 
         self._rating_btns: dict = {}  # mode -> QPushButton
 
@@ -354,17 +358,28 @@ class FilterPanel(QWidget):
     # ------------------------------------------------------------------
 
     def _build_focus_checkboxes(self) -> QWidget:
-        """3个对焦多选 checkbox（精焦/合焦/失焦），默认全选。文案走 i18n，与详情面板同词。"""
+        """
+        3个对焦多选 checkbox（精焦/合焦/失焦），默认全选。文案走 i18n，与详情面板同词。
+
+        布局用 2 列网格而非单行横排：英文文案（Critical Focus / Good Focus / Soft）
+        单行需 257px，超过面板 236px 固定宽的内容可用宽(204px)，会把滚动容器撑宽并
+        裁掉右侧内容（评分行最右的 0★ 筹码首当其冲）。2 列下最宽仅 ~200px，中英皆可容纳。
+
+        Uses a 2-column grid instead of a single row: the English labels need 257px on one
+        line, exceeding the 204px usable width inside the 236px fixed-width panel. That
+        widened the scroll container and clipped content on the right (notably the 0★ chip
+        in the rating row). A 2-column grid stays at ~200px and fits both locales.
+        """
         w = QWidget()
         w.setStyleSheet("background: transparent;")
-        row = QHBoxLayout(w)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(8)
+        grid = QGridLayout(w)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(6)
 
         # 默认勾选全部对焦状态，避免 burst 结果被默认 focus 再过滤一次
         _defaults = set(_DEFAULT_CHECKED_FOCUS)
 
-        for mode, statuses, color in _FOCUS_OPTIONS:
+        for idx, (mode, statuses, color) in enumerate(_FOCUS_OPTIONS):
             label = self.i18n.t(f"browser.focus_state_{mode.lower()}")
             cb = QCheckBox(label)
             cb.setChecked(mode in _defaults)
@@ -374,7 +389,7 @@ class FilterPanel(QWidget):
             )
             cb.stateChanged.connect(self._emit_filters)
             self._focus_checks[mode] = cb
-            row.addWidget(cb)
+            grid.addWidget(cb, idx // 2, idx % 2)
 
         return w
 
