@@ -21,7 +21,7 @@ from .file_utils import ensure_hidden_directory
 
 
 # Schema 版本，用于未来升级
-SCHEMA_VERSION = "8"
+SCHEMA_VERSION = "9"
 
 # 所有列定义（有序），用于 CREATE TABLE 和数据验证
 PHOTO_COLUMNS = [
@@ -98,6 +98,10 @@ PHOTO_COLUMNS = [
     # V8: GBIF 全球罕见度 (0-100 分制，越大越罕见，CC0+CC-BY 4.0 子集派生)
     # V8: GBIF-derived global rarity score (0-100, higher = rarer)
     ("gbif_rarity_100",  "REAL", None),
+
+    # V9: iRateBird 鸟种美学(颜值)指数 (0-100，越大越好看，CC-BY 4.0 派生)
+    # V9: iRateBird species aesthetic score (0-100, higher = prettier)
+    ("aesthetic_index",  "REAL", None),
 
     ("created_at",    "TEXT", None),
     ("updated_at",    "TEXT", None),
@@ -397,6 +401,26 @@ class ReportDB:
                 current_version = "8"
                 print("✅ Database schema upgraded to v8")
 
+            # ----------------------------------------------------------------------
+            #  Upgrade: v8 -> v9 (iRateBird species aesthetic index)
+            # ----------------------------------------------------------------------
+            if current_version == "8":
+                print("🔄 Upgrading database schema from v8 to v9...")
+                new_columns_v9 = [
+                    ("aesthetic_index", "REAL"),
+                ]
+                with self._conn:
+                    for col_name, col_type in new_columns_v9:
+                        try:
+                            self._conn.execute(
+                                f"ALTER TABLE photos ADD COLUMN {col_name} {col_type}"
+                            )
+                        except sqlite3.OperationalError:
+                            pass  # 列已存在，跳过
+                    self._update_schema_version("9")
+                current_version = "9"
+                print("✅ Database schema upgraded to v9")
+
     def _update_schema_version(self, version):
         """更新数据库中的版本号（由调用方负责提交事务）"""
         with self._lock:
@@ -690,6 +714,10 @@ class ReportDB:
         elif sort_by == "rarity_desc":
             # V4.2.7: 按 GBIF 罕见度降序（最罕见在前）— 无 GBIF 数据的排最后
             order_sql = "ORDER BY COALESCE(gbif_rarity_100, -1e99) DESC, filename ASC"
+        elif sort_by == "species_beauty_desc":
+            # V9: 按鸟种颜值(iRateBird)降序 — 无数据排最后
+            # V9: sort by species beauty (iRateBird) desc — missing data last
+            order_sql = "ORDER BY COALESCE(aesthetic_index, -1e99) DESC, filename ASC"
         else:
             order_sql = "ORDER BY filename ASC"
 

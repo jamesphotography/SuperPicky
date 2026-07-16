@@ -198,6 +198,7 @@ class FilterPanel(QWidget):
         self._sort_combo.addItem(self.i18n.t("browser.sort_filename"), "filename")
         self._sort_combo.addItem(self.i18n.t("browser.sort_sharpness"), "sharpness_desc")
         self._sort_combo.addItem(self.i18n.t("browser.sort_aesthetic"), "aesthetic_desc")
+        self._sort_combo.addItem(self.i18n.t("browser.sort_species_beauty"), "species_beauty_desc")
         self._sort_combo.setStyleSheet(f"""
             QComboBox {{
                 background-color: {COLORS['bg_input']};

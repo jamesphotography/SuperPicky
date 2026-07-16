@@ -950,6 +950,11 @@ def predict_bird(
             if db_manager
             else None
         )
+        # iRateBird 鸟种美学(颜值)分（0–100，与照片无关的物种级指标）
+        # iRateBird species aesthetic score (0–100, species-level, photo-agnostic)
+        aesthetic_index = (
+            db_manager.get_aesthetic_by_class_id(class_id) if db_manager else None
+        )
 
         results.append(
             {
@@ -959,6 +964,7 @@ def predict_bird(
                 "scientific_name": scientific_name,
                 "iucn_category": iucn_category,
                 "gbif_rarity_100": gbif_rarity_100,
+                "aesthetic_index": aesthetic_index,
                 "confidence": confidence,
                 "ebird_code": ebird_code,
                 "region_match": region_match,
