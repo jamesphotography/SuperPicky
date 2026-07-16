@@ -1959,6 +1959,11 @@ class SettingsCenter(QDialog):
                 "YOLO11 - Bird Detection by Ultralytics\n"
                 "OSEA - Bird Classification by Sun Jiao\n"
                 "TOPIQ - Aesthetic Scoring by Chaofeng Chen et al.\n\n"
+                "Data Sources\n"
+                "Species Beauty Index - iRateBird Citizen Science Dataset (CC-BY 4.0)\n"
+                "Santangeli, A. et al. (2023), Scientific Data\n"
+                "Note: ratings skew toward Finnish and English-speaking users, "
+                "reflecting a Western aesthetic perspective\n\n"
                 "License: GPL-3.0\n"
                 "© 2024-2025 James Yu"
             )
