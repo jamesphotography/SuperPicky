@@ -910,7 +910,7 @@ class DetailPanel(QWidget):
         # iRateBird species beauty (0–100, placeholder when missing)
         beauty = p.get("aesthetic_index")
         if beauty is not None:
-            self._val_species_beauty.setText(f"{beauty:.0f}/100")
+            self._val_species_beauty.setText(f"{beauty:.0f}")
             self._val_species_beauty.setStyleSheet(
                 f"color: {COLORS['text_primary']}; font-size: 13px; font-weight: 600; background: transparent;"
             )
