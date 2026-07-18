@@ -149,6 +149,14 @@ class ReportDB:
 
         # 启用 WAL 模式和外键
         self._conn.execute("PRAGMA journal_mode=WAL")
+        # WAL 搭配 NORMAL:每次 commit 不再单独 fsync(默认 FULL 每 commit 一次),
+        # 仅 checkpoint 时同步。主处理循环每张照片 2-6 次 commit,在 SD 卡/ExFAT/
+        # HDD 上每次 fsync 10-30ms;NORMAL 断电最多丢最后一批事务,库不会损坏。
+        # WAL + NORMAL: commits no longer fsync individually (default FULL
+        # syncs every commit); only checkpoints do. The main loop commits 2-6
+        # times per photo, and on SD/ExFAT/HDD each fsync costs 10-30ms.
+        # NORMAL may lose the last batch on power loss but never corrupts.
+        self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
 
         # 初始化 Schema

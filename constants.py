@@ -59,6 +59,17 @@ def get_rating_folder_name(rating: int) -> str:
 # 支持的 RAW 文件扩展名（小写）
 RAW_EXTENSIONS = ['.nef', '.cr2', '.cr3', '.arw', '.raf', '.orf', '.rw2', '.pef', '.dng', '.3fr', '.iiq']
 
+# 元数据强制写 XMP 侧车（不重写 RAW 本体）的专有 RAW 格式。
+# DNG 除外：Lightroom/C1 惯例是 DNG 读写内嵌 XMP、不认侧车；专有 RAW 则
+# 侧车优先。实测嵌入式重写 RAW 本体 ~190ms/张 vs 侧车 ~10ms/张（A/B 快 33%），
+# 且不动本体更安全（曾有 ExFAT overwrite_original 丢原图事故）。
+# Proprietary RAW formats whose metadata is force-written to XMP sidecars
+# (never rewriting the RAW body). DNG is excluded: LR/C1 convention reads
+# embedded XMP in DNG and ignores sidecars, while proprietary RAW prefers
+# sidecars. Measured: embedded body rewrite ~190ms/photo vs sidecar ~10ms
+# (33% faster end-to-end), and leaving the body untouched is safer.
+SIDECAR_RAW_EXTENSIONS = [ext for ext in RAW_EXTENSIONS if ext != '.dng']
+
 # 支持的 HEIF 文件扩展名（小写）- Sony HIF / Apple HEIC 等
 HEIF_EXTENSIONS = ['.hif', '.heif', '.heic']
 
