@@ -1,3 +1,33 @@
+# SuperPicky 4.5.0 RC6
+
+**What's new since RC5** (the sections below are the full cumulative 4.5.0
+notes):
+
+- **No-bird rescue scan (new).** When the first detection pass finds no bird
+  at the default resolution, SuperPicky rescans at 1024px with a low
+  threshold and uses the Bird ID classifier as a gatekeeper — recovering
+  birds that YOLO missed (small, distant, or confused with airplane/kite)
+  without letting false positives through. Toggle in Settings → Picking.
+- **iRateBird species aesthetic index (new).** An offline, CC-BY beauty
+  score (0–100) per species, shown in the detail panel and available as a
+  filter/sort key. It is display-and-sort only and independent of the
+  per-photo TOPIQ aesthetic score that drives star ratings.
+- **Species correction entry (#106).** An edit pencil on the grid and detail
+  cards lets you fix a misidentified species; candidate cards now follow the
+  interface language.
+- **Focus sharpness arbitration (#107).** When the EXIF focus-point verdict
+  says a shot is soft but the measured bird-head sharpness clears your
+  threshold, pixel evidence wins and the verdict is upgraded — fewer sharp
+  keepers wrongly demoted.
+- **Processing ~30% faster** (measured: 495 ARW, 135s → 95s). Proprietary
+  RAW metadata now writes to XMP sidecars instead of rewriting the RAW body;
+  fixed a bug that fully rewrote cached preview JPEGs on every photo, and a
+  silent sidecar temp-file write failure.
+- **Fixes.** English filter panel no longer clips the 0★ chip; the species
+  aesthetic score is shown without a "/100" suffix.
+
+---
+
 # SuperPicky 4.5.0
 
 **4.5.0 is a focus release.** Building on the 4.3.0 LTS baseline, it
@@ -184,6 +214,27 @@ codebase and may return in a future release.
   - The **Lite** installer (~190 MB) still covers all configurations,
     downloading the AI runtime on first launch — fine when your network is
     reliable.
+
+---
+
+# SuperPicky 4.5.0 RC6（中文）
+
+**RC5 以来的新增**（下方为 4.5.0 累积完整说明）：
+
+- **无鸟补救扫描（全新）。** 第一遍默认分辨率检测无鸟时，用 1024px 低阈值
+  重扫、并以识鸟分类器守门——救回被 YOLO 漏检的鸟（小、远、或与飞机/风筝
+  混淆），同时挡住误检。开关在 设置 → 精选。
+- **iRateBird 鸟种颜值指数（全新）。** 离线 CC-BY 的鸟种颜值分（0–100），
+  在详情面板展示、并可作为筛选/排序键。它仅用于展示与排序，与驱动评星的
+  单张 TOPIQ 美学分相互独立。
+- **鸟种纠错入口（#106）。** 网格卡与详情卡上新增编辑铅笔，可修正识别错误
+  的鸟种；候选卡片跟随界面语言。
+- **对焦锐度仲裁（#107）。** 当 EXIF 对焦点判定为脱焦、但实测鸟头锐度已过
+  阈值时，以像素证据为准升级判定——减少清晰好片被误降级。
+- **处理提速约 30%**（实测：495 张 ARW，135 秒 → 95 秒）。专有 RAW 元数据
+  改写 XMP 侧车而非重写 RAW 本体；修复了每张照片都完整重写缓存预览 JPEG
+  的 bug，以及侧车临时文件导致的静默写入失败。
+- **修复。** 英文筛选面板不再裁掉 0★ 筹码；鸟种颜值分去掉「/100」后缀。
 
 ---
 
