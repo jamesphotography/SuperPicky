@@ -53,6 +53,13 @@ _RG_LOCK = threading.Lock()
 _RG_INSTANCE: Any = None  # 标记是否已初始化（None 表示未尝试）
 _RG_AVAILABLE = True
 
+# 分类器推理锁：批处理 BirdID executor 与补救扫描确认可能跨线程并发调用
+# forward，MPS/CUDA 下并发安全性有限，统一串行化。
+# Classifier inference lock: the batch BirdID executor and the rescue-scan
+# confirmation may call forward concurrently from different threads; MPS/CUDA
+# concurrency safety is limited, so all forwards are serialized here.
+_CLASSIFIER_INFER_LOCK = threading.Lock()
+
 
 def _resolve_country_code_from_gps(lat: float, lon: float) -> Optional[str]:
     """
@@ -865,10 +872,12 @@ def predict_bird(
         image = image.convert("RGB")
     transform = OSEA_TRANSFORM_DIRECT if is_yolo_cropped else OSEA_TRANSFORM
     transformed_tensor = cast(torch.Tensor, transform(image))
-    input_tensor = transformed_tensor.unsqueeze(0).to(CLASSIFIER_DEVICE)
+    input_tensor = transformed_tensor.unsqueeze(0)
 
-    with torch.no_grad():
-        output = model(input_tensor)[0]
+    with _CLASSIFIER_INFER_LOCK:
+        input_tensor = input_tensor.to(CLASSIFIER_DEVICE)
+        with torch.no_grad():
+            output = model(input_tensor)[0]
 
     num_classes = min(10964, output.shape[0])
     output = output[:num_classes]
@@ -941,6 +950,11 @@ def predict_bird(
             if db_manager
             else None
         )
+        # iRateBird 鸟种美学(颜值)分（0–100，与照片无关的物种级指标）
+        # iRateBird species aesthetic score (0–100, species-level, photo-agnostic)
+        aesthetic_index = (
+            db_manager.get_aesthetic_by_class_id(class_id) if db_manager else None
+        )
 
         results.append(
             {
@@ -950,6 +964,7 @@ def predict_bird(
                 "scientific_name": scientific_name,
                 "iucn_category": iucn_category,
                 "gbif_rarity_100": gbif_rarity_100,
+                "aesthetic_index": aesthetic_index,
                 "confidence": confidence,
                 "ebird_code": ebird_code,
                 "region_match": region_match,

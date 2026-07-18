@@ -1,4 +1,11 @@
 import os
+
+# 禁用 Ultralytics 逐次推理日志。必须在 import ultralytics 之前设置——
+# ultralytics 在自身 import 时读取该环境变量,之后再设无效。
+# Disable Ultralytics per-inference logging. Must be set BEFORE importing
+# ultralytics — it reads this env var at its own import time.
+os.environ.setdefault('YOLO_VERBOSE', 'False')
+
 import time
 import cv2
 import numpy as np
@@ -15,9 +22,6 @@ from iqa_scorer import get_iqa_scorer
 from advanced_config import get_advanced_config
 # V4.2.1
 from tools.i18n import get_i18n
-
-# 禁用 Ultralytics 设置警告
-os.environ['YOLO_VERBOSE'] = 'False'
 
 
 def load_yolo_model(log_callback=None):
@@ -99,6 +103,143 @@ def _get_iqa_scorer():
     return registry.get_or_create(key, lambda: get_iqa_scorer(device=get_best_device().type))
 
 
+def _get_rescue_birdid():
+    """
+    获取补救确认用的 BirdID 适配器单例（懒加载，经 lazy registry 管理）。
+
+    返回:
+    BirdIDAdapter: 适配器实例（底层模型与批处理识鸟共享，无重复显存）
+
+    Lazily get the BirdID adapter singleton for rescue confirmation via the
+    lazy registry; the underlying model is shared with batch bird-ID.
+    """
+    registry = get_lazy_registry()
+
+    def _factory():
+        from core.birdid_adapter import BirdIDAdapter
+        return BirdIDAdapter()
+
+    return registry.get_or_create("ai_model.rescue_birdid_adapter", _factory)
+
+
+def _birdid_confirm(image: np.ndarray, xyxy) -> tuple:
+    """
+    把候选框裁下来交给 BirdID 分类器确认是否为鸟。
+
+    参数:
+    image (np.ndarray): BGR 整图（长边 1024 预处理后）
+    xyxy: 候选框 (x1, y1, x2, y2)
+
+    返回:
+    tuple[str, float]: (top1 鸟种名, 置信度百分比 0-100)；失败返回 ("", 0.0)
+
+    Crop the candidate box and ask the BirdID classifier whether it is a
+    bird. Returns (top1 species name, confidence percent 0-100); ("", 0.0)
+    on any failure (model missing, load error) so the caller degrades
+    gracefully.
+    """
+    try:
+        adapter = _get_rescue_birdid()
+        res = adapter.identify(image, top_k=1,
+                               bbox=tuple(int(v) for v in xyxy))
+    except Exception:
+        return "", 0.0
+    if not res:
+        return "", 0.0
+    top = res[0]
+    return (top.name_zh or top.name_en or ""), top.confidence * 100.0
+
+
+def _rescue_scan(model, image: np.ndarray, accept_conf: float,
+                 birdid_gate: int, dir, i18n) -> Optional[dict]:
+    """
+    无鸟补救扫描：1024px 低阈值重扫 + BirdID 分类器守门。
+
+    第一遍 640 检测低于 UI 阈值时调用。规则：
+    1. 重扫最佳 bird 置信度 >= accept_conf → 直接救回；
+    2. 否则取最佳候选框（弱 bird，或 airplane/kite 混淆类）交 BirdID 确认，
+       top1 置信度 >= birdid_gate(%) → 救回；
+    3. 都不满足 → None，维持原拒绝结果。
+
+    参数:
+    model: 共享的 YOLO 模型实例（调用方已持有 yolo_infer_lock）
+    image (np.ndarray): 已预处理 BGR 图（长边 1024）
+    accept_conf (float): UI「AI 置信度」阈值 (0-1)
+    birdid_gate (int): 弱候选识鸟确认门槛（百分比 0-100）
+    dir: 日志目录
+    i18n: I18n 实例（可为 None）
+
+    返回:
+    Optional[dict]: 救回时含 xyxy/conf/mask/source/species/species_conf，
+                    否则 None
+
+    No-bird rescue scan: high-res low-threshold rescan with the BirdID
+    classifier as gatekeeper. Returns the rescued candidate dict or None.
+    """
+    t = i18n.t if i18n else get_i18n().t
+    try:
+        from config import get_best_device
+        device = get_best_device()
+        results = model(image, imgsz=config.ai.RESCUE_IMGSZ,
+                        conf=config.ai.RESCUE_CONF, device=device.type,
+                        verbose=False)
+    except Exception:
+        return None
+
+    boxes = results[0].boxes
+    if boxes is None or len(boxes) == 0:
+        del results
+        return None
+    confs = boxes.conf.cpu().numpy()
+    clss = boxes.cls.cpu().numpy().astype(int)
+    xyxy = boxes.xyxy.cpu().numpy()
+    masks_np = None
+    if getattr(results[0], "masks", None) is not None:
+        masks_np = results[0].masks.data.cpu().numpy()
+    del results
+
+    def _mask_of(i: int):
+        if masks_np is not None and i < len(masks_np):
+            return masks_np[i]
+        return None
+
+    def _result(i: int, source: str, species: str = "",
+                species_conf: float = 0.0) -> dict:
+        return {
+            "xyxy": xyxy[i], "conf": float(confs[i]), "mask": _mask_of(i),
+            "source": source, "species": species, "species_conf": species_conf,
+        }
+
+    # 规则 1：重扫 bird 直接过 UI 阈值 / Rule 1: rescanned bird clears UI threshold
+    cand_i, source = None, ""
+    bird_ix = np.flatnonzero(clss == config.ai.BIRD_CLASS_ID)
+    if bird_ix.size:
+        j = int(bird_ix[confs[bird_ix].argmax()])
+        if confs[j] >= accept_conf:
+            log_message(t("logs.rescue_direct", conf=f"{confs[j]:.2f}"), dir)
+            return _result(j, "bird")
+        cand_i, source = j, "bird"
+
+    # 规则 2：弱 bird 或 airplane/kite 混淆候选，识鸟守门
+    # Rule 2: weak bird or airplane/kite confusable candidate, BirdID-gated
+    if cand_i is None:
+        conf_ix = np.flatnonzero(
+            np.isin(clss, list(config.ai.RESCUE_CONFUSABLE_CLASS_IDS)))
+        if conf_ix.size:
+            j = int(conf_ix[confs[conf_ix].argmax()])
+            cand_i = j
+            source = config.ai.RESCUE_CONFUSABLE_CLASS_IDS[int(clss[j])]
+    if cand_i is None:
+        return None
+
+    species, species_conf = _birdid_confirm(image, xyxy[cand_i])
+    if species_conf >= birdid_gate:
+        log_message(t("logs.rescue_confirmed", source=source, species=species,
+                      conf=f"{species_conf:.0f}"), dir)
+        return _result(cand_i, source, species, species_conf)
+    return None
+
+
 def detect_and_draw_birds(
     image_path,
     model,
@@ -126,8 +267,9 @@ def detect_and_draw_birds(
         decoded_image: 复用上游已解码的 BGR 图像，减少重复 JPEG 解码
     
     Returns:
-        元组 (found_bird, bird_result, confidence, sharpness, nima_score, bird_bbox, img_dims, bird_mask, bird_count)
+        10-tuple (found_bird, bird_result, confidence, sharpness, nima_score, bird_bbox, img_dims, bird_mask, bird_count, rescued)
         bird_count: 检测到的鸟的数量（V4.2 新增）
+        rescued: 是否经补救扫描救回（V4.6 新增）/ whether rescued by the rescue scan (V4.6 new)
     """
     # V3.1: 从 ui_settings 获取参数
     ai_confidence = ui_settings[0] / 100  # AI置信度：50-100 -> 0.5-1.0（仅用于过滤）
@@ -175,7 +317,7 @@ def detect_and_draw_birds(
         device = get_best_device()
 
         # 使用最佳设备进行推理
-        results = model(image, device=device.type)
+        results = model(image, device=device.type, verbose=False)
     except Exception as device_error:
         # 设备推理失败，清理 GPU 显存后降级到 CPU
         t = i18n.t if i18n else get_i18n().t
@@ -189,7 +331,7 @@ def detect_and_draw_birds(
         except Exception:
             pass
         try:
-            results = model(image, device='cpu')
+            results = model(image, device='cpu', verbose=False)
         except Exception as cpu_error:
             log_message(t("ai.ai_inference_failed", error=cpu_error), dir)
             # 返回"无鸟"结果（V3.1）
@@ -207,7 +349,7 @@ def detect_and_draw_birds(
             }
             if report_db:
                 report_db.insert_photo(data)
-            return found_bird, bird_result, 0.0, 0.0, None, None, None, None, 0  # V4.2: 9 values including bird_count
+            return found_bird, bird_result, 0.0, 0.0, None, None, None, None, 0, False  # V4.6: 10 values with rescued
 
     yolo_time = (time.time() - step_start) * 1000
     # V3.3: 简化日志，移除步骤详情
@@ -242,7 +384,34 @@ def detect_and_draw_birds(
             })
     
     bird_count = len(all_birds)
-    
+
+    # V4.6: 无鸟补救扫描——第一遍低于 UI 阈值时触发 1024px 重扫 + 识鸟守门
+    # V4.6: No-bird rescue scan — when pass-1 falls below the UI threshold,
+    # rescan at 1024px with the BirdID classifier as gatekeeper.
+    rescued = False
+    _best_pass1 = max((b['conf'] for b in all_birds), default=0.0)
+    if _best_pass1 < ai_confidence:
+        _adv = get_advanced_config()
+        if _adv.rescue_scan_enabled:
+            _rescue = _rescue_scan(model, image, ai_confidence,
+                                   _adv.rescue_birdid_gate, dir, i18n)
+            if _rescue is not None:
+                # 用救回候选覆盖第一遍解析结果，后续裁剪/画框/入库全部复用
+                # Overwrite the pass-1 parse with the rescued candidate; the
+                # rest of the pipeline (crop/draw/DB) is reused unchanged.
+                detections = np.array([_rescue["xyxy"]], dtype=np.float64)
+                confidences = np.array([_rescue["conf"]], dtype=np.float64)
+                class_ids = np.array([float(config.ai.BIRD_CLASS_ID)])
+                masks = (_rescue["mask"][None, ...]
+                         if _rescue["mask"] is not None else None)
+                all_birds = [{
+                    'idx': 0,
+                    'conf': _rescue["conf"],
+                    'bbox': tuple(int(v) for v in _rescue["xyxy"]),
+                }]
+                bird_count = 1
+                rescued = True
+
     # V4.2: 鸟选择策略
     bird_idx = -1
     if bird_count == 1:
@@ -298,7 +467,7 @@ def detect_and_draw_birds(
         }
         if report_db:
             report_db.insert_photo(data)
-        return found_bird, bird_result, 0.0, 0.0, None, None, None, None, 0  # V4.2: 9 values including bird_count
+        return found_bird, bird_result, 0.0, 0.0, None, None, None, None, 0, False  # V4.6: 10 values with rescued
     # V3.2: 移除 NIMA 计算（现在由 photo_processor 在裁剪区域上计算）
     # nima_score 设为 None，photo_processor 会重新计算
     nima_score = None
@@ -472,4 +641,4 @@ def detect_and_draw_birds(
             # Mask processing failed, ignore
             pass
 
-    return found_bird, bird_result, bird_confidence, bird_sharpness, nima_score, bird_bbox, img_dims, bird_mask, bird_count
+    return found_bird, bird_result, bird_confidence, bird_sharpness, nima_score, bird_bbox, img_dims, bird_mask, bird_count, rescued

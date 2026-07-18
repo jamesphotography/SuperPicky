@@ -295,6 +295,7 @@
     "rating_v2_summary": "🎯 Rating V2 done: pool {total}, 3-star {three} (quota {quota}%, {overall}% of all photos), {changed} differ from estimate",
     "caption_data": "[Data] AI Conf: {conf:.0%} | Head Sharp: {sharp} | Aesthetics: {nima} | Eye Vis: {vis:.0%}",
     "caption_factors": "[Factors] Focus Sharp Weight: {sharp_w:.2f} | Focus Aes Weight: {aes_w:.2f} | Flying: {flying}",
+    "focus_arbitrated": "[Focus Arbitration] metadata weight {orig:.2f}, but measured head sharpness {sharp:.0f} >= threshold {thr:.0f} -> upgraded to GOOD",
     "caption_adjusted": "[Adjusted] Sharpness: {sharp:.2f} | Aesthetics: {nima:.2f}",
     "caption_vis_weight": "[Visibility] Weight: {weight:.2f}",
     "flying_yes": "Yes (ranking bonus)",
@@ -359,7 +360,9 @@
     "caption_alt_species": "Alt. species: {name}? (confidence {confidence}%)",
     "file_deleted": "  ✅ Deleted: {name}",
     "tmp_jpeg_found": "  Found {count} temp JPEG file(s) (tmp_*.jpg), deleting...",
-    "tmp_jpeg_done": "  ✅ Temp JPEG cleanup done: {count} succeeded"
+    "tmp_jpeg_done": "  ✅ Temp JPEG cleanup done: {count} succeeded",
+    "rescue_direct": "  Rescue scan: high-res rescan found a bird (conf {conf})",
+    "rescue_confirmed": "  Rescue scan: {source} candidate confirmed as {species} ({conf}%) → bird"
   },
   "server": {
     "server_already_running": "✅ Server already running on port {port}",
@@ -594,6 +597,7 @@
     "culling_burst_label": "Burst Detection",
     "culling_burst_fps_label": "Burst Speed (fps)",
     "culling_burst_folders_label": "Group bursts into subfolders",
+    "culling_rescue_label": "Rescue scan for missed birds (slower, fewer misses)",
     "birdid_section_auto": "Auto Bird ID",
     "birdid_auto_label": "Automatically identify bird species (2-star and above)",
     "birdid_keywords_label": "Write species to photo keywords (Lightroom)",
@@ -955,7 +959,7 @@
   "about": {
     "window_title": "About James",
     "subtitle": "AI Bird Photo Culling Tool",
-    "content": "James Yu\nAustralian-Chinese Professional Photographer, Author of \"James' Landscape Photography Notes\" Trilogy\n\nModel Training: Jordan Yu\nDevelopment Team: Xiaoping, Lyapunov, osk.sh, yblpoi, jcchan23\n\nOpen Source Models\nYOLO11 - Bird Detection by Ultralytics\nOSEA - Bird Classification by Sun Jiao\nTOPIQ - Aesthetic Scoring by Chaofeng Chen et al.\n\nLicense: GPL-3.0\n© 2024-2025 James Yu"
+    "content": "James Yu\nAustralian-Chinese Professional Photographer, Author of \"James' Landscape Photography Notes\" Trilogy\n\nModel Training: Jordan Yu\nDevelopment Team: Xiaoping, Lyapunov, osk.sh, yblpoi, jcchan23\n\nOpen Source Models\nYOLO11 - Bird Detection by Ultralytics\nOSEA - Bird Classification by Sun Jiao\nTOPIQ - Aesthetic Scoring by Chaofeng Chen et al.\n\nData Sources\nSpecies Beauty Index - iRateBird Citizen Science Dataset (CC-BY 4.0)\nSantangeli, A. et al. (2023), Scientific Data\nNote: ratings skew toward Finnish and English-speaking users, reflecting a Western aesthetic perspective\n\nLicense: GPL-3.0\n© 2024-2025 James Yu"
   },
   "birdid": {
     "title": "Bird ID",
@@ -1224,6 +1228,7 @@
     "loading": "Loading...",
     "meta_rating": "Rating",
     "meta_gbif_rarity": "GBIF Rarity",
+    "meta_species_beauty": "Species Beauty",
     "meta_focus": "Focus",
     "meta_exposure": "Exposure",
     "meta_sharpness": "Sharpness",
@@ -1265,6 +1270,7 @@
     "sort_filename": "Filename",
     "sort_sharpness": "Sharpness",
     "sort_aesthetic": "Aesthetic",
+    "sort_species_beauty": "Species Beauty",
     "species_all": "— All —",
     "species_copied": "✓ Copied",
     "edit_species_tooltip": "Change bird species",

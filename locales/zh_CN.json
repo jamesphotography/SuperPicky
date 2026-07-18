@@ -295,6 +295,7 @@
     "rating_v2_summary": "🎯 V2 定星完成: 排序池 {total} 张, 3星 {three} 张 (配额{quota}%, 占全部 {overall}%), 与预估不同 {changed} 张",
     "caption_data": "[原始检测数据] AI置信度: {conf:.0%} | 头部锐度: {sharp} | TOPIQ美学: {nima} | 眼睛可见度: {vis:.0%}",
     "caption_factors": "[修正] 对焦锐度权重: {sharp_w:.2f} | 对焦美学权重: {aes_w:.2f} | 飞鸟: {flying}",
+    "focus_arbitrated": "[对焦仲裁] 元数据判权重 {orig:.2f}，但鸟头实测锐度 {sharp:.0f} ≥ 阈值 {thr:.0f} → 升为 GOOD",
     "caption_adjusted": "[调整后] 锐度: {sharp:.2f} | 美学: {nima:.2f}",
     "caption_vis_weight": "[可见度] 权重: {weight:.2f}",
     "flying_yes": "是 (排序加分)",
@@ -359,7 +360,9 @@
     "caption_alt_species": "备选鸟种：{name}？（把握度 {confidence}%）",
     "file_deleted": "  ✅ 已删除: {name}",
     "tmp_jpeg_found": "  发现 {count} 个临时JPEG文件（tmp_*.jpg），正在删除...",
-    "tmp_jpeg_done": "  ✅ 临时JPEG删除完成: {count} 成功"
+    "tmp_jpeg_done": "  ✅ 临时JPEG删除完成: {count} 成功",
+    "rescue_direct": "  补救扫描: 高分辨率重扫检出鸟 (置信度 {conf})",
+    "rescue_confirmed": "  补救扫描: {source} 候选经识鸟确认为 {species} ({conf}%) → 判有鸟"
   },
   "server": {
     "server_already_running": "✅ 服务器已在端口 {port} 运行",
@@ -594,6 +597,7 @@
     "culling_burst_label": "连拍检测",
     "culling_burst_fps_label": "连拍速度 (张/秒)",
     "culling_burst_folders_label": "连拍归入独立子文件夹",
+    "culling_rescue_label": "无鸟补救扫描（更慢但更少漏检）",
     "birdid_section_auto": "自动识鸟",
     "birdid_auto_label": "自动识别鸟种（2星及以上照片）",
     "birdid_keywords_label": "识别后写入照片关键字（Lightroom Keywords）",
@@ -923,7 +927,7 @@
   "about": {
     "window_title": "关于",
     "subtitle": "AI 智能选片助手",
-    "content": "开发者\n詹姆斯·于震 (James Yu)\n澳大利亚华裔职业摄影师\n《詹姆斯的风光摄影笔记》三部曲作者\n\n模型训练：Jordan Yu\n开发团队：小平, Lyapunov, osk.sh, yblpoi, jcchan23\n\n开源模型\nYOLO11 - 鸟类检测 by Ultralytics\nOSEA - 鸟类识别 by Sun Jiao\nTOPIQ - 美学评分 by Chaofeng Chen et al.\n\n许可证: GPL-3.0\n© 2024-2025 詹姆斯·于震"
+    "content": "开发者\n詹姆斯·于震 (James Yu)\n澳大利亚华裔职业摄影师\n《詹姆斯的风光摄影笔记》三部曲作者\n\n模型训练：Jordan Yu\n开发团队：小平, Lyapunov, osk.sh, yblpoi, jcchan23\n\n开源模型\nYOLO11 - 鸟类检测 by Ultralytics\nOSEA - 鸟类识别 by Sun Jiao\nTOPIQ - 美学评分 by Chaofeng Chen et al.\n\n数据来源\n鸟种颜值指数 - iRateBird 公民科学数据集 (CC-BY 4.0)\nSantangeli, A. 等 (2023), Scientific Data\n注: 评分以芬兰及英语用户为主, 反映西方审美视角\n\n许可证: GPL-3.0\n© 2024-2025 詹姆斯·于震"
   },
   "birdid": {
     "title": "鸟类识别",
@@ -1224,6 +1228,7 @@
     "loading": "加载中...",
     "meta_rating": "评分",
     "meta_gbif_rarity": "全球罕见度",
+    "meta_species_beauty": "鸟种颜值",
     "meta_focus": "对焦",
     "meta_exposure": "曝光",
     "meta_sharpness": "锐度",
@@ -1265,6 +1270,7 @@
     "sort_filename": "文件名",
     "sort_sharpness": "锐度",
     "sort_aesthetic": "美学",
+    "sort_species_beauty": "鸟种颜值",
     "species_all": "— 全部 —",
     "species_copied": "✓ 鸟名已复制",
     "edit_species_tooltip": "修改鸟种",

@@ -41,7 +41,7 @@ from core.rating_engine import RatingEngine, create_rating_engine_from_config
 from core.keypoint_detector import KeypointDetector, get_keypoint_detector
 from core.flight_detector import FlightDetector, get_flight_detector, FlightResult
 from core.exposure_detector import ExposureDetector, get_exposure_detector, ExposureResult
-from core.focus_point_detector import get_focus_detector, verify_focus_in_bbox
+from core.focus_point_detector import get_focus_detector, verify_focus_in_bbox, arbitrate_focus_weights
 
 from constants import RATING_FOLDER_NAMES, RAW_EXTENSIONS, JPG_EXTENSIONS, HEIF_EXTENSIONS, get_rating_folder_names
 
@@ -1263,7 +1263,8 @@ class PhotoProcessor:
             en_name = top_result.get('en_name', '')
             iucn_category = top_result.get('iucn_category')  # IUCN 等级 (LC/NT/VU/EN/CR/...)，可能为 None
             gbif_rarity_100 = top_result.get('gbif_rarity_100')  # GBIF 全球罕见度 (0-100)，可能为 None
-            
+            aesthetic_index = top_result.get('aesthetic_index')  # iRateBird 颜值 (0-100)，可能为 None
+
             if birdid_confidence >= self.settings.birdid_confidence_threshold:
                 if self.i18n.current_lang.startswith('en'):
                     bird_log = en_name or cn_name
@@ -1310,6 +1311,8 @@ class PhotoProcessor:
                             db_updates['iucn_category'] = iucn_category
                         if gbif_rarity_100 is not None:
                             db_updates['gbif_rarity_100'] = gbif_rarity_100
+                        if aesthetic_index is not None:
+                            db_updates['aesthetic_index'] = aesthetic_index
                         self.report_db.update_photo(file_prefix, db_updates)
                         # 将鸟种 + IUCN 追加到已生成的 DB caption 最前面
                         # Prepend species + IUCN lines to the DB caption.
@@ -1346,6 +1349,8 @@ class PhotoProcessor:
                             meta_item['iucn_category'] = iucn_category
                         if gbif_rarity_100 is not None:
                             meta_item['gbif_rarity_100'] = gbif_rarity_100
+                        if aesthetic_index is not None:
+                            meta_item['aesthetic_index'] = aesthetic_index
                         # 鸟名关键字(Paul P1-1):开关开启时随 Title 一起 merge-add
                         # 写入 XMP-dc:Subject(bird_title 已按界面语言选名)。
                         # Species keyword (Paul P1-1): when enabled, merge-add
@@ -1533,30 +1538,39 @@ class PhotoProcessor:
                     return exif_data
             return {}
 
-        def calculate_rejected_quality_detail(in_filepath: str) -> dict:
+        def calculate_rejected_quality_detail(
+            in_filepath: str,
+            decoded_bgr: Optional[np.ndarray] = None,
+        ) -> dict:
             """
             为无鸟/早期拒绝照片计算可定义的质量详情。
 
             无鸟照片没有鸟头区域和鸟框，因此这里使用整张图的 Tenengrad 锐度与整张图 TOPIQ 美学分。
             这些值仅用于结果浏览器展示，不参与原有评星逻辑。
+            优先复用预取阶段已解码的 BGR 图（decoded_bgr），避免对同一张图
+            重复 imdecode（45MP 约 200-400ms/张）。
 
             Calculate defined quality detail for no-bird/early-rejected photos.
 
             A no-bird photo has no bird head region or bird bbox, so this uses
             whole-image Tenengrad sharpness and whole-image TOPIQ aesthetics.
             These values are for result-browser display only and do not affect
-            the existing rating logic.
+            the existing rating logic. Reuses the prefetch-stage decoded BGR
+            frame (decoded_bgr) when available to skip a duplicate imdecode
+            (~200-400ms per 45MP frame).
             """
             nonlocal topiq_scorer
+            import cv2
 
-            try:
-                import cv2
-                image_bgr = cv2.imdecode(
-                    np.fromfile(in_filepath, dtype=np.uint8),
-                    cv2.IMREAD_COLOR,
-                )
-            except Exception:
-                image_bgr = None
+            image_bgr = decoded_bgr
+            if image_bgr is None:
+                try:
+                    image_bgr = cv2.imdecode(
+                        np.fromfile(in_filepath, dtype=np.uint8),
+                        cv2.IMREAD_COLOR,
+                    )
+                except Exception:
+                    image_bgr = None
 
             if image_bgr is None:
                 return {}
@@ -1911,8 +1925,8 @@ class PhotoProcessor:
                     mark_resume_completed(original_prefix)
                     continue
             
-                # V4.2: 解构 AI 结果（现在有 9 个返回值，包含 bird_count）
-                detected, _, confidence, sharpness, _, bird_bbox, img_dims, bird_mask, bird_count = result
+                # V4.2: 解构 AI 结果（现在有 10 个返回值，包含 bird_count 和 rescued）
+                detected, _, confidence, sharpness, _, bird_bbox, img_dims, bird_mask, bird_count, rescued = result
             
                 # 多鸟场景才补读对焦点，并在需要时做一次 YOLO 复选（避免全量样本都读 RAW 对焦）
                 if detected and bird_count > 1 and can_read_focus_raw:
@@ -1934,7 +1948,7 @@ class PhotoProcessor:
                                 yolo_item.get('decoded_image'),
                             )
                             if refined_result is not None:
-                                detected, _, confidence, sharpness, _, bird_bbox, img_dims, bird_mask, bird_count = refined_result
+                                detected, _, confidence, sharpness, _, bird_bbox, img_dims, bird_mask, bird_count, rescued = refined_result
                         except Exception:
                             pass
                         add_photo_stage('yolo_refine', (time.time() - refine_start) * 1000)
@@ -1943,7 +1957,13 @@ class PhotoProcessor:
                 # V4.1/V4.2: Mark no-bird/low-confidence photos as rejected first;
                 # detail-metadata settings decide whether the processor can exit early.
                 confidence_threshold = self.settings.ai_confidence / 100.0
-                rejected_by_detection = not detected or (detected and confidence < confidence_threshold)
+                # V4.6: 救回照片已经过两因子核验(YOLO候选+鸟种分类器)，豁免二次
+                # 置信度门槛——否则弱候选救回(conf≈0.3)会被默认0.5阈值再杀一遍。
+                # V4.6: Rescued photos passed two-factor verification (YOLO
+                # candidate + species classifier); exempt them from this gate,
+                # otherwise the default 0.5 threshold would re-kill weak rescues.
+                rejected_by_detection = not detected or (
+                    detected and not rescued and confidence < confidence_threshold)
                 needs_expensive_rejected_detail = (
                     detail_metadata_for_rejected
                     and detected
@@ -1983,7 +2003,8 @@ class PhotoProcessor:
                             read_detail_exif_safe(yolo_item, prefetched_exif)
                         )
                         rejected_detail.update(
-                            calculate_rejected_quality_detail(filepath)
+                            calculate_rejected_quality_detail(
+                                filepath, yolo_item.get('decoded_image'))
                         )
                         self.report_db.insert_photo(rejected_detail)
                 
@@ -2370,26 +2391,23 @@ class PhotoProcessor:
                     elif raw_ext is not None:
                         # V3.9.3: 支持对焦检测的 RAW 文件但无法获取对焦点数据
                         if raw_ext.lower() in focus_supported_raw_exts and raw_path is not None:
-                            # 检查是否是手动对焦模式
+                            # 检查是否是手动对焦模式。
+                            # 走常驻 ExifTool 读进程而非每张 spawn 子进程:
+                            # 子进程冷启动 Mac ~30-80ms、Windows 100-300ms
+                            # (进程创建 + Defender 扫描),对焦点缺失的批次每张都付一次。
+                            # Check for manual-focus mode via the persistent
+                            # ExifTool read process instead of spawning a
+                            # subprocess per photo (~30-80ms on Mac, 100-300ms
+                            # on Windows with process creation + Defender).
                             is_manual_focus = False
                             try:
-                                import subprocess
-                                focus_detector = get_focus_detector()
-                                exiftool_path = focus_detector._get_exiftool_path()
-                                # V3.9.4: 在 Windows 上隐藏控制台窗口
-                                creationflags = subprocess.CREATE_NO_WINDOW if sys.platform.startswith('win') else 0
-                                result = subprocess.run(
-                                    [exiftool_path, '-charset', 'utf8', '-FocusMode', '-s', '-s', '-s', raw_path],
-                                    capture_output=True, 
-                                    text=True, 
-                                    encoding='utf-8',
-                                    timeout=5,
-                                    creationflags=creationflags
-                                )
-                                focus_mode = result.stdout.strip().lower()
+                                _fm_meta = exiftool_mgr.read_metadata(
+                                    raw_path, extra_args=['-FocusMode'])
+                                focus_mode = str(
+                                    (_fm_meta or {}).get('FocusMode', '')).strip().lower()
                                 if 'manual' in focus_mode or focus_mode == 'mf' or focus_mode == 'm':
                                     is_manual_focus = True
-                            except:
+                            except Exception:
                                 pass
                         
                             if is_manual_focus:
@@ -2398,6 +2416,27 @@ class PhotoProcessor:
                             else:
                                 focus_sharpness_weight = 0.7
                                 focus_topiq_weight = 0.9
+                    # V4.7(issue#107): 锐度仲裁——BAD/WORST(权重<0.9)且鸟头实测锐度
+                    # 达标(≥用户阈值,与评星硬门槛同源)时升为GOOD(0.9/1.0)。
+                    # 像素证据优先于EXIF对焦点元数据;真糊照片锐度不达标维持原判。
+                    # V4.7 (issue #107): sharpness arbitration — when the verdict
+                    # is BAD/WORST (weight < 0.9) and the measured head sharpness
+                    # meets the user threshold (same source as the rating hard
+                    # gate), upgrade to GOOD (0.9/1.0). Pixel evidence beats EXIF
+                    # focus-point metadata; truly-blurred shots keep the verdict.
+                    _orig_focus_w = focus_sharpness_weight
+                    (focus_sharpness_weight, focus_topiq_weight), _focus_arbitrated = arbitrate_focus_weights(
+                        (focus_sharpness_weight, focus_topiq_weight),
+                        normalized_sharpness,
+                        float(self.settings.sharpness_threshold),
+                    )
+                    if _focus_arbitrated:
+                        self._log(self.i18n.t(
+                            "logs.focus_arbitrated",
+                            orig=_orig_focus_w,
+                            sharp=normalized_sharpness,
+                            thr=float(self.settings.sharpness_threshold),
+                        ))
                 add_photo_stage('focus', (time.time() - focus_start) * 1000)
             
                 # V4.0: 最终评分计算（传入对焦权重和飞鸟状态）
@@ -2614,9 +2653,25 @@ class PhotoProcessor:
                             'caption': caption,
                         }, original_prefix, v2_in_pool)
                         # RAW+JPEG 时也写入当前 JPEG，便于单独查看 JPEG 时也有星级/题注（DNG/ARW/NEF 等同理）
-                        # V4.0.5: 跳过临时预览文件 (tmp_*.jpg)，避免无用写入
+                        # V4.0.5: 跳过临时预览文件，避免无用写入。
+                        # V4.7 修复: V4.1.0 起 RAW 转换的预览存 .superpicky/cache/
+                        # 且不带 tmp_ 前缀，仅查 basename 的旧判断全部漏网——每张
+                        # RAW 照片的星级+题注都被完整写进缓存预览 JPG 本体
+                        # (实测 ~190ms/张,474 张批次纯浪费 ~90s,是 exif_flush
+                        # 占大头的真正元凶)。补上缓存路径检查,与上文
+                        # is_temp_preview_path 同判据。
+                        # V4.7 fix: since V4.1.0 converted-RAW previews live in
+                        # .superpicky/cache/ WITHOUT the tmp_ prefix, so the
+                        # basename-only check missed them all — every RAW photo's
+                        # star+caption was fully written into the cached preview
+                        # JPG body (~190ms each, ~90s wasted per 474-photo batch;
+                        # the real culprit behind exif_flush dominance). Add the
+                        # cache-path check, same criterion as is_temp_preview_path.
                         filepath_basename = os.path.basename(filepath)
-                        is_temp_file = filepath_basename.startswith('tmp_') or filepath_basename.startswith('tmp.')
+                        is_temp_file = (
+                            filepath_basename.startswith(('tmp_', 'tmp.'))
+                            or '.superpicky/cache' in normalize_path_for_match(filepath)
+                        )
                         if target_file_path != filepath and os.path.exists(filepath) and not is_temp_file:
                             birdid_title_targets.append(filepath)
                             queue_star_metadata({

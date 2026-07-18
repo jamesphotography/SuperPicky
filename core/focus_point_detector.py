@@ -856,6 +856,61 @@ def verify_focus_in_bbox(
         return (0.5, 0.8)  # V4.0: BBox外，锐度×0.5，美学×0.8
 
 
+def arbitrate_focus_weights(
+    weights: Tuple[float, float],
+    norm_sharpness: Optional[float],
+    sharpness_threshold: Optional[float],
+) -> Tuple[Tuple[float, float], bool]:
+    """
+    对焦锐度仲裁 (issue #107)：像素证据优先于 EXIF 元数据。
+
+    几何判定结果为 BAD/WORST（锐度权重 < 0.9，元数据惩罚）时，
+    若鸟头实测归一化锐度达到用户锐度阈值（与评星硬门槛同源），
+    则升级为 GOOD 档权重 (0.9, 1.0)。实测数据表明 EXIF 对焦点
+    会「撒谎」（Z8 12% 框外全为记录偏差而非真脱焦），而真跟丢
+    的照片鸟头锐度不达标，天然免疫误赦。
+
+    参数:
+    weights (Tuple[float, float]): 几何判定的 (锐度权重, 美学权重)
+    norm_sharpness (Optional[float]): ISO 归一化后的鸟头实测锐度；
+        None 或 ≤0 表示无有效数据（如关键点检测失败）
+    sharpness_threshold (Optional[float]): 用户锐度达标阈值
+
+    返回:
+    Tuple[Tuple[float, float], bool]: (可能升级的权重, 是否发生仲裁)
+
+    Focus sharpness arbitration (issue #107): pixel evidence beats EXIF
+    metadata. When the geometric verdict is BAD/WORST (sharpness weight
+    < 0.9, a metadata-driven penalty), upgrade to GOOD-tier weights
+    (0.9, 1.0) if the measured normalized head sharpness reaches the
+    user's sharpness threshold (same source as the rating hard gate).
+    Truly-blurred shots fail the threshold, so they keep their verdict.
+
+    Parameters:
+    weights: (sharpness_weight, topiq_weight) from the geometric check
+    norm_sharpness: ISO-normalized measured head sharpness; None or <=0
+        means no valid data (e.g. keypoint detection failed)
+    sharpness_threshold: the user's sharpness pass threshold
+
+    Return:
+    ((possibly upgraded weights), arbitrated flag)
+    """
+    sharp_w, _ = weights
+    # 仅仲裁元数据惩罚档（<0.9）；BEST/GOOD 不触碰
+    # Only arbitrate metadata-penalty tiers (<0.9); BEST/GOOD untouched
+    if sharp_w >= 0.9:
+        return weights, False
+    # 无有效锐度数据或阈值异常 → 保守维持原判
+    # No valid sharpness data or invalid threshold -> keep the verdict
+    if norm_sharpness is None or norm_sharpness <= 0:
+        return weights, False
+    if sharpness_threshold is None or sharpness_threshold <= 0:
+        return weights, False
+    if norm_sharpness >= sharpness_threshold:
+        return (0.9, 1.0), True
+    return weights, False
+
+
 # 全局单例
 _focus_detector: Optional[FocusPointDetector] = None
 

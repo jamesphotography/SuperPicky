@@ -559,6 +559,13 @@ class SettingsCenter(QDialog):
         self._cull_burst_folders.setStyleSheet(self._checkbox_qss())
         lay.addWidget(self._cull_burst_folders)
 
+        # 无鸟补救扫描 (V4.6): 判无鸟/低置信度时 1024px 重扫 + 识鸟守门
+        # No-bird rescue scan (V4.6): 1024px rescan + BirdID gate on rejects
+        self._cull_rescue = QCheckBox(self.i18n.t("settings.culling_rescue_label"))
+        self._cull_rescue.setChecked(cfg.rescue_scan_enabled)
+        self._cull_rescue.setStyleSheet(self._checkbox_qss())
+        lay.addWidget(self._cull_rescue)
+
         # 连拍速度 / Burst FPS
         fps_row = QHBoxLayout()
         fps_label = QLabel(self.i18n.t("settings.culling_burst_fps_label"))
@@ -1135,6 +1142,7 @@ class SettingsCenter(QDialog):
         cfg.set_flight_check(self._cull_flight.isChecked())
         cfg.set_burst_check(self._cull_burst.isChecked())
         cfg.set_burst_group_folders(self._cull_burst_folders.isChecked())
+        cfg.set_rescue_scan_enabled(self._cull_rescue.isChecked())
         cfg.set_skill_level(self._current_skill_key)
         # 当处于自定义档时同步写回 custom_* 字段，避免 CLI 路径读到陈旧值。
         # When in custom mode, also persist custom_* fields so CLI path reads fresh values.
@@ -1951,6 +1959,11 @@ class SettingsCenter(QDialog):
                 "YOLO11 - Bird Detection by Ultralytics\n"
                 "OSEA - Bird Classification by Sun Jiao\n"
                 "TOPIQ - Aesthetic Scoring by Chaofeng Chen et al.\n\n"
+                "Data Sources\n"
+                "Species Beauty Index - iRateBird Citizen Science Dataset (CC-BY 4.0)\n"
+                "Santangeli, A. et al. (2023), Scientific Data\n"
+                "Note: ratings skew toward Finnish and English-speaking users, "
+                "reflecting a Western aesthetic perspective\n\n"
                 "License: GPL-3.0\n"
                 "© 2024-2025 James Yu"
             )

@@ -88,6 +88,11 @@ class AdvancedConfig:
         "folder_layout": "species-first",
         "burst_group_folders": True,  # 连拍归入 burst_NNN 子目录(关=按星级/鸟种常规归档,Paul P1)
 
+        # V4.6: 无鸟补救扫描 (spec: docs/specs/2026-07-14-no-bird-rescue-scan-design.md)
+        # V4.6: No-bird rescue scan
+        "rescue_scan_enabled": True,   # 判无鸟/低置信度时触发 1024px 重扫 + 识鸟守门
+        "rescue_birdid_gate": 10,      # 弱候选的识鸟确认门槛 (0-100, top1 置信度百分比)
+
         # 外部编辑应用（右键菜单 "用 X 打开"）
         # 每项格式：{"name": "显示名称", "path": "/Applications/...app"}
         "external_apps": [],
@@ -301,6 +306,16 @@ class AdvancedConfig:
         """纠错样本提交的首次自愿说明是否已展示过。"""
         return bool(self.config.get("correction_consent_shown", False))
 
+    @property
+    def rescue_scan_enabled(self):
+        """无鸟补救扫描开关 / No-bird rescue scan toggle."""
+        return self.config.get("rescue_scan_enabled", True)
+
+    @property
+    def rescue_birdid_gate(self):
+        """补救识鸟确认门槛 (0-100) / Rescue BirdID gate percent (0-100)."""
+        return self.config.get("rescue_birdid_gate", 10)
+
     # Setter方法
     def set_min_confidence(self, value):
         """设置AI置信度阈值 (0.3-0.7)"""
@@ -345,6 +360,14 @@ class AdvancedConfig:
         self.config["correction_consent_shown"] = bool(value)
         self.save()
 
+    def set_rescue_scan_enabled(self, value):
+        """设置无鸟补救扫描开关 / Toggle the no-bird rescue scan."""
+        self.config["rescue_scan_enabled"] = bool(value)
+
+    def set_rescue_birdid_gate(self, value):
+        """设置补救识鸟确认门槛 (0-100) / Rescue BirdID gate percent (0-100)."""
+        self.config["rescue_birdid_gate"] = max(0, min(100, int(value)))
+
     def set_log_level(self, value):
         """设置日志详细程度"""
         if value in ["simple", "detailed"]:
@@ -382,10 +405,18 @@ class AdvancedConfig:
 
     def get_arw_write_mode_for_file(self, file_path=None):
         """
-        获取针对当前文件的 ARW 写入策略。
-        若 file_path 为 ARW 格式，强制返回 "sidecar"（只写 XMP 侧车，不修改 ARW 本体）。
+        获取针对当前文件的 RAW 写入策略。
+        若 file_path 为专有 RAW 格式（SIDECAR_RAW_EXTENSIONS，DNG 除外），
+        强制返回 "sidecar"（只写 XMP 侧车，不修改 RAW 本体）。
+        原先仅 ARW 强制侧车，现扩展到全部专有 RAW（快 ~33% 且不动本体更安全）。
+
+        Get the RAW write mode for this file. Proprietary RAW formats
+        (SIDECAR_RAW_EXTENSIONS, DNG excluded) are forced to "sidecar" —
+        XMP sidecar only, never rewriting the RAW body. Previously only ARW
+        was forced; now all proprietary RAW are (~33% faster, safer).
         """
-        if file_path and Path(file_path).suffix.lower() == ".arw":
+        from constants import SIDECAR_RAW_EXTENSIONS
+        if file_path and Path(file_path).suffix.lower() in SIDECAR_RAW_EXTENSIONS:
             return "sidecar"
         return self.config.get("arw_write_mode", "sidecar")
 
