@@ -1,4 +1,11 @@
 import os
+
+# 禁用 Ultralytics 逐次推理日志。必须在 import ultralytics 之前设置——
+# ultralytics 在自身 import 时读取该环境变量,之后再设无效。
+# Disable Ultralytics per-inference logging. Must be set BEFORE importing
+# ultralytics — it reads this env var at its own import time.
+os.environ.setdefault('YOLO_VERBOSE', 'False')
+
 import time
 import cv2
 import numpy as np
@@ -15,9 +22,6 @@ from iqa_scorer import get_iqa_scorer
 from advanced_config import get_advanced_config
 # V4.2.1
 from tools.i18n import get_i18n
-
-# 禁用 Ultralytics 设置警告
-os.environ['YOLO_VERBOSE'] = 'False'
 
 
 def load_yolo_model(log_callback=None):
@@ -177,7 +181,8 @@ def _rescue_scan(model, image: np.ndarray, accept_conf: float,
         from config import get_best_device
         device = get_best_device()
         results = model(image, imgsz=config.ai.RESCUE_IMGSZ,
-                        conf=config.ai.RESCUE_CONF, device=device.type)
+                        conf=config.ai.RESCUE_CONF, device=device.type,
+                        verbose=False)
     except Exception:
         return None
 
@@ -312,7 +317,7 @@ def detect_and_draw_birds(
         device = get_best_device()
 
         # 使用最佳设备进行推理
-        results = model(image, device=device.type)
+        results = model(image, device=device.type, verbose=False)
     except Exception as device_error:
         # 设备推理失败，清理 GPU 显存后降级到 CPU
         t = i18n.t if i18n else get_i18n().t
@@ -326,7 +331,7 @@ def detect_and_draw_birds(
         except Exception:
             pass
         try:
-            results = model(image, device='cpu')
+            results = model(image, device='cpu', verbose=False)
         except Exception as cpu_error:
             log_message(t("ai.ai_inference_failed", error=cpu_error), dir)
             # 返回"无鸟"结果（V3.1）

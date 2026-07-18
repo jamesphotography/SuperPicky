@@ -13,7 +13,7 @@ import shutil
 from typing import Optional, List, Dict
 from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from constants import RATING_FOLDER_NAMES
+from constants import RATING_FOLDER_NAMES, SIDECAR_RAW_EXTENSIONS
 import time
 import threading
 import queue
@@ -584,9 +584,20 @@ class ExifToolManager:
             return None
 
     @staticmethod
-    def _is_arw(file_path: str) -> bool:
-        """判断是否为 ARW 文件"""
-        return Path(file_path).suffix.lower() == '.arw'
+    def _is_sidecar_raw(file_path: str) -> bool:
+        """
+        判断是否为「元数据强制走 XMP 侧车」的专有 RAW 格式（DNG 除外）。
+
+        原先仅 ARW 强制侧车；现扩展到全部专有 RAW：不重写 RAW 本体既快
+        （~190ms/张 → ~10ms/张）又安全，且符合 LR/C1 的侧车优先惯例。
+
+        Whether this file is a proprietary RAW whose metadata must be
+        written to an XMP sidecar (DNG excluded). Previously only ARW was
+        forced; now all proprietary RAW formats are — skipping the body
+        rewrite is faster (~190ms → ~10ms per photo), safer, and matches
+        the LR/C1 sidecar-first convention.
+        """
+        return Path(file_path).suffix.lower() in SIDECAR_RAW_EXTENSIONS
 
     # exiftool 对无组前缀标签按内置优先级分组：以下裸标签名会落到 IPTC IIM。
     # 写这些标签需要 UTF-8 字符集声明（见 set_metadata），未列出的冷门 IPTC
@@ -764,6 +775,7 @@ class ExifToolManager:
         if not file_path:
             return False
         xmp_path = os.path.splitext(file_path)[0] + '.xmp'
+        self._cleanup_sidecar_tmp(xmp_path)
 
         args = [] # 使用常驻进程的参数模式
 
@@ -842,9 +854,34 @@ class ExifToolManager:
                 except Exception:
                     pass
 
+    @staticmethod
+    def _cleanup_sidecar_tmp(xmp_path: str) -> None:
+        """
+        清理侧车残留的 exiftool 临时文件。
+
+        exiftool 异常退出会遗留 {xmp}_exiftool_tmp，之后对该侧车的所有写入
+        都报 "Temporary file already exists" 静默失败（cleanup_temp_files
+        只按原文件路径清理，覆盖不到侧车路径）。侧车 tmp 是纯 scratch 文件，
+        无论侧车本体是否存在都应删除。
+
+        Remove a leftover {xmp}_exiftool_tmp scratch file. When exiftool
+        exits abnormally it leaves this behind, and every later write to
+        that sidecar fails with "Temporary file already exists"
+        (cleanup_temp_files only covers the original file's path, not the
+        sidecar's). Safe to delete regardless of whether the sidecar exists.
+        """
+        tmp_path = f"{xmp_path}_exiftool_tmp"
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+                print(f"🧹 Cleaned up residual sidecar temp file: {tmp_path}")
+            except OSError as e:
+                print(f"⚠️ Failed to clean sidecar temp file: {tmp_path} - {e}")
+
     def _reset_xmp_sidecar(self, file_path: str) -> bool:
         """清理 XMP 侧车中的评分相关字段 (V4.0.6: 使用常驻进程)"""
         xmp_path = os.path.splitext(file_path)[0] + '.xmp'
+        self._cleanup_sidecar_tmp(xmp_path)
         if not os.path.exists(xmp_path):
             return True
 
@@ -937,8 +974,8 @@ class ExifToolManager:
             print(f"❌ File not found: {file_path}")
             return False
 
-        # ARW 使用一次性 subprocess 方式写入（更稳妥）
-        if self._is_arw(file_path):
+        # 专有 RAW 强制走 XMP 侧车路由 / proprietary RAW routes to XMP sidecar
+        if self._is_sidecar_raw(file_path):
             item = {
                 'file': file_path,
                 'rating': rating,
@@ -1029,9 +1066,9 @@ class ExifToolManager:
             print(f"[ExifTool] metadata_write_mode=none, 跳过 set_metadata: {os.path.basename(file_path)}")
             return True
 
-        # ARW 一律只写 XMP 侧车；全局 sidecar 模式下所有格式也走侧车
-        # ARW always goes to the XMP sidecar; global sidecar mode does too
-        use_sidecar = self._is_arw(file_path) or global_mode == "sidecar"
+        # 专有 RAW 一律只写 XMP 侧车；全局 sidecar 模式下所有格式也走侧车
+        # Proprietary RAW always goes to the XMP sidecar; global sidecar mode does too
+        use_sidecar = self._is_sidecar_raw(file_path) or global_mode == "sidecar"
 
         # 侧车只支持 XMP 组：IPTC 题注映射到 XMP:Description，无组前缀的标签补 XMP:
         # Sidecars are XMP-only: map the IPTC caption tag to XMP:Description
@@ -1039,6 +1076,8 @@ class ExifToolManager:
         sidecar_alias = {'caption-abstract': 'XMP:Description'}
 
         target_path = os.path.splitext(file_path)[0] + '.xmp' if use_sidecar else file_path
+        if use_sidecar:
+            self._cleanup_sidecar_tmp(target_path)
 
         args: List[str] = []
         temp_files: List[str] = []
@@ -1143,8 +1182,10 @@ class ExifToolManager:
         # 诊断：本次调用有多少条带 caption（若无则不会出现 [ExifTool Caption] 详细日志）
         print(f"[ExifTool] batch_set_metadata: {len(files_metadata)} 条, 其中 {num_with_caption} 条带 caption")
 
-        # ARW 使用一次性 subprocess 方式写入（更稳妥）
-        arw_items = [it for it in files_metadata if self._is_arw(it.get('file', ''))]
+        # 专有 RAW 逐条走侧车写入；其余（JPG/DNG/HEIF）走常驻进程批量写本体
+        # Proprietary RAW items go to per-item sidecar writes; the rest
+        # (JPG/DNG/HEIF) use the persistent-process embedded batch path.
+        arw_items = [it for it in files_metadata if self._is_sidecar_raw(it.get('file', ''))]
         other_items = [it for it in files_metadata if it not in arw_items]
 
         for item in arw_items:
@@ -1330,9 +1371,12 @@ class ExifToolManager:
                 except Exception as e:
                     print(f"⚠️ Caption temp file cleanup failed: {tmp_path} - {e}")
 
-        # 侧车文件处理（非关键，保留同步调用或优化）
-        self._create_xmp_sidecars_for_raf(files_metadata)
-            
+        # RAF/ORF 补侧车已冗余：专有 RAW（含 RAF/ORF）现统一走侧车路由，
+        # 上面的 arw_items 分支已写过侧车，再调用会重复写同一批文件。
+        # The RAF/ORF sidecar backfill is now redundant: proprietary RAW
+        # (incl. RAF/ORF) routes through the sidecar branch above, so calling
+        # _create_xmp_sidecars_for_raf here would double-write those files.
+
         return stats
         
     def cleanup_temp_files(self, file_paths: List[str]):
@@ -1507,8 +1551,8 @@ class ExifToolManager:
             print(f"❌ File not found: {file_path}")
             return False
 
-        # ARW 强制只清 XMP 侧车，不修改 RAW 本体
-        if self._is_arw(file_path):
+        # 专有 RAW 强制只清 XMP 侧车，不修改 RAW 本体
+        if self._is_sidecar_raw(file_path):
             return self._reset_xmp_sidecar(file_path)
 
         # 删除Rating、Pick、City、Country和Province-State字段
@@ -1581,8 +1625,8 @@ class ExifToolManager:
             # V4.0.3: 预先清理可能存在的残留 _exiftool_tmp 文件
             self.cleanup_temp_files(valid_files)
 
-            # ARW 强制只清理 XMP 侧车，不修改 RAW 本体
-            arw_files = [f for f in valid_files if self._is_arw(f)]
+            # 专有 RAW 强制只清理 XMP 侧车，不修改 RAW 本体
+            arw_files = [f for f in valid_files if self._is_sidecar_raw(f)]
             if arw_files:
                 for f in arw_files:
                     if self._reset_xmp_sidecar(f):
