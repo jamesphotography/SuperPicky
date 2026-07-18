@@ -6,7 +6,7 @@ SuperPicky 常量定义
 """
 
 # 应用版本号
-APP_VERSION = "4.5.0RC4"
+APP_VERSION = "4.5.0RC6"
 
 
 # 评分对应的文件夹名称映射（向后兼容，默认中文）
