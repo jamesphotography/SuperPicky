@@ -437,7 +437,7 @@ class FilterPanel(QWidget):
     # ------------------------------------------------------------------
 
     def update_count(self, count: int):
-        """由 ResultsBrowserWidget 在每次应用筛选后调用，更新数量标签。"""
+        """由 ResultsBrowserWindow 在每次应用筛选后调用，更新数量标签。"""
         if not hasattr(self, '_count_label'):
             return
         warning_color = COLORS.get('warning', '#E8C000')

@@ -13,7 +13,7 @@ from typing import Optional
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QFrame
 )
-from PySide6.QtCore import Qt, Signal, QThread, QTimer, Slot, QEvent, QSize
+from PySide6.QtCore import Qt, Signal, QThread, QTimer, Slot, QEvent, QSize, QObject
 from PySide6.QtGui import QPixmap, QImage, QPainter, QPen, QColor, QBrush
 
 from ui.styles import COLORS, FONTS
@@ -62,6 +62,12 @@ class _HdCache:
             if len(self._cache) > self._maxsize:
                 self._cache.popitem(last=False)
 
+    def contains(self, key: str) -> bool:
+        """仅探测是否在缓存,不刷新 LRU 顺序(预加载池扫描任务列表时用,
+        避免整窗扫描把淘汰顺序刷乱)。/ Presence check without LRU bump."""
+        with self._lock:
+            return key in self._cache
+
 
 _hd_cache = _HdCache(21)
 
@@ -71,54 +77,104 @@ _hd_cache = _HdCache(21)
 # ============================================================
 
 
-class _PreloadWorker(QThread):
+class _PreloadThread(QThread):
+    """预加载池工作线程:循环向池领取路径,解码后入 _hd_cache。"""
+
+    def __init__(self, pool: '_PreloadWorker', parent=None):
+        super().__init__(parent)
+        self._pool = pool
+
+    def run(self):
+        while True:
+            path = self._pool._next_path()
+            if path is None:
+                return              # 池已取消 / pool cancelled
+            # QImage 可在工作线程安全使用；QPixmap 须在主线程转换
+            img = QImage(path)
+            ok = not img.isNull()
+            if ok:
+                # 解码完成一律入缓存(旧实现在 restart 后丢弃在途解码结果,
+                # 每次导航白白浪费约一整张 14MP 的解码)
+                # Always cache a finished decode — the old implementation
+                # discarded in-flight results on restart.
+                _hd_cache.put(path, img)
+            self._pool._task_done(path, ok)
+
+
+class _PreloadWorker(QObject):
     """
-    按优先级顺序预加载高清图片到 _hd_cache。
-    调用 restart(paths) 可安全地重置任务列表并重新开始。
+    常驻并行预加载池,按优先级把高清图解码进 _hd_cache。
+
+    旧实现是单线程 QThread:填满 ±10 窗口需串行解码 ~2s,且每次导航
+    restart 都取消重启、丢弃在途结果,按住方向键连读时完全跟不上。
+    新实现:
+    - 固定 2~4 条常驻线程,restart(paths) 只替换任务列表并唤醒,不杀线程
+    - 解码失败的路径记入本轮跳过集,防止坏文件被反复重试
+    - cancel()+wait() 供退出时确定性收线(任务/应用退出清理约定)
+
+    Resident parallel preload pool. restart() swaps the priority list and
+    wakes the threads instead of tearing them down; finished decodes are
+    always cached; failed paths are skipped for the current round.
     """
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._paths: list = []
-        self._cancelled: bool = False
-        self._pending_restart: bool = False
         self._lock = _threading.Lock()
-        self.finished.connect(self._check_restart)
+        self._cond = _threading.Condition(self._lock)
+        self._paths: list = []
+        self._inflight: set = set()
+        self._failed: set = set()
+        self._cancelled: bool = False
+        self._started: bool = False
+        num = min(4, max(2, (os.cpu_count() or 4) // 2))
+        self._threads = [_PreloadThread(self, self) for _ in range(num)]
 
     def restart(self, paths: list):
-        """设置新的预加载路径列表，非阻塞地（重）启动。"""
-        with self._lock:
-            self._paths = list(paths)
-        if self.isRunning():
-            # 通知当前 run() 尽快退出，run() 结束后由 _check_restart 接力启动
+        """替换预加载任务列表(优先级序)并唤醒线程;首次调用时启动线程。"""
+        with self._cond:
+            self._paths = [p for p in paths if p]
+            self._failed.clear()    # 与旧语义一致:每轮允许对失败路径重试一次
+            self._cond.notify_all()
+        if not self._started:
+            self._started = True
+            for t in self._threads:
+                t.start()
+
+    def _next_path(self) -> Optional[str]:
+        """线程取下一个待解码路径;无任务时阻塞等待,池取消时返回 None。"""
+        with self._cond:
+            while not self._cancelled:
+                for p in self._paths:
+                    if p in self._inflight or p in self._failed:
+                        continue
+                    if _hd_cache.contains(p):
+                        continue
+                    if not os.path.exists(p):
+                        self._failed.add(p)
+                        continue
+                    self._inflight.add(p)
+                    return p
+                self._cond.wait()
+            return None
+
+    def _task_done(self, path: str, ok: bool):
+        """线程完成一个解码后回报;失败路径本轮不再重试。"""
+        with self._cond:
+            self._inflight.discard(path)
+            if not ok:
+                self._failed.add(path)
+
+    def cancel(self):
+        with self._cond:
             self._cancelled = True
-            self._pending_restart = True
-        else:
-            self._cancelled = False
-            self._pending_restart = False
-            self.start()
+            self._cond.notify_all()
 
-    def _check_restart(self):
-        """run() 结束后检查是否有新的预加载任务等待启动（主线程执行）。"""
-        if self._pending_restart:
-            self._pending_restart = False
-            self._cancelled = False
-            self.start()
+    def isRunning(self) -> bool:
+        return any(t.isRunning() for t in self._threads)
 
-    def run(self):
-        with self._lock:
-            paths = list(self._paths)
-        for path in paths:
-            if self._cancelled:
-                break
-            if not path or not os.path.exists(path):
-                continue
-            if _hd_cache.get(path) is not None:
-                continue        # 已在缓存，跳过
-            # QImage 可在工作线程安全使用；QPixmap 须在主线程转换
-            img = QImage(path)
-            if not img.isNull() and not self._cancelled:
-                _hd_cache.put(path, img)
+    def wait(self, msecs: int = 1000):
+        for t in self._threads:
+            t.wait(msecs)
 
 
 # ============================================================
@@ -1106,12 +1162,16 @@ class FullscreenViewer(QWidget):
 
     def cleanup(self):
         if self._loader:
-            self._loader.cancel()
-            if self._loader.isRunning():
-                self._loader.wait(1000)
+            try:
+                self._loader.cancel()
+                if self._loader.isRunning():
+                    self._loader.wait(1000)
+            except RuntimeError:
+                # loader 已 deleteLater 销毁 / already destroyed via deleteLater
+                pass
             self._loader = None
         if self._preload_worker:
-            self._preload_worker._cancelled = True
+            self._preload_worker.cancel()
             if self._preload_worker.isRunning():
                 self._preload_worker.wait(1000)
 
@@ -1186,8 +1246,8 @@ class FullscreenViewer(QWidget):
 
         # 1. 立即显示缩略图缓存
         try:
-            from ui.thumbnail_grid import _thumb_cache, _overlay_key
-            cached = _thumb_cache.get(_overlay_key(photo))
+            from ui.thumbnail_grid import _thumb_cache, _photo_key
+            cached = _thumb_cache.get(_photo_key(photo))
             if cached and not cached.isNull():
                 self._img_label.set_pixmap(cached)
                 # 功能2：缩略图加载后直接还原锁定的缩放和位置
@@ -1207,14 +1267,15 @@ class FullscreenViewer(QWidget):
             photo.get("focus_status")
         )
 
-        # 3. 取消上一个加载任务，断开信号防止旧图覆盖新显示
+        # 3. 取消上一个加载任务，断开信号防止旧图覆盖新显示。
+        #    不在主线程 wait(旧 wait(100) 让快速切图每次白等最多 100ms;
+        #    cancel 标志保证解码完成后不再 emit,断开信号双保险)。
+        #    Never block the GUI thread waiting for the old loader.
         if self._loader:
-            self._loader.cancel()
-            if self._loader.isRunning():
-                self._loader.wait(100)
             try:
+                self._loader.cancel()
                 self._loader.ready.disconnect()
-            except RuntimeError:
+            except (RuntimeError, TypeError):
                 pass
             self._loader = None
 
@@ -1233,12 +1294,14 @@ class FullscreenViewer(QWidget):
                         self._locked_oy
                     )
             else:
-                # 5. 后台加载，完成后存入高清缓存
+                # 5. 后台加载，完成后存入高清缓存(loader 用后自行销毁,
+                #    避免 QThread 对象随导航累积)
                 self._loader = _ImageLoader(hd_path, self)
                 _path_capture = hd_path
                 self._loader.ready.connect(
                     lambda px, p=_path_capture: self._on_image_ready(px, p)
                 )
+                self._loader.finished.connect(self._loader.deleteLater)
                 self._loader.start()
 
         # 6. 触发 ±10 预加载
@@ -1378,7 +1441,7 @@ class FullscreenViewer(QWidget):
         elif key in (_Qt.Key_Up, _Qt.Key_Down,
                      _Qt.Key_0, _Qt.Key_1, _Qt.Key_2, _Qt.Key_3):
             # 键盘打星交给宿主窗口处理(Paul P0-3):忽略事件让其冒泡到
-            # ResultsBrowserWindow/Widget.keyPressEvent 的打星分支。
+            # ResultsBrowserWindow.keyPressEvent 的打星分支。
             # Keyboard rating is handled by the host window — ignore the
             # event so it bubbles up to the host's rating branch.
             event.ignore()
