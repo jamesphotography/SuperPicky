@@ -1385,7 +1385,7 @@ class FullscreenViewer(QWidget):
         elif key in (_Qt.Key_Up, _Qt.Key_Down,
                      _Qt.Key_0, _Qt.Key_1, _Qt.Key_2, _Qt.Key_3):
             # 键盘打星交给宿主窗口处理(Paul P0-3):忽略事件让其冒泡到
-            # ResultsBrowserWindow/Widget.keyPressEvent 的打星分支。
+            # ResultsBrowserWindow.keyPressEvent 的打星分支。
             # Keyboard rating is handled by the host window — ignore the
             # event so it bubbles up to the host's rating branch.
             event.ignore()

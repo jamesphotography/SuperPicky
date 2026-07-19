@@ -694,7 +694,7 @@ class ThumbnailCard(QFrame):
         super().mouseDoubleClickEvent(event)
 
     def contextMenuEvent(self, event):
-        """C4：右键菜单 — 发射信号，由 ResultsBrowserWidget 处理。"""
+        """C4：右键菜单 — 发射信号，由 ResultsBrowserWindow 处理。"""
         self.context_menu_requested.emit(self.photo, self.mapToGlobal(event.pos()))
         event.accept()
 
@@ -1189,8 +1189,8 @@ class ThumbnailGrid(QScrollArea):
 
     def _on_context_menu_requested(self, photo: dict, pos):
         """C4：将右键菜单请求向上传递（由父级窗口处理）。"""
-        # 通过信号链向上传递：ThumbnailGrid → ResultsBrowserWidget
-        # 使用 parent chain 找到 ResultsBrowserWidget
+        # 通过信号链向上传递：ThumbnailGrid → ResultsBrowserWindow
+        # 使用 parent chain 找到 ResultsBrowserWindow
         node = self.parent()
         while node is not None:
             handler = getattr(node, '_show_context_menu', None)
