@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QFrame
 )
 from PySide6.QtCore import Qt, Signal, QThread, QTimer, Slot, QEvent, QSize, QObject
-from PySide6.QtGui import QPixmap, QImage, QPainter, QPen, QColor, QBrush
+from PySide6.QtGui import QPixmap, QImage, QPainter, QPen, QColor, QBrush, QImageReader
 
 from ui.styles import COLORS, FONTS
 from ui.icon_utils import (
@@ -31,8 +31,53 @@ _FOCUS_COLORS = {
 }
 
 
+# 高清缓存/预加载的封顶解码边长。相机内嵌预览无尺寸上限(45/61MP 机身单张
+# 解码后 180~240MB,21 槽缓存实测可占 2.4~5GB RSS),而 fit 模式显示 4K 屏
+# 最长也只需 ~3800 物理像素。封顶后缓存内存与机身像素数脱钩;100% 缩放的
+# 全分辨率由「停留 250ms 后按需补全解」提供(仅当前张,不入缓存)。
+# Cap for cache/preload decodes. Embedded RAW previews are full-res
+# (180-240MB decoded on 45/61MP bodies; the 21-slot cache measured
+# 2.4GB+ RSS), while fit-mode display needs ~3800px at most on a 4K
+# screen. Full resolution for 100% zoom is loaded on demand after a
+# 250ms dwell, for the current photo only, and never cached.
+_HD_CACHE_MAX_EDGE = 3200
+
+# 停留多久后为当前张补全分辨率解码(按住方向键连读时不触发,松手才解)
+# Dwell before the full-res top-up decode (skipped during rapid nav).
+_FULLRES_DWELL_MS = 250
+
+
+def _decode_capped(path: str, max_edge: int) -> QImage:
+    """
+    解码图片,长边超过 max_edge 时用 QImageReader.setScaledSize 在解码期
+    降采样(JPEG 走 libjpeg DCT 缩放,更快且不分配全尺寸缓冲)。
+
+    Decode an image, downscaling at decode time when its long edge
+    exceeds max_edge (libjpeg DCT scaling: faster, and the full-size
+    buffer is never allocated).
+
+    参数 / Parameters:
+        path (str): 图片路径 / image path.
+        max_edge (int): 允许的最大长边像素 / max long-edge pixels.
+
+    返回 / Returns:
+        QImage: 解码结果,失败时为 isNull 的空图。
+    """
+    reader = QImageReader(path)
+    reader.setAutoTransform(True)   # 与 QImage(path) 一致的 EXIF 旋转行为
+    src = reader.size()
+    if src.isValid() and max(src.width(), src.height()) > max_edge:
+        scale = max_edge / max(src.width(), src.height())
+        reader.setScaledSize(QSize(
+            max(1, round(src.width() * scale)),
+            max(1, round(src.height() * scale)),
+        ))
+    img = reader.read()
+    return img if img is not None else QImage()
+
+
 # ============================================================
-#  高清图 LRU 缓存（模块级，21 slots，键为绝对路径）
+#  高清图 LRU 缓存（模块级，21 slots，键为绝对路径，存封顶分辨率）
 # ============================================================
 
 
@@ -62,12 +107,6 @@ class _HdCache:
             if len(self._cache) > self._maxsize:
                 self._cache.popitem(last=False)
 
-    def contains(self, key: str) -> bool:
-        """仅探测是否在缓存,不刷新 LRU 顺序(预加载池扫描任务列表时用,
-        避免整窗扫描把淘汰顺序刷乱)。/ Presence check without LRU bump."""
-        with self._lock:
-            return key in self._cache
-
 
 _hd_cache = _HdCache(21)
 
@@ -89,8 +128,9 @@ class _PreloadThread(QThread):
             path = self._pool._next_path()
             if path is None:
                 return              # 池已取消 / pool cancelled
-            # QImage 可在工作线程安全使用；QPixmap 须在主线程转换
-            img = QImage(path)
+            # QImage 可在工作线程安全使用；QPixmap 须在主线程转换。
+            # 封顶解码:缓存内存与机身像素数脱钩(全分辨率按需另行补解)。
+            img = _decode_capped(path, _HD_CACHE_MAX_EDGE)
             ok = not img.isNull()
             if ok:
                 # 解码完成一律入缓存(旧实现在 restart 后丢弃在途解码结果,
@@ -147,7 +187,15 @@ class _PreloadWorker(QObject):
                 for p in self._paths:
                     if p in self._inflight or p in self._failed:
                         continue
-                    if _hd_cache.contains(p):
+                    # 用 get() 而非纯探测:有意把 ±10 窗口内条目 bump 到
+                    # LRU 队尾,保护预测工作集不被新写入挤出(封顶解码提速
+                    # 写入后,21 槽缓存曾因此把"+1 张"在消费前淘汰掉,
+                    # 连读命中 25/25 掉到 18/25)。
+                    # get() on purpose: bumping window entries protects the
+                    # predicted working set from eviction churn — with the
+                    # faster capped decodes, a non-bumping check let the
+                    # "+1" entry get evicted before consumption.
+                    if _hd_cache.get(p) is not None:
                         continue
                     if not os.path.exists(p):
                         self._failed.add(p)
@@ -182,12 +230,21 @@ class _PreloadWorker(QObject):
 # ============================================================
 
 class _ImageLoader(QThread):
-    """后台线程加载 QImage，避免主线程 QPixmap 线程安全问题。"""
+    """
+    后台线程加载 QImage，避免主线程 QPixmap 线程安全问题。
+    max_edge 传入时按封顶分辨率解码(喂 _hd_cache 用);None 为全分辨率
+    (停留后补全解、供 100% 缩放用)。
+
+    Background QImage loader. With max_edge it decodes capped (feeding
+    _hd_cache); with None it decodes full resolution (the dwell top-up
+    for 100% zoom).
+    """
     ready = Signal(object)   # QImage
 
-    def __init__(self, path: str, parent=None):
+    def __init__(self, path: str, parent=None, max_edge: Optional[int] = None):
         super().__init__(parent)
         self._path = path
+        self._max_edge = max_edge
         self._cancelled = False
 
     def cancel(self):
@@ -197,7 +254,10 @@ class _ImageLoader(QThread):
         if self._cancelled:
             return
         if self._path and os.path.exists(self._path):
-            img = QImage(self._path)
+            if self._max_edge:
+                img = _decode_capped(self._path, self._max_edge)
+            else:
+                img = QImage(self._path)
             if not self._cancelled:
                 self.ready.emit(img)
         else:
@@ -780,6 +840,17 @@ class FullscreenViewer(QWidget):
         self._photos: list = []                        # 当前完整照片列表
         self._current_photo: dict = {}                 # 当前显示的 photo dict
 
+        # 停留补全解:缓存/预加载是封顶分辨率,在一张图上停留 250ms 后
+        # 后台补一次全分辨率解码(仅当前张,不入缓存),供 100% 缩放检视。
+        # Dwell top-up: cache/preload are capped; after dwelling 250ms on
+        # a photo, decode it once at full resolution (current photo only,
+        # never cached) for 100% zoom inspection.
+        self._fullres_loader: Optional[_ImageLoader] = None
+        self._fullres_timer = QTimer(self)
+        self._fullres_timer.setSingleShot(True)
+        self._fullres_timer.setInterval(_FULLRES_DWELL_MS)
+        self._fullres_timer.timeout.connect(self._start_fullres_load)
+
         # 功能2：锁定缩放状态（同时锁定平移位置）
         self._zoom_locked: bool = False
         self._locked_scale: float = 1.0
@@ -1161,15 +1232,18 @@ class FullscreenViewer(QWidget):
         self._photos = photos
 
     def cleanup(self):
-        if self._loader:
-            try:
-                self._loader.cancel()
-                if self._loader.isRunning():
-                    self._loader.wait(1000)
-            except RuntimeError:
-                # loader 已 deleteLater 销毁 / already destroyed via deleteLater
-                pass
-            self._loader = None
+        self._fullres_timer.stop()
+        for attr in ("_loader", "_fullres_loader"):
+            loader = getattr(self, attr, None)
+            if loader:
+                try:
+                    loader.cancel()
+                    if loader.isRunning():
+                        loader.wait(1000)
+                except RuntimeError:
+                    # loader 已 deleteLater 销毁 / already destroyed via deleteLater
+                    pass
+                setattr(self, attr, None)
         if self._preload_worker:
             self._preload_worker.cancel()
             if self._preload_worker.isRunning():
@@ -1278,6 +1352,16 @@ class FullscreenViewer(QWidget):
             except (RuntimeError, TypeError):
                 pass
             self._loader = None
+        # 同步取消上一张的全分辨率补解与停留计时
+        # Also cancel the previous photo's full-res top-up and dwell timer.
+        self._fullres_timer.stop()
+        if self._fullres_loader:
+            try:
+                self._fullres_loader.cancel()
+                self._fullres_loader.ready.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+            self._fullres_loader = None
 
         # 4. 优先检查高清缓存（存的是 QImage，需在主线程转为 QPixmap）
         hd_path = self._resolve_hd_path(photo)
@@ -1294,15 +1378,19 @@ class FullscreenViewer(QWidget):
                         self._locked_oy
                     )
             else:
-                # 5. 后台加载，完成后存入高清缓存(loader 用后自行销毁,
-                #    避免 QThread 对象随导航累积)
-                self._loader = _ImageLoader(hd_path, self)
+                # 5. 后台加载(封顶分辨率,与缓存一致)，完成后存入高清缓存
+                #    (loader 用后自行销毁,避免 QThread 对象随导航累积)
+                self._loader = _ImageLoader(hd_path, self,
+                                            max_edge=_HD_CACHE_MAX_EDGE)
                 _path_capture = hd_path
                 self._loader.ready.connect(
                     lambda px, p=_path_capture: self._on_image_ready(px, p)
                 )
                 self._loader.finished.connect(self._loader.deleteLater)
                 self._loader.start()
+            # 停留 250ms 后为当前张补全分辨率(连读时被下一次 show_photo 打断)
+            # Full-res top-up after dwell; rapid navigation keeps resetting it.
+            self._fullres_timer.start()
 
         # 6. 触发 ±10 预加载
         self._trigger_preload(photo)
@@ -1394,6 +1482,58 @@ class FullscreenViewer(QWidget):
                     self._locked_ox,
                     self._locked_oy
                 )
+
+    def _start_fullres_load(self):
+        """
+        停留计时到期:为当前照片启动全分辨率补解(不入缓存)。
+        源图长边不超过封顶值时缓存里已是全分辨率,直接跳过。
+
+        Dwell expired: start the full-res top-up for the current photo
+        (never cached). Skipped when the source is within the cap —
+        the cached image is already full resolution.
+        """
+        if not self._current_photo:
+            return
+        path = self._resolve_hd_path(self._current_photo)
+        if not path:
+            return
+        src = QImageReader(path).size()     # 仅读头部 / header only
+        if src.isValid() and max(src.width(), src.height()) <= _HD_CACHE_MAX_EDGE:
+            return
+        self._fullres_loader = _ImageLoader(path, self)   # max_edge=None → 全分辨率
+        _path_capture = path
+        self._fullres_loader.ready.connect(
+            lambda img, p=_path_capture: self._on_fullres_ready(img, p)
+        )
+        self._fullres_loader.finished.connect(self._fullres_loader.deleteLater)
+        self._fullres_loader.start()
+
+    @Slot(object)
+    def _on_fullres_ready(self, img: QImage, path: str):
+        """
+        全分辨率补解完成:仍是当前照片时替换显示,并保持视图变换不跳
+        (封顶图→全图分辨率不同,等比换算 display_scale;锁定缩放沿用锁定值)。
+
+        Full-res top-up done: swap it in if the photo is still current,
+        preserving the on-screen transform (scale is re-based because the
+        capped and full images differ in pixel size).
+        """
+        if img.isNull() or not self._current_photo:
+            return
+        if path != self._resolve_hd_path(self._current_photo):
+            return                          # 用户已切走 / user moved on
+        lbl = self._img_label
+        old_px = lbl._pixmap
+        was_manual = (not lbl._fit_mode) and old_px is not None and not old_px.isNull()
+        old_w = old_px.width() if was_manual else 0
+        old_scale, old_ox, old_oy = lbl._display_scale, lbl._draw_ox, lbl._draw_oy
+        px = QPixmap.fromImage(img)
+        lbl.set_pixmap(px)                  # 重置为 fit / resets to fit
+        if self._zoom_locked:
+            lbl.restore_zoom(self._locked_scale, self._locked_ox, self._locked_oy)
+        elif was_manual and px.width() > 0:
+            # 等比换算:保持屏幕上看到的内容与位置完全不变
+            lbl.restore_zoom(old_scale * old_w / px.width(), old_ox, old_oy)
 
     def _trigger_preload(self, current_photo: dict):
         """
