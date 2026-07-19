@@ -1106,9 +1106,13 @@ class FullscreenViewer(QWidget):
 
     def cleanup(self):
         if self._loader:
-            self._loader.cancel()
-            if self._loader.isRunning():
-                self._loader.wait(1000)
+            try:
+                self._loader.cancel()
+                if self._loader.isRunning():
+                    self._loader.wait(1000)
+            except RuntimeError:
+                # loader 已 deleteLater 销毁 / already destroyed via deleteLater
+                pass
             self._loader = None
         if self._preload_worker:
             self._preload_worker._cancelled = True
@@ -1186,8 +1190,8 @@ class FullscreenViewer(QWidget):
 
         # 1. 立即显示缩略图缓存
         try:
-            from ui.thumbnail_grid import _thumb_cache, _overlay_key
-            cached = _thumb_cache.get(_overlay_key(photo))
+            from ui.thumbnail_grid import _thumb_cache, _photo_key
+            cached = _thumb_cache.get(_photo_key(photo))
             if cached and not cached.isNull():
                 self._img_label.set_pixmap(cached)
                 # 功能2：缩略图加载后直接还原锁定的缩放和位置
@@ -1207,14 +1211,15 @@ class FullscreenViewer(QWidget):
             photo.get("focus_status")
         )
 
-        # 3. 取消上一个加载任务，断开信号防止旧图覆盖新显示
+        # 3. 取消上一个加载任务，断开信号防止旧图覆盖新显示。
+        #    不在主线程 wait(旧 wait(100) 让快速切图每次白等最多 100ms;
+        #    cancel 标志保证解码完成后不再 emit,断开信号双保险)。
+        #    Never block the GUI thread waiting for the old loader.
         if self._loader:
-            self._loader.cancel()
-            if self._loader.isRunning():
-                self._loader.wait(100)
             try:
+                self._loader.cancel()
                 self._loader.ready.disconnect()
-            except RuntimeError:
+            except (RuntimeError, TypeError):
                 pass
             self._loader = None
 
@@ -1233,12 +1238,14 @@ class FullscreenViewer(QWidget):
                         self._locked_oy
                     )
             else:
-                # 5. 后台加载，完成后存入高清缓存
+                # 5. 后台加载，完成后存入高清缓存(loader 用后自行销毁,
+                #    避免 QThread 对象随导航累积)
                 self._loader = _ImageLoader(hd_path, self)
                 _path_capture = hd_path
                 self._loader.ready.connect(
                     lambda px, p=_path_capture: self._on_image_ready(px, p)
                 )
+                self._loader.finished.connect(self._loader.deleteLater)
                 self._loader.start()
 
         # 6. 触发 ±10 预加载

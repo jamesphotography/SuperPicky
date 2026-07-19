@@ -1267,7 +1267,14 @@ class ResultsBrowserWindow(QMainWindow):
         self._fullscreen_nav_photos = list(nav_photos) if nav_photos is not None else list(self._filtered_photos)
         self._fullscreen.set_photo_list(self._fullscreen_nav_photos)
         self._fullscreen.show_photo(photo)
-        self._detail_panel.show_photo(photo)
+        if self._stack.currentIndex() == 1:
+            # 全屏导航中:详情面板被盖住不可见,只同步元数据不解码大图
+            # (每次方向键少解码一整张;退出全屏时 _switch_view 刷新一次)。
+            # During fullscreen navigation the panel is hidden — sync
+            # metadata only; the image reloads once on fullscreen exit.
+            self._detail_panel.set_current_photo(photo)
+        else:
+            self._detail_panel.show_photo(photo)
 
         if any(_photo_identity(p) == _photo_identity(photo) for p in self._filtered_photos):
             self._thumb_grid.select_photo(photo)
@@ -1343,17 +1350,21 @@ class ResultsBrowserWindow(QMainWindow):
     def _prev_photo(self):
         photo = self._thumb_grid.select_prev()
         if photo:
-            self._detail_panel.show_photo(photo)
-            if self._stack.currentIndex() == 1:   # 全屏模式同步大图
+            if self._stack.currentIndex() == 1:   # 全屏模式:同步大图,面板只同步元数据
                 self._fullscreen.show_photo(photo)
+                self._detail_panel.set_current_photo(photo)
+            else:
+                self._detail_panel.show_photo(photo)
 
     @Slot()
     def _next_photo(self):
         photo = self._thumb_grid.select_next()
         if photo:
-            self._detail_panel.show_photo(photo)
-            if self._stack.currentIndex() == 1:   # 全屏模式同步大图
+            if self._stack.currentIndex() == 1:   # 全屏模式:同步大图,面板只同步元数据
                 self._fullscreen.show_photo(photo)
+                self._detail_panel.set_current_photo(photo)
+            else:
+                self._detail_panel.show_photo(photo)
 
     @Slot(dict)
     def _enter_fullscreen(self, photo: dict):

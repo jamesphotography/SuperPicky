@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QToolButton, QSizePolicy, QGraphicsOpacityEffect
 )
 from PySide6.QtCore import Qt, Signal, QThread, QObject, Slot, QSize, QTimer, QPoint, QRect, QEasingCurve, QPropertyAnimation
-from PySide6.QtGui import QPixmap, QColor, QPainter, QPen, QFont, QBrush, QImage
+from PySide6.QtGui import QPixmap, QColor, QPainter, QPen, QFont, QBrush, QImage, QImageReader
 
 from ui.styles import COLORS, FONTS
 from ui.icon_utils import render_tinted_image, load_tinted_icon, ICON_DANGER
@@ -92,20 +92,12 @@ def _photo_key(photo: dict):
     return filename
 
 
-def _overlay_key(photo: dict):
-    """
-    缩略图缓存键:身份键 + 影响右上/左下角标的状态(评分/精选/对焦/连拍)。
-    把这些烤进缓存的状态纳入键,使其变化(如重跑选鸟后 picked 变化)时缓存自动失效,
-    避免显示过期角标。身份键 _photo_key 不含可变状态,继续用于卡片/选择。
-    """
-    return (
-        _photo_key(photo),
-        photo.get("rating", 0),
-        1 if photo.get("picked") else 0,
-        photo.get("focus_status"),
-        photo.get("burst_position"),
-        photo.get("burst_total"),
-    )
+# 缩略图缓存键就是身份键 _photo_key:缓存只存「干净」缩略图,评分/精选/
+# 对焦等角标全部在 ThumbnailCard._draw_overlays 动态层现画。这样改星/
+# 重跑选鸟只触发重绘(<1ms),不再作废缓存、不再在主线程重解码磁盘图。
+# The thumb cache is keyed by identity (_photo_key) and stores CLEAN
+# thumbnails only; rating/picked/focus badges are painted in the card's
+# dynamic overlay layer, so state changes redraw instead of re-decoding.
 
 
 # ============================================================
@@ -113,32 +105,56 @@ def _overlay_key(photo: dict):
 # ============================================================
 
 class _LRUCache:
+    """
+    线程安全的缩略图 LRU 缓存。
+    被多个 _ThumbnailWorker 工作线程与主线程并发访问,必须持锁:
+    无锁时 get() 的「检查后取值」在并发淘汰(popitem)下会抛 KeyError
+    并静默杀死工作线程(压测 160 万次操作可复现)。
+
+    Thread-safe thumbnail LRU cache. Accessed concurrently by several
+    _ThumbnailWorker threads plus the GUI thread, so every operation
+    holds the lock; the unlocked check-then-get raced with eviction and
+    raised KeyError, silently killing worker threads.
+    """
+
     def __init__(self, maxsize: int = 500):
         self._cache: OrderedDict = OrderedDict()
         self._maxsize = maxsize
+        self._lock = threading.Lock()
 
     def get(self, key) -> Optional[QImage]:
-        if key not in self._cache:
-            return None
-        self._cache.move_to_end(key)
-        return self._cache[key]
+        with self._lock:
+            if key not in self._cache:
+                return None
+            self._cache.move_to_end(key)
+            return self._cache[key]
 
     def put(self, key, value: QImage):
-        if key in self._cache:
-            self._cache.move_to_end(key)
-        self._cache[key] = value
-        if len(self._cache) > self._maxsize:
-            self._cache.popitem(last=False)
+        with self._lock:
+            if key in self._cache:
+                self._cache.move_to_end(key)
+            self._cache[key] = value
+            if len(self._cache) > self._maxsize:
+                self._cache.popitem(last=False)
 
     def clear(self):
-        self._cache.clear()
+        with self._lock:
+            self._cache.clear()
 
 
 _thumb_cache = _LRUCache(500)
 
 
-def _draw_static_overlays(image: QImage, photo: dict):
-    """在 QImage 上预先绘制静态叠加层（评分、对焦状态等）。"""
+def _draw_static_overlays(image, photo: dict):
+    """
+    绘制评分/精选/对焦角标。image 可为 QImage 或 QPixmap(paint device 均可)。
+    自缓存去角标化后由 ThumbnailCard._draw_overlays 每次重绘时调用,
+    不再烤进缓存图。
+
+    Draw the rating/picked/focus badges onto a QImage or QPixmap. Since
+    the cache stores clean thumbnails, this is invoked from the card's
+    dynamic overlay pass instead of being baked into cached images.
+    """
     painter = QPainter(image)
     painter.setRenderHint(QPainter.Antialiasing)
 
@@ -217,8 +233,22 @@ def _load_thumbnail_image(photo: dict, thumb_size: int) -> Optional[QImage]:
             candidates.append(op)
 
     for path in candidates:
-        image = QImage(path)
-        if image.isNull():
+        # 解码期降采样:QImageReader.setScaledSize 让 JPEG 直接按低分辨率
+        # 解码(libjpeg 1/2、1/4、1/8 DCT 缩放),避免全尺寸解码后再缩小。
+        # Decode-time downscaling: setScaledSize lets libjpeg decode at a
+        # reduced resolution instead of full-res decode + scale.
+        reader = QImageReader(path)
+        reader.setAutoTransform(True)   # 保持与 QImage(path) 一致的 EXIF 旋转行为
+        src = reader.size()             # 仅读头部,不触发解码 / header only
+        if src.isValid() and src.width() > 0 and src.height() > 0:
+            scale = max(thumb_size / src.width(), thumb_size / src.height())
+            if scale < 1.0:             # 只缩不放 / never upscale
+                reader.setScaledSize(QSize(
+                    max(thumb_size, round(src.width() * scale)),
+                    max(thumb_size, round(src.height() * scale)),
+                ))
+        image = reader.read()
+        if image is None or image.isNull():
             continue
         size = QSize(thumb_size, thumb_size)
         image = image.scaled(
@@ -256,10 +286,10 @@ class _ThumbnailWorker(QThread):
                 
             photo, thumb_size = task
             photo_key = _photo_key(photo)
-            ckey = _overlay_key(photo)
 
-            # 先查缓存(键含角标状态,过期角标自动失效)
-            cached = _thumb_cache.get(ckey)
+            # 缓存键=身份键;缓存存干净图,角标由卡片动态层现画
+            # Identity-keyed cache of clean thumbnails; badges drawn by the card.
+            cached = _thumb_cache.get(photo_key)
             if cached is not None:
                 self.manager.signals.thumbnail_ready.emit(photo_key, cached)
                 continue
@@ -277,8 +307,7 @@ class _ThumbnailWorker(QThread):
                     y = (pixmap.height() - thumb_size) // 2
                     pixmap = pixmap.copy(x, y, thumb_size, thumb_size)
 
-                _draw_static_overlays(pixmap, photo)
-                _thumb_cache.put(ckey, pixmap)
+                _thumb_cache.put(photo_key, pixmap)
                 self.manager.signals.thumbnail_ready.emit(photo_key, pixmap)
             else:
                 self.manager.signals.thumbnail_ready.emit(photo_key, QImage())
@@ -496,6 +525,13 @@ class ThumbnailCard(QFrame):
 
         # 始终从 raw_image 转换后的 pixmap 开始，避免反复叠加
         overlay = QPixmap(self._final_pixmap)
+
+        # 评分/精选/对焦角标:缓存图是干净的,每次重绘时现画
+        # (打星/重跑选鸟只需重绘,不再重解码磁盘图)
+        # Rating/picked/focus badges painted per redraw on the clean
+        # cached image — a star press is now a repaint, not a re-decode.
+        _draw_static_overlays(overlay, self.photo)
+
         painter = QPainter(overlay)
         painter.setRenderHint(QPainter.Antialiasing)
         
@@ -804,10 +840,11 @@ class ThumbnailGrid(QScrollArea):
 
     def load_photos(self, photos: list, keep_scroll: bool = False):
         """加载照片列表并重建网格。延迟 50ms 构建以等布局稳定，避免列数跳变。"""
-        # 取消上一个加载任务
-        if self._loader and self._loader.isRunning():
-            self._loader.cancel()
-            self._loader.wait(500)
+        # 取消上一个加载任务:断开信号防止旧结果进入新网格,不在主线程 wait
+        # (旧 wait(500) 会在切筛选时冻结 UI 最多半秒;worker 收到 cancel 后自然退出)
+        # Cancel the previous loader: disconnect so stale results can't reach
+        # the new grid; never block the GUI thread waiting for workers.
+        self._detach_loader()
         self._start_transition_overlay()
 
         # 记录高精度滚动位置（基于索引的浮点行偏移，可跨列数精确恢复）
@@ -837,8 +874,28 @@ class ThumbnailGrid(QScrollArea):
         self._batch_timer.stop()
         self._clear_transition_overlay()
         if self._loader:
-            self._loader.cleanup()
+            self._loader.cleanup()   # 退出时确定性等待线程结束 / deterministic join on exit
             self._loader = None
+
+    def _detach_loader(self):
+        """
+        非阻塞地废弃当前加载器:断开信号并 cancel,让工作线程自行退出。
+        供 load_photos/_build_batch 在重建网格前调用;与 cleanup 的区别是
+        不在主线程 join(阻塞交互),仅保证旧结果不再回流。
+
+        Retire the current loader without blocking: disconnect its signal
+        and cancel; worker threads drain on their own. Unlike cleanup this
+        never joins on the GUI thread — it only guarantees stale results
+        can no longer flow back.
+        """
+        if not self._loader:
+            return
+        try:
+            self._loader.signals.thumbnail_ready.disconnect(self._on_thumbnail_ready)
+        except (RuntimeError, TypeError):
+            pass
+        self._loader.cancel()
+        self._loader = None
 
     def _deferred_build(self):
         """延迟构建网格开始（布局稳定后执行）。"""
@@ -934,7 +991,7 @@ class ThumbnailGrid(QScrollArea):
             # 强制设置行最小高度
             self._grid.setRowMinimumHeight(row, self._thumb_size + 32)
 
-            cached = _thumb_cache.get(_overlay_key(photo))
+            cached = _thumb_cache.get(photo_key)
             if cached:
                 card.set_pixmap(cached)
 
@@ -952,9 +1009,7 @@ class ThumbnailGrid(QScrollArea):
             # 完成后移除 MinimumHeight 限制，让布局自由发挥
             self._container.setMinimumHeight(0)
 
-            if self._loader and self._loader.isRunning():
-                self._loader.cancel()
-                self._loader.wait(500)
+            self._detach_loader()
             self._loader = ThumbnailLoader(self._photos, self._thumb_size, self)
             self._loader.signals.thumbnail_ready.connect(self._on_thumbnail_ready)
             self._loader.start()
@@ -997,18 +1052,19 @@ class ThumbnailGrid(QScrollArea):
         self._emit_multi_selection()
 
     def refresh_photo(self, photo_or_key, new_rating: int):
-        """更新指定照片的评分角标（不重新加载缩略图）。"""
+        """
+        更新指定照片的评分角标。角标在动态层现画,这里只需重绘,
+        不做任何磁盘 IO/解码(旧实现会在主线程同步重解码一张图)。
+
+        Update the rating badge of one photo. Badges live in the dynamic
+        overlay layer, so this is a pure repaint — no disk IO or decoding
+        on the GUI thread (the old code re-decoded the image synchronously).
+        """
         photo_key = _photo_key(photo_or_key) if isinstance(photo_or_key, dict) else photo_or_key
         card = self._cards.get(photo_key)
         if card:
             card.photo["rating"] = new_rating
-            image = _load_thumbnail_image(card.photo, self._thumb_size)
-            if image and not image.isNull():
-                _draw_static_overlays(image, card.photo)
-                _thumb_cache.put(_overlay_key(card.photo), image)
-                card.set_pixmap(image)
-            else:
-                card._draw_overlays()
+            card._draw_overlays()
 
     def remove_photo(self, photo_or_key):
         """从网格中移除指定缩略图卡片（不重新加载全部数据）。"""
