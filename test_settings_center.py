@@ -572,14 +572,20 @@ def test_custom_skill_writes_custom_fields(monkeypatch):
         os.unlink(tmp_path)
 
 
-def test_algo_cards_switch_config_and_slider_visibility():
+def test_algo_legacy_toggle_switches_config_and_slider_visibility():
     """
-    验证评星算法卡片:v2 初始态配额行可见/旧滑块隐藏;点 v1 卡后配置落盘为
-    v1、旧滑块可见/配额行隐藏、卡片选中态切换;点 v2 卡恢复。
+    验证「高级选项」区的旧版评星算法复选框:v2 初始态配额行可见/旧滑块隐藏、
+    复选框未勾选;勾选后配置即时落盘为 v1、旧滑块可见/配额行隐藏;取消勾选恢复 v2。
 
-    Verify the rating-algorithm cards: under v2 the quota row is visible and the
-    legacy sliders are hidden; clicking the v1 card persists "v1", swaps slider
-    visibility and card selection; clicking v2 restores everything.
+    (评星算法从原来的两张大卡片降级为「高级」折叠区里的一个复选框——普通用户
+    不再面对"算法选择",只看到 技能档 + 3星配额 + 检测开关。)
+
+    Verify the legacy rating-algorithm checkbox in the "Advanced" disclosure:
+    under v2 the quota row is visible, the legacy sliders hidden, and the
+    checkbox unchecked; checking it persists "v1" immediately (legacy sliders
+    shown / quota hidden); unchecking restores v2. (The algorithm switch was
+    demoted from two large cards to one checkbox in the Advanced section so
+    ordinary users no longer face an "algorithm choice".)
     """
     import tempfile
     import advanced_config as _ac_mod
@@ -600,21 +606,20 @@ def test_algo_cards_switch_config_and_slider_visibility():
         w = SettingsCenter(get_i18n())
         w.show_page("culling")
 
-        # v2 初始:配额行可见,旧阈值滑块隐藏 / v2 initial state
+        # v2 初始:配额行可见,旧阈值滑块隐藏,复选框未勾选 / v2 initial state
         assert not w._cull_quota.isHidden()
         assert w._cull_sharp.isHidden() and w._cull_nima.isHidden()
-        assert w._algo_cards["v2"]._selected and not w._algo_cards["v1"]._selected
+        assert not w._algo_legacy_checkbox.isChecked()
 
-        # 点 v1 卡 → 落盘 + 可见性互换 / click v1 card
-        w._on_algo_selected("v1")
+        # 勾选旧版复选框 → 即时落盘 v1 + 可见性互换 / check legacy box
+        w._algo_legacy_checkbox.setChecked(True)
         assert cfg.rating_algorithm == "v1"
         assert AdvancedConfig(config_file=tmp_path).rating_algorithm == "v1"  # 已写盘
         assert w._cull_quota.isHidden()
         assert not w._cull_sharp.isHidden() and not w._cull_nima.isHidden()
-        assert w._algo_cards["v1"]._selected and not w._algo_cards["v2"]._selected
 
-        # 点 v2 卡 → 恢复 / click v2 card restores
-        w._on_algo_selected("v2")
+        # 取消勾选 → 恢复 v2 / uncheck restores v2
+        w._algo_legacy_checkbox.setChecked(False)
         assert cfg.rating_algorithm == "v2"
         assert not w._cull_quota.isHidden()
         assert w._cull_sharp.isHidden() and w._cull_nima.isHidden()
@@ -622,3 +627,175 @@ def test_algo_cards_switch_config_and_slider_visibility():
     finally:
         _ac_mod.get_advanced_config = _orig_get
         os.unlink(tmp_path)
+
+
+def test_immediate_save_no_done_needed(monkeypatch):
+    """
+    验证统一即时保存模型:精选/识鸟/输出页的控件改动无需点"完成"就已落盘。
+    直接用第二个 AdvancedConfig 实例读同一文件,证明写盘发生在控件回调而非
+    _on_done/_save_*。
+
+    Verify the unified immediate-save model: control changes on the culling /
+    birdid / output pages persist to disk without clicking "Done". A second
+    AdvancedConfig instance reads the same file to prove the write happened in
+    the control callback, not in _on_done/_save_*.
+    """
+    import tempfile
+    from advanced_config import AdvancedConfig
+    from ui.settings_center import SettingsCenter
+    from tools.i18n import get_i18n
+
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+        tmp_path = f.name
+    try:
+        cfg = AdvancedConfig(config_file=tmp_path)
+        import advanced_config as _ac_mod
+        monkeypatch.setattr(_ac_mod, "get_advanced_config", lambda: cfg)
+
+        w = SettingsCenter(get_i18n())
+
+        # 精选页:改 AI 置信度 → 立即从磁盘可读到新值(未点完成)
+        w.show_page("culling")
+        w._cull_ai.setValue(63)
+        assert AdvancedConfig(config_file=tmp_path).min_confidence == 0.63
+
+        # 识鸟页:改置信度 → 立即落盘
+        w.show_page("birdid")
+        w._bid_conf.setValue(88)
+        assert AdvancedConfig(config_file=tmp_path).birdid_confidence == 88
+
+        # 输出页:改删除确认 → 立即落盘
+        w.show_page("output")
+        w._delete_confirm.setChecked(False)
+        assert AdvancedConfig(config_file=tmp_path).delete_confirm is False
+
+        w.close()
+    finally:
+        os.unlink(tmp_path)
+
+
+def test_name_format_and_more_countries_present(monkeypatch):
+    """
+    验证补齐的两处识鸟页 UI:鸟名显示格式下拉存在且改动即时落盘;国家下拉含
+    「更多国家」入口(MORE 伪代码在 country_list 中)。
+
+    Verify the two restored Bird-ID UI pieces: the name-format dropdown exists
+    and persists immediately on change; the country dropdown includes the "more
+    countries" entry (the MORE pseudo-code is present in country_list).
+    """
+    import tempfile
+    from advanced_config import AdvancedConfig
+    from ui.settings_center import SettingsCenter
+    from tools.i18n import get_i18n
+
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+        tmp_path = f.name
+    try:
+        cfg = AdvancedConfig(config_file=tmp_path)
+        import advanced_config as _ac_mod
+        monkeypatch.setattr(_ac_mod, "get_advanced_config", lambda: cfg)
+
+        w = SettingsCenter(get_i18n())
+        w.show_page("birdid")
+
+        # 鸟名格式下拉:切到 clements 后即时落盘 / name-format persists immediately
+        idx = w._bid_name_format.findData("clements")
+        assert idx >= 0
+        w._bid_name_format.setCurrentIndex(idx)
+        assert AdvancedConfig(config_file=tmp_path).name_format == "clements"
+
+        # 「更多国家」入口存在 / "more countries" entry present
+        assert "MORE" in w._bid_country_list.values()
+
+        w.close()
+    finally:
+        os.unlink(tmp_path)
+
+
+def test_clear_cache_removes_cache_keeps_originals_and_clears_db(monkeypatch, tmp_path):
+    """
+    验证「清理所有预览缓存」按钮的三条不变量:
+      1. 只删除 .superpicky/cache 目录;
+      2. 原始照片文件不受影响;
+      3. report.db 里指向缓存的路径字段被清空（clear_cache_paths 生效）。
+
+    这是本批设置中心新功能里唯一的破坏性操作（shutil.rmtree），且 DB 清理
+    逻辑被 `except Exception: pass` 包裹——一旦 clear_cache_paths 方法名/签名
+    发生回归会静默失败、无人察觉。本测试同时守住「破坏范围」与「静默失败」两
+    个风险；插入后先断言字段非空，确保第 3 条断言检验的是清空动作本身生效，
+    而非字段本来就为 NULL。
+
+    Verify the three invariants of the "Clear all preview caches" button:
+      1. only the .superpicky/cache directory is removed;
+      2. original photo files are left untouched;
+      3. the report.db cache path columns are cleared (clear_cache_paths works).
+
+    This is the only destructive action (shutil.rmtree) among the batch's new
+    Settings Center features, and the DB cleanup is wrapped in
+    `except Exception: pass` — a regression in clear_cache_paths' name/signature
+    would fail silently. This test guards both the blast radius and the silent
+    failure. A pre-assert that the column is non-null before clearing ensures the
+    third assertion tests the clearing action itself, not a column already NULL.
+    """
+    import sqlite3
+
+    from ui.settings_center import SettingsCenter
+    from ui import custom_dialogs
+    from tools.report_db import ReportDB
+
+    directory = str(tmp_path)
+
+    # 原图:不该被删 / original photo: must survive
+    original = tmp_path / "photo.jpg"
+    original.write_bytes(b"JPEGDATA")
+
+    # 缓存目录 + 假缓存文件:该被删 / cache dir + fake cache file: must be removed
+    cache_dir = tmp_path / ".superpicky" / "cache"
+    cache_dir.mkdir(parents=True)
+    cache_file = cache_dir / "preview_001.jpg"
+    cache_file.write_bytes(b"CACHE")
+
+    # report.db:写一条带缓存路径字段的记录 / DB row carrying a cache path column
+    db = ReportDB(directory)
+    db.insert_photo({"filename": "photo.jpg", "temp_jpeg_path": str(cache_file)})
+    db.close()
+
+    db_path = tmp_path / ".superpicky" / "report.db"
+
+    def _read_temp_jpeg_path() -> object:
+        con = sqlite3.connect(str(db_path))
+        try:
+            row = con.execute(
+                "SELECT temp_jpeg_path FROM photos WHERE filename = 'photo.jpg'"
+            ).fetchone()
+        finally:
+            con.close()
+        return row[0] if row else None
+
+    # 前置:字段确实非空,否则第 3 条断言等于没测 / pre-assert: column non-null
+    assert _read_temp_jpeg_path() == str(cache_file)
+
+    # 弹窗:确认返回 Yes,信息/警告框静默(offscreen 下避免 exec 阻塞)
+    # dialogs: confirm returns Yes; info/warning silenced (avoid exec under offscreen)
+    monkeypatch.setattr(
+        custom_dialogs.StyledMessageBox, "question",
+        lambda *a, **k: custom_dialogs.StyledMessageBox.Yes,
+    )
+    monkeypatch.setattr(custom_dialogs.StyledMessageBox, "information", lambda *a, **k: None)
+    monkeypatch.setattr(custom_dialogs.StyledMessageBox, "warning", lambda *a, **k: None)
+
+    w = SettingsCenter(get_i18n())
+    # 设置中心从父窗口取 directory_path;测试用轻量 stub 提供该属性
+    # Settings Center reads directory_path off the parent window; stub it here.
+    monkeypatch.setattr(w, "parent", lambda: type("_Host", (), {"directory_path": directory})())
+
+    w._on_clear_cache_clicked()
+
+    # 1. 缓存目录被删 / cache dir removed
+    assert not cache_dir.exists()
+    # 2. 原图仍在 / original survives
+    assert original.exists() and original.read_bytes() == b"JPEGDATA"
+    # 3. DB 缓存路径字段被清空 / DB cache path column cleared
+    assert _read_temp_jpeg_path() is None
+
+    w.close()
