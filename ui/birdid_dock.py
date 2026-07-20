@@ -353,6 +353,218 @@ class ResultCard(QFrame):
         menu.exec(event.globalPos())
 
 
+# ============================================================
+#  国家选择器对话框(模块级共享函数)
+#  Country picker dialog (module-level shared function)
+# ============================================================
+
+def show_country_picker_dialog(
+    parent,
+    i18n,
+    regions_data: dict,
+    country_combo,
+    country_list: dict,
+    exclude_codes: set,
+    fallback_display: str,
+    more_item_text: Optional[str] = None,
+) -> None:
+    """
+    弹出「更多国家」对话框：展示完整国家/大洲列表(含搜索框)。
+    选中后将该国家插入 country_combo(若尚未在列表中)并设为当前选中项；
+    取消则将 country_combo 恢复为 fallback_display。
+
+    抽取为模块级函数供 BirdIDDockWidget 与 SettingsCenter 共用，避免识鸟
+    设置在两个入口能力不对等（此前设置中心的国家下拉只有 top10，仅识鸟
+    面板才有完整列表，非 top10 国家的用户在设置中心里选不到自己的国家）。
+
+    Show the "More countries" dialog with a full, searchable list of
+    countries/continents. On confirm, inserts the chosen country into
+    country_combo (if missing) and selects it; on cancel, restores
+    fallback_display.
+
+    Extracted to a module-level function shared by BirdIDDockWidget and
+    SettingsCenter, so both entry points offer the same country coverage
+    (Settings Center previously only listed the top10, leaving users
+    outside it unable to pick their own country there).
+
+    参数 / Parameters:
+        parent: 承载对话框的父窗口 / Parent widget for the dialog.
+        i18n: i18n 实例，需提供 .t(key) 与 .current_lang / i18n instance.
+        regions_data (dict): load_regions_data() 的返回值 / Regions data dict.
+        country_combo (QComboBox): 要更新的国家下拉 / Country combo to update.
+        country_list (dict): 显示名→代码 映射，选中新国家时原地追加一项 /
+                              display→code map; a new entry is appended in place.
+        exclude_codes (set): 已在下拉别处出现、无需在本列表重复的代码集合
+                              (通常是 top10 + "GLOBAL") / Codes already shown
+                              elsewhere (typically top10 + "GLOBAL"), excluded here.
+        fallback_display (str): 取消时恢复的显示名 / Display name to restore on cancel.
+        more_item_text (str | None): 下拉中「更多国家」项的显示文本，用于定位
+                              插入位置；缺省时新国家追加到下拉末尾 / Display text
+                              of the "more countries" combo entry, used to locate
+                              the insert position; appended at the end if omitted.
+
+    返回 / Returns: None
+    """
+    t = i18n.t
+    is_english = i18n.current_lang.startswith("en")
+
+    continent_codes = {"AF", "AS", "EU", "NA", "SA", "OC"}
+
+    continent_i18n = {
+        "AF": "birdid.continent_af",
+        "AS": "birdid.continent_as",
+        "EU": "birdid.continent_eu",
+        "NA": "birdid.continent_na",
+        "SA": "birdid.continent_sa",
+        "OC": "birdid.continent_oc",
+    }
+
+    other_country_i18n = {
+        "AR": "birdid.country_ar", "CA": "birdid.country_ca",
+        "CH": "birdid.country_ch", "CL": "birdid.country_cl",
+        "CO": "birdid.country_co", "CR": "birdid.country_cr",
+        "DE": "birdid.country_de", "EC": "birdid.country_ec",
+        "EG": "birdid.country_eg", "ES": "birdid.country_es",
+        "FI": "birdid.country_fi", "FR": "birdid.country_fr",
+        "GR": "birdid.country_gr", "IN": "birdid.country_in",
+        "IT": "birdid.country_it", "KE": "birdid.country_ke",
+        "KR": "birdid.country_kr", "LK": "birdid.country_lk",
+        "MA": "birdid.country_ma", "MG": "birdid.country_mg",
+        "MN": "birdid.country_mn", "MX": "birdid.country_mx",
+        "NL": "birdid.country_nl", "NO": "birdid.country_no",
+        "NP": "birdid.country_np", "NZ": "birdid.country_nz",
+        "PE": "birdid.country_pe", "PH": "birdid.country_ph",
+        "PL": "birdid.country_pl", "PT": "birdid.country_pt",
+        "RU": "birdid.country_ru", "SE": "birdid.country_se",
+        "SG": "birdid.country_sg", "TH": "birdid.country_th",
+        "TZ": "birdid.country_tz", "UA": "birdid.country_ua",
+        "VN": "birdid.country_vn", "ZA": "birdid.country_za",
+    }
+
+    dialog = QDialog(parent)
+    dialog.setWindowTitle(t("birdid.country_dialog_title"))
+    dialog.setMinimumSize(320, 450)
+    dialog.setStyleSheet(f"""
+        QDialog {{
+            background-color: {COLORS['bg_primary']};
+        }}
+        QLineEdit {{
+            background-color: {COLORS['bg_input']};
+            border: 1px solid {COLORS['border_subtle']};
+            border-radius: 6px;
+            padding: 8px;
+            color: {COLORS['text_primary']};
+            font-size: 13px;
+        }}
+        QLineEdit:focus {{
+            border-color: {COLORS['accent']};
+        }}
+        QListWidget {{
+            background-color: {COLORS['bg_elevated']};
+            border: 1px solid {COLORS['border_subtle']};
+            border-radius: 6px;
+            color: {COLORS['text_primary']};
+            font-size: 13px;
+        }}
+        QListWidget::item {{
+            padding: 8px;
+        }}
+        QListWidget::item:selected {{
+            background-color: {COLORS['accent']};
+            color: {COLORS['bg_void']};
+        }}
+    """)
+
+    dlg_layout = QVBoxLayout(dialog)
+    dlg_layout.setContentsMargins(12, 12, 12, 12)
+    dlg_layout.setSpacing(8)
+
+    # 搜索框 / Search input
+    search_input = QLineEdit()
+    search_input.setPlaceholderText(t("birdid.search_country_placeholder"))
+    dlg_layout.addWidget(search_input)
+
+    list_widget = QListWidget()
+
+    # 收集并排序除已排除代码外的国家/大洲
+    # Collect and sort countries/continents outside exclude_codes
+    other_regions: list = []
+    for region in regions_data.get("countries", []):
+        code = region.get("code", "")
+        if code in exclude_codes:
+            continue
+        name_en = region.get("name", code)
+        name_cn = region.get("name_cn", "")
+        if code in continent_codes:
+            i18n_key = continent_i18n.get(code)
+            if i18n_key:
+                base_name = t(i18n_key)
+            else:
+                base_name = name_cn if not is_english and name_cn else name_en
+            display = base_name   # 大洲图标改用 globe.svg(下方 setIcon),不再用 emoji
+        else:
+            i18n_key = other_country_i18n.get(code)
+            if i18n_key:
+                display = t(i18n_key)
+            else:
+                display = name_cn if not is_english and name_cn else name_en
+        other_regions.append((name_en.lower(), display, code, name_en))
+
+    other_regions.sort(key=lambda x: x[0])
+
+    for _, display, code, name_en in other_regions:
+        item = QListWidgetItem(display)
+        if code in continent_codes:   # 大洲项加 globe.svg 图标(替代旧 🌍 emoji)
+            item.setIcon(load_tinted_icon("globe.svg", ICON_IDLE, 16))
+        item.setData(USER_ROLE, code)
+        item.setData(USER_ROLE + 1, name_en)  # 用于搜索 / For search
+        list_widget.addItem(item)
+
+    dlg_layout.addWidget(list_widget)
+
+    def _filter(text: str) -> None:
+        text = text.lower()
+        for i in range(list_widget.count()):
+            it = list_widget.item(i)
+            visible = (
+                text in it.text().lower()
+                or text in (it.data(USER_ROLE + 1) or "").lower()
+            )
+            it.setHidden(not visible)
+
+    search_input.textChanged.connect(_filter)
+
+    button_box = QDialogButtonBox(
+        QDialogButtonBox.StandardButton.Ok
+        | QDialogButtonBox.StandardButton.Cancel
+    )
+    button_box.accepted.connect(dialog.accept)
+    button_box.rejected.connect(dialog.reject)
+    dlg_layout.addWidget(button_box)
+
+    if dialog.exec() == QDialog.DialogCode.Accepted:
+        selected = list_widget.currentItem()
+        if selected:
+            code_data = selected.data(USER_ROLE)
+            if not isinstance(code_data, str):
+                return
+            display = selected.text()
+            existing = [
+                country_combo.itemText(i)
+                for i in range(country_combo.count())
+            ]
+            if display not in existing:
+                idx = country_combo.findText(more_item_text) if more_item_text else -1
+                if idx >= 0:
+                    country_combo.insertItem(idx, display)
+                else:
+                    country_combo.addItem(display)
+                country_list[display] = code_data
+            country_combo.setCurrentText(display)
+    else:
+        # 取消 → 恢复上次保存的国家 / Cancel → restore the last saved country
+        country_combo.setCurrentText(fallback_display)
+
 
 class BirdIDDockWidget(QDockWidget):
     """
@@ -1190,175 +1402,28 @@ class BirdIDDockWidget(QDockWidget):
         """
         弹出「更多国家」对话框：展示完整国家列表（含搜索框）。
         选中后将该国家插入下拉菜单（若不在 top10 中）并设为当前选中项。
+        实现委托给模块级共享函数 show_country_picker_dialog（与设置中心复用同一份逻辑）。
+
         Show the "More countries" dialog with a full searchable country list.
         On confirm, inserts the chosen country into the combo (if not already
-        in top10) and sets it as the current selection.
+        in top10) and sets it as the current selection. Delegates to the
+        module-level show_country_picker_dialog (shared with Settings Center).
 
         参数 / Parameters: (none)
         返回 / Returns: None
         """
         t = self.i18n.t
-        is_english = self.i18n.current_lang.startswith("en")
-
-        top10_codes = {"AU", "BR", "CN", "GB", "HK", "ID", "JP", "MY", "TW", "US", "GLOBAL"}
-        continent_codes = {"AF", "AS", "EU", "NA", "SA", "OC"}
-
-        continent_i18n = {
-            "AF": "birdid.continent_af",
-            "AS": "birdid.continent_as",
-            "EU": "birdid.continent_eu",
-            "NA": "birdid.continent_na",
-            "SA": "birdid.continent_sa",
-            "OC": "birdid.continent_oc",
-        }
-
-        other_country_i18n = {
-            "AR": "birdid.country_ar", "CA": "birdid.country_ca",
-            "CH": "birdid.country_ch", "CL": "birdid.country_cl",
-            "CO": "birdid.country_co", "CR": "birdid.country_cr",
-            "DE": "birdid.country_de", "EC": "birdid.country_ec",
-            "EG": "birdid.country_eg", "ES": "birdid.country_es",
-            "FI": "birdid.country_fi", "FR": "birdid.country_fr",
-            "GR": "birdid.country_gr", "IN": "birdid.country_in",
-            "IT": "birdid.country_it", "KE": "birdid.country_ke",
-            "KR": "birdid.country_kr", "LK": "birdid.country_lk",
-            "MA": "birdid.country_ma", "MG": "birdid.country_mg",
-            "MN": "birdid.country_mn", "MX": "birdid.country_mx",
-            "NL": "birdid.country_nl", "NO": "birdid.country_no",
-            "NP": "birdid.country_np", "NZ": "birdid.country_nz",
-            "PE": "birdid.country_pe", "PH": "birdid.country_ph",
-            "PL": "birdid.country_pl", "PT": "birdid.country_pt",
-            "RU": "birdid.country_ru", "SE": "birdid.country_se",
-            "SG": "birdid.country_sg", "TH": "birdid.country_th",
-            "TZ": "birdid.country_tz", "UA": "birdid.country_ua",
-            "VN": "birdid.country_vn", "ZA": "birdid.country_za",
-        }
-
-        dialog = QDialog(self)
-        dialog.setWindowTitle(t("birdid.country_dialog_title"))
-        dialog.setMinimumSize(320, 450)
-        dialog.setStyleSheet(f"""
-            QDialog {{
-                background-color: {COLORS['bg_primary']};
-            }}
-            QLineEdit {{
-                background-color: {COLORS['bg_input']};
-                border: 1px solid {COLORS['border_subtle']};
-                border-radius: 6px;
-                padding: 8px;
-                color: {COLORS['text_primary']};
-                font-size: 13px;
-            }}
-            QLineEdit:focus {{
-                border-color: {COLORS['accent']};
-            }}
-            QListWidget {{
-                background-color: {COLORS['bg_elevated']};
-                border: 1px solid {COLORS['border_subtle']};
-                border-radius: 6px;
-                color: {COLORS['text_primary']};
-                font-size: 13px;
-            }}
-            QListWidget::item {{
-                padding: 8px;
-            }}
-            QListWidget::item:selected {{
-                background-color: {COLORS['accent']};
-                color: {COLORS['bg_void']};
-            }}
-        """)
-
-        dlg_layout = QVBoxLayout(dialog)
-        dlg_layout.setContentsMargins(12, 12, 12, 12)
-        dlg_layout.setSpacing(8)
-
-        # 搜索框 / Search input
-        search_input = QLineEdit()
-        search_input.setPlaceholderText(t("birdid.search_country_placeholder"))
-        dlg_layout.addWidget(search_input)
-
-        list_widget = QListWidget()
-
-        # 收集并排序除 Top10 外的国家/大洲
-        # Collect and sort countries/continents outside Top10
-        other_regions: list = []
-        for region in self.regions_data.get("countries", []):
-            code = region.get("code", "")
-            if code in top10_codes:
-                continue
-            name_en = region.get("name", code)
-            name_cn = region.get("name_cn", "")
-            if code in continent_codes:
-                i18n_key = continent_i18n.get(code)
-                if i18n_key:
-                    base_name = t(i18n_key)
-                else:
-                    base_name = name_cn if not is_english and name_cn else name_en
-                display = base_name   # 大洲图标改用 globe.svg(下方 setIcon),不再用 emoji
-            else:
-                i18n_key = other_country_i18n.get(code)
-                if i18n_key:
-                    display = t(i18n_key)
-                else:
-                    display = name_cn if not is_english and name_cn else name_en
-            other_regions.append((name_en.lower(), display, code, name_en))
-
-        other_regions.sort(key=lambda x: x[0])
-
-        for _, display, code, name_en in other_regions:
-            item = QListWidgetItem(display)
-            if code in continent_codes:   # 大洲项加 globe.svg 图标(替代旧 🌍 emoji)
-                item.setIcon(load_tinted_icon("globe.svg", ICON_IDLE, 16))
-            item.setData(USER_ROLE, code)
-            item.setData(USER_ROLE + 1, name_en)  # 用于搜索 / For search
-            list_widget.addItem(item)
-
-        dlg_layout.addWidget(list_widget)
-
-        def _filter(text: str) -> None:
-            text = text.lower()
-            for i in range(list_widget.count()):
-                it = list_widget.item(i)
-                visible = (
-                    text in it.text().lower()
-                    or text in (it.data(USER_ROLE + 1) or "").lower()
-                )
-                it.setHidden(not visible)
-
-        search_input.textChanged.connect(_filter)
-
-        button_box = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok
-            | QDialogButtonBox.StandardButton.Cancel
+        top10_and_global = {"AU", "BR", "CN", "GB", "HK", "ID", "JP", "MY", "TW", "US", "GLOBAL"}
+        show_country_picker_dialog(
+            parent=self,
+            i18n=self.i18n,
+            regions_data=self.regions_data,
+            country_combo=self.country_combo,
+            country_list=self.country_list,
+            exclude_codes=top10_and_global,
+            fallback_display=self.settings.get("selected_country", t("birdid.country_auto_gps")),
+            more_item_text=t("birdid.country_more"),
         )
-        button_box.accepted.connect(dialog.accept)
-        button_box.rejected.connect(dialog.reject)
-        dlg_layout.addWidget(button_box)
-
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            selected = list_widget.currentItem()
-            if selected:
-                code_data = selected.data(USER_ROLE)
-                if not isinstance(code_data, str):
-                    return
-                display = selected.text()
-                existing = [
-                    self.country_combo.itemText(i)
-                    for i in range(self.country_combo.count())
-                ]
-                if display not in existing:
-                    idx = self.country_combo.findText(t("birdid.country_more"))
-                    if idx >= 0:
-                        self.country_combo.insertItem(idx, display)
-                        self.country_list[display] = code_data
-                self.country_combo.setCurrentText(display)
-        else:
-            # 取消 → 恢复上次保存的国家
-            # Cancel → restore last saved country
-            saved = self.settings.get(
-                "selected_country", t("birdid.country_auto_gps")
-            )
-            self.country_combo.setCurrentText(saved)
 
     # ------------------------------------------------------------------
 
