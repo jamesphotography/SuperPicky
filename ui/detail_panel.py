@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QSizePolicy, QToolButton
 )
 from PySide6.QtCore import Qt, Signal, QSize, QThread, Slot, QTimer
-from PySide6.QtGui import QPixmap, QFont, QGuiApplication, QImage
+from PySide6.QtGui import QPixmap, QFont, QGuiApplication, QImage, QImageReader
 
 from ui.styles import COLORS, FONTS
 from ui.icon_utils import load_tinted_icon, stars_pixmap, tinted_png_path, glyph_png_path, ICON_IDLE, ICON_ACTIVE
@@ -24,9 +24,16 @@ from core.rarity_tier import gbif_score_to_tier, tier_name, tier_icon, tier_colo
 #  后台异步图片加载器
 # ============================================================
 
+# 详情面板预览的最大解码边长。面板固定 300 宽 / 200 高,解码全尺寸
+# temp JPEG(实测 4608×3072)纯属浪费;1024 已远超显示所需并留缩放余量。
+# Max decode edge for the detail preview. The panel is fixed at 300×200,
+# so decoding the full temp JPEG (4608×3072 in practice) is wasted work.
+_DETAIL_MAX_EDGE = 1024
+
+
 class _ImageLoader(QThread):
-    """后台线程加载 QPixmap，避免主线程阻塞。"""
-    ready = Signal(object)   # QPixmap
+    """后台线程加载 QImage(解码期降采样到 _DETAIL_MAX_EDGE),避免主线程阻塞。"""
+    ready = Signal(object)   # QImage
 
     def __init__(self, path: str, parent=None):
         super().__init__(parent)
@@ -40,7 +47,21 @@ class _ImageLoader(QThread):
         if self._cancelled:
             return
         if self._path and os.path.exists(self._path):
-            img = QImage(self._path)
+            # QImageReader.setScaledSize: JPEG 走 libjpeg DCT 降采样解码,
+            # 14MP 预览图不再全尺寸解码(详情面板只有 300×200 显示区)。
+            # Decode-time downscaling via libjpeg DCT scaling.
+            reader = QImageReader(self._path)
+            reader.setAutoTransform(True)
+            src = reader.size()
+            if src.isValid() and max(src.width(), src.height()) > _DETAIL_MAX_EDGE:
+                scale = _DETAIL_MAX_EDGE / max(src.width(), src.height())
+                reader.setScaledSize(QSize(
+                    max(1, round(src.width() * scale)),
+                    max(1, round(src.height() * scale)),
+                ))
+            img = reader.read()
+            if img is None:
+                img = QImage()
             if not self._cancelled:
                 self.ready.emit(img)
         else:
@@ -573,6 +594,24 @@ class DetailPanel(QWidget):
         self._refresh_image()
         self._refresh_metadata()
 
+    def set_current_photo(self, photo: dict):
+        """
+        仅同步当前照片与元数据,不触发大图解码。
+        供全屏导航期间调用:面板被 QStackedWidget 盖住不可见,解码大图纯属
+        浪费 IO/CPU;退出全屏时 _switch_view 会用同步好的照片刷新一次图片。
+
+        Sync the current photo and metadata WITHOUT loading the image.
+        Used during fullscreen navigation where the panel is hidden behind
+        the stacked widget — decoding for it wastes IO/CPU. On fullscreen
+        exit, _switch_view refreshes the image once from the synced photo.
+
+        参数 / Parameters:
+            photo (dict): 照片记录 / photo record.
+        """
+        self._current_photo = photo
+        self._copy_exif_btn.setEnabled(True)
+        self._refresh_metadata()
+
     def clear(self):
         """清空面板。"""
         self._current_photo = None
@@ -782,42 +821,59 @@ class DetailPanel(QWidget):
         self._refresh_image()
 
     def _refresh_image(self):
-        # 取消上一个未完成的加载
-        if self._loader and self._loader.isRunning():
+        # 取消上一个未完成的加载:断开信号防旧图晚到覆盖新图,不在主线程 wait
+        # (旧 wait(100) 让快速切图时每次白等最多 100ms;cancel 标志已保证
+        # 解码完成后不再 emit,断开信号双保险)。
+        # Cancel the previous load: disconnect so a late result can't
+        # overwrite the new photo; never block the GUI thread waiting.
+        if self._loader:
             self._loader.cancel()
-            self._loader.wait(100)
+            try:
+                self._loader.ready.disconnect(self._on_image_ready)
+            except (RuntimeError, TypeError):
+                pass
             self._loader = None
 
         if not self._current_photo:
             self._img_label.set_pixmap(QPixmap())
             return
 
-        # 立即显示 grid 缓存缩略图（零延迟反馈）
+        # 立即显示 grid 缓存缩略图(零延迟反馈)。缓存键是 _photo_key 身份键
+        # (干净图,不含角标),打星等状态变化后依然命中。
+        # Show the grid's cached thumbnail instantly. The cache is keyed by
+        # identity (_photo_key) and stores clean images, so it still hits
+        # right after a rating change.
         try:
-            from ui.thumbnail_grid import _thumb_cache
-            fn = self._current_photo.get("filename", "")
-            cached = _thumb_cache.get(fn)
+            from ui.thumbnail_grid import _thumb_cache, _photo_key
+            cached = _thumb_cache.get(_photo_key(self._current_photo))
             if cached and not cached.isNull():
-                self._img_label.set_pixmap(cached)
+                self._img_label.set_pixmap(QPixmap.fromImage(cached))
         except Exception:
             pass
 
         # 解析目标路径
         path = self._resolve_image_path()
 
-        # 后台异步加载全图
+        # 后台异步加载大图(完成后自行销毁,避免 QThread 对象随导航累积)
+        # Async load; the loader deletes itself when done so QThread
+        # objects no longer accumulate with every navigation.
         if path:
             self._loader = _ImageLoader(path, self)
             self._loader.ready.connect(self._on_image_ready)
+            self._loader.finished.connect(self._loader.deleteLater)
             self._loader.start()
         else:
             self._img_label.set_pixmap(QPixmap())
 
     def cleanup(self):
         if self._loader:
-            self._loader.cancel()
-            if self._loader.isRunning():
-                self._loader.wait(1000)
+            try:
+                self._loader.cancel()
+                if self._loader.isRunning():
+                    self._loader.wait(1000)
+            except RuntimeError:
+                # loader 已 deleteLater 销毁 / already destroyed via deleteLater
+                pass
             self._loader = None
 
     def _resolve_image_path(self) -> Optional[str]:

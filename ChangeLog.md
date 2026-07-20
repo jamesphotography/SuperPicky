@@ -1,3 +1,26 @@
+# SuperPicky 4.5.0 RC7
+
+**What's new since RC6:**
+
+- **Faster, lighter full-screen browsing.** The full-screen viewer's preview
+  pipeline was reworked. A resident parallel preload pool keeps held-arrow-key
+  navigation on cache (0/25 → 25/25 reads), and high-resolution caching is now
+  capped at the 3200px long edge and back-filled on a 250ms dwell — cutting
+  resident memory by roughly 2.4 GB on large libraries. Also removed ~1050
+  lines of dead results-browser code.
+- **Settings Center additions.**
+  - **Legacy V1 rating (opt-in).** A new "Advanced" section exposes the old
+    absolute-threshold star rating (V1) for anyone who prefers it over the
+    batch-relative V2 engine; the V2-only sliders hide when it is on.
+  - **Bird-name display format.** Choose how species names are shown.
+  - **Delete-confirmation toggle.** Turn the "confirm before deleting a photo"
+    dialog on or off.
+  - **Clear all preview caches.** A one-click button removes the current
+    directory's AI preview/crop cache (`.superpicky/cache`) and the now-dangling
+    cache paths in `report.db`, without touching your original photos.
+
+---
+
 # SuperPicky 4.5.0 RC6
 
 **What's new since RC5** (the sections below are the full cumulative 4.5.0

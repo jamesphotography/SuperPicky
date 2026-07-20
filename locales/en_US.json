@@ -598,6 +598,8 @@
     "culling_burst_fps_label": "Burst Speed (fps)",
     "culling_burst_folders_label": "Group bursts into subfolders",
     "culling_rescue_label": "Rescue scan for missed birds (slower, fewer misses)",
+    "culling_advanced_toggle": "Advanced",
+    "culling_algo_legacy_label": "Use legacy fixed-threshold rating (V1)",
     "birdid_section_auto": "Auto Bird ID",
     "birdid_auto_label": "Automatically identify bird species (2-star and above)",
     "birdid_keywords_label": "Write species to photo keywords (Lightroom)",
@@ -608,7 +610,8 @@
     "birdid_source_gbif": "Global / No region filter",
     "birdid_section_region": "Country / Region",
     "birdid_country_label": "Country",
-    "birdid_region_label": "Region"
+    "birdid_region_label": "Region",
+    "birdid_section_name_format": "Bird Name Display Format"
   },
   "advanced_settings": {
     "title": "Settings",
@@ -717,7 +720,16 @@
     "folder_layout_rating_first": "Rating → Species (3star_excellent/White-breasted_Robin/)",
     "folder_layout_species_first": "Species → Rating (White-breasted_Robin/3star_excellent/)",
     "folder_layout_flat": "Flat — rate in place, no file moves (Lightroom-friendly)",
-    "folder_layout_hint": "1-star / 0-star / -1-star photos always go into the \"Other Birds\" folder (not split by species) so the rejected pile stays consolidated. Only affects new runs; existing directory structures are untouched."
+    "folder_layout_hint": "1-star / 0-star / -1-star photos always go into the \"Other Birds\" folder (not split by species) so the rejected pile stays consolidated. Only affects new runs; existing directory structures are untouched.",
+    "delete_confirm_label": "Show a confirmation dialog before deleting photos",
+    "delete_confirm_hint": "When off, deleting in the browser skips the prompt — turn off with care",
+    "clear_cache_button": "Clear All Preview Caches",
+    "clear_cache_hint": "Removes the current directory's AI preview/crop cache (.superpicky/cache); original photos are untouched, but thumbnails will need to regenerate next time you browse",
+    "clear_cache_confirm_title": "Clear Preview Caches",
+    "clear_cache_confirm_msg": "Clear all preview caches for \"{directory}\"? This cannot be undone and does not affect the original photos.",
+    "clear_cache_no_dir": "Open a processed directory in the main window first",
+    "clear_cache_none": "This directory has no cache to clear",
+    "clear_cache_done": "Preview cache cleared"
   },
   "normalization_modes": {
     "log_compression": "Log Compression(V3.1)",

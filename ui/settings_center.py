@@ -2,12 +2,17 @@
 """
 统一设置中心:左侧分类导航 + 右侧内容页。
 
-取代旧高级设置/技能等级/关于弹窗入口,后续 Task 3-6 用真实页替换占位页。
+取代旧高级设置/技能等级/关于弹窗入口,统管精选/识鸟/输出/外部应用/关于五页。
+所有控件走「统一即时保存」模型:每个控件的 changed 信号即时写回 advanced_config,
+关闭对话框(完成/ESC/关闭按钮)经 done() 再做一次幂等兜底 flush。
 
 Unified Settings Center: left-side category nav + right-side content pages.
 
-Replaces the old advanced settings / skill level / about dialog entry points;
-Tasks 3-6 will replace the placeholder pages with real content.
+Replaces the old advanced settings / skill level / about dialog entry points,
+covering five pages (culling / bird-ID / output / external apps / about). Every
+control uses the unified immediate-save model: each control's changed signal
+persists to advanced_config right away, and closing the dialog (Done / ESC /
+close button) runs one idempotent safety-net flush via done().
 """
 from __future__ import annotations
 
@@ -16,7 +21,7 @@ import subprocess
 import sys
 from typing import Any, cast
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QStandardItem
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -114,85 +119,6 @@ _PAGE_TITLE_KEY: dict[str, str] = {
 }
 
 
-# ── 评星算法卡片 / Rating-algorithm card ─────────────────────────────────────
-
-
-class _AlgoCard(QFrame):
-    """
-    评星算法选择卡片（标题+描述+选中态），视觉样式与 SkillLevelCard 一致。
-    内容为任意标题/描述文本，不绑定 SKILL_PRESETS（故不复用 SkillLevelCard）。
-
-    Rating-algorithm selector card (title + description + selected state),
-    visually consistent with SkillLevelCard but content-agnostic (hence a
-    dedicated class instead of reusing the preset-bound SkillLevelCard).
-    """
-
-    clicked = Signal(str)  # 发射算法 key("v1"/"v2") / emits the algorithm key
-
-    def __init__(self, algo_key: str, title: str, desc: str,
-                 parent: QWidget | None = None) -> None:
-        """
-        参数 / Parameters:
-            algo_key (str): 算法 key，"v1" 或 "v2" / algorithm key.
-            title (str): 卡片标题 / card title.
-            desc (str): 卡片描述（自动换行）/ card description (word-wrapped).
-        """
-        super().__init__(parent)
-        self.algo_key = algo_key
-        self._selected = False
-        self.setCursor(Qt.PointingHandCursor)
-        self.setFixedHeight(100)
-        self.setMinimumWidth(200)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(4)
-        layout.setAlignment(Qt.AlignCenter)
-
-        name_label = QLabel(title)
-        name_label.setAlignment(Qt.AlignCenter)
-        name_label.setStyleSheet(
-            f"color:{COLORS['text_primary']};font-size:14px;font-weight:600;"
-            "background:transparent;border:none;"
-        )
-        layout.addWidget(name_label)
-
-        desc_label = QLabel(desc)
-        desc_label.setAlignment(Qt.AlignCenter)
-        desc_label.setWordWrap(True)
-        desc_label.setStyleSheet(
-            f"color:{COLORS['text_tertiary']};font-size:11px;"
-            "background:transparent;border:none;"
-        )
-        layout.addWidget(desc_label)
-
-        self._update_style()
-
-    def set_selected(self, selected: bool) -> None:
-        """设置选中态并刷新样式 / Set selection state and refresh style."""
-        self._selected = selected
-        self._update_style()
-
-    def _update_style(self) -> None:
-        """按选中态应用边框/底色（与 SkillLevelCard 同款）。/ Apply style."""
-        if self._selected:
-            self.setStyleSheet(
-                f"QFrame {{background-color:{COLORS['accent']}20;"
-                f"border:2px solid {COLORS['accent']};border-radius:8px;}}"
-            )
-        else:
-            self.setStyleSheet(
-                f"QFrame {{background-color:{COLORS['bg_elevated']};"
-                f"border:2px solid {COLORS['border']};border-radius:8px;}}"
-                f"QFrame:hover {{border-color:{COLORS['accent']};}}"
-            )
-
-    def mousePressEvent(self, event) -> None:
-        """点击发射 clicked(algo_key) / Emit clicked(algo_key) on press."""
-        self.clicked.emit(self.algo_key)
-        super().mousePressEvent(event)
-
-
 # ── 主对话框 / Main Dialog ────────────────────────────────────────────────────
 
 
@@ -201,13 +127,12 @@ class SettingsCenter(QDialog):
     统一设置中心对话框。
 
     左侧 QListWidget 导航,右侧 QStackedWidget 内容区。
-    各分页由 _build_page(key) 分发构建; Task 3-6 仅需替换对应分支。
+    各分页由 _build_page(key) 分发构建。
 
     Unified settings center dialog.
 
     Left: QListWidget navigation. Right: QStackedWidget content area.
-    Each page is dispatched via _build_page(key); Tasks 3-6 only need
-    to replace the relevant branch.
+    Each page is dispatched via _build_page(key).
 
     参数 / Parameters:
         i18n: i18n 实例,提供 .t(key) 方法 / i18n instance with .t(key) method.
@@ -280,15 +205,18 @@ class SettingsCenter(QDialog):
             + checkbox_indicator_qss(16, COLORS['text_muted'], COLORS['accent'])
         )
 
+    def _divider(self) -> QFrame:
+        """1px 分隔线,供各设置页在小节之间使用。/ 1px divider between sections."""
+        line = QFrame()
+        line.setFixedHeight(1)
+        line.setStyleSheet(f"background-color:{COLORS['border_subtle']};")
+        return line
+
     def _build_page(self, key: str) -> QWidget:
         """
         根据 key 构建对应内容页。
 
-        Task 3-6 在此添加各自真实页的分支;其余保持占位。
-
         Build the content page for the given key.
-
-        Tasks 3-6 add their real page branches here; others remain as placeholders.
 
         参数 / Parameters:
             key (str): 页面标识符,取自 PAGE_ORDER / Page identifier from PAGE_ORDER.
@@ -314,8 +242,9 @@ class SettingsCenter(QDialog):
         """
         构建精选(Culling)设置页。
 
-        包含:技能等级单选卡片行(含"自定义")、AI 置信度/锐度/美学三个阈值滑块、
-        飞鸟检测/连拍检测开关、连拍速度 QSpinBox。
+        包含:技能等级单选卡片行(含"自定义")、3星配额/锐度/美学阈值滑块、
+        飞鸟检测/连拍检测(含缩进的连拍速度)/无鸟补救扫描开关，以及底部折叠的
+        「高级选项」(AI 置信度滑块 + 旧版 V1 评星算法开关)。
 
         技能等级 ↔ 阈值协同逻辑:
           - 选技能等级预设 → `_on_skill_preset_selected` 置 `_suppress=True`、
@@ -323,17 +252,28 @@ class SettingsCenter(QDialog):
           - 手动拖动任一阈值 → `_on_cull_threshold_changed` 检查 `_suppress`，
             若未抑制则将 `_current_skill_key` 切为 "custom" 并刷新卡片选中态。
 
+        统一即时保存(Task: unify save model):每个控件的 changed 信号都直接
+        持久化对应字段，不再依赖"完成"按钮做统一保存；ESC/关窗与点"完成"
+        效果一致(见 SettingsCenter.done() 的兜底 flush)。`_save_culling()`
+        仍保留为一次性批量落盘的辅助方法(供测试与偶发的兜底调用)。
+
         Build the Culling settings page.
 
-        Contains: a row of skill-level cards (incl. "custom"), three threshold sliders
-        for AI confidence / sharpness / aesthetics, flight-detection and burst-detection
-        check-boxes, and a burst-fps QSpinBox.
+        Contains: a row of skill-level cards (incl. "custom"), quota/sharpness/
+        aesthetics threshold sliders, flight/burst (with an indented burst-fps
+        row)/rescue-scan toggles, and a bottom "Advanced" disclosure holding the
+        AI-confidence slider and the legacy V1 rating-algorithm toggle.
 
         Coordination logic:
           - Selecting a skill preset → _on_skill_preset_selected sets _suppress=True,
             fills sliders, then False — prevents re-entrant loop.
           - Manually adjusting any threshold → _on_cull_threshold_changed checks _suppress;
             if not suppressed, sets _current_skill_key="custom" and refreshes card state.
+
+        Every control's changed signal persists its field immediately; the
+        "Done" button and ESC/close are now equivalent (see SettingsCenter.done()'s
+        safety-net flush). _save_culling() stays as a one-shot bulk-flush helper
+        (used by tests and as a defensive fallback).
 
         返回 / Returns:
             QWidget: 精选设置页 / Culling settings page widget.
@@ -395,34 +335,15 @@ class SettingsCenter(QDialog):
         # 刷新初始选中态 / Refresh initial selection
         self._select_skill_radio(self._current_skill_key)
 
-        # ── 评星算法区 / Rating-algorithm section ────────────────────────────
-        # V4.6(rating-v2/UI): 暴露 rating_algorithm 为两张选择卡,默认 v2;
-        # 点卡即写盘、下次跑批生效,下方滑块可见性随算法实时切换。
-        # V4.6 (rating-v2/UI): expose rating_algorithm as two selector cards
-        # (default v2). Clicking persists immediately (takes effect next run)
-        # and swaps the slider rows below in real time.
+        # V4.6(rating-v2): rating_algorithm 默认 v2，决定下方阈值区显示配额还是
+        # 锐度/美学两个旧滑块；算法本身的切换入口挪到页面底部「高级选项」区
+        # (见下)，普通用户只看到 技能档 + 3星配额 + 检测开关。
+        # V4.6 (rating-v2): rating_algorithm defaults to v2 and decides whether
+        # the threshold section below shows the quota slider or the legacy
+        # sharpness/aesthetics sliders; the algorithm switch itself moved to
+        # the bottom "Advanced" disclosure (see below) so the primary view is
+        # just skill level + 3-star quota + detection toggles.
         self._rating_v2 = cfg.rating_algorithm == "v2"
-        algo_title = QLabel(self.i18n.t("settings.culling_algo_section"))
-        algo_title.setStyleSheet(
-            f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
-        )
-        lay.addWidget(algo_title)
-
-        algo_row = QHBoxLayout()
-        algo_row.setSpacing(8)
-        self._algo_cards: dict[str, _AlgoCard] = {}
-        for algo_key in ("v2", "v1"):
-            card = _AlgoCard(
-                algo_key,
-                self.i18n.t(f"settings.culling_algo_{algo_key}_title"),
-                self.i18n.t(f"settings.culling_algo_{algo_key}_desc"),
-            )
-            card.clicked.connect(self._on_algo_selected)
-            self._algo_cards[algo_key] = card
-            algo_row.addWidget(card)
-        algo_row.addStretch(1)
-        lay.addLayout(algo_row)
-        self._algo_cards["v2" if self._rating_v2 else "v1"].set_selected(True)
 
         # ── 阈值区 / Threshold section ────────────────────────────────────────
         thresh_title = QLabel(self.i18n.t("settings.culling_threshold_section"))
@@ -430,27 +351,6 @@ class SettingsCenter(QDialog):
             f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
         )
         lay.addWidget(thresh_title)
-
-        # AI 置信度滑块 (30-70, 显示 ×100 整数; 对应 min_confidence 0.3..0.7)
-        # AI confidence slider (30-70 integer; maps to min_confidence 0.3..0.7)
-        ai_row = QHBoxLayout()
-        ai_label = QLabel(self.i18n.t("settings.culling_ai_label"))
-        ai_label.setStyleSheet(f"color:{COLORS['text_secondary']};font-size:12px;")
-        ai_label.setFixedWidth(160)
-        self._cull_ai = QSlider(Qt.Horizontal)
-        self._cull_ai.setRange(30, 70)
-        self._cull_ai.setValue(int(round(cfg.min_confidence * 100)))
-        self._cull_ai_value_label = QLabel(str(self._cull_ai.value()))
-        self._cull_ai_value_label.setFixedWidth(30)
-        self._cull_ai_value_label.setStyleSheet(f"color:{COLORS['text_tertiary']};font-size:11px;")
-        self._cull_ai.valueChanged.connect(
-            lambda v: self._cull_ai_value_label.setText(str(v))
-        )
-        self._cull_ai.valueChanged.connect(self._on_cull_threshold_changed)
-        ai_row.addWidget(ai_label)
-        ai_row.addWidget(self._cull_ai, 1)
-        ai_row.addWidget(self._cull_ai_value_label)
-        lay.addLayout(ai_row)
 
         # V4.6(rating-v2/T4): v2 用单一「3星配额」滑块取代锐度/美学两个阈值滑块
         # (星级=批内相对排序,阈值不再决定星级);v1 回滚开关下保留原两滑块。
@@ -482,8 +382,9 @@ class SettingsCenter(QDialog):
         lay.addLayout(quota_row)
         self._quota_row_widgets = (quota_label, self._cull_quota, self._cull_quota_value_label)
 
-        # 锐度滑块 (200-600, int; 对应 min_sharpness)
-        # Sharpness slider (200-600 integer; maps to min_sharpness)
+        # 锐度滑块 (100-600, int; 对应 min_sharpness，范围与 set_min_sharpness clamp 一致)
+        # Sharpness slider (100-600 integer; maps to min_sharpness, matches the
+        # set_min_sharpness clamp range)
         sharp_row = QHBoxLayout()
         sharp_label = QLabel(self.i18n.t("settings.culling_sharp_label"))
         sharp_label.setStyleSheet(f"color:{COLORS['text_secondary']};font-size:12px;")
@@ -506,8 +407,8 @@ class SettingsCenter(QDialog):
         lay.addLayout(sharp_row)
         self._sharp_row_widgets = (sharp_label, self._cull_sharp, self._cull_sharp_value_label)
 
-        # 美学(NIMA)滑块 (40-70, 值/10 = NIMA; 对应 min_nima 4.0..7.0)
-        # Aesthetics (NIMA) slider (40-70; value/10 = NIMA float; maps to min_nima 4.0..7.0)
+        # 美学(NIMA)滑块 (0-70, 值/10 = NIMA; 对应 min_nima 0.0..7.0)
+        # Aesthetics (NIMA) slider (0-70; value/10 = NIMA float; maps to min_nima 0.0..7.0)
         nima_row = QHBoxLayout()
         nima_label = QLabel(self.i18n.t("settings.culling_nima_label"))
         nima_label.setStyleSheet(f"color:{COLORS['text_secondary']};font-size:12px;")
@@ -544,42 +445,119 @@ class SettingsCenter(QDialog):
         self._cull_flight = QCheckBox(self.i18n.t("settings.culling_flight_label"))
         self._cull_flight.setChecked(cfg.flight_check)
         self._cull_flight.setStyleSheet(self._checkbox_qss())
+        self._cull_flight.stateChanged.connect(self._on_flight_check_changed)
         lay.addWidget(self._cull_flight)
 
         # 连拍检测 / Burst detection
         self._cull_burst = QCheckBox(self.i18n.t("settings.culling_burst_label"))
         self._cull_burst.setChecked(cfg.burst_check)
         self._cull_burst.setStyleSheet(self._checkbox_qss())
+        self._cull_burst.stateChanged.connect(self._on_burst_check_changed)
         lay.addWidget(self._cull_burst)
 
-        # 连拍子目录开关(Paul P1):关=连拍照片按星级/鸟种常规归档
-        # Burst-subfolder toggle (Paul P1): off = bursts filed normally.
-        self._cull_burst_folders = QCheckBox(self.i18n.t("settings.culling_burst_folders_label"))
-        self._cull_burst_folders.setChecked(cfg.burst_group_folders)
-        self._cull_burst_folders.setStyleSheet(self._checkbox_qss())
-        lay.addWidget(self._cull_burst_folders)
+        # 连拍速度(缩进,随连拍开关禁用/启用):关闭连拍检测时这个数字无意义,
+        # 置灰比"独立一行、开关关了也能编辑"更清楚地表达依赖关系。
+        # Burst speed (indented, enabled state follows the burst toggle): the
+        # value is meaningless while burst detection is off, so graying it out
+        # communicates the dependency more clearly than a same-level standalone row.
+        fps_row = QHBoxLayout()
+        fps_row.setContentsMargins(24, 0, 0, 0)
+        fps_label = QLabel(self.i18n.t("settings.culling_burst_fps_label"))
+        fps_label.setStyleSheet(f"color:{COLORS['text_secondary']};font-size:12px;")
+        fps_label.setFixedWidth(136)
+        self._cull_burst_fps = QSpinBox()
+        self._cull_burst_fps.setRange(4, 20)
+        self._cull_burst_fps.setValue(cfg.burst_fps)
+        self._cull_burst_fps.valueChanged.connect(self._on_burst_fps_changed)
+        fps_row.addWidget(fps_label)
+        fps_row.addWidget(self._cull_burst_fps)
+        fps_row.addStretch(1)
+        lay.addLayout(fps_row)
+        self._burst_fps_row_widgets = (fps_label, self._cull_burst_fps)
+        self._set_burst_fps_enabled(cfg.burst_check)
 
         # 无鸟补救扫描 (V4.6): 判无鸟/低置信度时 1024px 重扫 + 识鸟守门
         # No-bird rescue scan (V4.6): 1024px rescan + BirdID gate on rejects
         self._cull_rescue = QCheckBox(self.i18n.t("settings.culling_rescue_label"))
         self._cull_rescue.setChecked(cfg.rescue_scan_enabled)
         self._cull_rescue.setStyleSheet(self._checkbox_qss())
+        self._cull_rescue.stateChanged.connect(self._on_rescue_changed)
         lay.addWidget(self._cull_rescue)
 
-        # 连拍速度 / Burst FPS
-        fps_row = QHBoxLayout()
-        fps_label = QLabel(self.i18n.t("settings.culling_burst_fps_label"))
-        fps_label.setStyleSheet(f"color:{COLORS['text_secondary']};font-size:12px;")
-        fps_label.setFixedWidth(160)
-        self._cull_burst_fps = QSpinBox()
-        self._cull_burst_fps.setRange(4, 20)
-        self._cull_burst_fps.setValue(cfg.burst_fps)
-        fps_row.addWidget(fps_label)
-        fps_row.addWidget(self._cull_burst_fps)
-        fps_row.addStretch(1)
-        lay.addLayout(fps_row)
-
         lay.addStretch(1)
+
+        # ── 高级选项(折叠,默认收起) / Advanced (collapsed by default) ────────
+        # AI 置信度 + 旧版评星算法开关都是"多数用户不需要天天碰"的设置,
+        # 折叠起来让主视觉只剩 技能档 + 3星配额 + 检测开关 三段。
+        # AI confidence and the legacy-algorithm toggle are settings most users
+        # never touch day to day; collapsing them keeps the primary view down
+        # to three sections: skill level, 3-star quota, detection toggles.
+        lay.addWidget(self._divider())
+
+        self._advanced_expanded = False
+        self._advanced_toggle_btn = QPushButton()
+        self._advanced_toggle_btn.setFlat(True)
+        self._advanced_toggle_btn.setCursor(Qt.PointingHandCursor)
+        self._advanced_toggle_btn.setStyleSheet(f"""
+            QPushButton {{
+                color: {COLORS['text_tertiary']};
+                font-size: 12px;
+                background: transparent;
+                border: none;
+                text-align: left;
+                padding: 4px 0px;
+            }}
+            QPushButton:hover {{ color: {COLORS['text_secondary']}; }}
+        """)
+        self._advanced_toggle_btn.clicked.connect(self._toggle_culling_advanced)
+        lay.addWidget(self._advanced_toggle_btn)
+
+        self._advanced_content = QWidget()
+        self._advanced_content.setVisible(False)
+        adv_lay = QVBoxLayout(self._advanced_content)
+        adv_lay.setContentsMargins(0, 8, 0, 0)
+        adv_lay.setSpacing(12)
+
+        # AI 置信度滑块 (30-70, 显示 ×100 整数; 对应 min_confidence 0.3..0.7)
+        # AI confidence slider (30-70 integer; maps to min_confidence 0.3..0.7)
+        ai_row = QHBoxLayout()
+        ai_label = QLabel(self.i18n.t("settings.culling_ai_label"))
+        ai_label.setStyleSheet(f"color:{COLORS['text_secondary']};font-size:12px;")
+        ai_label.setFixedWidth(160)
+        self._cull_ai = QSlider(Qt.Horizontal)
+        self._cull_ai.setRange(30, 70)
+        self._cull_ai.setValue(int(round(cfg.min_confidence * 100)))
+        self._cull_ai_value_label = QLabel(str(self._cull_ai.value()))
+        self._cull_ai_value_label.setFixedWidth(30)
+        self._cull_ai_value_label.setStyleSheet(f"color:{COLORS['text_tertiary']};font-size:11px;")
+        self._cull_ai.valueChanged.connect(
+            lambda v: self._cull_ai_value_label.setText(str(v))
+        )
+        self._cull_ai.valueChanged.connect(self._on_ai_confidence_changed)
+        ai_row.addWidget(ai_label)
+        ai_row.addWidget(self._cull_ai, 1)
+        ai_row.addWidget(self._cull_ai_value_label)
+        adv_lay.addLayout(ai_row)
+
+        # 旧版评星算法开关(取代原两张大卡片):默认不勾选=v2,勾选=v1回滚。
+        # Legacy rating-algorithm toggle (replaces the old two large cards):
+        # unchecked by default (v2); checked rolls back to v1.
+        self._algo_legacy_checkbox = QCheckBox(
+            self.i18n.t("settings.culling_algo_legacy_label")
+        )
+        self._algo_legacy_checkbox.setChecked(not self._rating_v2)
+        self._algo_legacy_checkbox.setStyleSheet(self._checkbox_qss())
+        self._algo_legacy_checkbox.stateChanged.connect(self._on_algo_legacy_toggled)
+        adv_lay.addWidget(self._algo_legacy_checkbox)
+
+        algo_hint = QLabel(self.i18n.t("settings.culling_algo_v1_desc"))
+        algo_hint.setWordWrap(True)
+        algo_hint.setStyleSheet(
+            f"color:{COLORS['text_muted']};font-size:11px;margin-left:24px;"
+        )
+        adv_lay.addWidget(algo_hint)
+
+        lay.addWidget(self._advanced_content)
 
         scroll.setWidget(inner)
         page_lay = QVBoxLayout(page)
@@ -594,19 +572,25 @@ class SettingsCenter(QDialog):
         构建识鸟(BirdID)设置页。
 
         包含：自动识鸟开关、识别置信度滑块(30-95)、数据源单选(eBird/GBIF)、
-        国家下拉菜单、地区下拉菜单(随国家变化动态填充)。
+        国家下拉菜单(含"更多国家"完整列表入口,与识鸟面板 dock 能力对等)、
+        地区下拉菜单(随国家变化动态填充)、鸟名显示格式下拉。
 
-        初值来自 advanced_config 的 birdid_* 字段；
-        通过 _save_birdid() 写回。
+        初值来自 advanced_config 的 birdid_* / name_format 字段；每个控件的
+        changed 信号即时持久化(见 _on_birdid_field_changed);_save_birdid()
+        仍保留为一次性批量落盘的辅助方法(供测试与偶发的兜底调用)。
 
         Build the Bird-ID settings page.
 
         Contains: auto-identify toggle, confidence slider (30-95), data-source
-        radio buttons (eBird / GBIF), country dropdown, and region dropdown
-        (dynamically populated on country change).
+        radio buttons (eBird / GBIF), country dropdown (with a "more countries"
+        entry offering the full list — matching the Bird-ID dock's coverage),
+        region dropdown (dynamically populated on country change), and a bird
+        name display-format dropdown.
 
-        Initial values come from advanced_config's birdid_* fields;
-        written back via _save_birdid().
+        Initial values come from advanced_config's birdid_* / name_format
+        fields; every control persists immediately on change (see
+        _on_birdid_field_changed); _save_birdid() remains as an idempotent
+        one-shot bulk-flush helper (used by tests and as a defensive fallback).
 
         返回 / Returns:
             QWidget: 识鸟设置页 / Bird-ID settings page widget.
@@ -650,12 +634,14 @@ class SettingsCenter(QDialog):
         self._bid_auto = QCheckBox(self.i18n.t("settings.birdid_auto_label"))
         self._bid_auto.setChecked(cfg.birdid_auto_identify)
         self._bid_auto.setStyleSheet(self._checkbox_qss())
+        self._bid_auto.stateChanged.connect(self._on_birdid_field_changed)
         lay.addWidget(self._bid_auto)
 
         # 写入关键字开关(Paul P1-1) / write-keywords toggle
         self._bid_keywords = QCheckBox(self.i18n.t("settings.birdid_keywords_label"))
         self._bid_keywords.setChecked(cfg.birdid_write_keywords)
         self._bid_keywords.setStyleSheet(self._checkbox_qss())
+        self._bid_keywords.stateChanged.connect(self._on_birdid_field_changed)
         lay.addWidget(self._bid_keywords)
 
         # ── 置信度滑块 / Confidence slider (range 30-95, mirrors set_birdid_confidence clamp) ──
@@ -686,6 +672,7 @@ class SettingsCenter(QDialog):
         self._bid_conf.valueChanged.connect(
             lambda v: self._bid_conf_label.setText(f"{v}%")
         )
+        self._bid_conf.valueChanged.connect(self._on_birdid_field_changed)
 
         conf_row.addWidget(conf_label)
         conf_row.addWidget(self._bid_conf, 1)
@@ -714,6 +701,7 @@ class SettingsCenter(QDialog):
             self._bid_ebird.setChecked(True)
         else:
             self._bid_gbif.setChecked(True)
+        self._bid_ebird.toggled.connect(self._on_birdid_field_changed)
 
         source_row.addWidget(self._bid_ebird)
         source_row.addWidget(self._bid_gbif)
@@ -763,6 +751,14 @@ class SettingsCenter(QDialog):
                     display_name = region_entry.get("name_cn") or region_entry.get("name", code)
             country_list[display_name] = code
 
+        # 「更多国家」入口(与识鸟面板 dock 能力对等):补上分隔符 + 完整列表入口,
+        # 选中后弹出 show_country_picker_dialog(含搜索框的完整国家/大洲列表)。
+        # "More countries" entry (parity with the Bird-ID dock): a separator
+        # plus a full-list entry that opens show_country_picker_dialog
+        # (a searchable full country/continent list) on selection.
+        country_list["─" * 15 + " "] = "SEP2"
+        country_list[self.i18n.t("birdid.country_more")] = "MORE"
+
         # 保存 country_list 供 _on_country_changed_birdid 使用
         # Store country_list for _on_country_changed_birdid to use
         self._bid_country_list = country_list
@@ -779,7 +775,7 @@ class SettingsCenter(QDialog):
         self._bid_country = QComboBox()
         for display_name, code in country_list.items():
             self._bid_country.addItem(display_name)
-            if code in ("SEP1",):
+            if code in ("SEP1", "SEP2"):
                 # 禁用分隔符项 / Disable separator item
                 idx = self._bid_country.count() - 1
                 model = cast(Any, self._bid_country.model())
@@ -802,6 +798,7 @@ class SettingsCenter(QDialog):
 
         self._bid_region = QComboBox()
         self._bid_region.addItem(self.i18n.t("birdid.region_entire_country"), None)
+        self._bid_region.currentIndexChanged.connect(self._on_birdid_field_changed)
 
         region_row.addWidget(region_label)
         region_row.addWidget(self._bid_region, 1)
@@ -814,6 +811,48 @@ class SettingsCenter(QDialog):
         self._bid_applying: bool = True
         self._restore_birdid_country(cfg)
         self._bid_applying = False
+
+        lay.addWidget(self._divider())
+
+        # ── 鸟名显示格式 / Bird name display format ──────────────────────────
+        # V4.x: name_format 此前只有 setter/属性,任何界面都改不了
+        # (advanced_settings_dialog.py 被合并进设置中心时漏掉了这一项 UI)。
+        # 复用其已有的 i18n 词条(advanced_settings.name_format*)补回入口。
+        # V4.x: name_format previously had a setter/property but no UI at all
+        # (dropped when advanced_settings_dialog.py was folded into this
+        # Settings Center). Restored here, reusing its existing i18n keys.
+        fmt_title = QLabel(self.i18n.t("advanced_settings.name_format"))
+        fmt_title.setStyleSheet(
+            f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
+        )
+        lay.addWidget(fmt_title)
+
+        fmt_row = QHBoxLayout()
+        fmt_label = QLabel(self.i18n.t("settings.birdid_section_name_format"))
+        fmt_label.setStyleSheet(f"color:{COLORS['text_secondary']};font-size:12px;")
+        fmt_label.setFixedWidth(160)
+        self._bid_name_format = QComboBox()
+        for value, key in (
+            ("default", "advanced_settings.name_format_default"),
+            ("avilist", "advanced_settings.name_format_avilist"),
+            ("clements", "advanced_settings.name_format_clements"),
+            ("birdlife", "advanced_settings.name_format_birdlife"),
+            ("scientific", "advanced_settings.name_format_scientific"),
+        ):
+            self._bid_name_format.addItem(self.i18n.t(key), value)
+        fmt_idx = self._bid_name_format.findData(cfg.name_format)
+        self._bid_name_format.setCurrentIndex(fmt_idx if fmt_idx >= 0 else 0)
+        self._bid_name_format.currentIndexChanged.connect(self._on_name_format_changed)
+        fmt_row.addWidget(fmt_label)
+        fmt_row.addWidget(self._bid_name_format, 1)
+        lay.addLayout(fmt_row)
+
+        fmt_hint = QLabel(self.i18n.t("advanced_settings.name_format_hint"))
+        fmt_hint.setWordWrap(True)
+        fmt_hint.setStyleSheet(
+            f"color:{COLORS['text_muted']};font-size:11px;margin-left:160px;"
+        )
+        lay.addWidget(fmt_hint)
 
         lay.addStretch(1)
 
@@ -930,12 +969,16 @@ class SettingsCenter(QDialog):
 
     def _on_bid_country_changed(self, country_display: str) -> None:
         """
-        国家下拉切换时动态填充地区下拉菜单。
+        国家下拉切换时动态填充地区下拉菜单；选中「更多国家」则弹出完整列表对话框；
+        普通切换完成后立即持久化(与设置中心统一即时保存模型一致)。
 
         仅在用户主动切换国家时触发（由 currentTextChanged 信号连接）；
         初始化/恢复路径请使用 _populate_bid_regions，以绕开 _bid_applying 守卫。
 
-        Dynamically populate the region dropdown when the country selection changes.
+        Dynamically populate the region dropdown when the country selection
+        changes; selecting "More countries" opens the full-list dialog.
+        Persists immediately after a normal change (consistent with the
+        Settings Center's unified immediate-save model).
 
         Triggered only by user interaction (connected to currentTextChanged signal).
         For the init/restore path use _populate_bid_regions directly to bypass the
@@ -948,21 +991,61 @@ class SettingsCenter(QDialog):
             return
 
         country_code = self._bid_country_list.get(country_display)
-        if country_code in ("SEP1",):
+        if country_code in ("SEP1", "SEP2"):
+            return
+
+        if country_code == "MORE":
+            from advanced_config import get_advanced_config
+            from ui.birdid_dock import show_country_picker_dialog
+
+            top10_and_global = {
+                "AU", "BR", "CN", "GB", "HK", "ID", "JP", "MY", "TW", "US", "GLOBAL",
+            }
+            # 取消时恢复用户上次保存的选项(而非当前下拉文本——此刻它已是
+            # "更多国家"本身),与 birdid_dock 的既有行为一致。
+            # On cancel, restore the last SAVED selection (not the combo's
+            # current text, which is already "More countries" itself at this
+            # point) — matching the existing birdid_dock behavior.
+            fallback = get_advanced_config().birdid_selected_country or self.i18n.t("birdid.country_auto_gps")
+            show_country_picker_dialog(
+                parent=self,
+                i18n=self.i18n,
+                regions_data=self._bid_regions_data,
+                country_combo=self._bid_country,
+                country_list=self._bid_country_list,
+                exclude_codes=top10_and_global,
+                fallback_display=fallback,
+                more_item_text=self.i18n.t("birdid.country_more"),
+            )
+            # show_country_picker_dialog 内部会重设 currentText,重新触发本回调
+            # (确认选择新国家) 或什么都不做(取消,已恢复为 fallback);两种情况
+            # 都无需在此继续处理。
+            # show_country_picker_dialog re-sets currentText internally, which
+            # re-enters this callback (on confirm) or is a no-op (on cancel,
+            # already restored to fallback); nothing further to do here.
             return
 
         self._populate_bid_regions(country_code)
+        self._on_birdid_field_changed()
 
     def _save_birdid(self) -> None:
         """
-        将识鸟页当前值写回 advanced_config 并保存。
+        将识鸟页当前值批量写回 advanced_config 并保存(幂等)。
+
+        由 _on_birdid_field_changed 在每次字段变化时调用，实现统一即时保存；
+        同时保留作为测试与偶发兜底调用的辅助方法。
 
         依次调用:
           set_birdid_auto_identify — 自动识鸟开关
           set_birdid_confidence   — 置信度 (30-95)
           set_birdid_region       — 数据源/国家代码/地区代码及其显示名称
 
-        Write the current Bird-ID page values back to advanced_config and save.
+        Bulk-flush the Bird-ID page's current values to advanced_config
+        (idempotent).
+
+        Called by _on_birdid_field_changed on every field change to implement
+        unified immediate saving; also kept as a helper for tests and
+        occasional defensive calls.
 
         Calls in order:
           set_birdid_auto_identify — auto-identify toggle
@@ -1018,6 +1101,27 @@ class SettingsCenter(QDialog):
             selected_region=region_display,
         )
 
+    def _on_birdid_field_changed(self, *_args) -> None:
+        """
+        识鸟页任一字段(自动识鸟/关键字/置信度/数据源/国家/地区)变化时的
+        统一即时保存回调；恢复初值期间(_bid_applying)不触发，避免重复写盘。
+
+        Unified immediate-save callback for any Bird-ID page field
+        (auto-identify / keywords / confidence / source / country / region);
+        skipped while restoring initial values (_bid_applying) to avoid
+        redundant writes.
+        """
+        if getattr(self, "_bid_applying", False):
+            return
+        self._save_birdid()
+
+    def _on_name_format_changed(self, _index: int) -> None:
+        """鸟名显示格式下拉变化 → 立即持久化。/ Persist immediately on change."""
+        from advanced_config import get_advanced_config
+        cfg = get_advanced_config()
+        cfg.set_name_format(self._bid_name_format.currentData())
+        cfg.save()
+
     # ── 精选页协同逻辑 / Culling page coordination logic ──────────────────────
 
     def _apply_algo_visibility(self) -> None:
@@ -1036,14 +1140,16 @@ class SettingsCenter(QDialog):
 
     def _on_algo_selected(self, algo_key: str) -> None:
         """
-        评星算法卡片点击回调：立即持久化 rating_algorithm（下次跑批生效），
-        刷新卡片选中态并切换滑块行可见性。
+        评星算法切换回调（由「高级选项」区的旧版 V1 复选框触发）：立即持久化
+        rating_algorithm（下次跑批生效），同步复选框勾选态并切换滑块行可见性。
 
-        Card click callback: persist rating_algorithm immediately (takes
-        effect on the next run), refresh card selection and slider rows.
+        Rating-algorithm switch callback (triggered by the legacy-V1 checkbox
+        in the "Advanced" section): persists rating_algorithm immediately
+        (takes effect on the next run), syncs the checkbox state, and toggles
+        slider-row visibility.
 
         参数 / Parameters:
-            algo_key (str): 被点击的算法 key（"v1"/"v2"）/ clicked key.
+            algo_key (str): 目标算法 key（"v1"/"v2"）/ target algorithm key.
         """
         from advanced_config import get_advanced_config
 
@@ -1051,9 +1157,21 @@ class SettingsCenter(QDialog):
         cfg.set_rating_algorithm(algo_key)
         cfg.save()
         self._rating_v2 = algo_key == "v2"
-        for key, card in self._algo_cards.items():
-            card.set_selected(key == algo_key)
+        checkbox = getattr(self, "_algo_legacy_checkbox", None)
+        if checkbox is not None:
+            checkbox.blockSignals(True)
+            checkbox.setChecked(algo_key == "v1")
+            checkbox.blockSignals(False)
         self._apply_algo_visibility()
+
+    def _on_algo_legacy_toggled(self, _state: int) -> None:
+        """
+        「使用旧版绝对阈值评星(V1)」复选框状态变化回调：委托给 _on_algo_selected。
+
+        Callback for the "use legacy fixed-threshold rating (V1)" checkbox;
+        delegates to _on_algo_selected.
+        """
+        self._on_algo_selected("v1" if self._algo_legacy_checkbox.isChecked() else "v2")
 
     def _select_skill_radio(self, level_key: str) -> None:
         """
@@ -1069,25 +1187,33 @@ class SettingsCenter(QDialog):
 
     def _on_skill_preset_selected(self, level_key: str) -> None:
         """
-        技能等级预设被选中时的回调。
+        技能等级预设被选中时的回调:立即持久化 skill_level,非"自定义"档还
+        联动填充并持久化阈值滑块(min_sharpness/min_nima/配额)。
 
         将 _suppress 置为 True,填充阈值滑块,再置 False,防止回环触发 _on_cull_threshold_changed。
-        "custom" 档只刷新卡片,不覆写滑块。
+        "custom" 档只刷新卡片,不覆写滑块(维持用户当前自定义值)。
 
-        Callback when a skill-level preset card is clicked.
+        Callback when a skill-level preset card is clicked: persists
+        skill_level immediately; non-"custom" levels also fill and persist
+        the threshold sliders (min_sharpness/min_nima/quota).
 
         Sets _suppress=True, fills threshold sliders from the preset, then False,
         preventing re-entrant calls to _on_cull_threshold_changed.
-        "custom" level only refreshes the card state without overwriting sliders.
+        "custom" level only refreshes the card state without overwriting sliders
+        (keeps the user's current custom values).
 
         参数 / Parameters:
             level_key (str): 被选中的档位 key / Selected skill level key.
         """
+        from advanced_config import get_advanced_config
         from core.skill_presets import get_skill_level_thresholds
 
         self._current_skill_key = level_key
         self._select_skill_radio(level_key)
+        cfg = get_advanced_config()
+        cfg.set_skill_level(level_key)
         if level_key == "custom":
+            cfg.save()
             return
 
         # get_skill_level_thresholds 返回 Tuple[int, float]: (sharpness, aesthetics)
@@ -1104,33 +1230,116 @@ class SettingsCenter(QDialog):
             self._cull_nima.setValue(int(round(th[1] * 10)))
         finally:
             self._suppress = False
+        cfg.set_min_sharpness(int(th[0]))
+        cfg.set_min_nima(float(th[1]))
+        cfg.save()
 
     def _on_cull_threshold_changed(self, *_) -> None:
         """
-        任一阈值滑块被用户拖动时的回调。
+        任一阈值滑块(AI 置信度除外)被用户拖动时的回调。
 
         若 _suppress 为 True(由技能等级预设填充触发)则直接返回,避免回环。
-        否则将当前技能等级切换为"自定义",并刷新卡片选中态。
+        否则将当前技能等级切换为"自定义"并立即持久化(min_sharpness/min_nima
+        及自定义档记忆字段 custom_sharpness/custom_aesthetics/custom_quota3)。
 
-        Callback fired when any threshold slider value changes.
+        Callback fired when any threshold slider (except AI confidence) changes.
 
-        If _suppress is True (triggered by preset fill), returns immediately to avoid
-        re-entry. Otherwise sets _current_skill_key="custom" and refreshes card state.
+        If _suppress is True (triggered by preset fill), returns immediately to
+        avoid re-entry. Otherwise switches skill level to "custom" and persists
+        immediately (min_sharpness/min_nima plus the custom-mode memory fields
+        custom_sharpness/custom_aesthetics/custom_quota3).
         """
         if getattr(self, "_suppress", False):
             return
         self._current_skill_key = "custom"
         self._select_skill_radio("custom")
 
+        from advanced_config import get_advanced_config
+
+        cfg = get_advanced_config()
+        cfg.set_skill_level("custom")
+        cfg.set_min_sharpness(self._cull_sharp.value())
+        cfg.set_min_nima(self._cull_nima.value() / 10.0)
+        cfg.set_custom_sharpness(self._cull_sharp.value())
+        cfg.set_custom_aesthetics(self._cull_nima.value() / 10.0)
+        if getattr(self, "_rating_v2", False) and self._cull_quota is not None:
+            cfg.set_custom_quota3(self._cull_quota.value())
+        cfg.save()
+
+    def _on_ai_confidence_changed(self, value: int) -> None:
+        """AI 置信度滑块变化 → 立即持久化(与技能档/自定义状态无关)。
+        AI confidence slider changed → persist immediately (independent of
+        skill level / custom state)."""
+        from advanced_config import get_advanced_config
+        get_advanced_config().set_min_confidence(value / 100.0)
+        get_advanced_config().save()
+
+    def _on_flight_check_changed(self, _state: int) -> None:
+        """飞鸟检测开关变化 → 立即持久化。/ Persist immediately on toggle."""
+        from advanced_config import get_advanced_config
+        cfg = get_advanced_config()
+        cfg.set_flight_check(self._cull_flight.isChecked())
+        cfg.save()
+
+    def _on_burst_check_changed(self, _state: int) -> None:
+        """
+        连拍检测开关变化 → 立即持久化,并同步连拍速度行的启用状态
+        (关闭连拍检测时该数值无意义,置灰更清楚地表达依赖关系)。
+
+        Burst-detection toggle changed → persist immediately and sync the
+        burst-speed row's enabled state (graying it out communicates the
+        dependency more clearly than a same-level standalone row).
+        """
+        from advanced_config import get_advanced_config
+        checked = self._cull_burst.isChecked()
+        cfg = get_advanced_config()
+        cfg.set_burst_check(checked)
+        cfg.save()
+        self._set_burst_fps_enabled(checked)
+
+    def _set_burst_fps_enabled(self, enabled: bool) -> None:
+        """按连拍检测开关状态启用/禁用连拍速度行控件。
+        Enable/disable the burst-speed row widgets per the burst toggle."""
+        for w in self._burst_fps_row_widgets:
+            w.setEnabled(enabled)
+
+    def _on_burst_fps_changed(self, value: int) -> None:
+        """连拍速度变化 → 立即持久化。/ Persist immediately on change."""
+        from advanced_config import get_advanced_config
+        cfg = get_advanced_config()
+        cfg.set_burst_fps(value)
+        cfg.save()
+
+    def _on_rescue_changed(self, _state: int) -> None:
+        """无鸟补救扫描开关变化 → 立即持久化。/ Persist immediately on toggle."""
+        from advanced_config import get_advanced_config
+        cfg = get_advanced_config()
+        cfg.set_rescue_scan_enabled(self._cull_rescue.isChecked())
+        cfg.save()
+
+    def _toggle_culling_advanced(self) -> None:
+        """展开/收起精选页底部「高级选项」区。/ Expand/collapse the Advanced disclosure."""
+        self._advanced_expanded = not self._advanced_expanded
+        self._advanced_content.setVisible(self._advanced_expanded)
+        svg = "arrow-down.svg" if self._advanced_expanded else "arrow-right.svg"
+        self._advanced_toggle_btn.setIcon(load_tinted_icon(svg, ICON_IDLE, 14))
+        self._advanced_toggle_btn.setIconSize(QSize(14, 14))
+        self._advanced_toggle_btn.setText(f"  {self.i18n.t('settings.culling_advanced_toggle')}")
+
     def _save_culling(self) -> None:
         """
-        将精选页当前值写回 advanced_config 并保存。
+        将精选页当前值批量写回 advanced_config 并保存。
 
-        此方法由 accept() 触发(连接到 done_btn.clicked)。
+        每个控件的 changed 信号已各自即时保存(见上方各 _on_*_changed 方法);
+        本方法作为一次性批量落盘的兜底/测试辅助保留，行为与逐控件即时保存
+        叠加时完全等价(幂等)。
 
-        Write the current culling-page values back to advanced_config and save.
+        Bulk-flush the culling page's current values to advanced_config.
 
-        Called on accept (connected to the Done button click).
+        Each control already persists on its own changed signal (see the
+        _on_*_changed methods above); this method remains as an idempotent
+        one-shot fallback / test helper — calling it after the per-control
+        saves is a no-op difference.
         """
         from advanced_config import get_advanced_config
 
@@ -1141,7 +1350,6 @@ class SettingsCenter(QDialog):
         cfg.set_burst_fps(self._cull_burst_fps.value())
         cfg.set_flight_check(self._cull_flight.isChecked())
         cfg.set_burst_check(self._cull_burst.isChecked())
-        cfg.set_burst_group_folders(self._cull_burst_folders.isChecked())
         cfg.set_rescue_scan_enabled(self._cull_rescue.isChecked())
         cfg.set_skill_level(self._current_skill_key)
         # 当处于自定义档时同步写回 custom_* 字段，避免 CLI 路径读到陈旧值。
@@ -1159,17 +1367,20 @@ class SettingsCenter(QDialog):
 
     def _build_output_page(self) -> QWidget:
         """
-        构建输出设置页，包含：分目录布局、元数据写入方式（XMP）、预览管理开关。
+        构建输出设置页，包含：分目录布局(含连拍子目录开关)、元数据写入方式
+        （XMP）、通用设置(预览管理/删除确认/清理缓存)。
 
-        初值来自 advanced_config 的 folder_layout / arw_write_mode /
+        初值来自 advanced_config 的 folder_layout / burst_group_folders /
         metadata_write_mode / keep_temp_files / completion_sound_enabled /
-        detail_metadata_for_rejected 字段；通过 _save_output() 写回。
+        detail_metadata_for_rejected / delete_confirm 字段；每个控件的
+        changed 信号即时持久化(与设置中心统一即时保存模型一致)。
 
         Build the Output settings page.
 
-        Contains: folder layout, XMP metadata write mode, and preview management
-        toggles. Initial values come from advanced_config; written back via
-        _save_output().
+        Contains: folder layout (with the burst-subfolder toggle), XMP
+        metadata write mode, and a General section (preview management /
+        delete confirmation / cache clearing). Initial values come from
+        advanced_config; every control persists immediately on change.
 
         返回 / Returns:
             QWidget: 输出设置页 / Output settings page widget.
@@ -1227,6 +1438,7 @@ class SettingsCenter(QDialog):
         # 恢复已保存的布局选项 / Restore saved folder layout
         fl_idx = self._folder_layout_combo.findData(cfg.folder_layout)
         self._folder_layout_combo.setCurrentIndex(fl_idx if fl_idx >= 0 else 0)
+        self._folder_layout_combo.currentIndexChanged.connect(self._on_folder_layout_changed)
 
         fl_row.addWidget(fl_label)
         fl_row.addWidget(self._folder_layout_combo)
@@ -1240,11 +1452,19 @@ class SettingsCenter(QDialog):
         )
         lay.addWidget(fl_hint)
 
+        # 连拍子目录开关(Paul P1，从精选页挪到这里——它是"目录怎么组织"的一部分，
+        # 不是检测行为):关=连拍照片按星级/鸟种常规归档。
+        # Burst-subfolder toggle (Paul P1; moved here from the culling page —
+        # it's about directory organization, not detection behavior): off =
+        # bursts filed normally by rating/species.
+        self._cull_burst_folders = QCheckBox(self.i18n.t("settings.culling_burst_folders_label"))
+        self._cull_burst_folders.setChecked(cfg.burst_group_folders)
+        self._cull_burst_folders.setStyleSheet(self._checkbox_qss())
+        self._cull_burst_folders.stateChanged.connect(self._on_burst_folders_changed)
+        lay.addWidget(self._cull_burst_folders)
+
         # ── 分隔线 / Divider ──────────────────────────────────────────────────
-        sep1 = QFrame()
-        sep1.setFixedHeight(1)
-        sep1.setStyleSheet(f"background-color:{COLORS['border_subtle']};")
-        lay.addWidget(sep1)
+        lay.addWidget(self._divider())
 
         # ── XMP 写入方式区标题 / XMP write mode section title ─────────────────
         xmp_title = QLabel(self.i18n.t("advanced_settings.xmp_write_mode"))
@@ -1303,24 +1523,30 @@ class SettingsCenter(QDialog):
             self._xmp_none.setChecked(True)
         else:
             self._xmp_embedded.setChecked(True)
+        # 三选一互斥组：任一按钮的 toggled(True) 都对应一次实际切换 /
+        # Any button's toggled(True) corresponds to one actual switch.
+        self._xmp_button_group.buttonToggled.connect(self._on_xmp_mode_changed)
 
         # ── 分隔线 / Divider ──────────────────────────────────────────────────
-        sep2 = QFrame()
-        sep2.setFixedHeight(1)
-        sep2.setStyleSheet(f"background-color:{COLORS['border_subtle']};")
-        lay.addWidget(sep2)
+        lay.addWidget(self._divider())
 
-        # ── 预览管理区 / Preview management section ───────────────────────────
-        prev_title = QLabel(self.i18n.t("advanced_settings.preview_management"))
-        prev_title.setStyleSheet(
+        # ── 通用区 / General section ───────────────────────────────────────────
+        # 原「预览管理」改名「通用」并入删除确认/清理缓存,避免把不相关设置
+        # 硬塞进"预览管理"这个过窄的标题下。
+        # Renamed from "Preview Management" to "General" and folded in delete
+        # confirmation / cache clearing, instead of cramming unrelated
+        # settings under an overly narrow heading.
+        general_title = QLabel(self.i18n.t("advanced_settings.section_general"))
+        general_title.setStyleSheet(
             f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
         )
-        lay.addWidget(prev_title)
+        lay.addWidget(general_title)
 
         # 保留预览图 / Keep preview files
         self._keep_temp_files = QCheckBox(self.i18n.t("advanced_settings.keep_preview"))
         self._keep_temp_files.setChecked(cfg.keep_temp_files)
         self._keep_temp_files.setStyleSheet(self._checkbox_qss())
+        self._keep_temp_files.stateChanged.connect(self._on_keep_temp_files_changed)
         lay.addWidget(self._keep_temp_files)
 
         keep_hint = QLabel(self.i18n.t("advanced_settings.keep_preview_hint"))
@@ -1335,6 +1561,7 @@ class SettingsCenter(QDialog):
         )
         self._completion_sound.setChecked(cfg.completion_sound_enabled)
         self._completion_sound.setStyleSheet(self._checkbox_qss())
+        self._completion_sound.stateChanged.connect(self._on_completion_sound_changed)
         lay.addWidget(self._completion_sound)
 
         sound_hint = QLabel(self.i18n.t("advanced_settings.completion_sound_hint"))
@@ -1349,6 +1576,7 @@ class SettingsCenter(QDialog):
         )
         self._detail_meta_for_rejected.setChecked(cfg.get_detail_metadata_for_rejected())
         self._detail_meta_for_rejected.setStyleSheet(self._checkbox_qss())
+        self._detail_meta_for_rejected.stateChanged.connect(self._on_detail_metadata_changed)
         lay.addWidget(self._detail_meta_for_rejected)
 
         detail_hint = QLabel(self.i18n.t("advanced_settings.detail_metadata_hint"))
@@ -1357,6 +1585,41 @@ class SettingsCenter(QDialog):
             f"color:{COLORS['text_muted']};font-size:11px;margin-left:24px;"
         )
         lay.addWidget(detail_hint)
+
+        # 删除确认弹窗(此前误勾"不再确认"后无处恢复,补上开关入口)
+        # Delete-confirmation dialog (previously had no way back once
+        # dismissed via "don't ask again"; this restores the toggle)
+        self._delete_confirm = QCheckBox(self.i18n.t("advanced_settings.delete_confirm_label"))
+        self._delete_confirm.setChecked(cfg.delete_confirm)
+        self._delete_confirm.setStyleSheet(self._checkbox_qss())
+        self._delete_confirm.stateChanged.connect(self._on_delete_confirm_changed)
+        lay.addWidget(self._delete_confirm)
+
+        delete_confirm_hint = QLabel(self.i18n.t("advanced_settings.delete_confirm_hint"))
+        delete_confirm_hint.setWordWrap(True)
+        delete_confirm_hint.setStyleSheet(
+            f"color:{COLORS['text_muted']};font-size:11px;margin-left:24px;"
+        )
+        lay.addWidget(delete_confirm_hint)
+
+        # 清理所有预览缓存(接入 parent().directory_path 当前目录)
+        # Clear all preview caches (targets the current directory via
+        # parent().directory_path)
+        clear_cache_row = QHBoxLayout()
+        clear_cache_btn = QPushButton(self.i18n.t("advanced_settings.clear_cache_button"))
+        clear_cache_btn.setObjectName("secondary")
+        clear_cache_btn.setFixedHeight(32)
+        clear_cache_btn.clicked.connect(self._on_clear_cache_clicked)
+        clear_cache_row.addWidget(clear_cache_btn)
+        clear_cache_row.addStretch(1)
+        lay.addLayout(clear_cache_row)
+
+        clear_cache_hint = QLabel(self.i18n.t("advanced_settings.clear_cache_hint"))
+        clear_cache_hint.setWordWrap(True)
+        clear_cache_hint.setStyleSheet(
+            f"color:{COLORS['text_muted']};font-size:11px;"
+        )
+        lay.addWidget(clear_cache_hint)
 
         lay.addStretch(1)
 
@@ -1368,23 +1631,33 @@ class SettingsCenter(QDialog):
 
     def _save_output(self) -> None:
         """
-        将输出页当前值写回 advanced_config 并保存。
+        将输出页当前值批量写回 advanced_config 并保存(幂等)。
+
+        每个控件的 changed 信号已各自即时保存(见下方各 _on_*_changed 方法);
+        本方法作为一次性批量落盘的兜底/测试辅助保留。
 
         依次调用:
           set_folder_layout          — 分目录布局
+          set_burst_group_folders    — 连拍归入独立子文件夹
           set_metadata_write_mode    — XMP 元数据写入方式
           set_keep_temp_files        — 保留预览图
           set_completion_sound_enabled — 完成提示音
           set_detail_metadata_for_rejected — 拒绝照片详情元数据
+          set_delete_confirm         — 删除确认弹窗
 
-        Write current output-page values back to advanced_config and save.
+        Bulk-flush the Output page's current values to advanced_config
+        (idempotent). Each control already persists on its own changed
+        signal (see the _on_*_changed methods below); this method remains
+        as a one-shot fallback / test helper.
 
         Calls in order:
           set_folder_layout          — folder layout
+          set_burst_group_folders    — group bursts into subfolders
           set_metadata_write_mode    — XMP metadata write mode
           set_keep_temp_files        — keep preview files
           set_completion_sound_enabled — completion sound
           set_detail_metadata_for_rejected — detail metadata for rejected
+          set_delete_confirm         — delete-confirmation dialog
         """
         from advanced_config import get_advanced_config
 
@@ -1392,18 +1665,146 @@ class SettingsCenter(QDialog):
 
         # 分目录布局 / Folder layout
         cfg.set_folder_layout(self._folder_layout_combo.currentData())
+        cfg.set_burst_group_folders(self._cull_burst_folders.isChecked())
 
         # XMP 写入方式 / XMP metadata write mode
         btn_id = self._xmp_button_group.checkedId()
         mode_map = {0: "embedded", 1: "sidecar", 2: "none"}
         cfg.set_metadata_write_mode(mode_map.get(btn_id, "embedded"))
 
-        # 预览管理 / Preview management
+        # 通用 / General
         cfg.set_keep_temp_files(self._keep_temp_files.isChecked())
         cfg.set_completion_sound_enabled(self._completion_sound.isChecked())
         cfg.set_detail_metadata_for_rejected(self._detail_meta_for_rejected.isChecked())
+        cfg.set_delete_confirm(self._delete_confirm.isChecked())
 
         cfg.save()
+
+    def _on_folder_layout_changed(self, _index: int) -> None:
+        """分目录布局变化 → 立即持久化。/ Persist immediately on change."""
+        from advanced_config import get_advanced_config
+        cfg = get_advanced_config()
+        cfg.set_folder_layout(self._folder_layout_combo.currentData())
+        cfg.save()
+
+    def _on_burst_folders_changed(self, _state: int) -> None:
+        """连拍子目录开关变化 → 立即持久化。/ Persist immediately on toggle."""
+        from advanced_config import get_advanced_config
+        cfg = get_advanced_config()
+        cfg.set_burst_group_folders(self._cull_burst_folders.isChecked())
+        cfg.save()
+
+    def _on_xmp_mode_changed(self, _button, checked: bool) -> None:
+        """
+        XMP 写入方式单选组变化 → 立即持久化。三选一互斥组每次切换会先后收到
+        旧按钮 toggled(False) 和新按钮 toggled(True)，只在 checked=True 时处理一次。
+
+        XMP write-mode radio group changed → persist immediately. A mutually
+        exclusive group fires toggled(False) on the old button then
+        toggled(True) on the new one; only act on the True firing.
+        """
+        if not checked:
+            return
+        from advanced_config import get_advanced_config
+        cfg = get_advanced_config()
+        btn_id = self._xmp_button_group.checkedId()
+        mode_map = {0: "embedded", 1: "sidecar", 2: "none"}
+        cfg.set_metadata_write_mode(mode_map.get(btn_id, "embedded"))
+        cfg.save()
+
+    def _on_keep_temp_files_changed(self, _state: int) -> None:
+        """保留预览图开关变化 → 立即持久化。/ Persist immediately on toggle."""
+        from advanced_config import get_advanced_config
+        cfg = get_advanced_config()
+        cfg.set_keep_temp_files(self._keep_temp_files.isChecked())
+        cfg.save()
+
+    def _on_completion_sound_changed(self, _state: int) -> None:
+        """完成提示音开关变化 → 立即持久化。/ Persist immediately on toggle."""
+        from advanced_config import get_advanced_config
+        cfg = get_advanced_config()
+        cfg.set_completion_sound_enabled(self._completion_sound.isChecked())
+        cfg.save()
+
+    def _on_detail_metadata_changed(self, _state: int) -> None:
+        """拒绝照片详情元数据开关变化 → 立即持久化。/ Persist immediately on toggle."""
+        from advanced_config import get_advanced_config
+        cfg = get_advanced_config()
+        cfg.set_detail_metadata_for_rejected(self._detail_meta_for_rejected.isChecked())
+        cfg.save()
+
+    def _on_delete_confirm_changed(self, _state: int) -> None:
+        """删除确认弹窗开关变化 → 立即持久化。/ Persist immediately on toggle."""
+        from advanced_config import get_advanced_config
+        cfg = get_advanced_config()
+        cfg.set_delete_confirm(self._delete_confirm.isChecked())
+        cfg.save()
+
+    def _on_clear_cache_clicked(self) -> None:
+        """
+        「清理所有预览缓存」按钮点击回调。
+
+        目标目录取自父窗口(主窗口)当前打开的 directory_path——设置中心本身
+        不持有目录概念。删除前二次确认(不可撤销的破坏性操作)；删除后同步
+        清空该目录 report.db 里指向已删缓存文件的路径字段，避免结果浏览器
+        读到死链接。原始照片不受影响，仅清 .superpicky/cache。
+
+        "Clear all preview caches" button callback.
+
+        The target directory comes from the parent (main) window's currently
+        open directory_path — Settings Center itself has no directory concept.
+        Confirms before deleting (an irreversible destructive action); after
+        deletion, also clears the report.db path columns that pointed at the
+        now-gone cache files, so the results browser doesn't read dangling
+        paths. Original photos are untouched — only .superpicky/cache is removed.
+        """
+        import shutil
+
+        from ui.custom_dialogs import StyledMessageBox
+
+        t = self.i18n.t
+        btn_title = t("advanced_settings.clear_cache_button")
+
+        directory = getattr(self.parent(), "directory_path", None)
+        if not directory or not os.path.isdir(directory):
+            StyledMessageBox.information(self, btn_title, t("advanced_settings.clear_cache_no_dir"))
+            return
+
+        cache_dir = os.path.join(directory, ".superpicky", "cache")
+        if not os.path.isdir(cache_dir):
+            StyledMessageBox.information(self, btn_title, t("advanced_settings.clear_cache_none"))
+            return
+
+        reply = StyledMessageBox.question(
+            self,
+            t("advanced_settings.clear_cache_confirm_title"),
+            t("advanced_settings.clear_cache_confirm_msg", directory=os.path.basename(directory)),
+        )
+        if reply != StyledMessageBox.Yes:
+            return
+
+        try:
+            shutil.rmtree(cache_dir)
+        except Exception as e:
+            StyledMessageBox.warning(self, btn_title, str(e))
+            return
+
+        # 清空数据库里指向已删除缓存文件的路径字段(与 photo_processor 里
+        # _cleanup_temp_files 收尾时的清理动作一致),避免结果浏览器读到死链接。
+        # Clear the DB's now-dangling cache path columns (mirrors the cleanup
+        # photo_processor._cleanup_temp_files does after a run) so the results
+        # browser doesn't read stale paths.
+        db_path = os.path.join(directory, ".superpicky", "report.db")
+        if os.path.exists(db_path):
+            try:
+                from tools.report_db import ReportDB
+                db = ReportDB(directory)
+                db.clear_cache_paths()
+                db.close()
+            except Exception:
+                pass
+
+        StyledMessageBox.information(self, btn_title, t("advanced_settings.clear_cache_done"))
 
     # ── 视频页 / Video page ───────────────────────────────────────────────────
 
@@ -1793,23 +2194,31 @@ class SettingsCenter(QDialog):
 
         self._apps_data.append({"name": name, "path": norm})
         self._refresh_apps_list()
+        self._save_apps()
 
     def _on_remove_app(self) -> None:
         """
-        删除列表中选中的应用条目。
+        删除列表中选中的应用条目，并立即持久化。
 
-        Remove the currently selected app entry from the list.
+        Remove the currently selected app entry from the list and persist
+        immediately.
         """
         row = self._apps_list.currentRow()
         if 0 <= row < len(self._apps_data):
             self._apps_data.pop(row)
             self._refresh_apps_list()
+            self._save_apps()
 
     def _save_apps(self) -> None:
         """
-        将外部应用列表写回 advanced_config 并保存。
+        将外部应用列表写回 advanced_config 并保存(幂等)。
 
-        Write the external apps list back to advanced_config and save.
+        由 _on_add_app/_on_remove_app 在列表变化时立即调用；同时保留作为
+        测试与偶发兜底调用的辅助方法。
+
+        Bulk-flush the external apps list to advanced_config (idempotent).
+        Called immediately by _on_add_app/_on_remove_app on list changes;
+        also kept as a helper for tests and occasional defensive calls.
         """
         from advanced_config import get_advanced_config
 
@@ -2023,28 +2432,49 @@ class SettingsCenter(QDialog):
 
     def _on_done(self) -> None:
         """
-        "完成"按钮点击回调:先保存各页面数据,再关闭对话框。
+        "完成"按钮点击回调:直接 accept()。
 
-        当前 Task 3 只保存精选页数据;后续 Task 4-6 在此追加各自的 _save_xxx 调用。
+        统一即时保存模型下,每个控件已在其 changed 信号里即时持久化(见各
+        _on_*_changed 方法),这里不再需要显式保存——兜底批量 flush 统一在
+        done() 里进行,accept()/reject()/ESC/关闭按钮都会等价地经过它。
 
-        "Done" button click callback: save page data then close the dialog.
+        "Done" button click callback: just accept().
 
-        Task 3 only saves culling-page data; Tasks 4-6 will append their own
-        _save_xxx calls here.
+        Under the unified immediate-save model, every control already
+        persists on its own changed signal (see the _on_*_changed methods);
+        no explicit save is needed here. The defensive bulk flush lives in
+        done(), which accept()/reject()/ESC/the close button all funnel
+        through equivalently.
         """
-        # 仅在精选页已构建时保存(即 _cull_ai 属性存在) / Save only if culling page was built
+        self.accept()
+
+    def done(self, r: int) -> None:
+        """
+        QDialog.done() 的统一入口——accept()/reject()/ESC/窗口关闭按钮最终
+        都会调用它。在此做一次兜底批量 flush，确保即便某个控件的即时保存
+        钩子遗漏，用户以任何方式关闭设置中心都不会丢失改动；这也是"ESC 与
+        点完成等价"的实现点：不再有专属于"完成"按钮的保存路径。
+
+        Unified entry point for QDialog.done() — accept()/reject()/ESC/the
+        window close button all funnel through it. Performs one defensive
+        bulk flush so that even if a control's immediate-save hook were
+        missed, closing Settings Center any way never loses a change. This
+        is also where "ESC behaves like Done" is implemented: there is no
+        save path exclusive to the Done button anymore.
+
+        参数 / Parameters:
+            r (int): QDialog 结果码(Accepted/Rejected)/ QDialog result code.
+        """
+        # 仅在对应页已构建时保存(以关键属性是否存在为判据)
+        # Save only if the corresponding page was built (gated on a key attribute)
         if hasattr(self, "_cull_ai"):
             self._save_culling()
-        # 仅在识鸟页已构建时保存(即 _bid_auto 属性存在) / Save only if bird-ID page was built
         if hasattr(self, "_bid_auto"):
             self._save_birdid()
-        # 仅在输出页已构建时保存(即 _folder_layout_combo 属性存在) / Save only if output page was built
         if hasattr(self, "_folder_layout_combo"):
             self._save_output()
-        # 仅在视频页已构建时保存(即 _video_auto_check 属性存在) / Save only if video page was built
         if hasattr(self, "_video_auto_check"):
             self._save_video()
-        # 仅在外部应用页已构建时保存(即 _apps_list 属性存在) / Save only if apps page was built
         if hasattr(self, "_apps_list"):
             self._save_apps()
-        self.accept()
+        super().done(r)

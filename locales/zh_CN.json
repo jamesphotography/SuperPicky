@@ -598,6 +598,8 @@
     "culling_burst_fps_label": "连拍速度 (张/秒)",
     "culling_burst_folders_label": "连拍归入独立子文件夹",
     "culling_rescue_label": "无鸟补救扫描（更慢但更少漏检）",
+    "culling_advanced_toggle": "高级选项",
+    "culling_algo_legacy_label": "使用旧版绝对阈值评星（V1）",
     "birdid_section_auto": "自动识鸟",
     "birdid_auto_label": "自动识别鸟种（2星及以上照片）",
     "birdid_keywords_label": "识别后写入照片关键字（Lightroom Keywords）",
@@ -608,7 +610,8 @@
     "birdid_source_gbif": "全球 / 不限地区",
     "birdid_section_region": "国家 / 地区",
     "birdid_country_label": "国家",
-    "birdid_region_label": "地区"
+    "birdid_region_label": "地区",
+    "birdid_section_name_format": "鸟名显示格式"
   },
   "advanced_settings": {
     "title": "参数设置",
@@ -717,7 +720,16 @@
     "folder_layout_rating_first": "先星级 → 鸟种 (3星_优选/白胸鸲鹟/)",
     "folder_layout_species_first": "先鸟种 → 星级 (白胸鸲鹟/3星_优选/)",
     "folder_layout_flat": "平铺——识别评分但不移动文件（Lightroom 友好）",
-    "folder_layout_hint": "1星/0星/-1星 统一归到「其他鸟类」目录（不按鸟种分散），便于整体处理。仅影响新跑批，已有目录结构不变。"
+    "folder_layout_hint": "1星/0星/-1星 统一归到「其他鸟类」目录（不按鸟种分散），便于整体处理。仅影响新跑批，已有目录结构不变。",
+    "delete_confirm_label": "删除照片前显示确认对话框",
+    "delete_confirm_hint": "关闭后浏览器中删除照片将不再询问，请谨慎关闭",
+    "clear_cache_button": "清理所有预览缓存",
+    "clear_cache_hint": "删除当前目录的 AI 预览/裁切缓存（.superpicky/cache），不影响原始照片；下次浏览需重新生成缩略图",
+    "clear_cache_confirm_title": "清理预览缓存",
+    "clear_cache_confirm_msg": "确定要清理「{directory}」的所有预览缓存吗？此操作不可撤销，不会影响原始照片。",
+    "clear_cache_no_dir": "请先在主界面打开一个已处理的目录",
+    "clear_cache_none": "该目录暂无缓存可清理",
+    "clear_cache_done": "预览缓存已清理"
   },
   "normalization_modes": {
     "log_compression": "对数压缩(V3.1)",
