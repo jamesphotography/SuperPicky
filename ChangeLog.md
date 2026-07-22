@@ -1,3 +1,25 @@
+# SuperPicky 4.5.0 RC9
+
+**What's new since RC8:**
+
+- **Star-quota split control (V2).** The single "3-star quota" slider is
+  replaced by a three-segment quota bar. Drag its two dividers to set the
+  3★ / 2★ / 1★ split directly — the three shares always add up to 100%, with
+  1★ as the automatic remainder. It lives in both the Settings Center culling
+  page and the home quick panel, kept in two-way sync. Ranges are bounded
+  (3★ 5–50%, 2★ 5–60%, 1★ ≥ 5%); the "intermediate" preset keeps the previous
+  20 / 25 / 55 behavior, so existing results are unchanged.
+- **V1 / V2 rating toggle promoted.** The legacy V1 (absolute-threshold) rating
+  switch moved out of the collapsed "Advanced" disclosure to a prominent spot
+  right under the threshold heading. It's now visible without expanding
+  anything and swaps the controls below in place — the quota bar for V2, the
+  sharpness / aesthetics sliders for V1.
+- **V2 caption / rating DB sync fix.** When V2 finalizes a photo's star and
+  reason in the post-pass, both are now written back to `report.db`, so the
+  browser's per-photo note no longer disagrees with its star rating.
+
+---
+
 # SuperPicky 4.5.0 RC8
 
 **What's new since RC7:**
