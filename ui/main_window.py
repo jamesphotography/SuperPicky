@@ -3003,32 +3003,27 @@ class SuperPickyMainWindow(QMainWindow):
         nima_layout.addWidget(self.nima_value)
         sliders_layout.addLayout(nima_layout)
 
-        # V4.6(rating-v2/T4): 「3星配额」滑块(批内相对评星)。v2 下只显示
-        # 配额滑块,旧阈值滑块隐藏(仍构建,供 v1 回滚与既有测试);范围 5-50
-        # 与 set_custom_quota3 clamp 一致(SSOT 约定),与设置中心精选页协同。
-        # V4.6 (rating-v2/T4): "3-star quota" slider (batch-relative rating).
-        # Under v2 only the quota slider is visible; legacy threshold sliders
-        # stay constructed but hidden for the v1 rollback switch and tests.
-        # Range 5-50 matches the set_custom_quota3 clamp (SSOT convention).
-        from core.rating_quota import get_quota3_for_skill
+        # V4.6+三段配额:「星级配额分配条」QuotaBar(批内相对评星)取代原单一
+        # 3星配额滑块——一条 3★/2★/1★ 三段条,拖分隔点即改配额(和恒 100%,1★ 为
+        # 余量)。v2 下只显示此条,旧阈值滑块隐藏(仍构建,供 v1 回滚与既有测试)。
+        # 约束与 set_custom_quota3/2 clamp 一致(SSOT),与设置中心精选页双向同步。
+        # V4.6 + 3-seg quota: the QuotaBar (3★/2★/1★ split) replaces the single
+        # 3-star quota slider; ranges match the setter clamps (SSOT), two-way
+        # synced with the Settings Center culling page.
+        from core.rating_quota import get_quota3_for_skill, get_quota2_for_skill
+        from ui.quota_bar import QuotaBar
         quota_layout = QHBoxLayout()
         quota_layout.setSpacing(16)
-        quota_label = QLabel(self.i18n.t("labels.quota3_short"))
+        quota_label = QLabel(self.i18n.t("labels.quota_split_short"))
         quota_label.setStyleSheet(
             f"color: {COLORS['text_secondary']}; font-size: 13px; min-width: 80px;")
         quota_layout.addWidget(quota_label)
-        self.quota_slider = QSlider(Qt.Orientation.Horizontal)
-        self.quota_slider.setRange(5, 50)
-        self.quota_slider.setSingleStep(5)
-        self.quota_slider.setPageStep(5)
-        self.quota_slider.setValue(int(get_quota3_for_skill(cfg.skill_level, cfg)))  # 初值在 connect 之前
-        self.quota_slider.valueChanged.connect(self._on_quota_changed)
-        quota_layout.addWidget(self.quota_slider)
-        self.quota_value = QLabel(f"{self.quota_slider.value()}%")
-        self.quota_value.setStyleSheet(VALUE_STYLE)
-        self.quota_value.setFixedWidth(50)
-        self.quota_value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        quota_layout.addWidget(self.quota_value)
+        self.quota_bar = QuotaBar(
+            int(get_quota3_for_skill(cfg.skill_level, cfg)),
+            int(get_quota2_for_skill(cfg.skill_level, cfg)),
+        )
+        self.quota_bar.quotasChanged.connect(self._on_quota_changed)
+        quota_layout.addWidget(self.quota_bar, 1)
         sliders_layout.addLayout(quota_layout)
 
         # V4.6(rating-v2/UI): 行控件存实例引用,供设置中心改算法后运行时切换
@@ -3036,7 +3031,7 @@ class SuperPickyMainWindow(QMainWindow):
         # re-applied after the Settings Center changes the algorithm.
         self._sharp_row_widgets = (sharp_label, self.sharp_slider, self.sharp_value)
         self._nima_row_widgets = (nima_label, self.nima_slider, self.nima_value)
-        self._quota_row_widgets = (quota_label, self.quota_slider, self.quota_value)
+        self._quota_row_widgets = (quota_label, self.quota_bar)
         self._apply_algo_visibility()
 
         params_layout.addLayout(sliders_layout)
@@ -3058,18 +3053,23 @@ class SuperPickyMainWindow(QMainWindow):
         self.config.set_min_nima(value / 10.0)
         self._mark_custom_skill()
 
-    def _on_quota_changed(self, value):
+    def _on_quota_changed(self, q3, q2):
         """
-        3星配额滑块(V2):更新显示 + 写 custom_quota3 并转自定义档。
+        星级配额分配条(V2):写 custom_quota3/quota2 并转自定义档。
 
-        3-star quota slider (V2): update the label, persist custom_quota3,
-        and switch the skill level to "custom" (consistent with the culling page).
+        1★ = 100 − q3 − q2 为算术余量,不单独存储。QuotaBar 拖动才发信号,
+        程序化 set_quotas 不触发,故无需额外 loading 守卫即可避免回环;仍保留
+        _params_loading 判断与其它滑块一致。
+
+        Star quota split (V2): persist custom_quota3/quota2 and switch the skill
+        level to "custom" (1★ is the derived remainder). Consistent with the
+        Settings Center culling page.
         """
-        self.quota_value.setText(f"{value}%")
         if getattr(self, "_params_loading", False):
             return
         cfg = self.config
-        cfg.set_custom_quota3(value)
+        cfg.set_custom_quota3(q3)
+        cfg.set_custom_quota2(q2)
         if cfg.skill_level != "custom":
             cfg.set_skill_level("custom")
         self._refresh_skill_chip()
@@ -3132,13 +3132,16 @@ class SuperPickyMainWindow(QMainWindow):
             self.birdid_check.setChecked(bool(cfg.birdid_auto_identify))
             self.sharp_value.setText(str(int(cfg.min_sharpness)))
             self.nima_value.setText(f"{cfg.min_nima:.1f}")
-            # V4.6(rating-v2/T4): 同步配额滑块(设置中心改过技能档/配额后刷新)
-            # V4.6 (rating-v2/T4): refresh the quota slider after Settings Center edits
-            if hasattr(self, "quota_slider"):
-                from core.rating_quota import get_quota3_for_skill
-                q = int(get_quota3_for_skill(cfg.skill_level, cfg))
-                self.quota_slider.setValue(q)
-                self.quota_value.setText(f"{q}%")
+            # V4.6+三段配额: 同步配额分配条(设置中心改过技能档/配额后刷新);
+            # set_quotas 不发信号,不会回写 config,天然避免回环。
+            # V4.6 + 3-seg quota: refresh the QuotaBar after Settings Center edits
+            # (set_quotas emits nothing, so no write-back loop).
+            if hasattr(self, "quota_bar"):
+                from core.rating_quota import (
+                    get_quota3_for_skill, get_quota2_for_skill)
+                self.quota_bar.set_quotas(
+                    int(get_quota3_for_skill(cfg.skill_level, cfg)),
+                    int(get_quota2_for_skill(cfg.skill_level, cfg)))
             # V4.6(rating-v2/UI): 设置中心可能改了评星算法 → 重应用滑块可见性
             # V4.6 (rating-v2/UI): the Settings Center may have switched the
             # rating algorithm — re-apply slider-row visibility.
