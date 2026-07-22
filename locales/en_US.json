@@ -1305,6 +1305,7 @@
     "ctx_open_with": "Open with {app_name}",
     "ctx_add_external_app": "Add external app in Settings…",
     "ctx_copy_path": "Copy File Path",
+    "ctx_edit_species": "Edit Species…",
     "copy_exif": "Copy EXIF Info",
     "copy_exif_done": "Copied ✓",
     "delete_title": "Delete Photo",

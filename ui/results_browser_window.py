@@ -563,6 +563,20 @@ def _show_context_menu_impl(parent_widget, photo: dict, pos, directory: str):
     finder_action.triggered.connect(_reveal)
     menu.addAction(finder_action)
 
+    # 修改鸟种 / 补录(取代原网格卡片上的常驻铅笔;对所有照片可用):
+    # 有鸟名=纠错,无鸟名=人工补录,复用浏览器既有编辑弹窗与目录移动逻辑。
+    # Edit/assign species (replaces the tile's always-on pencil; available
+    # for every photo). Reuses the browser's existing edit dialog.
+    species_action = QAction(_i18n.t('browser.ctx_edit_species'), parent_widget)
+
+    def _edit_species(_checked=False, _p=photo):
+        handler = getattr(parent_widget, "_on_species_edit_requested", None)
+        if callable(handler):
+            handler(_p)
+
+    species_action.triggered.connect(_edit_species)
+    menu.addAction(species_action)
+
     # 用户配置的外部应用列表（设置 → 外部应用）
     external_apps = get_advanced_config().get_external_apps()
     if external_apps:
@@ -761,9 +775,8 @@ class ResultsBrowserWindow(QMainWindow):
         self._thumb_grid.photo_double_clicked.connect(self._enter_fullscreen)
         self._thumb_grid.multi_selection_changed.connect(self._on_multi_selection_changed)
         self._thumb_grid.burst_badge_clicked.connect(self._toggle_burst)
-        # issue #106: grid 卡片铅笔 → 复用既有鸟种编辑弹窗
-        # issue #106: grid pencil reuses the existing species-edit dialog
-        self._thumb_grid.species_edit_requested.connect(self._on_species_edit_requested)
+        # issue #106: 网格鸟种编辑改由右键菜单进入(见 _show_context_menu_impl)
+        # issue #106: grid species-edit now lives in the right-click menu
         center_layout.addWidget(self._thumb_grid, 1)
 
         main_h.addWidget(center_widget, 1)
