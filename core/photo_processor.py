@@ -1199,7 +1199,7 @@ class PhotoProcessor:
             assign_ratings as assign_ratings_v2,
             gate_photo as gate_photo_v2,
             get_quota3_for_skill,
-            DEFAULT_QUOTA2,
+            get_quota2_for_skill,
         )
         v2_enabled = self.config.rating_algorithm == "v2"
         v2_pending: Dict[str, Dict] = {}
@@ -2908,10 +2908,11 @@ class PhotoProcessor:
                 if info:
                     pend['metrics'].species = info.get('en_name') or info.get('cn_name')
             quota3 = get_quota3_for_skill(self.config.skill_level, self.config)
+            quota2 = get_quota2_for_skill(self.config.skill_level, self.config)
             v2_results = assign_ratings_v2(
                 [p['metrics'] for p in v2_pending.values()],
                 quota3=quota3,
-                quota2=DEFAULT_QUOTA2,
+                quota2=quota2,
                 min_confidence=self.settings.ai_confidence / 100.0,
             )
             v2_changed = 0
@@ -2923,6 +2924,7 @@ class PhotoProcessor:
                 if final_rating != pend['v1_rating']:
                     v2_changed += 1
                 reason_final = self.i18n.t(res.reason_key, **res.reason_args)
+                final_caption = None   # V2 终评重写后的 caption,用于同步回 DB
                 for item in pend['items']:
                     old_caption = item.get('caption')
                     if old_caption:
@@ -2932,6 +2934,7 @@ class PhotoProcessor:
                         head = self.i18n.t("logs.caption_final",
                                            rating=final_rating, reason=reason_final)
                         item['caption'] = head + ('\n' + parts[1] if len(parts) > 1 else '')
+                        final_caption = item['caption']
                     item['rating'] = final_rating
                     queue_metadata(item)
                 self.file_ratings[prefix] = final_rating
@@ -2946,7 +2949,14 @@ class PhotoProcessor:
                     })
                 if self.report_db:
                     try:
-                        self.report_db.update_photo(prefix, {'rating': final_rating})
+                        # V2 终评须同步 rating 与 caption,否则 DB caption 停留在初始
+                        # V1 措辞(与浏览器 rating 不符,即「选片备注/星级」错位 bug)。
+                        # V2 must sync both rating and caption to the DB, else the
+                        # caption keeps the stale V1 head and disagrees with rating.
+                        db_update = {'rating': final_rating}
+                        if final_caption is not None:
+                            db_update['caption'] = final_caption
+                        self.report_db.update_photo(prefix, db_update)
                     except Exception:
                         pass
             self._log(self.i18n.t(

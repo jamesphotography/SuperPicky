@@ -19,7 +19,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from core.rating_quota import (
     PhotoMetricsV2, assign_ratings, gate_photo, get_quota3_for_skill,
-    DEFAULT_QUOTA3, SKILL_QUOTA3,
+    get_quota2_for_skill, DEFAULT_QUOTA3, DEFAULT_QUOTA2,
+    SKILL_QUOTA3, SKILL_QUOTA2,
 )
 
 
@@ -183,6 +184,58 @@ class TestSkillQuota(unittest.TestCase):
 
     def test_presets_complete(self):
         self.assertEqual(set(SKILL_QUOTA3), {"beginner", "intermediate", "master"})
+
+    def test_quota2_mapping(self):
+        self.assertEqual(get_quota2_for_skill("beginner"), 30.0)
+        self.assertEqual(get_quota2_for_skill("intermediate"), 25.0)
+        self.assertEqual(get_quota2_for_skill("master"), 20.0)
+        self.assertEqual(get_quota2_for_skill("unknown"), DEFAULT_QUOTA2)
+
+    def test_quota2_custom_reads_config(self):
+        class Cfg:
+            custom_quota2 = 18.0
+        self.assertEqual(get_quota2_for_skill("custom", Cfg()), 18.0)
+
+    def test_quota2_presets_complete(self):
+        self.assertEqual(set(SKILL_QUOTA2), {"beginner", "intermediate", "master"})
+
+    def test_intermediate_matches_legacy_default(self):
+        """进阶档 2★ 须等于旧硬编码 DEFAULT_QUOTA2,保证升级前后行为不变。
+        Intermediate 2★ must equal the legacy hardcoded default (no behavior drift)."""
+        self.assertEqual(get_quota2_for_skill("intermediate"), DEFAULT_QUOTA2)
+
+
+class TestQuotaBarConstraints(unittest.TestCase):
+    """QuotaBar 约束求解(纯逻辑,不建 Qt 控件)/ QuotaBar clamp (pure logic)."""
+
+    def _clamp(self, q3, q2):
+        from ui.quota_bar import QuotaBar
+        return QuotaBar._clamp(q3, q2)
+
+    def test_valid_passthrough(self):
+        self.assertEqual(self._clamp(20, 25), (20, 25))
+
+    def test_q3_clamped_to_range(self):
+        self.assertEqual(self._clamp(2, 25), (5, 25))    # 3★ 下限
+        self.assertEqual(self._clamp(80, 10), (50, 10))  # 3★ 上限
+
+    def test_q2_lower_bound(self):
+        self.assertEqual(self._clamp(20, 1), (20, 5))    # 2★ 下限
+
+    def test_joint_leaves_1star_min(self):
+        """3★+2★ 不得超过 95(保留 1★≥5%)/ q3+q2 capped at 95 so 1★≥5."""
+        q3, q2 = self._clamp(50, 60)
+        self.assertEqual(q3, 50)
+        self.assertEqual(q2, 45)                          # 100-5-50
+        self.assertEqual(100 - q3 - q2, 5)                # 1★ 恰为下限
+
+    def test_sum_never_exceeds_100(self):
+        for q3 in range(5, 51, 5):
+            for q2 in range(5, 61, 5):
+                cq3, cq2 = self._clamp(q3, q2)
+                self.assertLessEqual(cq3 + cq2, 95)
+                self.assertGreaterEqual(cq3, 5)
+                self.assertGreaterEqual(cq2, 5)
 
 
 if __name__ == "__main__":

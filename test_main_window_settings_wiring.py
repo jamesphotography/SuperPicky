@@ -100,13 +100,13 @@ def test_refresh_param_panel_switches_algo_slider_visibility():
     try:
         cfg.config["rating_algorithm"] = "v1"
         w._refresh_param_panel()
-        assert w.quota_slider.isHidden()
+        assert w.quota_bar.isHidden()
         assert not w.sharp_slider.isHidden() and not w.nima_slider.isHidden()
         assert w._rating_v2_ui is False
 
         cfg.config["rating_algorithm"] = "v2"
         w._refresh_param_panel()
-        assert not w.quota_slider.isHidden()
+        assert not w.quota_bar.isHidden()
         assert w.sharp_slider.isHidden() and w.nima_slider.isHidden()
         assert w._rating_v2_ui is True
     finally:

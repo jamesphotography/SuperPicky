@@ -54,6 +54,7 @@ class AdvancedConfig:
         # V4.6: 评星 V2(批内相对+配额) / Rating V2 (batch-relative + quota)
         "rating_algorithm": "v2",       # "v1"(绝对阈值,回滚用) | "v2"(批内相对+配额)
         "custom_quota3": 20,            # 自选模式下的 3★ 配额百分比 (5-50)
+        "custom_quota2": 25,            # 自选模式下的 2★ 配额百分比 (5-60,且 3★+2★≤95)
 
         # ARW 写入策略:
         #   sidecar: 只写 XMP 侧车，不修改 ARW（最安全，推荐）
@@ -260,6 +261,23 @@ class AdvancedConfig:
 
     def set_custom_quota3(self, value: float):
         self.config["custom_quota3"] = max(5, min(50, int(value)))
+        self.save()
+
+    @property
+    def custom_quota2(self) -> float:
+        """自选模式下的 2★ 配额百分比 (clamp 5-60,与 QuotaBar 2★ 段宽范围一致)。
+
+        1★ 为算术余量 (100 − 3★ − 2★),不单独存储;3★+2★≤95 的联合约束由
+        QuotaBar 拖动时保证(保留 1★ 最小 5%)。
+
+        Custom-mode 2-star quota percentage (clamp 5-60, matching the QuotaBar
+        2-star segment range). 1★ is the remainder (100 − 3★ − 2★) and is not
+        stored; the joint 3★+2★≤95 constraint is enforced by QuotaBar on drag.
+        """
+        return float(self.config.get("custom_quota2", 25))
+
+    def set_custom_quota2(self, value: float):
+        self.config["custom_quota2"] = max(5, min(60, int(value)))
         self.save()
 
     @property
