@@ -5,6 +5,38 @@ import os
 import stat
 import subprocess
 import sys
+from typing import Optional
+
+
+def sibling_jpeg(base_path: Optional[str]) -> Optional[str]:
+    """
+    返回与 base_path 同目录、同主名的 JPG/JPEG 边车路径(存在则返回,否则 None)。
+
+    用途:SuperPicky 的 RAW+JPG 成对拍摄中,配对 JPG 与 RAW 始终位于同一目录、
+    同主名,并随整理移动一起搬动。当数据库里的 temp_jpeg_path 因多轮整理/连拍
+    重组而失同步时,可用可靠的 current_path/original_path 推导出真正的显示用 JPG,
+    避免缩略图/预览丢失。大小写扩展名都尝试以兼容大小写敏感文件系统。
+
+    Return the JPG/JPEG sidecar that sits next to base_path (same directory,
+    same stem) if it exists, else None. In SuperPicky's RAW+JPG workflow the
+    paired JPG always lives beside the RAW and moves with it, so it can be
+    derived from the reliable current_path even when the DB temp_jpeg_path has
+    drifted out of sync after organizing/burst-regrouping.
+
+    参数 / Parameters:
+        base_path (Optional[str]): 任意成员文件的绝对路径(RAW 或 JPG 均可)。
+
+    返回 / Returns:
+        Optional[str]: 存在的同名 JPG 路径 / the existing sibling JPG path.
+    """
+    if not base_path:
+        return None
+    stem = os.path.splitext(base_path)[0]
+    for ext in ('.jpg', '.jpeg', '.JPG', '.JPEG'):
+        candidate = stem + ext
+        if os.path.exists(candidate):
+            return candidate
+    return None
 
 
 def hide_path(path):

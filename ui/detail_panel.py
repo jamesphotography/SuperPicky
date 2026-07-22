@@ -5,6 +5,8 @@ DetailPanel: 大图预览 + 元数据展示 + 上一张/下一张导航
 """
 
 import os
+
+from tools.file_utils import sibling_jpeg
 from typing import Optional
 
 from PySide6.QtWidgets import (
@@ -880,20 +882,28 @@ class DetailPanel(QWidget):
         """根据当前视图模式解析目标图片路径。"""
         p = self._current_photo
         if self._use_crop_view:
-            # 裁切图：YOLO 裁切区域，退而用干净大图
+            # 裁切诊断视图：显示带对焦十字/头圈/mask 的裁切图,缺失时退而用干净大图。
+            # Crop-diagnostic view: the annotated crop; fall back to the clean image.
             path = p.get("debug_crop_path")
             if not path or not os.path.exists(path):
                 path = p.get("temp_jpeg_path")
         else:
-            # 全图：干净 temp JPEG（无检测框叠加）
+            # 全图：只显示干净原图(temp JPEG → 原始 JPEG),绝不回退到带标注的
+            # debug_crop_path,与 grid / 全屏 HD 链路保持一致。
+            # Full-image view: clean image only (temp JPEG → original JPEG); never
+            # fall back to the annotated debug_crop_path.
             path = p.get("temp_jpeg_path")
-            if not path or not os.path.exists(path):
-                path = p.get("debug_crop_path")
 
         if not path or not os.path.exists(path):
-            op = p.get("original_path") or p.get("current_path")
-            if op and os.path.exists(op) and os.path.splitext(op)[1].lower() in ('.jpg', '.jpeg'):
-                path = op
+            # temp_jpeg 失同步时,从可靠的 current_path 推导同目录同名 JPG 边车;
+            # 再退到本身即为 JPG 的原文件。
+            # Fall back to the JPG sibling derived from the reliable current path,
+            # then to the original file if it is itself a JPG.
+            path = sibling_jpeg(p.get("current_path")) or sibling_jpeg(p.get("original_path"))
+            if not path:
+                op = p.get("original_path") or p.get("current_path")
+                if op and os.path.exists(op) and os.path.splitext(op)[1].lower() in ('.jpg', '.jpeg'):
+                    path = op
 
         return path if path and os.path.exists(path) else None
 
