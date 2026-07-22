@@ -21,6 +21,7 @@ from PySide6.QtGui import QPixmap, QColor, QPainter, QPen, QFont, QBrush, QImage
 from ui.styles import COLORS, FONTS
 from ui.icon_utils import render_tinted_image, ICON_DANGER
 from tools.i18n import get_i18n
+from tools.file_utils import sibling_jpeg
 
 
 def _display_name(photo: dict) -> str:
@@ -202,27 +203,46 @@ def _draw_static_overlays(image, photo: dict):
     painter.end()
 
 
-def _load_thumbnail_image(photo: dict, thumb_size: int) -> Optional[QImage]:
-    """按优先级查找可用图片文件并返回裁切后的缩略图 QImage。"""
+def _thumbnail_candidates(photo: dict) -> list:
+    """
+    按优先级返回缩略图可用的「干净原图」路径列表:temp_jpeg_path → 原始 JPEG。
+
+    刻意**不含**任何带标注的调试图(yolo_debug_path 全图红框、debug_crop_path
+    裁切+对焦十字/头圈)——缩略图应展示原图,与全屏 HD 链路(fullscreen_viewer
+    ._resolve_hd_path)保持一致;调试图仅供详情面板的「裁切诊断视图」按钮使用。
+
+    Return the ordered list of clean, decodable image paths for a thumbnail:
+    temp_jpeg_path → original JPEG. Debug artifacts (the boxed yolo_debug_path
+    and the annotated debug_crop_path) are deliberately excluded so the grid
+    shows the actual photo, matching the full-screen HD path resolver.
+
+    参数 / Parameters:
+        photo (dict): 照片记录 / photo record.
+
+    返回 / Returns:
+        list[str]: 存在的候选路径,按优先级排列 / existing candidate paths.
+    """
     candidates = []
 
-    ydp = photo.get("yolo_debug_path")
-    if ydp and os.path.exists(ydp):
-        candidates.append(ydp)
+    def _add(path):
+        if path and path not in candidates and os.path.exists(path):
+            candidates.append(path)
 
-    tjp = photo.get("temp_jpeg_path")
-    if tjp and os.path.exists(tjp):
-        candidates.append(tjp)
+    # 1. temp_jpeg_path:RAW→JPEG 预览 / 配对 JPG(可能因多轮整理失同步)。
+    _add(photo.get("temp_jpeg_path"))
 
-    dcp = photo.get("debug_crop_path")
-    if dcp and os.path.exists(dcp):
-        candidates.append(dcp)
+    # 2. 兜底:从可靠的 current_path/original_path 推导同目录同名 JPG 边车。
+    #    RAW+JPG 成对且随文件移动,可修复 temp_jpeg_path 失同步导致的缺图。
+    #    Fall back to the JPG sibling derived from the reliable current path.
+    _add(sibling_jpeg(photo.get("current_path")))
+    _add(sibling_jpeg(photo.get("original_path")))
 
-    op = photo.get("original_path") or photo.get("current_path")
-    if op and os.path.exists(op):
-        ext = os.path.splitext(op)[1].lower()
-        if ext in ('.jpg', '.jpeg'):
-            candidates.append(op)
+    return candidates
+
+
+def _load_thumbnail_image(photo: dict, thumb_size: int) -> Optional[QImage]:
+    """按优先级查找可用图片文件并返回裁切后的缩略图 QImage。"""
+    candidates = _thumbnail_candidates(photo)
 
     for path in candidates:
         # 解码期降采样:QImageReader.setScaledSize 让 JPEG 直接按低分辨率
