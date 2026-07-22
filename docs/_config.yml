@@ -1,0 +1,21 @@
+# GitHub Pages / Jekyll 构建配置
+# GitHub Pages / Jekyll build configuration
+#
+# 说明 / Note:
+#   docs/ 目录既是对外文档站,又混放了内部开发文档(计划/设计/规格等)。
+#   内部文档常含 Python f-string / Qt 样式表的 `{{ ... }}`,会被 Jekyll 的
+#   Liquid 模板引擎误当成变量解析,导致整站构建失败(pages-build-deployment 红叉)。
+#   这里把内部开发文档从构建里排除:既修复构建,也避免它们被发布到公开站。
+#
+#   The docs/ folder mixes the public site with internal dev docs (plans/design/
+#   specs). Those internal docs often embed `{{ ... }}` from Python f-strings / Qt
+#   stylesheets, which Jekyll's Liquid engine misreads as template variables and
+#   fails the whole build. Exclude them so the build passes and they stay private.
+
+exclude:
+  - plans/
+  - design/
+  - specs/
+  - architecture/
+  - superpowers/
+  - "*_REPORT.md"
