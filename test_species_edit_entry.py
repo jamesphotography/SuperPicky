@@ -1,59 +1,78 @@
 # -*- coding: utf-8 -*-
 """
-issue #106 回归测试:grid 卡片与详情面板的鸟种编辑铅笔入口。
+issue #106 回归测试:鸟种编辑/补录入口。
 
-- 卡片铅笔点击 → ThumbnailCard.species_edit_requested 携带 photo dict
-- 无鸟种照片也显示铅笔(允许人工补录)
-- 详情面板铅笔点击 → DetailPanel.species_edit_requested(修复幽灵信号)
-- ThumbnailGrid 转发信号存在(浏览器接线依赖)
+入口现状(RC8 起,原网格卡片常驻铅笔已移除):
+- grid 卡片:右键菜单「修改鸟种…」项 → 调用浏览器 _on_species_edit_requested(photo);
+  对所有照片可用(有鸟名=纠错,无鸟名=人工补录)。
+- 详情面板:铅笔按钮 → DetailPanel.species_edit_requested(保留,未变)。
+- 卡片本身不再暴露 _edit_btn / species_edit_requested,标签回归单行干净显示。
 
-Regression tests for the issue #106 species-edit entries: the grid-card
-pencil and the detail-panel pencil both emit species_edit_requested with
-the photo dict, the pencil also shows for species-less photos, and the
-grid-level relay signal exists.
+Regression tests for the issue #106 species-edit entries. Since RC8 the grid
+card's always-on pencil is gone; the entry lives in the tile's right-click
+menu ("Edit Species…") and invokes the browser's _on_species_edit_requested
+handler. The detail-panel pencil is unchanged.
 """
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 from tools.i18n import get_i18n
 
 _app = QApplication.instance() or QApplication([])
 
 
-def test_card_pencil_emits_species_edit_requested():
-    """卡片铅笔点击发射 species_edit_requested(photo)。"""
-    from ui.thumbnail_grid import ThumbnailCard
+def _invoke_context_menu(photo: dict):
+    """
+    构建 grid 右键菜单(不弹出)并模拟点击「修改鸟种…」项,返回 handler 收到的
+    photo 列表。用 _build_context_menu 拿到 QMenu(避免 exec 阻塞),从而验证
+    菜单确实含该项且已正确接线到浏览器 _on_species_edit_requested。
+    """
+    import ui.results_browser_window as rbw
 
-    photo = {"filename": "DSC01234.ARW",
+    received = []
+
+    class _FakeBrowser(QWidget):
+        def _on_species_edit_requested(self, p):
+            received.append(p)
+
+    parent = _FakeBrowser()
+    label = get_i18n().t('browser.ctx_edit_species')
+    menu = rbw._build_context_menu(parent, photo, "/nonexistent")
+    matched = [act for act in menu.actions() if act.text() == label]
+    for act in matched:
+        act.trigger()
+    parent.close()
+    return received, matched
+
+
+def test_context_menu_species_edit_invokes_handler():
+    """右键菜单「修改鸟种…」→ 携带 photo 调用浏览器 handler。"""
+    photo = {"filename": "DSC01234.ARW", "current_path": "/nonexistent/DSC01234.ARW",
              "bird_species_cn": "红脚鹬", "bird_species_en": "Common Redshank"}
-    card = ThumbnailCard(photo, 180)
-    received = []
-    card.species_edit_requested.connect(received.append)
-    card._edit_btn.click()
+    received, matched = _invoke_context_menu(photo)
+    assert matched, "菜单应含「修改鸟种…」项"
     assert received and received[0]["filename"] == "DSC01234.ARW"
-    card.close()
 
 
-def test_card_pencil_shown_without_species():
-    """无鸟种照片也有铅笔(补录场景),点击同样携带 photo。"""
-    from ui.thumbnail_grid import ThumbnailCard
-
-    photo = {"filename": "DSC09999.NEF"}
-    card = ThumbnailCard(photo, 180)
-    assert card._edit_btn.isVisibleTo(card)
-    received = []
-    card.species_edit_requested.connect(received.append)
-    card._edit_btn.click()
+def test_context_menu_species_edit_for_species_less_photo():
+    """无鸟种照片:菜单同样提供「修改鸟种…」(人工补录场景)。"""
+    photo = {"filename": "DSC09999.NEF", "current_path": "/nonexistent/DSC09999.NEF"}
+    received, matched = _invoke_context_menu(photo)
+    assert matched, "无鸟种照片也应有「修改鸟种…」项"
     assert received and received[0]["filename"] == "DSC09999.NEF"
+
+
+def test_card_and_grid_have_no_stale_pencil():
+    """卡片/网格不再暴露已废弃的铅笔按钮与转发信号(锁定 RC8 重构)。"""
+    from ui.thumbnail_grid import ThumbnailCard, ThumbnailGrid
+
+    card = ThumbnailCard({"filename": "DSC01234.ARW"}, 180)
+    assert not hasattr(card, "_edit_btn")
+    assert not hasattr(card, "species_edit_requested")
     card.close()
-
-
-def test_grid_relay_signal_exists():
-    """ThumbnailGrid 有 species_edit_requested 转发信号(浏览器接线点)。"""
-    from ui.thumbnail_grid import ThumbnailGrid
 
     grid = ThumbnailGrid(get_i18n())
-    assert hasattr(grid, "species_edit_requested")
+    assert not hasattr(grid, "species_edit_requested")
     grid.close()
 
 

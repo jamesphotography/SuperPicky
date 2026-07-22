@@ -56,26 +56,30 @@ def test_focus_filter_labels_use_i18n_in_english_ui():
     panel.close()
 
 
-def test_tile_label_shows_species_and_filename():
+def test_tile_label_single_line_species_or_filename():
     """
-    有鸟种时卡片标签两行并显(鸟名+文件名),无鸟种时只显示文件名。
-    With a species the tile label carries both species and filename;
-    without a species it falls back to the filename only.
+    RC8 起卡片标签单行:有鸟种显示鸟名(随界面语言),无鸟种显示文件名;
+    文件名不再进标签(改由整卡 tooltip 悬停查看),连拍后缀附于行尾。
+    Since RC8 the tile label is a single line — species name (localized) when
+    present, otherwise the filename; the filename lives in the hover tooltip.
     """
-    from ui.thumbnail_grid import _tile_label_text
+    from ui.thumbnail_grid import _tile_label_text, _display_name
 
     photo = {"filename": "DSC01234.ARW",
              "bird_species_cn": "白胸鸲鹟", "bird_species_en": "White-breasted Robin"}
     text = _tile_label_text(photo)
-    assert "DSC01234.ARW" in text
+    # 单行显示鸟名(随语言),不含文件名 / single line = species, no filename
+    assert text == _display_name(photo)
+    assert "DSC01234.ARW" not in text
     assert ("白胸鸲鹟" in text) or ("White-breasted Robin" in text)
 
     no_species = {"filename": "DSC09999.NEF"}
     assert _tile_label_text(no_species) == "DSC09999.NEF"
 
-    # 连拍后缀跟在第一行(鸟名)之后 / burst suffix stays on the first line
+    # 连拍后缀附在单行行尾,且不再有第二行 / suffix appended, no second line
     text2 = _tile_label_text(photo, " (5)")
-    assert "(5)" in text2.split("<br/>")[0]
+    assert text2 == _display_name(photo) + " (5)"
+    assert "<br/>" not in text2
 
 
 def test_detail_panel_species_row_above_gbif():

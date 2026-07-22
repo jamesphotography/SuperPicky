@@ -504,8 +504,14 @@ def _best_reveal_target(*filepaths: str) -> str:
     return ""
 
 
-def _show_context_menu_impl(parent_widget, photo: dict, pos, directory: str):
-    """构建并显示右键菜单（C4）。外部应用列表从 advanced_config 读取。"""
+def _build_context_menu(parent_widget, photo: dict, directory: str):
+    """
+    构建右键菜单(C4)并返回 QMenu,不负责弹出——便于单测各菜单项接线。
+    外部应用列表从 advanced_config 读取。弹出由 _show_context_menu_impl 负责。
+
+    Build and return the right-click QMenu (without showing it), so each menu
+    item's wiring can be unit-tested. Display is handled separately.
+    """
     from advanced_config import get_advanced_config
 
     # current_path 是整理后的实际位置（优先），original_path 是处理时的原始位置（兜底）
@@ -617,6 +623,12 @@ def _show_context_menu_impl(parent_widget, photo: dict, pos, directory: str):
         copy_action.triggered.connect(_copy_path)
     menu.addAction(copy_action)
 
+    return menu
+
+
+def _show_context_menu_impl(parent_widget, photo: dict, pos, directory: str):
+    """构建并在 pos 处弹出右键菜单(C4)。"""
+    menu = _build_context_menu(parent_widget, photo, directory)
     menu.exec(pos)
 
 

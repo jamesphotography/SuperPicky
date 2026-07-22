@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QThread, QTimer, Slot, QEvent, QSize, QObject
 from PySide6.QtGui import QPixmap, QImage, QPainter, QPen, QColor, QBrush, QImageReader
 
+from tools.file_utils import sibling_jpeg
 from ui.styles import COLORS, FONTS
 from ui.icon_utils import (
     load_tinted_icon, stars_pixmap, ICON_IDLE, ICON_ACTIVE, ICON_DISABLED, ICON_DANGER,
@@ -1451,13 +1452,22 @@ class FullscreenViewer(QWidget):
     # ------------------------------------------------------------------
 
     def _resolve_hd_path(self, photo: dict) -> Optional[str]:
-        """按优先级解析高清图路径：temp_jpeg_path → 原始 JPEG。
+        """按优先级解析高清图路径：temp_jpeg_path → 同目录同名 JPG 边车 → 原始 JPEG。
         debug_crop_path / yolo_debug_path 均不使用。
+
+        注意:temp_jpeg_path 会因多轮整理/连拍重组而失同步(指向旧位置),此时必须
+        据可靠的 current_path 推导同目录同名 JPG,否则全屏找不到高清图会停在低清缩略图。
+        temp_jpeg_path can drift out of sync after organizing; fall back to the JPG
+        sibling derived from the reliable current_path so full-screen loads full-res.
         """
         tjp = photo.get("temp_jpeg_path")
         if tjp and os.path.exists(tjp):
             return tjp
-        # 回退到原始 JPEG
+        # 兜底:据 current_path/original_path 推导同目录同名 JPG 边车
+        sib = sibling_jpeg(photo.get("current_path")) or sibling_jpeg(photo.get("original_path"))
+        if sib:
+            return sib
+        # 最后回退到本身即为 JPG 的原文件
         op = photo.get("original_path") or photo.get("current_path")
         if op and os.path.exists(op):
             ext = os.path.splitext(op)[1].lower()
