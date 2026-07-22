@@ -1305,6 +1305,7 @@
     "ctx_open_with": "用 {app_name} 打开",
     "ctx_add_external_app": "在设置中添加外部应用…",
     "ctx_copy_path": "复制文件路径",
+    "ctx_edit_species": "修改鸟种…",
     "copy_exif": "复制 EXIF 信息",
     "copy_exif_done": "已复制 ✓",
     "delete_title": "删除图片",
