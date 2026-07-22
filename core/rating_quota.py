@@ -49,6 +49,14 @@ SKILL_QUOTA3 = {
     "master": 10.0,
 }
 
+# 技能等级 → 2★ 配额映射(接在 3★ 之后;1★ = 100 − 3★ − 2★ 为算术余量)
+# skill level → 2-star quota (after 3★; 1★ is the remainder 100 − 3★ − 2★)
+SKILL_QUOTA2 = {
+    "beginner": 30.0,
+    "intermediate": 25.0,
+    "master": 20.0,
+}
+
 
 @dataclass
 class PhotoMetricsV2:
@@ -252,3 +260,14 @@ def get_quota3_for_skill(level_key: str, config=None) -> float:
     if level_key == "custom" and config is not None:
         return float(getattr(config, "custom_quota3", DEFAULT_QUOTA3))
     return SKILL_QUOTA3.get(level_key, DEFAULT_QUOTA3)
+
+
+def get_quota2_for_skill(level_key: str, config=None) -> float:
+    """
+    技能等级 → 2★ 配额。custom 从 config.custom_quota2 读取。
+
+    Map skill level to the 2-star quota; "custom" reads config.custom_quota2.
+    """
+    if level_key == "custom" and config is not None:
+        return float(getattr(config, "custom_quota2", DEFAULT_QUOTA2))
+    return SKILL_QUOTA2.get(level_key, DEFAULT_QUOTA2)

@@ -335,14 +335,13 @@ class SettingsCenter(QDialog):
         # 刷新初始选中态 / Refresh initial selection
         self._select_skill_radio(self._current_skill_key)
 
-        # V4.6(rating-v2): rating_algorithm 默认 v2，决定下方阈值区显示配额还是
-        # 锐度/美学两个旧滑块；算法本身的切换入口挪到页面底部「高级选项」区
-        # (见下)，普通用户只看到 技能档 + 3星配额 + 检测开关。
+        # V4.6(rating-v2): rating_algorithm 默认 v2，决定下方阈值区显示星级配额
+        # 分配条(V2) 还是 锐度/美学两个旧滑块(V1)；V1/V2 切换开关显眼放在阈值
+        # 标题正下方(见下),方便用户随时回滚旧版评星。
         # V4.6 (rating-v2): rating_algorithm defaults to v2 and decides whether
-        # the threshold section below shows the quota slider or the legacy
-        # sharpness/aesthetics sliders; the algorithm switch itself moved to
-        # the bottom "Advanced" disclosure (see below) so the primary view is
-        # just skill level + 3-star quota + detection toggles.
+        # the threshold section below shows the quota bar (V2) or the legacy
+        # sharpness/aesthetics sliders (V1); the V1/V2 toggle sits prominently
+        # right under the threshold title (see below) for easy rollback.
         self._rating_v2 = cfg.rating_algorithm == "v2"
 
         # ── 阈值区 / Threshold section ────────────────────────────────────────
@@ -352,6 +351,28 @@ class SettingsCenter(QDialog):
         )
         lay.addWidget(thresh_title)
 
+        # V1/V2 评星算法切换(从折叠的「高级选项」提到此显眼处):勾选=回滚旧版
+        # 绝对阈值 V1,直接决定下方显示「星级配额分配条」(V2) 还是「锐度/美学」
+        # 两滑块(V1)。放在阈值标题正下方,与其控制的控件紧邻,切换所见即所得。
+        # V1/V2 rating-algorithm toggle promoted from the Advanced disclosure to
+        # this prominent spot: checking it rolls back to legacy fixed-threshold
+        # V1 and swaps the controls right below (quota bar for V2 vs sharpness/
+        # aesthetics sliders for V1).
+        self._algo_legacy_checkbox = QCheckBox(
+            self.i18n.t("settings.culling_algo_legacy_label")
+        )
+        self._algo_legacy_checkbox.setChecked(cfg.rating_algorithm != "v2")
+        self._algo_legacy_checkbox.setStyleSheet(self._checkbox_qss())
+        self._algo_legacy_checkbox.stateChanged.connect(self._on_algo_legacy_toggled)
+        lay.addWidget(self._algo_legacy_checkbox)
+
+        algo_hint = QLabel(self.i18n.t("settings.culling_algo_v1_desc"))
+        algo_hint.setWordWrap(True)
+        algo_hint.setStyleSheet(
+            f"color:{COLORS['text_muted']};font-size:11px;margin-left:24px;"
+        )
+        lay.addWidget(algo_hint)
+
         # V4.6(rating-v2/T4): v2 用单一「3星配额」滑块取代锐度/美学两个阈值滑块
         # (星级=批内相对排序,阈值不再决定星级);v1 回滚开关下保留原两滑块。
         # 范围 5-50 与 set_custom_quota3 的 clamp 一致(SSOT 约定)。
@@ -359,28 +380,27 @@ class SettingsCenter(QDialog):
         # the sharpness/aesthetics threshold sliders (stars are batch-relative);
         # the v1 rollback switch keeps the legacy sliders. Range 5-50 matches
         # the set_custom_quota3 clamp (SSOT convention).
-        from core.rating_quota import get_quota3_for_skill
+        # V4.6(rating-v2)+三段配额:v2 用「星级配额分配条」QuotaBar 取代单一 3星
+        # 配额滑块——一条 3★/2★/1★ 三段条,拖分隔点即改配额(三段和恒 100%,
+        # 1★ 为算术余量)。约束(3★∈[5,50]/2★∈[5,60]/1★≥5)与 set_custom_quota3/2
+        # clamp 对齐(SSOT)。v1 回滚开关下仍显示下方锐度/美学两滑块。
+        # V4.6 + 3-segment quota: under v2 the QuotaBar (3★/2★/1★ split) replaces
+        # the single 3-star quota slider; ranges match the setter clamps (SSOT).
+        from core.rating_quota import get_quota3_for_skill, get_quota2_for_skill
+        from ui.quota_bar import QuotaBar
         quota_row = QHBoxLayout()
-        quota_label = QLabel(self.i18n.t("settings.culling_quota_label"))
+        quota_label = QLabel(self.i18n.t("settings.culling_quota_split_label"))
         quota_label.setStyleSheet(f"color:{COLORS['text_secondary']};font-size:12px;")
         quota_label.setFixedWidth(160)
-        self._cull_quota = QSlider(Qt.Horizontal)
-        self._cull_quota.setRange(5, 50)
-        self._cull_quota.setValue(int(get_quota3_for_skill(self._current_skill_key, cfg)))
-        self._cull_quota_value_label = QLabel(f"{self._cull_quota.value()}%")
-        self._cull_quota_value_label.setFixedWidth(34)
-        self._cull_quota_value_label.setStyleSheet(
-            f"color:{COLORS['text_tertiary']};font-size:11px;"
+        self._cull_quota = QuotaBar(
+            int(get_quota3_for_skill(self._current_skill_key, cfg)),
+            int(get_quota2_for_skill(self._current_skill_key, cfg)),
         )
-        self._cull_quota.valueChanged.connect(
-            lambda v: self._cull_quota_value_label.setText(f"{v}%")
-        )
-        self._cull_quota.valueChanged.connect(self._on_cull_threshold_changed)
+        self._cull_quota.quotasChanged.connect(self._on_cull_quota_changed)
         quota_row.addWidget(quota_label)
         quota_row.addWidget(self._cull_quota, 1)
-        quota_row.addWidget(self._cull_quota_value_label)
         lay.addLayout(quota_row)
-        self._quota_row_widgets = (quota_label, self._cull_quota, self._cull_quota_value_label)
+        self._quota_row_widgets = (quota_label, self._cull_quota)
 
         # 锐度滑块 (100-600, int; 对应 min_sharpness，范围与 set_min_sharpness clamp 一致)
         # Sharpness slider (100-600 integer; maps to min_sharpness, matches the
@@ -487,11 +507,11 @@ class SettingsCenter(QDialog):
         lay.addStretch(1)
 
         # ── 高级选项(折叠,默认收起) / Advanced (collapsed by default) ────────
-        # AI 置信度 + 旧版评星算法开关都是"多数用户不需要天天碰"的设置,
-        # 折叠起来让主视觉只剩 技能档 + 3星配额 + 检测开关 三段。
-        # AI confidence and the legacy-algorithm toggle are settings most users
-        # never touch day to day; collapsing them keeps the primary view down
-        # to three sections: skill level, 3-star quota, detection toggles.
+        # AI 置信度是"多数用户不需要天天碰"的设置,折叠收起(V1/V2 切换已提到
+        # 上方阈值区,不再放这里)。
+        # AI confidence is a setting most users never touch day to day, so it
+        # stays collapsed here (the V1/V2 toggle was promoted up to the
+        # threshold section and no longer lives here).
         lay.addWidget(self._divider())
 
         self._advanced_expanded = False
@@ -538,24 +558,6 @@ class SettingsCenter(QDialog):
         ai_row.addWidget(self._cull_ai, 1)
         ai_row.addWidget(self._cull_ai_value_label)
         adv_lay.addLayout(ai_row)
-
-        # 旧版评星算法开关(取代原两张大卡片):默认不勾选=v2,勾选=v1回滚。
-        # Legacy rating-algorithm toggle (replaces the old two large cards):
-        # unchecked by default (v2); checked rolls back to v1.
-        self._algo_legacy_checkbox = QCheckBox(
-            self.i18n.t("settings.culling_algo_legacy_label")
-        )
-        self._algo_legacy_checkbox.setChecked(not self._rating_v2)
-        self._algo_legacy_checkbox.setStyleSheet(self._checkbox_qss())
-        self._algo_legacy_checkbox.stateChanged.connect(self._on_algo_legacy_toggled)
-        adv_lay.addWidget(self._algo_legacy_checkbox)
-
-        algo_hint = QLabel(self.i18n.t("settings.culling_algo_v1_desc"))
-        algo_hint.setWordWrap(True)
-        algo_hint.setStyleSheet(
-            f"color:{COLORS['text_muted']};font-size:11px;margin-left:24px;"
-        )
-        adv_lay.addWidget(algo_hint)
 
         lay.addWidget(self._advanced_content)
 
@@ -1221,11 +1223,14 @@ class SettingsCenter(QDialog):
         th = get_skill_level_thresholds(level_key)
         self._suppress = True
         try:
-            # V4.6(rating-v2/T4): v2 下预设联动配额滑块;v1 联动旧阈值滑块
-            # V4.6 (rating-v2/T4): presets drive the quota slider under v2
+            # V4.6+三段配额: v2 下预设联动配额分配条(3★/2★ 一对);v1 联动旧阈值滑块
+            # V4.6 + 3-seg quota: presets drive the QuotaBar (3★/2★ pair) under v2
             if getattr(self, "_rating_v2", False) and self._cull_quota is not None:
-                from core.rating_quota import SKILL_QUOTA3, DEFAULT_QUOTA3
-                self._cull_quota.setValue(int(SKILL_QUOTA3.get(level_key, DEFAULT_QUOTA3)))
+                from core.rating_quota import (
+                    SKILL_QUOTA3, SKILL_QUOTA2, DEFAULT_QUOTA3, DEFAULT_QUOTA2)
+                self._cull_quota.set_quotas(
+                    int(SKILL_QUOTA3.get(level_key, DEFAULT_QUOTA3)),
+                    int(SKILL_QUOTA2.get(level_key, DEFAULT_QUOTA2)))
             self._cull_sharp.setValue(int(th[0]))
             self._cull_nima.setValue(int(round(th[1] * 10)))
         finally:
@@ -1263,7 +1268,29 @@ class SettingsCenter(QDialog):
         cfg.set_custom_sharpness(self._cull_sharp.value())
         cfg.set_custom_aesthetics(self._cull_nima.value() / 10.0)
         if getattr(self, "_rating_v2", False) and self._cull_quota is not None:
-            cfg.set_custom_quota3(self._cull_quota.value())
+            cfg.set_custom_quota3(self._cull_quota.quota3())
+            cfg.set_custom_quota2(self._cull_quota.quota2())
+        cfg.save()
+
+    def _on_cull_quota_changed(self, q3: int, q2: int) -> None:
+        """
+        星级配额分配条被用户拖动的回调:切自定义档并持久化 custom_quota3/quota2。
+
+        1★ = 100 − q3 − q2 为算术余量,不单独存储。_suppress 期间(预设联动)
+        由 set_quotas 静默填充、不发信号,故此处无需再判 _suppress。
+
+        Callback when the user drags the QuotaBar: switch to the custom skill
+        level and persist custom_quota3/quota2 (1★ is the derived remainder).
+        """
+        self._current_skill_key = "custom"
+        self._select_skill_radio("custom")
+
+        from advanced_config import get_advanced_config
+
+        cfg = get_advanced_config()
+        cfg.set_skill_level("custom")
+        cfg.set_custom_quota3(q3)
+        cfg.set_custom_quota2(q2)
         cfg.save()
 
     def _on_ai_confidence_changed(self, value: int) -> None:
@@ -1357,10 +1384,11 @@ class SettingsCenter(QDialog):
         if self._current_skill_key == "custom":
             cfg.set_custom_sharpness(self._cull_sharp.value())
             cfg.set_custom_aesthetics(self._cull_nima.value() / 10.0)
-            # V4.6(rating-v2/T4): v2 自定义配额同步写回
-            # V4.6 (rating-v2/T4): persist the custom 3-star quota under v2
+            # V4.6+三段配额: v2 自定义配额(3★/2★)同步写回,1★ 为余量不存储
+            # V4.6 + 3-seg quota: persist custom 3★/2★ quotas under v2 (1★ derived)
             if getattr(self, "_rating_v2", False) and self._cull_quota is not None:
-                cfg.set_custom_quota3(self._cull_quota.value())
+                cfg.set_custom_quota3(self._cull_quota.quota3())
+                cfg.set_custom_quota2(self._cull_quota.quota2())
         cfg.save()
 
     # ── 输出页 / Output page ──────────────────────────────────────────────────
