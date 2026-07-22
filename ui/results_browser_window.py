@@ -163,14 +163,17 @@ def _burst_sharpness(photo: dict) -> float:
     return float(v) if v is not None else float("-inf")
 
 
+from core.burst_ranking import burst_composite_key
+
 def _burst_representative(photos: list) -> dict:
     """
-    从同组连拍中选「锐度最高」的一张作为折叠封面代表。
+    组内「最佳」代表:分层排序(对焦仲裁档 → 层内眼清为主+头锐为辅)。
+    折叠封面与展开标红均取此结果。
 
-    Pick the sharpest photo in a burst group as the collapsed-cover representative.
+    Pick the burst representative via tiered ranking (focus tier, then
+    eye-led + head sharpness). Used for the collapsed cover and highlight.
     """
-    return max(photos, key=_burst_sharpness)
-
+    return max(photos, key=burst_composite_key)
 
 def _build_burst_update_map(photos: list) -> dict:
     grouped = {}
