@@ -6,7 +6,6 @@ ThumbnailCard: 单张照片卡片（评分角标 + 对焦指示点）
 ThumbnailLoader: QThread 后台加载缩略图
 """
 
-import html as _html
 import os
 import threading
 from collections import OrderedDict
@@ -14,13 +13,13 @@ from typing import Optional
 
 from PySide6.QtWidgets import (
     QScrollArea, QWidget, QGridLayout, QLabel, QFrame,
-    QVBoxLayout, QHBoxLayout, QToolButton, QSizePolicy, QGraphicsOpacityEffect
+    QVBoxLayout, QSizePolicy, QGraphicsOpacityEffect
 )
 from PySide6.QtCore import Qt, Signal, QThread, QObject, Slot, QSize, QTimer, QPoint, QRect, QEasingCurve, QPropertyAnimation
 from PySide6.QtGui import QPixmap, QColor, QPainter, QPen, QFont, QBrush, QImage, QImageReader
 
 from ui.styles import COLORS, FONTS
-from ui.icon_utils import render_tinted_image, load_tinted_icon, ICON_DANGER
+from ui.icon_utils import render_tinted_image, ICON_DANGER
 from tools.i18n import get_i18n
 
 
@@ -36,29 +35,22 @@ def _display_name(photo: dict) -> str:
 
 def _tile_label_text(photo: dict, burst_suffix: str = "") -> str:
     """
-    卡片底部标签文本:有鸟种时两行 rich text(第一行鸟名+连拍后缀,第二行
-    文件名小一号灰字),无鸟种时返回纯文件名单行(Paul 反馈 P0-2)。
+    卡片底部标签文本:单行显示——有鸟种时显示鸟名(跟随语言),无鸟种时显示
+    文件名,尾部附连拍数量后缀。文件名不再占第二行,改由整卡 tooltip 悬停查看。
 
-    Tile label text: with a species, two rich-text lines (species + burst
-    suffix, then the filename in smaller muted type); otherwise just the
-    plain filename.
+    Tile label text: a single line — the species name (localized) when the
+    photo has one, otherwise the filename, with the burst-count suffix
+    appended. The filename is no longer shown on a second line; it is
+    revealed via the card's hover tooltip instead.
 
     参数 / Parameters:
         photo (dict): 照片记录 / photo record.
         burst_suffix (str): 连拍数量后缀,如 " (5)" / burst-count suffix.
 
     返回 / Returns:
-        str: QLabel 文本(含 HTML 时 QLabel 自动按 rich text 渲染)。
+        str: QLabel 纯文本单行 / a single plain-text line for the QLabel.
     """
-    primary = _display_name(photo)
-    filename = photo.get("filename", "")
-    if primary and primary != filename:
-        return (
-            f"{_html.escape(primary + burst_suffix)}<br/>"
-            f"<span style='font-size:9px;color:{COLORS['text_muted']};'>"
-            f"{_html.escape(filename)}</span>"
-        )
-    return primary + burst_suffix
+    return _display_name(photo) + burst_suffix
 
 
 # 对焦状态指示颜色（WORST 不显示圆点）
@@ -404,9 +396,6 @@ class ThumbnailCard(QFrame):
     clicked = Signal(dict)
     double_clicked = Signal(dict)
     context_menu_requested = Signal(dict, object)  # C4 右键菜单
-    # issue #106: 点击鸟名旁铅笔 → 编辑/补录鸟种(复用既有弹窗)
-    # issue #106: pencil next to the species name → edit/assign species
-    species_edit_requested = Signal(dict)
 
     # V5: Add badge clicked signal
     badge_clicked = Signal(dict)
@@ -454,9 +443,11 @@ class ThumbnailCard(QFrame):
         self.img_label.setText("") 
         layout.addWidget(self.img_label)
 
-        # 卡片底部:鸟种+文件名两行并显(无鸟种时单行文件名);悬停显示文件名
-        # Tile footer: species + filename on two lines (filename only when
-        # no species); the tooltip still shows the filename.
+        # 卡片底部:单行显示鸟名(有鸟种)或文件名(无鸟种);文件名靠整卡
+        # tooltip 悬停查看。鸟种编辑/补录改由右键菜单进入(见 results_browser)。
+        # Tile footer: a single line showing the species (if any) or the
+        # filename; the filename is revealed via the card's hover tooltip.
+        # Species edit/assign now lives in the right-click menu.
         burst_suffix = f" ({self.burst_count})" if (self.is_burst_group and self.burst_count > 1) else ""
         self.setToolTip(photo.get("filename", ""))
         self.name_label = QLabel(_tile_label_text(photo, burst_suffix))
@@ -469,33 +460,7 @@ class ThumbnailCard(QFrame):
             }}
         """)
         self.name_label.setMaximumWidth(thumb_size - 16)
-
-        # issue #106: 鸟名右侧常驻小铅笔 → 编辑/补录鸟种(无鸟种照片也显示,
-        # 允许人工补录);点击复用浏览器既有的鸟种编辑弹窗与目录移动逻辑。
-        # issue #106: an always-visible pencil next to the name opens the
-        # existing species-edit dialog (also shown for species-less photos
-        # so users can assign a name manually).
-        self._edit_btn = QToolButton()
-        self._edit_btn.setIcon(load_tinted_icon("square-pen.svg", COLORS['text_muted'], size=12))
-        self._edit_btn.setIconSize(QSize(12, 12))
-        self._edit_btn.setFixedSize(16, 16)
-        self._edit_btn.setCursor(Qt.PointingHandCursor)
-        self._edit_btn.setFocusPolicy(Qt.NoFocus)
-        self._edit_btn.setToolTip(get_i18n().t("fullscreen.tb_species"))
-        self._edit_btn.setStyleSheet(f"""
-            QToolButton {{ border: none; background: transparent; }}
-            QToolButton:hover {{ background: {COLORS['accent_dim']}; border-radius: 4px; }}
-        """)
-        self._edit_btn.clicked.connect(lambda: self.species_edit_requested.emit(self.photo))
-
-        footer = QHBoxLayout()
-        footer.setContentsMargins(0, 0, 0, 0)
-        footer.setSpacing(2)
-        footer.addStretch(1)
-        footer.addWidget(self.name_label)
-        footer.addWidget(self._edit_btn)
-        footer.addStretch(1)
-        layout.addLayout(footer)
+        layout.addWidget(self.name_label, alignment=Qt.AlignHCenter)
 
     def set_pixmap(self, image: QImage):
         try:
@@ -728,9 +693,6 @@ class ThumbnailGrid(QScrollArea):
     photo_double_clicked = Signal(dict)
     multi_selection_changed = Signal(list)   # C3 多选信号
     burst_badge_clicked = Signal(int)        # V5: Burst badge click signal
-    # issue #106: 转发卡片铅笔点击 → 浏览器打开鸟种编辑弹窗
-    # issue #106: relay the card pencil click to the browser's edit dialog
-    species_edit_requested = Signal(dict)
 
     def __init__(self, i18n, parent=None):
         super().__init__(parent)
@@ -981,7 +943,6 @@ class ThumbnailGrid(QScrollArea):
             card.double_clicked.connect(lambda p: self.photo_double_clicked.emit(p))
             card.context_menu_requested.connect(self._on_context_menu_requested)
             card.badge_clicked.connect(self._on_badge_clicked)
-            card.species_edit_requested.connect(self.species_edit_requested.emit)
             photo_key = _photo_key(photo)
             self._cards[photo_key] = card
             self._grid.addWidget(card, row, col)
