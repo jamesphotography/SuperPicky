@@ -1,3 +1,19 @@
+# SuperPicky 4.5.0 RC8
+
+**What's new since RC7:**
+
+- **Best-of-burst pick, re-scored.** The frame chosen to represent a burst
+  group is now selected by a tiered score — first the arbitrated focus tier,
+  then eye clarity plus head sharpness — instead of head sharpness alone.
+  This surfaces a sharper, better-focused keeper as the group's cover shot.
+- **Species editing moved to the right-click menu.** The always-on edit
+  pencil on grid tiles is gone; species correction/assignment now lives in
+  each tile's right-click menu ("Edit Species…") and works for every photo,
+  including ones without a name yet. Tile labels are cleaner as a result —
+  a single line (species or filename), with the filename shown on hover.
+
+---
+
 # SuperPicky 4.5.0 RC7
 
 **What's new since RC6:**
