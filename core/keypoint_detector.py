@@ -193,13 +193,21 @@ class KeypointDetector:
             visible_eye = None
         
         # 计算头部锐度
-        head_sharpness = 0.0
-        if visible_eye is not None:
-            head_sharpness = self._calculate_head_sharpness(
-                bird_crop, left_eye, right_eye, beak,
-                left_eye_vis, right_eye_vis, beak_visible,
-                box, seg_mask
-            )
+        # V4.8: 无条件计算。此前有 `if visible_eye is not None` 守卫，
+        # 双眼可见度均 <0.3 时直接返回 0.0，与低可见度分支的 LOW_VIS_PENALTY
+        # 逻辑互斥（那段分支因此永不可达）。实测 495 张批次中 23% 的照片
+        # 双眼 <0.3，其中绝大多数鸟喙清晰可见、画面本身锐利，却被 0 锐度
+        # 送进 0★ 判废。现改为总是计算，可见度不足时由内部惩罚系数降分。
+        # V4.8: always compute. The old `if visible_eye is not None` guard made
+        # the LOW_VIS_PENALTY branch unreachable and forced sharpness to 0 for
+        # every photo whose eyes both scored <0.3 — 23% of a real 495-shot
+        # batch, most of them sharp shots with a clearly visible beak. Low
+        # visibility is now handled by the penalty factor, not by zeroing.
+        head_sharpness = self._calculate_head_sharpness(
+            bird_crop, left_eye, right_eye, beak,
+            left_eye_vis, right_eye_vis, beak_vis,
+            box, seg_mask
+        )
         
         # V3.8: 计算双眼中较高的置信度，用于评分封顶逻辑
         best_eye_visibility = max(left_eye_vis, right_eye_vis)
@@ -226,14 +234,30 @@ class KeypointDetector:
         beak: Tuple[float, float],
         left_eye_vis: float,
         right_eye_vis: float,
-        beak_visible: bool,
+        beak_vis: float,
         box: Tuple[int, int, int, int] = None,
         seg_mask: np.ndarray = None
     ) -> float:
         """
-        计算头部区域锐度
-        
-        使用眼睛为圆心，眼喙距离×1.2为半径，与seg掩码取交集
+        计算头部区域锐度。
+
+        以眼睛为圆心、眼喙距离×1.2 为半径画圆，与 seg 掩码取交集后做 Tenengrad。
+
+        参数:
+        bird_crop (np.ndarray): 鸟的裁剪区域 (RGB)
+        left_eye / right_eye / beak (Tuple[float, float]): 归一化关键点坐标
+        left_eye_vis / right_eye_vis / beak_vis (float): 对应可见性 0-1
+            V4.8 起 beak_vis 为 float（此前误声明为 bool 且低可见度分支
+            引用未定义的 beak_vis，该分支一旦可达即 NameError）
+        box (Tuple[int, int, int, int]): 原始检测框 (x, y, w, h)，无喙时定半径用
+        seg_mask (np.ndarray): 分割掩码，与 bird_crop 同尺寸时取交集
+
+        返回:
+        float: 0-1000 的头部锐度；双眼可见度均 <0.3 时结果 ×0.8 作为惩罚
+
+        Compute head-region sharpness. beak_vis is a float since V4.8 — it was
+        declared as a bool while the low-visibility branch referenced an
+        undefined `beak_vis`, which would have raised NameError once reachable.
         """
         h, w = bird_crop.shape[:2]
 
@@ -280,7 +304,7 @@ class KeypointDetector:
         beak_px = (int(beak[0] * w), int(beak[1] * h))
         
         # 计算半径
-        if beak_visible:
+        if beak_vis >= self.VISIBILITY_THRESHOLD:
             radius = int(self._distance(eye_px, beak_px) * self.RADIUS_MULTIPLIER)
         elif box is not None:
             # 无喙时用检测框的15%
