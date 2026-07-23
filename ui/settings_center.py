@@ -1156,6 +1156,22 @@ class SettingsCenter(QDialog):
         from advanced_config import get_advanced_config
 
         cfg = get_advanced_config()
+        # V4.8: 切到 V1 前先告知代价。V1 把同一个阈值同时当判废线和达标线
+        # (rating_engine 的 min_nima 与 nima_threshold 同源)，1★/2★ 恒为空集，
+        # 只会产生 0★/3★；实测 433 张批次在美学阈值 7.0 下 99.7% 被判 0★。
+        # 用户取消则保持 V2，复选框回滚。
+        # V4.8: warn before switching to V1. It feeds one value into both the
+        # reject line and the pass line, so 1★/2★ are always empty — only 0★/3★
+        # are reachable. On a real 433-shot batch an aesthetics threshold of 7.0
+        # rejected 99.7% of the photos. Cancelling keeps V2 and reverts the box.
+        if algo_key == "v1" and not self._confirm_switch_to_v1(cfg):
+            checkbox = getattr(self, "_algo_legacy_checkbox", None)
+            if checkbox is not None:
+                checkbox.blockSignals(True)
+                checkbox.setChecked(False)
+                checkbox.blockSignals(False)
+            return
+
         cfg.set_rating_algorithm(algo_key)
         cfg.save()
         self._rating_v2 = algo_key == "v2"
@@ -1165,6 +1181,59 @@ class SettingsCenter(QDialog):
             checkbox.setChecked(algo_key == "v1")
             checkbox.blockSignals(False)
         self._apply_algo_visibility()
+
+    # V1 美学阈值高于此值时追加「大量判废」的额外警告 / extra warning above this
+    _V1_NIMA_WARN_LEVEL = 5.5
+
+    def _confirm_switch_to_v1(self, cfg) -> bool:
+        """
+        切换到 V1 前的确认对话框。
+
+        说明 V1 只产生 0★/3★（1★/2★ 恒为空集），并回显当前两个阈值；
+        美学阈值偏高时追加一段「会导致大量判废」的警告。
+
+        参数:
+        cfg: advanced_config 单例，用于读取当前锐度/美学阈值
+
+        返回:
+        bool: True=用户确认切换到 V1；False=取消，维持 V2
+
+        Confirmation dialog shown before switching to V1. Explains that V1 can
+        only produce 0★/3★, echoes the current thresholds, and appends an extra
+        warning when the aesthetics threshold is high enough to reject most
+        photos. Returns True when the user confirms the switch.
+        """
+        from PySide6.QtWidgets import QMessageBox
+
+        from core.skill_presets import get_skill_level_thresholds
+
+        # 窗口不可见 = 没有用户在看（测试、程序化 setChecked、CLI 构造），
+        # 此时弹模态框会永久阻塞——没人可点。这种场景直接放行。
+        # Not visible = nobody is looking (tests, programmatic setChecked,
+        # headless construction). A modal dialog would block forever with no
+        # one to dismiss it, so skip the prompt and allow the switch.
+        if not self.isVisible():
+            return True
+
+        sharp, nima = get_skill_level_thresholds(cfg.skill_level, cfg)
+        advice = (
+            self.i18n.t("settings.culling_algo_v1_warn_high", nima=nima)
+            if float(nima) > self._V1_NIMA_WARN_LEVEL else ""
+        )
+
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle(self.i18n.t("settings.culling_algo_v1_warn_title"))
+        box.setText(self.i18n.t(
+            "settings.culling_algo_v1_warn_body",
+            nima=nima, sharp=int(sharp), advice=advice))
+        ok = box.addButton(self.i18n.t("settings.culling_algo_v1_warn_ok"),
+                           QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(self.i18n.t("settings.culling_algo_v1_warn_cancel"),
+                      QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(box.buttons()[-1])   # 默认保持 V2 / default to keeping V2
+        box.exec()
+        return box.clickedButton() is ok
 
     def _on_algo_legacy_toggled(self, _state: int) -> None:
         """
