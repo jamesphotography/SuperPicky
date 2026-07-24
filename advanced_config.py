@@ -462,8 +462,10 @@ class AdvancedConfig:
         self.config["is_first_run"] = bool(value)
     
     def set_custom_sharpness(self, value):
-        """设置自选模式下的锐度阈值 (200-600)"""
-        self.config["custom_sharpness"] = max(200, min(600, int(value)))
+        """设置自选模式下的锐度阈值 (100-600) - 与 set_min_sharpness clamp 对齐"""
+        # V4.8: 下限 200→100,与 set_min_sharpness 及 UI 滑块(100-600)一致。
+        # 此前 200 会在拖到 100-199 时静默截断,导致 custom 档恢复时默认值漂移。
+        self.config["custom_sharpness"] = max(100, min(600, int(value)))
     
     def set_custom_aesthetics(self, value):
         """设置自选模式下的美学阈值 (4.0-7.0)"""

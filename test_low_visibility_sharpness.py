@@ -72,11 +72,21 @@ def test_low_visibility_penalty_applied():
     crop = _sharp_crop()
     low = det._calculate_head_sharpness(
         crop, **LOW_VIS_KWARGS, box=None, seg_mask=None)
+    # 对照组必须落在**同一只眼**上：LOW_VIS_KWARGS 里 left_eye_vis(0.08) >
+    # right_eye_vis(0.05)，低可见度分支取的是左眼，故这里让左眼可见。
+    # 若改让右眼可见，两条路径的眼-喙距离不同 → 半径不同 → 头部 ROI 不同，
+    # 锐度尺寸补偿会按不同 ROI 扣分，0.8 的比例自然不成立（那是对照组的
+    # 构造错误，不是惩罚系数失效）。
+    # The control must use the SAME eye: with left(0.08) > right(0.05) the
+    # low-visibility branch picks the left eye, so make the left eye visible
+    # here. Picking the other eye changes the eye-beak distance, hence the
+    # radius and the head ROI — and the size compensation then scales the two
+    # paths differently, breaking the 0.8 ratio for reasons unrelated to it.
     normal = det._calculate_head_sharpness(
         crop,
         left_eye=LOW_VIS_KWARGS["left_eye"], right_eye=LOW_VIS_KWARGS["right_eye"],
         beak=LOW_VIS_KWARGS["beak"],
-        left_eye_vis=0.05, right_eye_vis=0.80,   # 右眼可见 → 走正常分支，同一只眼
+        left_eye_vis=0.80, right_eye_vis=0.05,   # 左眼可见 → 与低可见度分支同一只眼
         beak_vis=0.92, box=None, seg_mask=None)
     assert normal > 0
     assert low == pytest.approx(normal * 0.8, rel=0.02)

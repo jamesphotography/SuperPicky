@@ -72,6 +72,22 @@ class KeypointDetector:
     VISIBILITY_THRESHOLD = 0.3  # 至少一个关键点可见性需≥0.3才不算"全部不可见"
     RADIUS_MULTIPLIER = 1.2         # 有喙时的半径系数
     NO_BEAK_RADIUS_RATIO = 0.15     # 无喙时用检测框的15%
+    # ---- 锐度尺寸补偿 / sharpness size compensation ----
+    # Tenengrad 是梯度密度 mean(g²),不是总量:同一只鸟拍得越小,边缘跨越的像素
+    # 越少、梯度幅值越高,密度就越高——远拍小鸟的锐度分被系统性虚抬。受控缩放
+    # 实验(40 张 ROI≥600px 的样本缩放到 512~45px,画质无任何真实变化)实测
+    # raw ∝ s^-0.641;log 归一化系数 1000/ln(154016/100)=136.25,故纯几何伪影
+    # 为 0.641×136.25 ≈ 87.4 分/e倍尺寸。此处按此值扣除,只减不加:
+    # ROI ≥ REF 的照片一分不动,故阈值语义对多数照片不变、无需重标。
+    # K=0 即完全关闭,等价于旧公式(单参数回滚)。
+    # 详见 docs/plans/2026-07-24-sharpness-size-compensation.md
+    # Tenengrad is a gradient *density*; smaller ROIs inflate it because edges
+    # span fewer pixels. A controlled rescaling experiment measured
+    # raw ∝ s^-0.641, i.e. 87.4 score-points per e-fold of ROI size. We subtract
+    # exactly that geometric artifact, downward only: ROI >= REF is untouched,
+    # so existing thresholds keep their meaning. K=0 disables the whole thing.
+    SIZE_COMP_K = 87.4      # 分/e倍尺寸 / points per e-fold of size
+    SIZE_COMP_REF = 300.0   # 参考尺寸(px),ROI ≥ 此值不补偿 / no penalty above this
     
     @staticmethod
     def _get_default_model_path() -> str:
@@ -359,6 +375,11 @@ class KeypointDetector:
         if cv2.countNonZero(roi_mask) == 0:
             return 0.0
 
+        # ROI 长边,用于尺寸补偿(见 _size_compensation)。不改动图像本身。
+        # ROI long side, used by the size compensation below; the image itself
+        # is never resampled.
+        roi_side = max(roi.shape[:2])
+
         if len(roi.shape) == 3:
             gray = cv2.cvtColor(roi, cv2.COLOR_RGB2GRAY)
         else:
@@ -378,13 +399,44 @@ class KeypointDetector:
         if raw_sharpness <= MIN_VAL:
             return 0.0
         if raw_sharpness >= MAX_VAL:
-            return 1000.0
-            
-        log_val = math.log(raw_sharpness) - math.log(MIN_VAL)
-        log_max = math.log(MAX_VAL) - math.log(MIN_VAL)
-        
-        return (log_val / log_max) * 1000.0
-    
+            score = 1000.0
+        else:
+            log_val = math.log(raw_sharpness) - math.log(MIN_VAL)
+            log_max = math.log(MAX_VAL) - math.log(MIN_VAL)
+            score = (log_val / log_max) * 1000.0
+
+        # 扣除小 ROI 的几何虚高。放在这里(log 归一化之后、返回之前)是因为
+        # 伪影发生在像素层面、与 ISO 无关,必须先扣伪影再由下游乘 ISO 系数。
+        # Subtract the small-ROI geometric inflation here — after log
+        # normalisation and before the caller applies its ISO factor.
+        return self._size_compensation(score, roi_side)
+
+    @classmethod
+    def _size_compensation(cls, score: float, roi_side: int) -> float:
+        """
+        按头部 ROI 尺寸扣除 Tenengrad 的几何虚高。
+
+        Tenengrad 是梯度密度,ROI 越小密度越高(实测 raw ∝ s^-0.641),
+        导致远拍小鸟锐度虚高。这里按对数曲线扣回,只减不加:
+        ROI ≥ SIZE_COMP_REF 的照片原样返回。
+
+        参数:
+        score (float): log 归一化后的锐度分 (0-1000)
+        roi_side (int): 头部 ROI 的长边像素数
+
+        返回:
+        float: 补偿后的锐度分,下限 0
+
+        Remove the size-driven inflation of the Tenengrad density. Downward
+        only: an ROI at or above SIZE_COMP_REF is returned unchanged. Result
+        is clamped at 0 because very small ROIs can overshoot.
+        """
+        if cls.SIZE_COMP_K <= 0 or roi_side <= 0 or roi_side >= cls.SIZE_COMP_REF:
+            return score
+        penalty = cls.SIZE_COMP_K * math.log(cls.SIZE_COMP_REF / roi_side)
+        return max(0.0, score - penalty)
+
+
     @staticmethod
     def _distance(p1: Tuple[float, float], p2: Tuple[float, float]) -> float:
         """计算两点距离"""

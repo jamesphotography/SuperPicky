@@ -2,6 +2,17 @@
 
 **What's new since RC8:**
 
+- **Distant birds no longer score inflated sharpness.** Head sharpness uses a
+  gradient *density*, which rises as the bird gets smaller in frame — edges
+  span fewer pixels, so a 60px head could out-score an 800px one on the very
+  same subject. A controlled rescaling experiment measured the artifact at
+  87.4 points per e-fold of head size (raw ∝ size^-0.641); that amount is now
+  subtracted analytically. The correction is downward only and stops at 300px:
+  photos with a head region at or above that size are untouched, so existing
+  sharpness thresholds keep their meaning and normal framing is unaffected.
+  On a distant-seabird set the sharpness/size correlation drops from -0.53 to
+  +0.05. Note that head sharpness values for *small-in-frame* birds are no
+  longer comparable with those recorded by earlier versions.
 - **Star-quota split control (V2).** The single "3-star quota" slider is
   replaced by a three-segment quota bar. Drag its two dividers to set the
   3★ / 2★ / 1★ split directly — the three shares always add up to 100%, with
