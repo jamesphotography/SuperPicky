@@ -806,9 +806,9 @@
     "reason_fmt": "{rating_name} Photo ({base_reason}{exposure}{focus}{visibility}{flying})"
   },
   "rating_v2": {
-    "top_quota": "Excellent (top {percent}%)",
-    "mid_quota": "Good (top {percent}%)",
-    "rest_quota": "Average (top {percent}%)",
+    "top_quota": "Excellent (rank {percent}%)",
+    "mid_quota": "Good (rank {percent}%)",
+    "rest_quota": "Average (rank {percent}%)",
     "eye_capped": "Good (low eye visibility, capped at 2 stars)",
     "burst_capped": "Good (burst 3-star cap reached, demoted to 2 stars)"
   },

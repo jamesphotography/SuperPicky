@@ -1080,9 +1080,9 @@
     "reason_fmt": "{rating_name}照片（{base_reason}{exposure}{focus}{visibility}{flying}）"
   },
   "rating_v2": {
-    "top_quota": "优选（排序前{percent}%）",
-    "mid_quota": "良好（排序前{percent}%）",
-    "rest_quota": "普通（排序前{percent}%）",
+    "top_quota": "优选（排名{percent}%）",
+    "mid_quota": "良好（排名{percent}%）",
+    "rest_quota": "普通（排名{percent}%）",
     "eye_capped": "良好（眼睛可见度低，封顶2星）",
     "burst_capped": "良好（连拍组3星已满，降为2星）"
   },

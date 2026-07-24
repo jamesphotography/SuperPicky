@@ -53,8 +53,10 @@ class AdvancedConfig:
 
         # V4.6: 评星 V2(批内相对+配额) / Rating V2 (batch-relative + quota)
         "rating_algorithm": "v2",       # "v1"(绝对阈值,回滚用) | "v2"(批内相对+配额)
+        # 自选档的起点取「大师」标准(3★20/2★30),用户可自行往宽调
+        # Custom mode starts from the strictest preset (master); users loosen from there.
         "custom_quota3": 20,            # 自选模式下的 3★ 配额百分比 (5-50)
-        "custom_quota2": 25,            # 自选模式下的 2★ 配额百分比 (5-60,且 3★+2★≤95)
+        "custom_quota2": 30,            # 自选模式下的 2★ 配额百分比 (5-60,且 3★+2★≤95)
 
         # ARW 写入策略:
         #   sidecar: 只写 XMP 侧车，不修改 ARW（最安全，推荐）
@@ -274,7 +276,7 @@ class AdvancedConfig:
         2-star segment range). 1★ is the remainder (100 − 3★ − 2★) and is not
         stored; the joint 3★+2★≤95 constraint is enforced by QuotaBar on drag.
         """
-        return float(self.config.get("custom_quota2", 25))
+        return float(self.config.get("custom_quota2", 30))
 
     def set_custom_quota2(self, value: float):
         self.config["custom_quota2"] = max(5, min(60, int(value)))
