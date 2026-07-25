@@ -326,26 +326,51 @@ Occurrence API（`classKey=212`，CC0/CC-BY 许可）取 `speciesKey` facet，�
 
 ## 6. 生成脚本 / Build Script
 
-`scripts_dev/build_geo_distribution.py`，复用 `docs/GBIF_RARITY_INDEX.md` 记载的管线
-（DuckDB 直读 S3 Parquet，无需下载整库，无需 API key）：
+`scripts_dev/build_geo_distribution.py`，对每个 1°网格调用 GBIF Occurrence API 的
+`speciesKey` facet，服务端直接返回「该格每个物种的观察记录数」，无需下载原始记录：
 
-```sql
-SELECT specieskey,
-       CAST(floor(decimallatitude)  AS INT) AS lat_bin,
-       CAST(floor(decimallongitude) AS INT) AS lon_bin,
-       count(*) AS n
-FROM read_parquet('s3://gbif-open-data-us-east-1/occurrence/<snapshot>/occurrence.parquet/*')
-WHERE classkey = 212
-  AND license IN ('CC0_1_0','CC_BY_4_0')
-  AND decimallatitude IS NOT NULL
-  AND NOT hasgeospatialissues
-GROUP BY 1, 2, 3
+```
+GET https://api.gbif.org/v1/occurrence/search
+    ?classKey=212
+    &decimalLatitude=<lat_bin>,<lat_bin+1>
+    &decimalLongitude=<lon_bin>,<lon_bin+1>
+    &hasCoordinate=true&hasGeospatialIssue=false
+    &license=CC0_1_0&license=CC_BY_4_0
+    &facet=speciesKey&facetLimit=1200&limit=0
 ```
 
 随后用 `bird_reference.sqlite` 的 `gbif_rarity_100.specieskey → model_class_id`
-（覆盖 10,963/10,964）映射，聚合出两张表，写入 SQLite，并在 `meta` 记录快照日期与 DOI。
+（覆盖 10,963/10,964）映射，聚合出两张表，写入 SQLite，并在 `meta` 记录构建日期与许可。
 
-**数据升级路径**：更换快照日期重跑一次脚本即可，无需 API key、无需逐国抓取、
+### 6.1 为什么不走 S3 Parquet（实测否决）/ Why not S3 Parquet (measured, rejected)
+
+设计初稿计划复用 `docs/GBIF_RARITY_INDEX.md` 记载的 DuckDB 直读 S3 管线。
+实施时实测否决，三个原因：
+
+1. **列名与初稿假设不符**：GBIF Parquet 没有 `classkey`（只有 `class VARCHAR`，值 `'Aves'`）、
+   没有 `hasgeospatialissues`（只有 `issue VARCHAR[]`），`specieskey` 是 `VARCHAR` 而非整数。
+2. **规模不可行**：`2026-07-01` 快照有 **8,515 个分片 / 265 GB**；单分片聚合实测 19.4 s，
+   串行外推 46 小时。首次尝试以 `IOException: Timeout ... occurrence.parquet/000018` 失败。
+3. **预筛选下载同样不现实**：鸟类 + 有坐标 + CC0/CC-BY 共 **21 亿条**记录
+   （eBird 观察数据集在 GBIF 上是 CC-BY-4.0，不被许可过滤排除），SIMPLE_PARQUET 仍有 20–30 GB。
+
+API facet 方案的实测吞吐（60 格随机采样）：
+
+| 模式 | 等效单格 | 18,709 格外推 | 错误 |
+|---|---|---|---|
+| 串行 | 0.54 s | 2.8 小时 | 0 |
+| 并发 4 | 0.172 s | 0.89 小时 | 2× HTTP 429 |
+| **并发 8** | **0.079 s** | **0.41 小时** | 0 |
+| 并发 16 | 0.311 s | 1.62 小时 | 1× 超时（过载反降） |
+
+采用并发 8，配 429 指数退避与断点续传（已处理网格记入 `_build_progress`，构建完成后删表）。
+该方法与 §5.1 的阈值标定同源，`cumulative:0.999` 直接适用；换用 S3 精确 count 反而需要
+重新验证标定值是否仍成立。
+
+**网格枚举**：用 `avonet.db` 中有分布记录的 18,709 个网格作枚举源。该依赖是一次性的——
+数据落地后 §7 删除 `avonet.db` 不影响本库。
+
+**数据升级路径**：重跑一次脚本即可（约 30–60 分钟），无需 API key、无需逐国抓取、
 无需人工维护国家清单。这是本设计相对现状（428 个手工抓取的 json + 一份来源不明的
 107 MB db + 无任何生成脚本）的核心改进。
 

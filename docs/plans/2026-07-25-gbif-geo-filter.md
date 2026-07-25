@@ -255,44 +255,82 @@ git commit -m "chore(geo): 标定 L1 候选集阈值并将结论写回设计文�
 ### Task 2: 生成 geo_distribution.db
 
 **Files:**
-- Create: `scripts_dev/build_geo_distribution.py`
+- Rewrite: `scripts_dev/build_geo_distribution.py`（当前版本走 S3，已证明不可行，整体重写）
 - Create: `birdid/data/geo_distribution.db`（脚本产物，约 16 MB）
 
 **Interfaces:**
-- Consumes: Task 1 选定的阈值方案（写入 `meta.tier1_threshold`，供 Task 3 读取）
+- Consumes: Task 1 选定的阈值方案，写入 `meta.tier1_threshold` 的值为**精确字符串 `cumulative:0.999`**
 - Produces: SQLite 库，表结构见下。Task 3 依赖 `cell_species(cell_id, class_id, n)`、`country_species(country, class_id, n)`、`meta(key, value)` 三张表及 `idx_cell` / `idx_country` 两个索引。
 
-- [ ] **Step 1: 写生成脚本**
+**为什么不走 S3（已实测否决）/ Why not S3 (measured and rejected):**
 
-创建 `scripts_dev/build_geo_distribution.py`：
+原计划用 DuckDB 直读 S3 Parquet，实际执行时暴露三个问题：
+
+1. **列名全错**：GBIF Parquet 没有 `classkey`（只有 `class VARCHAR`，值为 `'Aves'`）、
+   没有 `hasgeospatialissues`（只有 `issue VARCHAR[]`），且 `specieskey` 是 **VARCHAR** 不是整数。
+2. **规模不可行**：快照有 **8,515 个分片 / 265 GB**；实测单分片聚合 19.4 s，
+   串行外推 46 小时。首次尝试即以 `IOException: Timeout ... occurrence.parquet/000018` 失败。
+3. **预筛选下载同样不现实**：鸟类 + 有坐标 + CC0/CC-BY 共 **21 亿条**记录
+   （eBird 观察数据集在 GBIF 上是 CC-BY-4.0，不被许可过滤排除），SIMPLE_PARQUET 仍有 20–30 GB。
+
+改用 GBIF Occurrence API 的 `speciesKey` facet 逐格聚合——服务端直接返回我们要的
+「每格每种计数」，无需下载任何原始记录。实测吞吐：
+
+| 模式 | 等效单格 | 18,709 格外推 | 错误 |
+|---|---|---|---|
+| 串行 | 0.54 s | 2.8 小时 | 0 |
+| 并发 4 | 0.172 s | 0.89 小时 | 2× HTTP 429 |
+| **并发 8** | **0.079 s** | **0.41 小时** | 0 |
+| 并发 16 | 0.311 s | 1.62 小时 | 1× 超时（过载反降） |
+
+并发 8 是甜点。**429 限流真实存在**，必须有退避重试；**必须支持断点续传**，
+中断后能接着跑。该方法与 Task 1 的阈值标定同源，`cumulative:0.999` 直接适用。
+
+- [ ] **Step 1: 重写生成脚本**
+
+把 `scripts_dev/build_geo_distribution.py` 整体替换为：
 
 ```python
 # -*- coding: utf-8 -*-
 """
-从 GBIF 快照生成地理分布库 / Build the geo-distribution DB from a GBIF snapshot.
+从 GBIF Occurrence API 生成地理分布库 / Build the geo-distribution DB from the GBIF API.
 
-用 DuckDB 直读 S3 上的 GBIF Parquet 月度快照（无需下载整库、无需 API key），
-聚合成 class_id × 1°网格 × 观察次数，再按国家汇总，写入 SQLite。
+对每个 1°网格调用 GBIF 的 speciesKey facet，拿到「该格每个物种的观察记录数」，
+映射到 OSEA class_id 后写入 SQLite，再按国家汇总。服务端完成聚合，无需下载原始记录。
 
-Query the monthly GBIF Parquet snapshot on S3 directly with DuckDB (no full
-download, no API key), aggregate into class_id x 1-degree cell x count, roll up
-by country, and write to SQLite.
+For each 1-degree cell, call the GBIF speciesKey facet to get per-species
+occurrence counts, map them to OSEA class ids, write them to SQLite, and roll up
+by country. The aggregation happens server-side; no raw records are downloaded.
+
+支持断点续传：已处理的网格记录在 _build_progress 表，重跑时自动跳过。
+Resumable: processed cells are tracked in _build_progress and skipped on re-run.
 
 用法 / Usage:
-    .venv/bin/python scripts_dev/build_geo_distribution.py --snapshot 2026-07-01
+    .venv/bin/python scripts_dev/build_geo_distribution.py --tier1 cumulative:0.999
+    .venv/bin/python scripts_dev/build_geo_distribution.py --resume   # 续跑
 """
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sqlite3
-from typing import Dict, Iterable, Tuple
-
-import duckdb
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date
+from typing import Dict, List, Optional, Set, Tuple
 
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT_PATH = os.path.join(PROJ, "birdid/data/geo_distribution.db")
+OUT_PATH = os.path.join(PROJ, "birdid", "data", "geo_distribution.db")
 AVES_CLASS_KEY = 212
+LICENSES = ("CC0_1_0", "CC_BY_4_0")
+WORKERS = 8
+BATCH = 200
+MAX_RETRY = 5
 
 
 def cell_id_of(lat_bin: int, lon_bin: int) -> int:
@@ -311,88 +349,221 @@ def cell_id_of(lat_bin: int, lon_bin: int) -> int:
     return (lat_bin + 90) * 360 + (lon_bin + 180)
 
 
-def query_gbif(snapshot: str) -> Iterable[Tuple[int, int, int, int]]:
+def fetch_cell(lat_bin: int, lon_bin: int) -> Optional[Dict[int, int]]:
     """
-    查询 GBIF 快照，产出 (specieskey, lat_bin, lon_bin, n)。
+    拉取单个网格内的鸟种及观察记录数，带 429/网络错误退避重试。
 
-    Query the GBIF snapshot, yielding (specieskey, lat_bin, lon_bin, n).
+    Fetch per-species occurrence counts for one cell, with backoff retries on
+    HTTP 429 and transient network errors.
 
     参数 / Parameters:
-        snapshot (str): 快照日期，如 "2026-07-01" / Snapshot date.
+        lat_bin (int): 网格南边界纬度 / Southern latitude of the cell.
+        lon_bin (int): 网格西边界经度 / Western longitude of the cell.
 
     返回 / Returns:
-        Iterable: 四元组迭代器 / Iterator of 4-tuples.
+        Optional[dict]: {gbif_species_key: count}；重试耗尽仍失败时返回 None /
+            {gbif_species_key: count}, or None when all retries are exhausted.
     """
-    con = duckdb.connect()
-    con.execute("INSTALL httpfs; LOAD httpfs;")
-    con.execute("SET s3_region='us-east-1'; SET s3_access_key_id=''; SET s3_secret_access_key='';")
-    src = f"s3://gbif-open-data-us-east-1/occurrence/{snapshot}/occurrence.parquet/*"
-    sql = f"""
-        SELECT specieskey,
-               CAST(floor(decimallatitude)  AS INTEGER) AS lat_bin,
-               CAST(floor(decimallongitude) AS INTEGER) AS lon_bin,
-               count(*) AS n
-        FROM read_parquet('{src}')
-        WHERE classkey = {AVES_CLASS_KEY}
-          AND license IN ('CC0_1_0', 'CC_BY_4_0')
-          AND specieskey IS NOT NULL
-          AND decimallatitude IS NOT NULL
-          AND decimallongitude IS NOT NULL
-          AND NOT hasgeospatialissues
-        GROUP BY 1, 2, 3
-    """
-    print(f"[build] 查询快照 / querying snapshot {snapshot} ...")
-    return con.execute(sql).fetchall()
+    params = [
+        ("classKey", str(AVES_CLASS_KEY)),
+        ("decimalLatitude", f"{lat_bin},{lat_bin + 1}"),
+        ("decimalLongitude", f"{lon_bin},{lon_bin + 1}"),
+        ("hasCoordinate", "true"),
+        ("hasGeospatialIssue", "false"),
+        ("facet", "speciesKey"),
+        ("facetLimit", "1200"),
+        ("limit", "0"),
+    ]
+    for lic in LICENSES:
+        params.append(("license", lic))
+    url = "https://api.gbif.org/v1/occurrence/search?" + urllib.parse.urlencode(params)
+
+    for attempt in range(MAX_RETRY):
+        req = urllib.request.Request(url, headers={"User-Agent": "SuperPicky-build/1.0"})
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                data = json.load(resp)
+            out: Dict[int, int] = {}
+            for f in data.get("facets", []):
+                if f.get("field") == "SPECIES_KEY":
+                    for c in f.get("counts", []):
+                        out[int(c["name"])] = int(c["count"])
+            return out
+        except urllib.error.HTTPError as e:
+            if e.code != 429:
+                if attempt == MAX_RETRY - 1:
+                    print(f"[build] 网格 ({lat_bin},{lon_bin}) HTTP {e.code}，放弃")
+                    return None
+            time.sleep(2 ** attempt)
+        except Exception:
+            if attempt == MAX_RETRY - 1:
+                return None
+            time.sleep(2 ** attempt)
+    return None
 
 
 def load_key_to_class() -> Dict[int, int]:
-    """GBIF specieskey → model_class_id 映射 / mapping (10963/10964 覆盖)."""
-    db = sqlite3.connect(os.path.join(PROJ, "birdid/data/bird_reference.sqlite"))
-    m = {
-        int(k): int(c)
-        for c, k in db.execute(
-            "SELECT model_class_id, specieskey FROM gbif_rarity_100 "
-            "WHERE specieskey IS NOT NULL"
-        )
-    }
+    """
+    GBIF specieskey → model_class_id 映射（覆盖 10963/10964）。
+
+    Mapping from GBIF specieskey to model class id (covers 10963/10964).
+
+    返回 / Returns:
+        dict[int, int]: {specieskey: model_class_id}
+    """
+    db = sqlite3.connect(os.path.join(PROJ, "birdid", "data", "bird_reference.sqlite"))
+    m: Dict[int, int] = {}
+    for cid, skey in db.execute(
+        "SELECT model_class_id, specieskey FROM gbif_rarity_100 WHERE specieskey IS NOT NULL"
+    ):
+        try:
+            m[int(skey)] = int(cid)
+        except (TypeError, ValueError):
+            continue
     db.close()
     return m
 
 
-def build(snapshot: str, tier1_threshold: str) -> None:
+def land_cells() -> List[Tuple[int, int]]:
     """
-    生成 geo_distribution.db / Build geo_distribution.db.
+    枚举待扫描的陆地网格 / Enumerate the land cells to scan.
+
+    用 avonet.db 中有分布记录的网格作为枚举源（18,709 个）。该依赖是一次性的：
+    数据落地后 Task 7 删除 avonet.db 不影响本库。
+
+    Uses the cells with distribution records in avonet.db (18,709) as the
+    enumeration source. This dependency is one-shot: once the data is built,
+    Task 7's removal of avonet.db does not affect this database.
+
+    返回 / Returns:
+        list[tuple[int, int]]: [(lat_bin, lon_bin), ...]
+    """
+    path = os.path.join(PROJ, "birdid", "data", "avonet.db")
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"网格枚举源缺失 / cell enumeration source missing: {path}"
+        )
+    av = sqlite3.connect(path)
+    rows = av.execute(
+        "SELECT p.south, p.west FROM places p WHERE EXISTS "
+        "(SELECT 1 FROM distributions d WHERE d.worldid = p.worldid)"
+    ).fetchall()
+    av.close()
+    return [(int(s // 1), int(w // 1)) for s, w in rows]
+
+
+def init_db(path: str, resume: bool) -> sqlite3.Connection:
+    """
+    打开（必要时重建）目标库并确保表结构存在。
+
+    Open (recreating when not resuming) the target database and ensure the schema.
 
     参数 / Parameters:
-        snapshot (str): GBIF 快照日期 / GBIF snapshot date.
-        tier1_threshold (str): Task 1 标定的 L1 方案名 / Calibrated L1 strategy.
+        path (str): 数据库路径 / Database path.
+        resume (bool): True 时保留已有数据续跑 / Keep existing data when True.
+
+    返回 / Returns:
+        sqlite3.Connection: 已就绪的连接 / A ready connection.
     """
-    rows = query_gbif(snapshot)
-    key2cls = load_key_to_class()
+    if not resume and os.path.exists(path):
+        os.remove(path)
+    db = sqlite3.connect(path)
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS cell_species (
+            cell_id  INTEGER NOT NULL,
+            class_id INTEGER NOT NULL,
+            n        INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS country_species (
+            country  TEXT NOT NULL,
+            class_id INTEGER NOT NULL,
+            n        INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+        CREATE TABLE IF NOT EXISTS _build_progress (cell_id INTEGER PRIMARY KEY);
+        """
+    )
+    db.commit()
+    return db
 
-    # 同一 class_id 可能对应多个 specieskey，需按 (cell, class) 累加
-    # Several specieskeys can map to one class_id; accumulate per (cell, class)
-    cell_acc: Dict[Tuple[int, int], int] = {}
-    unmapped = 0
-    for skey, lat_bin, lon_bin, n in rows:
-        cls = key2cls.get(int(skey))
-        if cls is None:
-            unmapped += 1
-            continue
-        key = (cell_id_of(int(lat_bin), int(lon_bin)), cls)
-        cell_acc[key] = cell_acc.get(key, 0) + int(n)
-    print(f"[build] 网格行 / cell rows: {len(cell_acc)}   未映射 specieskey / unmapped: {unmapped}")
 
-    # 国家汇总：每个网格中心反查 ISO 国家代码
-    # Country rollup: reverse-geocode each cell centre to an ISO country code
+def harvest(db: sqlite3.Connection, key2cls: Dict[int, int], cells: List[Tuple[int, int]]) -> int:
+    """
+    并发拉取所有网格并分批写入，跳过已完成的网格。
+
+    Fetch all cells concurrently and write in batches, skipping completed cells.
+
+    参数 / Parameters:
+        db (sqlite3.Connection): 目标库连接 / Target database connection.
+        key2cls (dict): specieskey → class_id 映射 / mapping.
+        cells (list): 待扫描网格 / Cells to scan.
+
+    返回 / Returns:
+        int: 本次新处理的网格数 / Number of cells processed in this run.
+    """
+    done: Set[int] = {r[0] for r in db.execute("SELECT cell_id FROM _build_progress")}
+    todo = [c for c in cells if cell_id_of(c[0], c[1]) not in done]
+    print(f"[build] 待扫描 / to scan: {len(todo)}（已完成 / done: {len(done)}）")
+
+    t0 = time.time()
+    processed = 0
+    for start in range(0, len(todo), BATCH):
+        chunk = todo[start:start + BATCH]
+        with ThreadPoolExecutor(max_workers=WORKERS) as ex:
+            results = list(ex.map(lambda c: (c, fetch_cell(c[0], c[1])), chunk))
+
+        rows: List[Tuple[int, int, int]] = []
+        progress: List[Tuple[int]] = []
+        for (lat_bin, lon_bin), counts in results:
+            if counts is None:
+                continue                      # 失败的格不标记完成，留待续跑重试
+            cid = cell_id_of(lat_bin, lon_bin)
+            acc: Dict[int, int] = {}
+            for skey, n in counts.items():
+                cls = key2cls.get(skey)
+                if cls is not None:
+                    acc[cls] = acc.get(cls, 0) + n
+            rows.extend((cid, cls, n) for cls, n in acc.items())
+            progress.append((cid,))
+
+        db.executemany("INSERT INTO cell_species (cell_id, class_id, n) VALUES (?,?,?)", rows)
+        db.executemany("INSERT OR IGNORE INTO _build_progress (cell_id) VALUES (?)", progress)
+        db.commit()
+        processed += len(progress)
+
+        elapsed = time.time() - t0
+        rate = processed / elapsed if elapsed > 0 else 0
+        remain = (len(todo) - processed) / rate / 60 if rate > 0 else 0
+        print(f"[build] {processed}/{len(todo)} 格  {rate:.1f} 格/秒  剩余约 {remain:.0f} 分钟", flush=True)
+
+    return processed
+
+
+def rollup_countries(db: sqlite3.Connection) -> int:
+    """
+    按国家汇总网格数据 / Roll up cell data by country.
+
+    每个网格中心用 reverse_geocoder 反查 ISO 国家代码后聚合。
+
+    Each cell centre is reverse-geocoded to an ISO country code, then aggregated.
+
+    参数 / Parameters:
+        db (sqlite3.Connection): 目标库连接 / Target database connection.
+
+    返回 / Returns:
+        int: 写入的国家级行数 / Number of country-level rows written.
+    """
     import reverse_geocoder as rg
 
-    cell_ids = sorted({cid for cid, _ in cell_acc})
+    cell_ids = [r[0] for r in db.execute("SELECT DISTINCT cell_id FROM cell_species")]
+    if not cell_ids:
+        return 0
     coords = []
     for cid in cell_ids:
         lat_bin, lon_bin = divmod(cid, 360)
         coords.append((lat_bin - 90 + 0.5, lon_bin - 180 + 0.5))
-    print(f"[build] 反查国家 / reverse-geocoding {len(coords)} cells ...")
+    print(f"[build] 反查国家 / reverse-geocoding {len(coords)} cells ...", flush=True)
     results = rg.search(coords, mode=2, verbose=False)
     cell_country = {
         cid: str(r.get("cc", "")).upper()
@@ -400,96 +571,100 @@ def build(snapshot: str, tier1_threshold: str) -> None:
         if r.get("cc")
     }
 
-    country_acc: Dict[Tuple[str, int], int] = {}
-    for (cid, cls), n in cell_acc.items():
+    acc: Dict[Tuple[str, int], int] = {}
+    for cid, cls, n in db.execute("SELECT cell_id, class_id, n FROM cell_species"):
         cc = cell_country.get(cid)
         if not cc:
             continue
-        country_acc[(cc, cls)] = country_acc.get((cc, cls), 0) + n
-    print(f"[build] 国家行 / country rows: {len(country_acc)}")
+        acc[(cc, cls)] = acc.get((cc, cls), 0) + n
 
-    if os.path.exists(OUT_PATH):
-        os.remove(OUT_PATH)
-    db = sqlite3.connect(OUT_PATH)
-    db.executescript(
-        """
-        CREATE TABLE cell_species (
-            cell_id  INTEGER NOT NULL,
-            class_id INTEGER NOT NULL,
-            n        INTEGER NOT NULL
-        );
-        CREATE TABLE country_species (
-            country  TEXT NOT NULL,
-            class_id INTEGER NOT NULL,
-            n        INTEGER NOT NULL
-        );
-        CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
-        """
-    )
+    db.execute("DELETE FROM country_species")
     db.executemany(
-        "INSERT INTO cell_species (cell_id, class_id, n) VALUES (?, ?, ?)",
-        [(cid, cls, n) for (cid, cls), n in cell_acc.items()],
-    )
-    db.executemany(
-        "INSERT INTO country_species (country, class_id, n) VALUES (?, ?, ?)",
-        [(cc, cls, n) for (cc, cls), n in country_acc.items()],
-    )
-    db.executescript(
-        "CREATE INDEX idx_cell ON cell_species(cell_id);"
-        "CREATE INDEX idx_country ON country_species(country);"
-    )
-    db.executemany(
-        "INSERT INTO meta (key, value) VALUES (?, ?)",
-        [
-            ("snapshot_date", snapshot),
-            ("gbif_doi", f"GBIF.org Occurrence Snapshot {snapshot}"),
-            ("license", "CC0-1.0 / CC-BY-4.0"),
-            ("attribution", "GBIF.org occurrence snapshot; CC0 and CC-BY-4.0 records only"),
-            ("builder_version", "1"),
-            ("tier1_threshold", tier1_threshold),
-        ],
+        "INSERT INTO country_species (country, class_id, n) VALUES (?,?,?)",
+        [(cc, cls, n) for (cc, cls), n in acc.items()],
     )
     db.commit()
+    return len(acc)
+
+
+def finalize(db: sqlite3.Connection, tier1: str) -> None:
+    """
+    建索引、写 meta、清理进度表并压实。
+
+    Create indexes, write meta, drop the progress table, and vacuum.
+
+    参数 / Parameters:
+        db (sqlite3.Connection): 目标库连接 / Target database connection.
+        tier1 (str): Task 1 标定的 L1 方案 / The calibrated L1 strategy.
+    """
+    db.executescript(
+        "CREATE INDEX IF NOT EXISTS idx_cell ON cell_species(cell_id);"
+        "CREATE INDEX IF NOT EXISTS idx_country ON country_species(country);"
+    )
+    db.executemany(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES (?,?)",
+        [
+            ("snapshot_date", date.today().isoformat()),
+            ("gbif_doi", "GBIF.org Occurrence Search API (facet aggregation)"),
+            ("license", "CC0-1.0 / CC-BY-4.0"),
+            ("attribution", "GBIF.org occurrence data; CC0 and CC-BY-4.0 records only"),
+            ("builder_version", "2"),
+            ("tier1_threshold", tier1),
+        ],
+    )
+    db.execute("DROP TABLE IF EXISTS _build_progress")
+    db.commit()
     db.execute("VACUUM")
-    db.close()
-    size_mb = os.path.getsize(OUT_PATH) / 1024 / 1024
-    print(f"[build] 完成 / done: {OUT_PATH}  {size_mb:.1f} MB")
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="Build geo_distribution.db from a GBIF snapshot")
-    p.add_argument("--snapshot", required=True, help="GBIF 快照日期 / snapshot date, e.g. 2026-07-01")
-    p.add_argument("--tier1", default="cumulative", help="Task 1 标定的 L1 方案名 / calibrated L1 strategy")
+    p = argparse.ArgumentParser(description="Build geo_distribution.db from the GBIF API")
+    p.add_argument("--tier1", default="cumulative:0.999",
+                   help="Task 1 标定的 L1 方案 / calibrated L1 strategy")
+    p.add_argument("--resume", action="store_true",
+                   help="保留已有数据续跑 / keep existing data and resume")
     a = p.parse_args()
-    build(a.snapshot, a.tier1)
+
+    key2cls = load_key_to_class()
+    print(f"[build] specieskey→class_id 映射: {len(key2cls)}")
+    cells = land_cells()
+    print(f"[build] 陆地网格 / land cells: {len(cells)}")
+
+    db = init_db(OUT_PATH, a.resume)
+    processed = harvest(db, key2cls, cells)
+    remaining = len(cells) - db.execute("SELECT COUNT(*) FROM _build_progress").fetchone()[0]
+    if remaining > 0:
+        print(f"[build] ⚠️ 仍有 {remaining} 格未完成，用 --resume 续跑")
+        db.close()
+        sys.exit(1)
+
+    n_country = rollup_countries(db)
+    finalize(db, a.tier1)
+    db.close()
+    size_mb = os.path.getsize(OUT_PATH) / 1024 / 1024
+    print(f"[build] 完成 / done: 本次 {processed} 格，国家行 {n_country}，{size_mb:.1f} MB")
 
 
 if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 2: 确认可用快照日期**
+- [ ] **Step 2: 后台启动构建**
 
 ```bash
-.venv/bin/python -c "
-import duckdb
-c = duckdb.connect(); c.execute('INSTALL httpfs; LOAD httpfs;')
-c.execute(\"SET s3_region='us-east-1'; SET s3_access_key_id=''; SET s3_secret_access_key='';\")
-print(c.execute(\"SELECT count(*) FROM read_parquet('s3://gbif-open-data-us-east-1/occurrence/2026-07-01/occurrence.parquet/*') LIMIT 1\").fetchall())
-"
+.venv/bin/python scripts_dev/build_geo_distribution.py --tier1 cumulative:0.999
 ```
 
-若 2026-07-01 不存在则依次试 2026-06-01、2026-05-01。GBIF 快照为月度发布，取发布前两周内的最新快照（见 `docs/GBIF_RARITY_INDEX.md`）。
+用 `run_in_background: true` 启动并轮询日志。预期 30–60 分钟（并发 8 实测外推 25 分钟，
+留出限流与热点格的余量）。脚本每 200 格打印一次进度与预计剩余时间。
 
-- [ ] **Step 3: 生成数据库**
+若中途失败或有未完成网格（退出码 1），用 `--resume` 续跑，不要从头重来：
 
 ```bash
-.venv/bin/python scripts_dev/build_geo_distribution.py --snapshot <确认的日期> --tier1 <Task1 选定方案>
+.venv/bin/python scripts_dev/build_geo_distribution.py --resume --tier1 cumulative:0.999
 ```
 
-预期：扫描耗时数十分钟（列存只读 6 列）。输出网格行数约 280–370 万、国家行数约 60–90 万、文件 12–25 MB。
-
-- [ ] **Step 4: 校验产物**
+- [ ] **Step 3: 校验产物**
 
 ```bash
 .venv/bin/python -c "
@@ -500,25 +675,32 @@ print('country rows', db.execute('SELECT count(*) FROM country_species').fetchon
 print('distinct class', db.execute('SELECT count(DISTINCT class_id) FROM cell_species').fetchone()[0])
 print('distinct country', db.execute('SELECT count(DISTINCT country) FROM country_species').fetchone()[0])
 print('meta', dict(db.execute('SELECT key, value FROM meta').fetchall()))
-# 悉尼格：家麻雀 class_id 必须在
+print('progress table dropped:', not db.execute(
+    \"SELECT name FROM sqlite_master WHERE type='table' AND name='_build_progress'\").fetchone())
 cid = (-34 + 90) * 360 + (151 + 180)
-rows = dict(db.execute('SELECT class_id, n FROM cell_species WHERE cell_id=?', (cid,)).fetchall())
-print('悉尼格类别数', len(rows))
+print('悉尼格类别数', db.execute('SELECT count(*) FROM cell_species WHERE cell_id=?', (cid,)).fetchone()[0])
+cid_is = (63 + 90) * 360 + (-20 + 180)
+print('冰岛格类别数', db.execute('SELECT count(*) FROM cell_species WHERE cell_id=?', (cid_is,)).fetchone()[0])
 "
 ```
 
-验收：`distinct class` ≥ 10000；`distinct country` ≥ 200；悉尼格类别数 ≥ 500；`meta` 六个键齐全。
+**硬性验收门 / Hard gates**（任一不达标都不得提交，须查明原因）：
 
-- [ ] **Step 5: 提交**
+- `distinct class` ≥ 10000 — 低于此值说明 `specieskey → model_class_id` 映射有问题
+- `distinct country` ≥ 200 — 低于此值说明 reverse_geocoding 失败
+- `meta` 六个键齐全，且 `tier1_threshold` **精确等于 `cumulative:0.999`**
+- `_build_progress` 表已被 `finalize` 删除
+- 悉尼格类别数 ≥ 500、冰岛格类别数 ≥ 300（对照 Task 1 实测：悉尼 624、冰岛 497）
 
-数据库文件较大，确认未被 gitignore 后提交：
+- [ ] **Step 4: 提交**
 
 ```bash
 git check-ignore -v birdid/data/geo_distribution.db || echo "not ignored, ok"
 git add scripts_dev/build_geo_distribution.py birdid/data/geo_distribution.db
-git commit -m "feat(geo): 新增 GBIF 地理分布库与生成脚本"
+git commit -m "feat(geo): 用 GBIF API 逐格聚合生成地理分布库"
 ```
 
+若 `geo_distribution.db` 被 gitignore 命中，**不要 `-f` 强加**，报告给控制方决定。
 ---
 
 ### Task 3: geo_filter 分层候选模块
