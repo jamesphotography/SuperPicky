@@ -1206,13 +1206,6 @@ from birdid.geo_filter import TIER_NONE, get_geo_filter
                 "species_count": count,
                 "country_code": effective_region,
             }
-            # 过渡期兼容：旧调用方仍读 ebird_info / Transitional compatibility
-            result["ebird_info"] = {
-                "enabled": tier != TIER_NONE,
-                "species_count": count or 0,
-                "data_source": "geo_distribution.db (offline)",
-                "region_code": effective_region,
-            }
         else:
             results = predict_bird(
                 image, top_k=top_k, species_class_ids=None,
@@ -1223,30 +1216,155 @@ from birdid.geo_filter import TIER_NONE, get_geo_filter
                                   "species_count": None, "country_code": None}
 ```
 
-同时把 `identify_bird` 的形参 `use_ebird: bool = True` 改名为 `use_geo_filter: bool = True`，并删除随之失效的局部变量 `species_filter` / `species_class_ids` 及其相关代码。
+同时把 `identify_bird` 的形参 `use_ebird: bool = True` 改名为 `use_geo_filter: bool = True`，并删除随之失效的局部变量 `species_filter` / `species_class_ids` 及其相关代码。**`result` 字典初始化处的 `"ebird_info": None` 一并删除，改为 `"geo_info": None`。**
 
 **注意**：`core/photo_processor.py:1230-1240` 按**位置**传参给 `identify_bird`（第 4 个位置实参是 `use_ebird`），改名不影响该调用；但 `birdid_cli.py:49`、`:428` 与 `birdid_server.py:324` 用的是关键字 `use_ebird=`，必须同步改名，否则 `TypeError`。
 
-- [ ] **Step 5: 同步三个关键字调用点**
+- [ ] **Step 5: 同步关键字调用点**
 
 - `birdid_cli.py:49` 与 `:428`：`use_ebird=args.ebird` → `use_geo_filter=args.ebird`
 - `birdid_server.py:324`：`use_ebird=use_ebird` → `use_geo_filter=use_ebird`
 
-- [ ] **Step 6: 运行测试**
+- [ ] **Step 6: 迁移全部 ebird_info 消费点并删除该字段**
+
+`ebird_info` 共有 3 个文件 20 处读取，其中 `country_fallback` / `gps_fallback`
+两个布尔标记已被 `tier` 取代，**不得保留兼容层**——保留会让这些分支永远走 False，
+UI 在过滤降级时反而显示正常状态。分层信息比布尔标记更丰富，直接展示层级。
+
+先加分层文案。`locales/zh_CN.json` 的 `birdid` 段加入：
+
+```json
+"geo_tier_cell_strong": "🗺️ 按拍摄地过滤（{count} 种）",
+"geo_tier_cell_all": "🗺️ 按拍摄地过滤（{count} 种，含少见记录）",
+"geo_tier_neighborhood": "⚠️ 拍摄地记录较少，已扩大到周边区域（{count} 种）",
+"geo_tier_country": "⚠️ 已回退到国家级过滤 {country}（{count} 种）",
+"geo_tier_none": "⚠️ 无地理过滤，按全球鸟种识别"
+```
+
+`locales/en_US.json` 的 `birdid` 段：
+
+```json
+"geo_tier_cell_strong": "🗺️ Filtered by location ({count} species)",
+"geo_tier_cell_all": "🗺️ Filtered by location ({count} species, incl. rare records)",
+"geo_tier_neighborhood": "⚠️ Few records at this location, widened to nearby area ({count} species)",
+"geo_tier_country": "⚠️ Fell back to country-level filter {country} ({count} species)",
+"geo_tier_none": "⚠️ No geographic filter, identifying against all species"
+```
+
+新增共用的层级文案函数，放在 `birdid/geo_filter.py` 末尾（Task 3 已建该文件）：
+
+```python
+_TIER_I18N_KEYS = {
+    TIER_CELL_STRONG: "birdid.geo_tier_cell_strong",
+    TIER_CELL_ALL: "birdid.geo_tier_cell_all",
+    TIER_NEIGHBORHOOD: "birdid.geo_tier_neighborhood",
+    TIER_COUNTRY: "birdid.geo_tier_country",
+    TIER_NONE: "birdid.geo_tier_none",
+}
+
+
+def describe_tier(geo_info: Optional[dict]) -> str:
+    """
+    把 geo_info 渲染成一行可读的过滤状态说明。
+
+    Render geo_info into a single human-readable filter-status line.
+
+    参数 / Parameters:
+        geo_info (Optional[dict]): identify_bird 返回的 geo_info /
+            The geo_info dict returned by identify_bird.
+
+    返回 / Returns:
+        str: 已本地化的说明文本；geo_info 为空时按未过滤处理 /
+             Localized description; treated as unfiltered when geo_info is None.
+    """
+    info = geo_info or {}
+    tier = info.get("tier", TIER_NONE)
+    key = _TIER_I18N_KEYS.get(tier, _TIER_I18N_KEYS[TIER_NONE])
+    return _t(
+        key,
+        count=info.get("species_count") or 0,
+        country=info.get("country_code") or "?",
+    )
+```
+
+然后逐处替换：
+
+- **`birdid_cli.py:154-162`**：整段 `if result.get('ebird_info'):` 块替换为
+
+```python
+        if result.get('geo_info'):
+            from birdid.geo_filter import describe_tier
+            print(describe_tier(result['geo_info']))
+```
+
+- **`birdid_server.py:406-415`**：`ebird_info` 改读 `geo_info`，错误响应体的
+  `'ebird_info': ebird_info` 改为 `'geo_info': geo_info`，`server.ebird_filter_error`
+  的实参改用 `geo_info.get('tier')` 与 `species_count`。
+- **`birdid_server.py:428`**：响应字段 `'ebird_info': result.get('ebird_info')` 改为
+  `'geo_info': result.get('geo_info')`。
+- **`birdid_server.py:432-437`**：整段回退警告替换为
+
+```python
+        geo_info = result.get('geo_info') or {}
+        if geo_info.get('tier') in (TIER_NEIGHBORHOOD, TIER_COUNTRY, TIER_NONE):
+            from birdid.geo_filter import describe_tier
+            response['warning'] = describe_tier(geo_info)
+```
+
+- **`ui/birdid_dock.py:1752-1774`**：整段「2. 地理过滤状态」替换为
+
+```python
+        # 2. 地理过滤状态：直接展示命中的候选层
+        # 2. Geo filter status: show which candidate tier was used
+        gps_info = result.get('gps_info')
+        geo_info = result.get('geo_info')
+        if gps_info and gps_info.get('latitude'):
+            lat = f"{gps_info['latitude']:.2f}"
+            lon = f"{gps_info['longitude']:.2f}"
+            info_lines.append(t("birdid.info_gps_coords", lat=lat, lon=lon))
+        from birdid.geo_filter import describe_tier
+        info_lines.append(describe_tier(geo_info))
+```
+
+`locales/zh_CN.json` 的 `birdid` 段补 `"info_gps_coords": "📍 GPS: {lat}, {lon}"`；
+`en_US.json` 补 `"info_gps_coords": "📍 GPS: {lat}, {lon}"`。
+
+删除已无引用的旧文案键：`birdid.info_gps`、`birdid.info_region`、`birdid.info_global`、
+`birdid.info_gps_fallback`、`birdid.info_country_fallback`、`cli.ebird_info`、
+`server.gps_fallback_warning`、`server.country_fallback_warning`（两个语言文件都删）。
+用 Python 脚本删除，不得用 sed（含中文）。
+
+- [ ] **Step 7: 确认无残留**
+
+```bash
+grep -rn "ebird_info\|country_fallback\|gps_fallback" --include="*.py" --include="*.json" . \
+  | grep -v ".venv" | grep -v ".worktrees"
+```
+
+预期：无输出。
+
+- [ ] **Step 8: 运行测试**
 
 ```bash
 .venv/bin/python -m pytest test_geo_filter_wiring.py test_geo_filter.py -v
-.venv/bin/python -m py_compile birdid/bird_identifier.py birdid_cli.py birdid_server.py
+.venv/bin/python -m py_compile birdid/bird_identifier.py birdid/geo_filter.py birdid_cli.py birdid_server.py ui/birdid_dock.py
+.venv/bin/python -c "
+import json
+for p in ['locales/zh_CN.json','locales/en_US.json']:
+    json.load(open(p, encoding='utf-8'))
+    print(p, 'JSON 合法')
+"
 ```
 
-预期：全部 PASS。
+预期：全部 PASS，两个 locale 文件均为合法 JSON。
 
-- [ ] **Step 7: 提交**
+- [ ] **Step 9: 提交**
 
 ```bash
-git add birdid/bird_identifier.py birdid_cli.py birdid_server.py
+git add birdid/bird_identifier.py birdid/geo_filter.py birdid_cli.py birdid_server.py \
+        ui/birdid_dock.py locales/zh_CN.json locales/en_US.json
 git add -f test_geo_filter_wiring.py
-git commit -m "feat(geo): identify_bird 改用分层候选逐层放宽"
+git commit -m "feat(geo): identify_bird 改用分层候选，geo_info 取代 ebird_info"
 ```
 
 ---
