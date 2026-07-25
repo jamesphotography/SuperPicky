@@ -261,7 +261,9 @@ L3/L4 标 "—" 表示本轮小样本未实测（邻域合并与国家级聚合�
 总记录 99.9% 的物种）。`meta.tier1_threshold` 写入字符串 `"cumulative:0.999"`。
 
 **标定方法**：`scripts_dev/calibrate_geo_threshold.py` 用固定种子（2026）从
-`avonet.db.places`（19,561 个有分布数据的 1°网格）随机抽样 60 格，逐格调用 GBIF
+`avonet.db.places`（18,709 个有分布数据的 1°网格，即 `WHERE EXISTS (... distributions ...)`
+过滤后的数量，与 §2.7"体积外推"一致；`places` 表未过滤总行数为 19,561，
+是 §4 提到的矩形总数，与本节采样池不同）随机抽样 60 格，逐格调用 GBIF
 Occurrence API（`classKey=212`，CC0/CC-BY 许可）取 `speciesKey` facet，映射到
 `model_class_id` 后分别用三种候选方案计算 L1 候选集，并检验每格记录数 top-30
 的物种（"当地常见种"）是否被排除。60 格中 11 格返回零物种（偏远海洋/沙漠网格，

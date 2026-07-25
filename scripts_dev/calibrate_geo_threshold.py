@@ -11,6 +11,7 @@ retention of locally common species, to pick the L1 strategy for geo_filter.
 """
 from __future__ import annotations
 
+import functools
 import json
 import os
 import random
@@ -119,13 +120,21 @@ def main() -> None:
     random.seed(2026)
     sample = random.sample(cells, 60)
 
-    stats: Dict[str, List[int]] = {"absolute": [], "cumulative": [], "hybrid": []}
-    violations: Dict[str, int] = {"absolute": 0, "cumulative": 0, "hybrid": 0}
+    # "cumulative" 是硬要求判定失败后按 Step 3 指示放宽 cover 到 0.999 重跑的
+    # 结果（spec §5.1 采用的正是这一版本）；"cumulative_995" 保留初次实测的
+    # cover=0.995 版本，spec 同时记录了两轮数字，脚本须能各自复现。
+    # "cumulative" is the cover=0.999 rerun mandated by Step 3 after the hard
+    # requirement failed at cover=0.995 (this is the version spec §5.1 adopts);
+    # "cumulative_995" keeps the first-round cover=0.995 result so the script
+    # can reproduce both numbers the spec cites.
     strategies = {
         "absolute": strategy_absolute,
-        "cumulative": strategy_cumulative,
+        "cumulative_995": functools.partial(strategy_cumulative, cover=0.995),
+        "cumulative": functools.partial(strategy_cumulative, cover=0.999),
         "hybrid": strategy_hybrid,
     }
+    stats: Dict[str, List[int]] = {name: [] for name in strategies}
+    violations: Dict[str, int] = {name: 0 for name in strategies}
     empty_cells = 0
 
     for i, (s, w) in enumerate(sample, 1):
@@ -157,15 +166,15 @@ def main() -> None:
         time.sleep(0.3)
 
     print(f"\n空网格 / empty cells: {empty_cells}")
-    print(f"{'方案':<12}{'中位':>7}{'均值':>8}{'P10':>7}{'P90':>7}{'top30违规格数':>14}")
-    for name in ("absolute", "cumulative", "hybrid"):
+    print(f"{'方案':<16}{'中位':>7}{'均值':>8}{'P10':>7}{'P90':>7}{'top30违规格数':>14}")
+    for name in strategies:
         v = sorted(stats[name])
         if not v:
             continue
         p10 = v[max(0, int(len(v) * 0.10) - 1)]
         p90 = v[min(len(v) - 1, int(len(v) * 0.90))]
         print(
-            f"{name:<12}{statistics.median(v):>7.0f}{statistics.mean(v):>8.0f}"
+            f"{name:<16}{statistics.median(v):>7.0f}{statistics.mean(v):>8.0f}"
             f"{p10:>7}{p90:>7}{violations[name]:>14}"
         )
 
