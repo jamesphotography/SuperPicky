@@ -363,7 +363,12 @@
     "tmp_jpeg_found": "  Found {count} temp JPEG file(s) (tmp_*.jpg), deleting...",
     "tmp_jpeg_done": "  ✅ Temp JPEG cleanup done: {count} succeeded",
     "rescue_direct": "  Rescue scan: high-res rescan found a bird (conf {conf})",
-    "rescue_confirmed": "  Rescue scan: {source} candidate confirmed as {species} ({conf}%) → bird"
+    "rescue_confirmed": "  Rescue scan: {source} candidate confirmed as {species} ({conf}%) → bird",
+    "geo_db_failed": "[GeoFilter] Database connection failed: {e}",
+    "geo_cell_failed": "[GeoFilter] Cell query failed: {e}",
+    "geo_country_failed": "[GeoFilter] Country query failed: {e}",
+    "geo_unavailable": "[GeoFilter] Geo-distribution DB unavailable, geo filtering skipped",
+    "geo_init_failed": "[GeoFilter] Init failed: {e}"
   },
   "server": {
     "server_already_running": "✅ Server already running on port {port}",

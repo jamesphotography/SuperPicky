@@ -363,7 +363,12 @@
     "tmp_jpeg_found": "  发现 {count} 个临时JPEG文件（tmp_*.jpg），正在删除...",
     "tmp_jpeg_done": "  ✅ 临时JPEG删除完成: {count} 成功",
     "rescue_direct": "  补救扫描: 高分辨率重扫检出鸟 (置信度 {conf})",
-    "rescue_confirmed": "  补救扫描: {source} 候选经识鸟确认为 {species} ({conf}%) → 判有鸟"
+    "rescue_confirmed": "  补救扫描: {source} 候选经识鸟确认为 {species} ({conf}%) → 判有鸟",
+    "geo_db_failed": "[GeoFilter] 数据库连接失败: {e}",
+    "geo_cell_failed": "[GeoFilter] 网格查询失败: {e}",
+    "geo_country_failed": "[GeoFilter] 国家查询失败: {e}",
+    "geo_unavailable": "[GeoFilter] 地理分布库不可用，地理过滤将被跳过",
+    "geo_init_failed": "[GeoFilter] 初始化失败: {e}"
   },
   "server": {
     "server_already_running": "✅ 服务器已在端口 {port} 运行",
