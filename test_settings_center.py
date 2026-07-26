@@ -223,7 +223,7 @@ def test_birdid_region_save(monkeypatch):
         tmp_path = f.name
     try:
         cfg = AdvancedConfig(config_file=tmp_path)
-        cfg.config["birdid_use_ebird"] = True
+        cfg.config["birdid_use_geo_filter"] = True
         cfg.save()
 
         import advanced_config as _ac_mod
@@ -236,8 +236,8 @@ def test_birdid_region_save(monkeypatch):
         # Switch to GBIF source and save
         w._bid_gbif.setChecked(True)
         w._save_birdid()
-        assert cfg.birdid_use_ebird is False, (
-            f"Expected False (GBIF selected), got {cfg.birdid_use_ebird}"
+        assert cfg.birdid_use_geo_filter is False, (
+            f"Expected False (GBIF selected), got {cfg.birdid_use_geo_filter}"
         )
 
         w.close()
@@ -245,22 +245,28 @@ def test_birdid_region_save(monkeypatch):
         os.unlink(tmp_path)
 
 
-def test_birdid_subnational_region_restore(monkeypatch):
+def test_birdid_subnational_region_hidden(monkeypatch):
     """
-    验证保存了子级地区（如 AU-ACT）后，重新打开设置页时地区下拉能正确恢复。
+    验证无州级数据时地区下拉整行隐藏，且旧配置里的 region_code 不致报错。
 
-    这是 C1 回归测试：_restore_birdid_country 原先在 _bid_applying=True 期间调用
-    _on_bid_country_changed，但后者因守卫提前返回，导致地区列表为空、保存的子级地区
-    无法恢复（始终显示"整个国家"）。修复后直接调用 _populate_bid_regions 绕开守卫。
+    地理数据源改为 GBIF 1°网格后，本设计不再提供州/省级分区（GPS 已精确到 1°，
+    手选地区只在无 GPS 时作国家级回退，见 spec §3.3）。因此地区下拉恒只有
+    「整个国家」一项，应整行隐藏而非展示一个无意义的空下拉。
 
-    Regression test for C1: after saving a sub-national region (e.g. AU-ACT),
-    re-opening the settings page must restore the region dropdown correctly.
+    本用例取代原先的 C1 回归测试（该测试断言州级下拉被填充，守护的功能已随
+    数据源变更被有意移除）。旧配置中残留的 AU-ACT 等 region_code 必须能被安全
+    忽略，不得抛异常。
 
-    Before the fix, _restore_birdid_country called _on_bid_country_changed while
-    _bid_applying=True; that method returned early due to the guard, so the region
-    list was never populated and the saved sub-region was lost (always showed
-    "Entire Country"). After the fix, _populate_bid_regions is called directly,
-    bypassing the guard.
+    After switching the geo data source to the GBIF 1-degree grid, this design no
+    longer provides sub-national divisions (GPS already resolves to 1 degree;
+    manual selection is only a country-level fallback for photos without GPS —
+    see spec section 3.3). The region dropdown therefore only ever holds "Entire
+    country" and the whole row is hidden.
+
+    This replaces the former C1 regression test, whose asserted behaviour
+    (sub-national dropdown population) was deliberately removed along with the
+    data source. Leftover region_codes such as AU-ACT in older configs must be
+    ignored safely without raising.
 
     参数 / Parameters:
         monkeypatch: pytest fixture.
@@ -290,20 +296,22 @@ def test_birdid_subnational_region_restore(monkeypatch):
         w = SettingsCenter(get_i18n())
         w.show_page("birdid")
 
-        # 地区下拉项数应 > 1（即除"整个国家"外还有子级地区）
-        # Region dropdown must have more than 1 item (sub-regions populated)
-        assert w._bid_region.count() > 1, (
-            f"Region dropdown was not populated (count={w._bid_region.count()}); "
-            "C1 guard bug may still be present."
+        # 无州级数据 → 下拉只有「整个国家」一项，且整行隐藏
+        # No sub-national data → only "Entire country", and the row is hidden
+        assert w._bid_region.count() == 1, (
+            f"地区下拉应只有「整个国家」一项，实际 {w._bid_region.count()} 项"
+        )
+        assert not w._bid_region.isVisible(), "无州级数据时地区下拉应隐藏"
+        assert not w._bid_region_label.isVisible(), "无州级数据时地区标签应隐藏"
+
+        # 旧配置里的 AU-ACT 被安全忽略：当前选中项回落到「整个国家」(itemData=None)
+        # The stale AU-ACT is ignored safely: selection falls back to "Entire country"
+        assert w._bid_region.currentData() is None, (
+            f"旧 region_code 应被忽略，实际 currentData={w._bid_region.currentData()!r}"
         )
 
-        # region_code 现存于 itemData(显示文本只剩名称,不含 ISO 代码)
-        # region_code now lives in itemData (display text shows only the name, no ISO code)
-        current_region_code = w._bid_region.currentData()
-        assert current_region_code == "AU-ACT", (
-            f"Expected saved region AU-ACT to be restored, got data: '{current_region_code}' "
-            f"(text='{w._bid_region.currentText()}')"
-        )
+        # 国家本身仍必须正确恢复 / The country itself must still restore correctly
+        assert cfg.birdid_country_code == "AU", "国家选择不应被地区行的变更影响"
 
         w.close()
     finally:

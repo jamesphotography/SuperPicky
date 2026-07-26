@@ -63,9 +63,9 @@ class ProcessingSettings:
     detect_burst: bool = True        # V4.0: 连拍检测开关（默认开启）
     # BirdID 自动识别设置
     auto_identify: bool = False       # 选片时自动识别鸟种（默认关闭）
-    birdid_use_ebird: bool = True     # 使用 eBird 过滤
-    birdid_country_code: str = None   # eBird 国家代码
-    birdid_region_code: str = None    # eBird 区域代码
+    birdid_use_geo_filter: bool = True  # 启用地理过滤（GPS 网格 + 国家级候选层）
+    birdid_country_code: str = None   # 手选国家代码（无 GPS 时用）
+    birdid_region_code: str = None    # 手选地区代码（无 GPS 时用）
     birdid_confidence_threshold: float = 50.0  # 置信度阈值（默认 50%，可在「高级设置 → 自动识鸟」调整 50-95%）
     # 鸟种英文名显示格式 (AviList mapping)
     name_format: str = "default"       # "default" | "avilist" | "clements" | "birdlife" | "scientific"
@@ -1231,7 +1231,7 @@ class PhotoProcessor:
                     image_path,
                     True,   # use_yolo
                     True,   # use_gps
-                    self.settings.birdid_use_ebird,
+                    self.settings.birdid_use_geo_filter,
                     self.settings.birdid_country_code,
                     self.settings.birdid_region_code,
                     1,      # top_k

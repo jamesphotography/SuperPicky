@@ -699,7 +699,7 @@ class SettingsCenter(QDialog):
         self._bid_source_group.addButton(self._bid_ebird)
         self._bid_source_group.addButton(self._bid_gbif)
 
-        if cfg.birdid_use_ebird:
+        if cfg.birdid_use_geo_filter:
             self._bid_ebird.setChecked(True)
         else:
             self._bid_gbif.setChecked(True)
@@ -805,6 +805,13 @@ class SettingsCenter(QDialog):
         region_row.addWidget(region_label)
         region_row.addWidget(self._bid_region, 1)
         lay.addLayout(region_row)
+        # 地区行整体受 _populate_bid_regions 控制：当前数据源(GBIF 网格)不提供
+        # 州/省级分区，该行会被隐藏；保留控件是为了兼容旧配置里存过的 region_code。
+        # The whole row is toggled by _populate_bid_regions: the current data
+        # source (GBIF grid) has no sub-national divisions, so it stays hidden.
+        # The widgets remain for compatibility with region_code values stored by
+        # older versions.
+        self._bid_region_label = region_label
 
         # 国家切换时动态填充地区 / Dynamically populate regions on country change
         self._bid_country.currentTextChanged.connect(self._on_bid_country_changed)
@@ -904,6 +911,17 @@ class SettingsCenter(QDialog):
                                 )
                             self._bid_region.addItem(region_name, rc)
                     break
+
+        # 无州级数据时隐藏整行，避免展示一个永远只有「整个国家」的空下拉。
+        # GBIF 网格已按 GPS 精确到 1°，手选地区只在无 GPS 时作国家级回退。
+        # Hide the whole row when there is no sub-national data, rather than
+        # showing a dropdown whose only entry is "Entire country". The GBIF grid
+        # already resolves to 1 degree by GPS; manual selection is only a
+        # country-level fallback for photos without GPS.
+        has_subnational = self._bid_region.count() > 1
+        self._bid_region.setVisible(has_subnational)
+        if hasattr(self, "_bid_region_label"):
+            self._bid_region_label.setVisible(has_subnational)
 
     def _restore_birdid_country(self, cfg) -> None:
         """
@@ -1070,7 +1088,7 @@ class SettingsCenter(QDialog):
         cfg.save()
 
         # 数据源 / Data source
-        use_ebird: bool = self._bid_ebird.isChecked()
+        use_geo_filter: bool = self._bid_ebird.isChecked()
 
         # 国家 / Country
         country_display = self._bid_country.currentText()
@@ -1096,7 +1114,7 @@ class SettingsCenter(QDialog):
         region_code: str | None = self._bid_region.currentData()
 
         cfg.set_birdid_region(
-            use_ebird=use_ebird,
+            use_geo_filter=use_geo_filter,
             country_code=country_code,
             selected_country=country_display,
             region_code=region_code,

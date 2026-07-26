@@ -8,7 +8,7 @@ SuperPicky V4.3 Phase 2 — BirdID 适配器
 
 核心做法：
     1. numpy BGR 帧 → smart_square_crop（如有 bbox）→ PIL RGB Image
-    2. 调 identify_bird(preloaded_crop=..., use_gps=False, use_ebird=False, ...)
+    2. 调 identify_bird(preloaded_crop=..., use_gps=False, use_geo_filter=False, ...)
        - 视频帧没有 EXIF / GPS，关闭这两项
        - preloaded_crop 跳过内部 YOLO 复检（性能 ↑）
     3. 把返回的 dict 列表 → SpeciesResult 列表
@@ -112,7 +112,7 @@ class BirdIDAdapter(BirdClassifier):
             preloaded_crop=pil_image,
             use_yolo=False,                  # 已在 video_analyzer 层做过 YOLO
             use_gps=False,                   # 视频帧无 EXIF GPS
-            use_ebird=False,                 # 同上
+            use_geo_filter=False,            # 同上
             top_k=top_k,
         )
         if self.name_format is not None:

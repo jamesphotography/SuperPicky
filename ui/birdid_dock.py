@@ -845,15 +845,15 @@ class BirdIDDockWidget(QDockWidget):
         the runtime settings dict used by the identification pipeline.
 
         返回 / Returns:
-            dict: 含 use_ebird / auto_identify / selected_country / country_code /
+            dict: 含 use_geo_filter / auto_identify / selected_country / country_code /
                   selected_region / region_code 的配置字典 /
-                  Config dict with use_ebird / auto_identify / selected_country /
+                  Config dict with use_geo_filter / auto_identify / selected_country /
                   country_code / selected_region / region_code.
         """
         from advanced_config import get_advanced_config
         cfg = get_advanced_config()
         return {
-            "use_ebird": cfg.birdid_use_ebird,
+            "use_geo_filter": cfg.birdid_use_geo_filter,
             "auto_identify": cfg.birdid_auto_identify,
             "selected_country": cfg.birdid_selected_country,
             "country_code": cfg.birdid_country_code,
@@ -1203,7 +1203,7 @@ class BirdIDDockWidget(QDockWidget):
 
         # 填充 eBird checkbox
         # Populate eBird checkbox
-        self.ebird_checkbox.setChecked(self.settings.get("use_ebird", True))
+        self.ebird_checkbox.setChecked(self.settings.get("use_geo_filter", True))
 
         country_code = self.settings.get("country_code")
         saved_country = self.settings.get(
@@ -1281,7 +1281,7 @@ class BirdIDDockWidget(QDockWidget):
         """
         from advanced_config import get_advanced_config
 
-        use_ebird: bool = self.ebird_checkbox.isChecked()
+        use_geo_filter: bool = self.ebird_checkbox.isChecked()
 
         country_display: str = self.country_combo.currentText()
         country_code = self.country_list.get(country_display)
@@ -1296,7 +1296,7 @@ class BirdIDDockWidget(QDockWidget):
         # 同步更新 self.settings 缓存
         # Update self.settings cache to keep pipeline in sync
         self.settings = {
-            "use_ebird": use_ebird,
+            "use_geo_filter": use_geo_filter,
             "auto_identify": self.settings.get("auto_identify", False),
             "selected_country": country_display,
             "country_code": country_code,
@@ -1305,7 +1305,7 @@ class BirdIDDockWidget(QDockWidget):
         }
 
         get_advanced_config().set_birdid_region(
-            use_ebird,
+            use_geo_filter,
             country_code,
             country_display,
             region_code,
@@ -1489,7 +1489,7 @@ class BirdIDDockWidget(QDockWidget):
 
         # 从 self.settings 读取运行时配置（由 advanced_config 填充）
         # Read runtime config from self.settings (populated from advanced_config)
-        use_ebird: bool = self.settings.get("use_ebird", True)
+        use_geo_filter: bool = self.settings.get("use_geo_filter", True)
         use_gps = True
         country_code: Optional[str] = self.settings.get("country_code")
         region_code: Optional[str] = self.settings.get("region_code")
@@ -1500,7 +1500,7 @@ class BirdIDDockWidget(QDockWidget):
             file_path,
             top_k=5,
             use_gps=use_gps,
-            use_geo_filter=use_ebird,
+            use_geo_filter=use_geo_filter,
             country_code=country_code,
             region_code=region_code,
             name_format=advanced_config.name_format,

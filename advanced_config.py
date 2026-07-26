@@ -180,7 +180,7 @@ class AdvancedConfig:
         # V4.4: 识鸟设置统一进 advanced_config(原 birdid_dock_settings.json)
         "birdid_auto_identify": False,
         "birdid_write_keywords": True,  # 识别后写鸟名到 XMP-dc:Subject(LR 关键字,Paul P1-1)
-        "birdid_use_ebird": True,
+        "birdid_use_geo_filter": True,
         "birdid_country_code": None,
         "birdid_selected_country": "自动检测 (GPS)",
         "birdid_region_code": None,
@@ -212,6 +212,23 @@ class AdvancedConfig:
                     loaded_config = json.load(f)
                     # 合并配置（保留默认值中有但加载配置中没有的项）
                     self.config.update(loaded_config)
+                    # 旧键 birdid_use_ebird 一次性迁移到 birdid_use_geo_filter。
+                    # 判断必须基于磁盘上的 loaded_config：self.config 已合并
+                    # DEFAULT_CONFIG，新键在其中恒存在，用它判断会让迁移永不触发，
+                    # 老用户关闭过的开关会被静默重置为默认 True。
+                    # One-time migration from the legacy birdid_use_ebird key.
+                    # The check must use loaded_config: self.config has already
+                    # merged DEFAULT_CONFIG, so the new key always exists there
+                    # and would make this migration dead code, silently resetting
+                    # the switch for users who had turned it off.
+                    if (
+                        "birdid_use_geo_filter" not in loaded_config
+                        and "birdid_use_ebird" in loaded_config
+                    ):
+                        self.config["birdid_use_geo_filter"] = bool(
+                            loaded_config["birdid_use_ebird"]
+                        )
+                    self.config.pop("birdid_use_ebird", None)
                 print(f"✅ Advanced config loaded: {self.config_file}")
             except Exception as e:
                 print(_t("logs.config_load_failed", e=e))
@@ -879,19 +896,24 @@ class AdvancedConfig:
         self.save()
 
     @property
-    def birdid_use_ebird(self) -> bool:
+    def birdid_use_geo_filter(self) -> bool:
         """
-        获取是否使用 eBird 源。
+        获取是否启用地理过滤（GPS 网格 + 国家级候选层）。
+
+        该开关控制整个地理过滤链路，而非仅某个数据源；旧键 `birdid_use_ebird`
+        的迁移在 `load()` 中完成，此处只读新键。
 
         返回:
-        bool: 是否使用 eBird（默认 True）
+        bool: 是否启用（默认 True）
 
-        Get whether to use eBird as source.
+        Get whether geographic filtering is enabled (GPS grid + country tiers).
+        The switch governs the whole geo-filter pipeline, not one data source;
+        migration from the legacy `birdid_use_ebird` key happens in `load()`.
 
         Return:
-        bool: Whether to use eBird (default True).
+        bool: Whether enabled (default True).
         """
-        return bool(self.config.get("birdid_use_ebird", True))
+        return bool(self.config.get("birdid_use_geo_filter", True))
 
     @property
     def birdid_country_code(self):
@@ -1001,7 +1023,7 @@ class AdvancedConfig:
 
     def set_birdid_region(
         self,
-        use_ebird: bool,
+        use_geo_filter: bool,
         country_code,
         selected_country: str,
         region_code,
@@ -1011,7 +1033,7 @@ class AdvancedConfig:
         一次性设置全部识鸟地区相关字段并保存。
 
         参数:
-        use_ebird (bool): 是否使用 eBird
+        use_geo_filter (bool): 是否启用地理过滤
         country_code (str or None): ISO 国家代码
         selected_country (str): 国家显示名称
         region_code (str or None): 地区代码
@@ -1020,13 +1042,13 @@ class AdvancedConfig:
         Set all bird identification region settings at once and save.
 
         Parameters:
-        use_ebird (bool): Whether to use eBird.
+        use_geo_filter (bool): Whether geographic filtering is enabled.
         country_code (str or None): ISO country code.
         selected_country (str): Country display name.
         region_code (str or None): Region code.
         selected_region (str): Region display name.
         """
-        self.config["birdid_use_ebird"] = bool(use_ebird)
+        self.config["birdid_use_geo_filter"] = bool(use_geo_filter)
         self.config["birdid_country_code"] = country_code
         self.config["birdid_selected_country"] = selected_country
         self.config["birdid_region_code"] = region_code
@@ -1075,7 +1097,7 @@ class AdvancedConfig:
         except Exception:
             return False  # 读失败不置位,下次重试 / Don't set flag on read failure; retry next time
 
-        self.config["birdid_use_ebird"] = bool(old.get("use_ebird", True))
+        self.config["birdid_use_geo_filter"] = bool(old.get("use_ebird", True))
         self.config["birdid_country_code"] = old.get("country_code")
         self.config["birdid_selected_country"] = old.get(
             "selected_country", "自动检测 (GPS)"

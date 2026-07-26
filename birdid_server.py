@@ -46,7 +46,7 @@ def get_gui_settings():
     settings_path = str(get_birdid_settings_path())
     
     settings = {
-        'use_ebird': True,
+        'use_geo_filter': True,
         'country_code': None,
         'region_code': None
     }
@@ -57,7 +57,7 @@ def get_gui_settings():
             with open(settings_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
-            settings['use_ebird'] = data.get('use_ebird', True)
+            settings['use_geo_filter'] = data.get('use_geo_filter', True)
             
             # 解析国家代码（从 country_list 映射）
             # 设置文件存储的是显示名称，需要转换为代码
@@ -301,13 +301,13 @@ def recognize_bird():
         gui_settings = get_gui_settings()
         country_code = data.get('country_code', gui_settings['country_code'])
         region_code = data.get('region_code', gui_settings['region_code'])
-        use_ebird = data.get('use_ebird', gui_settings['use_ebird'])
+        use_geo_filter = data.get('use_geo_filter', gui_settings['use_geo_filter'])
         
         # 日志：显示识别参数
         print(t("server.log_params"))
         print(t("server.log_yolo", value=t("server.yes") if use_yolo else t("server.no")))
         print(t("server.log_gps", value=t("server.yes") if use_gps else t("server.no")))
-        print(t("server.log_ebird", value=t("server.yes") if use_ebird else t("server.no")))
+        print(t("server.log_ebird", value=t("server.yes") if use_geo_filter else t("server.no")))
         print(t("server.log_location", country=country_code or 'N/A', region=region_code or 'N/A'))
 
         # 执行识别（懒加载：首次请求会在此处完成模型栈导入）
@@ -321,7 +321,7 @@ def recognize_bird():
             top_k=top_k,
             country_code=country_code,
             region_code=region_code,
-            use_geo_filter=use_ebird,
+            use_geo_filter=use_geo_filter,
             name_format=get_advanced_config().name_format,
         )
         
