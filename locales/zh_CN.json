@@ -449,9 +449,7 @@
     "arg_host": "监听地址 (默认: {default})",
     "arg_port": "监听端口 (默认: {default})",
     "arg_debug": "启用调试模式",
-    "arg_no_preload": "跳过模型预加载",
-    "gps_fallback_warning": "GPS过滤在当前坐标无匹配（已检索{count}种），已自动切换为全球模式",
-    "country_fallback_warning": "当地分布数据无匹配，已自动回退到 eBird {country} 国家物种列表"
+    "arg_no_preload": "跳过模型预加载"
   },
   "ai": {
     "using_mps": "✅ 使用 MPS (Apple GPU) 加速",
@@ -1033,11 +1031,6 @@
     "country_prompt_message": "当前使用「自动检测 GPS」模式。\n\n如果您的照片没有 GPS 信息，建议选择国家/地区以获得更准确的识别结果。\n\n是否现在选择？",
     "info_yolo_ok": "慧眼: 检测到鸟类",
     "info_yolo_fail": "慧眼: 未检测到鸟类",
-    "info_gps": "GPS: {lat}, {lon} | {count}",
-    "info_gps_fallback": "⚠️ 当地无匹配，已切换全球模式（提示：可在上方选「全球模式」固定此设置）",
-    "info_country_fallback": "⚠️ 当地无精确匹配，使用 eBird {country} 国家鸟种过滤",
-    "info_region": "区域: {region} | {count}",
-    "info_global": "全球模式（无地理过滤）",
     "info_no_bird_hint": "建议降低检测敏感度或重新拍摄",
     "info_identify_fail": "识别失败",
     "info_no_result": "未能识别",
@@ -1057,7 +1050,13 @@
     "stats_species": "{count} 种: {names}",
     "screen_record_title": "需要屏幕录制权限",
     "win_shortcut_unsupported": "当前环境不支持 Windows 截图快捷键",
-    "query_birdname_btn": "查询鸟名"
+    "query_birdname_btn": "查询鸟名",
+    "geo_tier_cell_strong": "🗺️ 按拍摄地过滤（{count} 种）",
+    "geo_tier_cell_all": "🗺️ 按拍摄地过滤（{count} 种，含少见记录）",
+    "geo_tier_neighborhood": "⚠️ 拍摄地记录较少，已扩大到周边区域（{count} 种）",
+    "geo_tier_country": "⚠️ 已回退到国家级过滤 {country}（{count} 种）",
+    "geo_tier_none": "⚠️ 无地理过滤，按全球鸟种识别",
+    "info_gps_coords": "📍 GPS: {lat}, {lon}"
   },
   "rating_engine": {
     "reject_no_bird": "未检测到鸟类",
@@ -1118,7 +1117,6 @@
     "identify_fail": "❌ 识别失败: {error}",
     "yolo_info": "📍 YOLO检测: {info}",
     "gps_info": "🌍 GPS位置: {info}",
-    "ebird_info": "🗺️  eBird过滤: {region} ({count} 种)",
     "no_bird": "⚠️  未能识别出鸟类",
     "no_bird_hint": "💡 建议：降低检测敏感度或重新拍摄",
     "result_title": "\n🐦 识别结果 (Top-{count}):",

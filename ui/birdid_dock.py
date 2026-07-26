@@ -51,14 +51,14 @@ class IdentifyWorker(QThread):
     error = Signal(str)
 
     def __init__(self, image_path: str, top_k: int = 5,
-                 use_gps: bool = True, use_ebird: bool = True,
+                 use_gps: bool = True, use_geo_filter: bool = True,
                  country_code: Optional[str] = None, region_code: Optional[str] = None,
                  name_format: Optional[str] = None):
         super().__init__()
         self.image_path = image_path
         self.top_k = top_k
         self.use_gps = use_gps
-        self.use_ebird = use_ebird
+        self.use_geo_filter = use_geo_filter
         self.country_code = country_code
         self.region_code = region_code
         self.name_format = name_format
@@ -70,7 +70,7 @@ class IdentifyWorker(QThread):
                 self.image_path,
                 top_k=self.top_k,
                 use_gps=self.use_gps,
-                use_ebird=self.use_ebird,
+                use_geo_filter=self.use_geo_filter,
                 country_code=self.country_code,
                 region_code=self.region_code,
                 name_format=self.name_format,
@@ -1500,7 +1500,7 @@ class BirdIDDockWidget(QDockWidget):
             file_path,
             top_k=5,
             use_gps=use_gps,
-            use_ebird=use_ebird,
+            use_geo_filter=use_ebird,
             country_code=country_code,
             region_code=region_code,
             name_format=advanced_config.name_format,
@@ -1747,32 +1747,17 @@ class BirdIDDockWidget(QDockWidget):
             else:
                 info_lines.append(t("birdid.info_yolo_ok"))
 
-        # 2. 地理过滤状态
-        gps_info = result.get('gps_info')
-        ebird_info = result.get('ebird_info')
+        # 2. 地理过滤状态：直接展示命中的候选层，比旧的布尔标记信息量更大
+        # 2. Geo filter status: show which candidate tier was used — richer than
+        #    the old country_fallback / gps_fallback booleans it replaces.
+        from birdid.geo_filter import describe_tier
 
+        gps_info = result.get('gps_info')
         if gps_info and gps_info.get('latitude'):
-            # GPS 过滤生效
-            count = ebird_info.get('species_count', 0) if ebird_info else 0
             lat = f"{gps_info['latitude']:.2f}"
             lon = f"{gps_info['longitude']:.2f}"
-            info_lines.append(t("birdid.info_gps", lat=lat, lon=lon, count=count))
-            # GPS 回退提示（优先显示国家级回退，其次全局）
-            if ebird_info and ebird_info.get('country_fallback'):
-                country = ebird_info.get('country_code', '?')
-                info_lines.append(t("birdid.info_country_fallback", country=country))
-            elif ebird_info and ebird_info.get('gps_fallback'):
-                info_lines.append(t("birdid.info_gps_fallback", count=count))
-        elif ebird_info and ebird_info.get('enabled'):
-            # 区域过滤生效
-            region = ebird_info.get('region_code', '')
-            count = ebird_info.get('species_count', 0)
-            if region:
-                info_lines.append(t("birdid.info_region", region=region, count=count))
-            else:
-                info_lines.append(t("birdid.info_region", region="—", count=count))
-        else:
-            info_lines.append(t("birdid.info_global"))
+            info_lines.append(t("birdid.info_gps_coords", lat=lat, lon=lon))
+        info_lines.append(describe_tier(result.get('geo_info')))
 
         # === 处理失败/无结果 ===
         if not result.get('success'):

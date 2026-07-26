@@ -321,7 +321,7 @@ def recognize_bird():
             top_k=top_k,
             country_code=country_code,
             region_code=region_code,
-            use_ebird=use_ebird,
+            use_geo_filter=use_ebird,
             name_format=get_advanced_config().name_format,
         )
         
@@ -403,16 +403,16 @@ def recognize_bird():
         
         # 如果没有结果，返回详细的错误信息
         if not formatted_results:
-            ebird_info = result.get('ebird_info')
-            if ebird_info and ebird_info.get('enabled'):
-                region = ebird_info.get('region_code', 'Unknown')
-                species_count = ebird_info.get('species_count', 0)
+            geo_info = result.get('geo_info')
+            if geo_info and geo_info.get('enabled'):
+                region = geo_info.get('country_code') or 'Unknown'
+                species_count = geo_info.get('species_count') or 0
                 error_msg = t("server.ebird_filter_error", region=region, species_count=species_count)
                 print(f"[API] ⚠️  {error_msg}")
                 return jsonify({
                     'success': False,
                     'error': error_msg,
-                    'ebird_info': ebird_info
+                    'geo_info': geo_info
                 })
             else:
                 return jsonify({
@@ -425,17 +425,17 @@ def recognize_bird():
             'results': formatted_results,
             'yolo_info': result.get('yolo_info'),
             'gps_info': result.get('gps_info'),
-            'ebird_info': result.get('ebird_info')
+            'geo_info': result.get('geo_info')
         }
 
-        # 回退警告（优先国家级，其次全局）
-        ebird_info = result.get('ebird_info') or {}
-        if ebird_info.get('country_fallback'):
-            country = ebird_info.get('country_code', '?')
-            response['warning'] = t("server.country_fallback_warning", country=country)
-        elif ebird_info.get('gps_fallback'):
-            species_count = ebird_info.get('species_count', 0)
-            response['warning'] = t("server.gps_fallback_warning", count=species_count)
+        # 过滤降级警告：命中 L3/L4/L5 说明候选层被放宽了
+        # Degradation warning: hitting L3/L4/L5 means the tier was widened
+        from birdid.geo_filter import (
+            TIER_COUNTRY, TIER_NEIGHBORHOOD, TIER_NONE, describe_tier,
+        )
+        geo_info = result.get('geo_info') or {}
+        if geo_info.get('tier') in (TIER_NEIGHBORHOOD, TIER_COUNTRY, TIER_NONE):
+            response['warning'] = describe_tier(geo_info)
 
         # 如果照片有 GPS 信息，同步检测到的区域到主界面设置
         gps_info = result.get('gps_info')

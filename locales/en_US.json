@@ -449,9 +449,7 @@
     "arg_host": "Bind address (Default: {default})",
     "arg_port": "Bind port (Default: {default})",
     "arg_debug": "Enable debug mode",
-    "arg_no_preload": "Skip model preloading",
-    "gps_fallback_warning": "GPS filter found no match at this location ({count} species checked). Switched to global mode automatically.",
-    "country_fallback_warning": "No local Avonet match. Fell back to eBird {country} species list."
+    "arg_no_preload": "Skip model preloading"
   },
   "ai": {
     "using_mps": "✅ Using MPS (Apple GPU) acceleration",
@@ -1065,11 +1063,6 @@
     "country_prompt_message": "Currently using 'Auto Detect GPS' mode.\n\nIf your photos don't have GPS data, we recommend selecting a country/region for more accurate results.\n\nWould you like to select now?",
     "info_yolo_ok": "Detection: Bird found",
     "info_yolo_fail": "Detection: No bird found",
-    "info_gps": "GPS: {lat}, {lon} | {count}",
-    "info_gps_fallback": "⚠️ No local match, switched to global mode (Tip: select 'Global Mode' above to make it permanent)",
-    "info_country_fallback": "⚠️ No Avonet match, using eBird {country} country list",
-    "info_region": "Region: {region} | {count}",
-    "info_global": "Global mode (no geo filter)",
     "info_no_bird_hint": "Try lowering detection sensitivity or retake",
     "info_identify_fail": "Identification failed",
     "info_no_result": "No bird identified",
@@ -1089,7 +1082,13 @@
     "stats_species": "{count} species: {names}",
     "screen_record_title": "Screen Recording Access Needed",
     "win_shortcut_unsupported": "Windows screenshot shortcut not supported in this environment",
-    "query_birdname_btn": "Look up Bird Name"
+    "query_birdname_btn": "Look up Bird Name",
+    "geo_tier_cell_strong": "🗺️ Filtered by location ({count} species)",
+    "geo_tier_cell_all": "🗺️ Filtered by location ({count} species, incl. rare records)",
+    "geo_tier_neighborhood": "⚠️ Few records at this location, widened to nearby area ({count} species)",
+    "geo_tier_country": "⚠️ Fell back to country-level filter {country} ({count} species)",
+    "geo_tier_none": "⚠️ No geographic filter, identifying against all species",
+    "info_gps_coords": "📍 GPS: {lat}, {lon}"
   },
   "cli": {
     "banner": "  🐦 SuperPicky CLI v{version} - AI Photo Selector (Command Line)",
@@ -1118,7 +1117,6 @@
     "identify_fail": "❌ Identification Failed: {error}",
     "yolo_info": "📍 YOLO Detection: {info}",
     "gps_info": "🌍 GPS Location: {info}",
-    "ebird_info": "🗺️  eBird Filter: {region} ({count} species)",
     "no_bird": "⚠️  No bird identified",
     "no_bird_hint": "💡 Tip: try lowering detection sensitivity or retake the photo",
     "result_title": "\n🐦 Identification Results (Top-{count}):",
