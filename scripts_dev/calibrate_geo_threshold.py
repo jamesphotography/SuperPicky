@@ -14,7 +14,6 @@ from __future__ import annotations
 import functools
 import json
 import os
-import random
 import sqlite3
 import statistics
 import time
@@ -108,17 +107,42 @@ def strategy_hybrid(counts: Dict[int, int]) -> Set[int]:
     return {c for c, n in counts.items() if n >= thr}
 
 
+# 标定实际使用的 60 个采样网格 (south, west)。
+# 原先由 `random.seed(2026)` + `random.sample()` 从 avonet.db 的 places 表抽取，
+# 依赖该表的行顺序才能复现；avonet.db 已随 GBIF 迁移删除，故把当时抽中的坐标
+# 固化于此，使 spec §5.1 记录的数字始终可复现。
+# The 60 sampled cells (south, west) actually used for calibration. They were
+# drawn with `random.seed(2026)` + `random.sample()` from avonet.db's places
+# table and therefore depended on that table's row order; avonet.db was removed
+# in the GBIF migration, so the drawn coordinates are frozen here to keep the
+# numbers recorded in spec section 5.1 reproducible.
+SAMPLE_CELLS: List[Tuple[float, float]] = [
+    (-11.42, -53.0), (29.2, 98.0), (60.26, 146.0),
+    (61.81, 159.0), (-16.09, 30.0), (11.42, 41.0),
+    (73.67, -107.0), (46.41, 84.0), (69.0, 107.0),
+    (58.78, 31.0), (49.78, 81.0), (15.3, 32.0),
+    (-87.13, -37.0), (-20.87, -55.0), (-13.74, -59.0),
+    (24.14, 35.0), (-16.88, -53.0), (50.96, 120.0),
+    (-71.19, -67.0), (58.78, 11.0), (28.34, 98.0),
+    (9.11, -76.0), (43.23, -107.0), (17.67, 26.0),
+    (34.53, 0.0), (35.45, 136.0), (39.23, 35.0),
+    (63.43, -139.0), (-22.49, 144.0), (32.72, 108.0),
+    (-19.26, 141.0), (73.67, -71.0), (67.0, 80.0),
+    (24.97, 38.0), (24.14, 48.0), (52.17, 130.0),
+    (-6.82, 122.0), (27.49, 101.0), (-56.0, -67.0),
+    (38.27, -98.0), (37.32, -92.0), (53.41, -1.0),
+    (46.41, 137.0), (-18.46, -64.0), (43.23, -2.0),
+    (71.19, 104.0), (60.26, 13.0), (-12.19, -49.0),
+    (47.51, 20.0), (61.81, -70.0), (58.78, 36.0),
+    (43.23, -77.0), (65.16, -92.0), (19.26, -70.0),
+    (46.41, 63.0), (76.58, -37.0), (56.0, 128.0),
+    (63.43, -160.0), (63.43, 50.0), (-54.68, -36.0),
+]
+
+
 def main() -> None:
     key2cls = load_key_to_class()
-    av = sqlite3.connect(os.path.join(PROJ, "birdid/data/avonet.db"))
-    cells = av.execute(
-        "SELECT p.south, p.west FROM places p WHERE EXISTS "
-        "(SELECT 1 FROM distributions d WHERE d.worldid = p.worldid)"
-    ).fetchall()
-    av.close()
-
-    random.seed(2026)
-    sample = random.sample(cells, 60)
+    sample = list(SAMPLE_CELLS)
 
     # "cumulative" 是硬要求判定失败后按 Step 3 指示放宽 cover 到 0.999 重跑的
     # 结果（spec §5.1 采用的正是这一版本）；"cumulative_995" 保留初次实测的

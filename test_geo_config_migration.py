@@ -100,6 +100,33 @@ def test_region_data_has_display_names():
         assert c["name_cn"], f"{c['code']} 缺中文名"
 
 
+def _isolate_advanced_config(monkeypatch):
+    """
+    把 get_advanced_config 指向临时文件，隔离本机真实配置。
+
+    构造 SettingsCenter 会读取、并在某些路径写回 advanced_config；若直连真实
+    配置，跑一次测试就可能改掉用户的国家选择等设置（本仓库有过此类事故记录）。
+
+    Point get_advanced_config at a temp file to isolate the developer's real
+    config: constructing SettingsCenter reads it and can write it back on some
+    paths, so running the suite could silently change real user settings.
+
+    参数 / Parameters:
+        monkeypatch: pytest fixture.
+    """
+    import tempfile
+
+    import advanced_config as _ac_mod
+
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w",
+                                     encoding="utf-8") as f:
+        f.write("{}")
+        tmp_path = f.name
+    cfg = _ac_mod.AdvancedConfig(config_file=tmp_path)
+    monkeypatch.setattr(_ac_mod, "get_advanced_config", lambda: cfg)
+    return cfg
+
+
 def test_settings_center_shows_gps_scope_hint(monkeypatch):
     """
     识鸟页必须展示「手选地区仅无 GPS 时生效」的提示。
@@ -116,6 +143,7 @@ def test_settings_center_shows_gps_scope_hint(monkeypatch):
     from tools.i18n import get_i18n
     from ui.settings_center import SettingsCenter
 
+    _isolate_advanced_config(monkeypatch)
     i18n = get_i18n()
     expected = i18n.t("settings.birdid_region_hint")
     assert expected and not expected.startswith("settings."), "提示文案键缺失"
@@ -142,6 +170,7 @@ def test_about_page_shows_gbif_attribution(monkeypatch):
     from tools.i18n import get_i18n
     from ui.settings_center import SettingsCenter
 
+    _isolate_advanced_config(monkeypatch)
     w = SettingsCenter(get_i18n())
     attr = w._geo_attribution_text()
     assert attr, "署名文本为空（geo_distribution.db 应可用）"

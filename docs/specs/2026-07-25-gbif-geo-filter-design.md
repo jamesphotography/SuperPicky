@@ -94,7 +94,7 @@ and replaces hard masking with a layered, progressively-widening candidate set.
 Lite 版打包的 `offline_ebird_data/`(1.5 MB) + `ebird_classid_mapping.json`(224 KB) +
 `ebird_regions.json`(24 KB) 共 **1.8 MB 是纯死重，一行都不会被读取**。
 
-新方案的 `geo_distribution.db`（~16 MB）单文件即可让 Lite 版**首次真正获得地理过滤能力**，
+新方案的 `geo_distribution.db`（实测 35.2 MB）单文件即可让 Lite 版**首次真正获得地理过滤能力**，
 同时删除这 1.8 MB 死重。**已确认纳入 Lite 版**（见 §3.4、§7）。
 
 ### 2.5 附带 bug / Incidental bug
@@ -112,7 +112,7 @@ Lite 版打包的 `offline_ebird_data/`(1.5 MB) + `ebird_classid_mapping.json`(2
 - **GBIF**：CC0 / CC-BY 4.0，署名即可，已有 `gbif_rarity_100` 的署名先例。
 - **eBird API**：条款为「will not publish or publicly distribute eBird data in their
   **original format**, either whole or in part, in any media」。该禁令**不因非商业而豁免**
-  （管的是格式，不是商业性）。现仓库打包分发的 428 个 `species_list_*.json` 存储的是
+  （管的是格式，不是商业性）。现仓库打包分发的 143 个 `species_list_*.json` 存储的是
   原始 speciesCode 数组，处于该禁令覆盖范围。条款允许派生数据集在附带同样条款的前提下传递。
   本设计移除这些文件，从根本上规避该问题。
 
@@ -163,7 +163,7 @@ AVONET 网格包含它因而拦不住，GBIF 正确排除。
 | n≥5 | 109 | 2,031,263 | 11.6 MB | 4.1 MB |
 
 对照 `avonet.db` = **107.2 MB**（3,373,379 行，学名字符串做键）。新数据集用
-`int16` class_id，体积小 5–10 倍，同时可删除 428 个 eBird json。
+`int16` class_id，体积小 5–10 倍，同时可删除 143 个 eBird json。
 
 ---
 
@@ -189,8 +189,8 @@ eBird 的再分发条款问题，以及冰岛这类"两边都无数据"的空白
 ### 3.4 Lite 版纳入 `geo_distribution.db`
 
 Lite 版当前完全没有地理过滤（见 §2.4），且携带 1.8 MB 从不读取的死重。
-纳入新库后 Lite 首次具备与完整版一致的地理过滤能力，体积净增约 14 MB
-（+16 MB 新库 −1.8 MB 死重）。用户已确认接受该体积代价。
+纳入新库后 Lite 首次具备与完整版一致的地理过滤能力，体积净增约 33 MB
+（+35.2 MB 新库 −1.8 MB 死重）。用户已确认接受该体积代价。
 
 ---
 
@@ -199,23 +199,30 @@ Lite 版当前完全没有地理过滤（见 §2.4），且携带 1.8 MB 从不�
 新文件 `birdid/data/geo_distribution.db`：
 
 ```sql
+-- WITHOUT ROWID + 复合主键：主键 B 树即是表本身，省掉隐藏 rowid 与一份独立索引，
+-- 并从根本上杜绝同一网格被重复写入。普通 rowid 表实测 86.3 MB，改此结构后 35.2 MB。
+-- The key B-tree IS the table: no hidden rowid, no separate index, and duplicate
+-- rows for a cell become impossible. A plain rowid table measured 86.3 MB.
 CREATE TABLE cell_species (
     cell_id  INTEGER NOT NULL,   -- (lat_bin+90)*360 + (lon_bin+180)
     class_id INTEGER NOT NULL,   -- OSEA 模型类别 / model class, 0-10963
-    n        INTEGER NOT NULL    -- CC0/CC-BY 观察记录数 / occurrence count
-);
-CREATE INDEX idx_cell ON cell_species(cell_id);
+    n        INTEGER NOT NULL,   -- CC0/CC-BY 观察记录数 / occurrence count
+    PRIMARY KEY (cell_id, class_id)
+) WITHOUT ROWID;
 
 CREATE TABLE country_species (
     country  TEXT NOT NULL,      -- ISO 3166-1 alpha-2
     class_id INTEGER NOT NULL,
-    n        INTEGER NOT NULL
-);
-CREATE INDEX idx_country ON country_species(country);
+    n        INTEGER NOT NULL,
+    PRIMARY KEY (country, class_id)
+) WITHOUT ROWID;
 
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
 -- snapshot_date, gbif_doi, license, attribution, builder_version, tier1_threshold
 ```
+
+实测产物：275.9 万行网格分布 + 12.9 万行国家汇总，覆盖 10,481 个模型类别、
+233 个国家/地区，**35.2 MB**。
 
 `cell_id` 用整数编码而非存储四个浮点边界，查询直接命中索引；
 现有 `avonet_filter.get_species_by_gps` 每次要在 19,561 个矩形上做四次浮点 `BETWEEN` 比较。
@@ -371,7 +378,7 @@ API facet 方案的实测吞吐（60 格随机采样）：
 数据落地后 §7 删除 `avonet.db` 不影响本库。
 
 **数据升级路径**：重跑一次脚本即可（约 30–60 分钟），无需 API key、无需逐国抓取、
-无需人工维护国家清单。这是本设计相对现状（428 个手工抓取的 json + 一份来源不明的
+无需人工维护国家清单。这是本设计相对现状（143 个手工抓取的 json + 一份来源不明的
 107 MB db + 无任何生成脚本）的核心改进。
 
 ---
@@ -382,8 +389,8 @@ API facet 方案的实测吞吐（60 格随机采样）：
 |---|---|---|
 | `birdid/ebird_country_filter.py` | 831 | 已 DEPRECATED、零调用点、含硬编码 API key (`:813`) |
 | `birdid/avonet_filter.py` | 501 | 由 `geo_filter.py` 取代（含 `REGION_BOUNDS` 矩形表与 `_detect_country_from_gps` bug） |
-| `birdid/data/avonet.db` | 107 MB | 由 `geo_distribution.db` (~16 MB) 取代 |
-| `birdid/data/offline_ebird_data/` | 428 文件 | 国家级数据并入新库，同时规避 eBird 再分发条款 |
+| `birdid/data/avonet.db` | 102 MB | 由 `geo_distribution.db` (35.2 MB) 取代；该文件不在 git 中，走 HuggingFace 下载，故同步从 `scripts/download_models.py`、`scripts/upload_to_hf.py` 与两个 `build_release_*.py` 移除 |
+| `birdid/data/offline_ebird_data/` | 143 文件 (1.5 MB) | 国家级数据并入新库，同时规避 eBird 再分发条款 |
 | `birdid/data/ebird_regions.json` | — | 国家/地区列表改由 `country_species` 动态生成 |
 | `birdid/data/ebird_classid_mapping.json` | — | 仅服务于上述 eBird 清单，一并移除 |
 

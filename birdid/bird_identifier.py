@@ -316,31 +316,6 @@ def get_yolo_detector():
     )
 
 
-def get_species_filter():
-    registry = get_lazy_registry()
-
-    def _factory():
-        try:
-            from birdid.avonet_filter import AvonetFilter
-
-            filt = AvonetFilter()
-            if filt.is_available():
-                return filt
-            print("[BirdID] AVONET 地理过滤库不可用，GPS/地区过滤将被跳过 / AVONET geo-filter unavailable, GPS/region filtering will be skipped")
-        except Exception as e:
-            # V4.4: 同 get_database_manager()——以前完全静默，调用方用
-            # `if species_filter:` 跳过过滤，用户看不到"地理过滤没生效"的原因。
-            # registry 是进程级单例缓存，这条日志同样只会打印一次。
-            # V4.4: Same rationale as get_database_manager() — this used to be
-            # fully silent, and callers guard with `if species_filter:` and skip
-            # filtering with no visible cause. The registry caches the result for
-            # the process lifetime, so this also fires at most once.
-            print(f"[BirdID] 地理过滤器初始化失败 / species filter init failed: {e}")
-        return None
-
-    return registry.get_or_create("birdid.avonet_filter", _factory)
-
-
 class YOLOBirdDetector:
     def __init__(self, model_path: Optional[str] = None):
         if not YOLO_AVAILABLE:

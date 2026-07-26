@@ -135,35 +135,34 @@ def land_cells() -> List[Tuple[int, int]]:
     """
     枚举待扫描的陆地网格 / Enumerate the land cells to scan.
 
-    用 avonet.db 中有分布记录的网格作为枚举源（18,709 个）。该依赖是一次性的：
-    数据落地后 Task 7 删除 avonet.db 不影响本库。
+    从 `birdid/data/land_cells.json` 读取 16,882 个网格编号并还原为
+    (lat_bin, lon_bin)。该列表最初由已退役的 avonet.db 分布网格一次性导出，
+    此后本脚本不再依赖 avonet.db——它已随 GBIF 迁移被删除。
 
-    Uses the cells with distribution records in avonet.db (18,709) as the
-    enumeration source. This dependency is one-shot: once the data is built,
-    Task 7's removal of avonet.db does not affect this database.
+    Reads the 16,882 cell ids from `birdid/data/land_cells.json` and decodes
+    them back to (lat_bin, lon_bin). The list was exported once from the retired
+    avonet.db distribution grid; this script no longer depends on avonet.db,
+    which was removed as part of the GBIF migration.
 
     返回 / Returns:
-        list[tuple[int, int]]: [(lat_bin, lon_bin), ...]
+        list[tuple[int, int]]: [(lat_bin, lon_bin), ...]，按编号升序 /
+            sorted by cell id.
+
+    异常 / Exceptions:
+        FileNotFoundError: 网格清单缺失时抛出 / Raised when the list is missing.
     """
-    path = os.path.join(PROJ, "birdid", "data", "avonet.db")
+    path = os.path.join(PROJ, "birdid", "data", "land_cells.json")
     if not os.path.exists(path):
         raise FileNotFoundError(
-            f"网格枚举源缺失 / cell enumeration source missing: {path}"
+            f"网格清单缺失 / cell list missing: {path}"
         )
-    av = sqlite3.connect(path)
-    rows = av.execute(
-        "SELECT p.south, p.west FROM places p WHERE EXISTS "
-        "(SELECT 1 FROM distributions d WHERE d.worldid = p.worldid)"
-    ).fetchall()
-    av.close()
-    # 必须去重：places 的边界不是整数对齐（如 south=-87.13），多行会 floor 到
-    # 同一个 1°网格。18,709 行去重后为 16,882 格；不去重会让完成度统计虚低，
-    # 把"已全部完成"误报成"仍有 1,840 格未完成"。
-    # Deduplicate: places boundaries are not integer-aligned (e.g. south=-87.13),
-    # so several rows floor to the same 1-degree cell. 18,709 rows collapse to
-    # 16,882 cells; without this, the completion count reads far too low and a
-    # finished run is misreported as "1,840 cells remaining".
-    return sorted({(int(s // 1), int(w // 1)) for s, w in rows})
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    cells: List[Tuple[int, int]] = []
+    for cid in data.get("cell_ids", []):
+        lat_bin, lon_bin = divmod(int(cid), 360)
+        cells.append((lat_bin - 90, lon_bin - 180))
+    return sorted(cells)
 
 
 def init_db(path: str, resume: bool) -> sqlite3.Connection:
