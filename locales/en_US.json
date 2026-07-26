@@ -621,7 +621,9 @@
     "culling_algo_v1_warn_body": "V1 uses one value as both the reject line and the pass line, so it only ever produces 0★ and 3★ — there is no 1★/2★ in between.\n\nWith your current aesthetics threshold {nima} and sharpness threshold {sharp}, photos below the threshold are rated 0★ and moved into the \"0 star_rejected\" folder.\n\n{advice}",
     "culling_algo_v1_warn_high": "⚠️ Your aesthetics threshold {nima} is high; measured on a real batch this rejects the vast majority of photos. Consider lowering it below 5.5 after switching.",
     "culling_algo_v1_warn_ok": "Switch to V1",
-    "culling_algo_v1_warn_cancel": "Keep V2"
+    "culling_algo_v1_warn_cancel": "Keep V2",
+    "birdid_region_hint": "Only applies to photos without GPS; photos with GPS are filtered by their location",
+    "geo_attribution": "Bird Distributions - GBIF.org occurrence data ({snapshot}), CC0-1.0 and CC-BY-4.0 records only"
   },
   "advanced_settings": {
     "title": "Settings",

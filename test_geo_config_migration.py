@@ -98,3 +98,57 @@ def test_region_data_has_display_names():
     for c in load_regions_data()["countries"][:50]:
         assert c["name"], f"{c['code']} 缺英文名"
         assert c["name_cn"], f"{c['code']} 缺中文名"
+
+
+def test_settings_center_shows_gps_scope_hint(monkeypatch):
+    """
+    识鸟页必须展示「手选地区仅无 GPS 时生效」的提示。
+
+    有 GPS 的照片按 1°网格过滤、手选国家不参与，这一点若不明说，用户会以为
+    选了没生效（旧版本无任何提示，是已知困惑点）。
+    """
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QLabel
+
+    app = QApplication.instance() or QApplication([])
+    from tools.i18n import get_i18n
+    from ui.settings_center import SettingsCenter
+
+    i18n = get_i18n()
+    expected = i18n.t("settings.birdid_region_hint")
+    assert expected and not expected.startswith("settings."), "提示文案键缺失"
+
+    w = SettingsCenter(i18n)
+    w.show_page("birdid")
+    texts = [lbl.text() for lbl in w.findChildren(QLabel)]
+    assert expected in texts, f"识鸟页未展示 GPS 生效提示；现有标签: {texts[:12]}"
+    w.close()
+
+
+def test_about_page_shows_gbif_attribution(monkeypatch):
+    """
+    关于页必须展示 GBIF 署名（CC-BY 要求），且带真实快照日期。
+
+    快照日期从 geo_distribution.db 的 meta 表动态读取，不能并入静态 about.content。
+    """
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QLabel
+
+    app = QApplication.instance() or QApplication([])
+    from tools.i18n import get_i18n
+    from ui.settings_center import SettingsCenter
+
+    w = SettingsCenter(get_i18n())
+    attr = w._geo_attribution_text()
+    assert attr, "署名文本为空（geo_distribution.db 应可用）"
+    assert "GBIF" in attr, f"署名未提及 GBIF: {attr}"
+    assert "CC" in attr, f"署名未提及许可: {attr}"
+
+    w.show_page("about")
+    texts = [lbl.text() for lbl in w.findChildren(QLabel)]
+    assert attr in texts, "关于页未展示 GBIF 署名行"
+    w.close()

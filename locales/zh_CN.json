@@ -621,7 +621,9 @@
     "culling_algo_v1_warn_body": "V1 用同一个数值同时当「判废线」和「达标线」，因此只会产生 0★ 和 3★，不会出现 1★/2★ 中间档。\n\n当前美学阈值 {nima}、锐度阈值 {sharp}：低于阈值的照片会直接判 0★ 并移入「0星_放弃」文件夹。\n\n{advice}",
     "culling_algo_v1_warn_high": "⚠️ 你当前的美学阈值 {nima} 偏高，实测这会让绝大多数照片被判废，建议切换后先把它调到 5.5 以下。",
     "culling_algo_v1_warn_ok": "确认切换到 V1",
-    "culling_algo_v1_warn_cancel": "保持 V2"
+    "culling_algo_v1_warn_cancel": "保持 V2",
+    "birdid_region_hint": "仅在照片没有 GPS 信息时生效；有 GPS 的照片自动按拍摄位置过滤",
+    "geo_attribution": "鸟类地理分布 - GBIF.org 观察记录 ({snapshot})，仅含 CC0-1.0 与 CC-BY-4.0 数据"
   },
   "advanced_settings": {
     "title": "参数设置",

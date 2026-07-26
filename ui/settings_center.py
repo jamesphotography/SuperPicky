@@ -790,6 +790,23 @@ class SettingsCenter(QDialog):
         country_row.addWidget(self._bid_country, 1)
         lay.addLayout(country_row)
 
+        # 生效条件提示：有 GPS 的照片按拍摄位置的 1°网格过滤，手选国家不参与；
+        # 这里明说，避免用户以为选了没生效（旧版本无任何提示，是常见困惑点）。
+        # Scope hint: photos with GPS are filtered by their location's 1-degree
+        # cell and the manual country is not used. Saying so explicitly avoids
+        # the common confusion of "I selected a country but nothing changed".
+        hint_row = QHBoxLayout()
+        hint_spacer = QLabel("")
+        hint_spacer.setFixedWidth(160)
+        hint_label = QLabel(self.i18n.t("settings.birdid_region_hint"))
+        hint_label.setStyleSheet(
+            f"color:{COLORS['text_secondary']};font-size:11px;"
+        )
+        hint_label.setWordWrap(True)
+        hint_row.addWidget(hint_spacer)
+        hint_row.addWidget(hint_label, 1)
+        lay.addLayout(hint_row)
+
         # 地区下拉 / Region dropdown
         region_row = QHBoxLayout()
         region_label = QLabel(self.i18n.t("settings.birdid_region_label"))
@@ -2343,6 +2360,41 @@ class SettingsCenter(QDialog):
 
     # ── 关于页 / About page ───────────────────────────────────────────────────
 
+    def _geo_attribution_text(self) -> str:
+        """
+        读取地理分布库的 meta 生成署名文本。
+
+        Build the geo-distribution attribution line from the database meta table.
+
+        返回 / Returns:
+            str: 含快照日期与许可的署名；库不可用时返回空串（调用方据此跳过该行）/
+                Attribution with snapshot date and license; empty string when the
+                database is unavailable, letting the caller skip the row.
+
+        异常 / Exceptions:
+            不抛出异常；任何读取失败都返回空串 / Never raises; returns "" on failure.
+        """
+        try:
+            import sqlite3
+
+            from birdid.geo_filter import default_db_path
+
+            path = default_db_path()
+            if not os.path.exists(path):
+                return ""
+            conn = sqlite3.connect(path)
+            try:
+                meta = dict(conn.execute("SELECT key, value FROM meta").fetchall())
+            finally:
+                conn.close()
+        except Exception:  # noqa: BLE001
+            return ""
+
+        snapshot = meta.get("snapshot_date", "")
+        if not snapshot:
+            return ""
+        return self.i18n.t("settings.geo_attribution", snapshot=snapshot)
+
     def _build_about_page(self) -> QWidget:
         """
         构建关于页，展示应用名称、版本号、致谢和许可证信息（只读，无保存逻辑）。
@@ -2499,6 +2551,21 @@ class SettingsCenter(QDialog):
         content_label.setWordWrap(True)
         content_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         lay.addWidget(content_label, 1)
+
+        # 地理分布数据署名：快照日期从 geo_distribution.db 的 meta 表动态读取，
+        # 因此不能并入静态的 about.content 文案。CC-BY 要求署名，见 spec §7。
+        # Geo-distribution attribution: the snapshot date is read dynamically from
+        # geo_distribution.db's meta table, so it cannot live in the static
+        # about.content string. CC-BY requires attribution — see spec section 7.
+        geo_attr = self._geo_attribution_text()
+        if geo_attr:
+            geo_label = QLabel(geo_attr)
+            geo_label.setStyleSheet(
+                f"color:{COLORS['text_secondary']};font-size:13px;line-height:1.6;"
+            )
+            geo_label.setWordWrap(True)
+            geo_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+            lay.addWidget(geo_label)
 
         lay.addStretch(1)
 
