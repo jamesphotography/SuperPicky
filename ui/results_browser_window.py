@@ -1704,7 +1704,10 @@ class ResultsBrowserWindow(QMainWindow):
         )
 
         target_photos = self._apple_photos_target_photos()
-        preflight = preflight_photos(target_photos)
+        preflight = preflight_photos(
+            target_photos,
+            prefer_english=self.i18n.current_lang.startswith("en"),
+        )
         if not preflight.candidates:
             QMessageBox.warning(
                 self,
@@ -1814,6 +1817,8 @@ class ResultsBrowserWindow(QMainWindow):
 
             message = self.i18n.t("browser.photos_import_failed_message").format(
                 imported=result.newly_imported,
+                metadata_applied=result.metadata_applied,
+                metadata_not_applied=result.metadata_not_applied,
                 error=result.error,
             )
             if is_automation_permission_error(result.error):
@@ -1831,6 +1836,8 @@ class ResultsBrowserWindow(QMainWindow):
                 self.i18n.t("browser.photos_import_cancelled_title"),
                 self.i18n.t("browser.photos_import_cancelled_message").format(
                     imported=result.newly_imported,
+                    metadata_applied=result.metadata_applied,
+                    metadata_not_applied=result.metadata_not_applied,
                     remaining=result.remaining,
                 ),
             )
@@ -1842,6 +1849,8 @@ class ResultsBrowserWindow(QMainWindow):
             self.i18n.t("browser.photos_import_done_message").format(
                 imported=result.newly_imported,
                 not_imported=result.photos_not_imported,
+                metadata_applied=result.metadata_applied,
+                metadata_not_applied=result.metadata_not_applied,
                 skipped=result.preflight_skipped,
             ),
         )

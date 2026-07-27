@@ -9,21 +9,33 @@ QProcess lifecycle in one place. Paths and album names are passed through
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import sys
+from collections import Counter
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import Iterable, Sequence
 
 from PySide6.QtCore import QObject, QProcess, QTimer, Signal
 
-from constants import HEIF_EXTENSIONS, IMAGE_EXTENSIONS, JPG_EXTENSIONS
-
+from constants import (
+    HEIF_EXTENSIONS,
+    IMAGE_EXTENSIONS,
+    JPG_EXTENSIONS,
+    RAW_EXTENSIONS,
+)
 
 _DISPLAY_EXTENSIONS = tuple(JPG_EXTENSIONS + HEIF_EXTENSIONS)
+_RAW_EXTENSIONS = tuple(RAW_EXTENSIONS)
 _SUPPORTED_EXTENSIONS = frozenset(ext.lower() for ext in IMAGE_EXTENSIONS)
+_SIBLING_RAW_EXTENSIONS = tuple(
+    extension
+    for raw_extension in RAW_EXTENSIONS
+    for extension in (raw_extension.lower(), raw_extension.upper())
+)
 _SIBLING_DISPLAY_EXTENSIONS = (
     ".jpg",
     ".jpeg",
@@ -38,16 +50,36 @@ _SIBLING_DISPLAY_EXTENSIONS = (
 )
 _IMPORT_FOLDER_NAME = "SuperPicky Imports"
 _DEFAULT_BATCH_SIZE = 100
+_DEFAULT_MAX_ARGUMENT_BYTES = 256 * 1024
 
 
 _APPLE_PHOTOS_IMPORT_SCRIPT = r"""
 on run argv
-    if (count of argv) < 2 then error "Missing album name or import files"
+    if (count of argv) < 3 then error "Missing album name, candidate count, or import files"
 
     set targetAlbumName to item 1 of argv
+    set candidateCount to (item 2 of argv) as integer
     set sourceFiles to {}
-    repeat with argumentIndex from 2 to count of argv
-        set end of sourceFiles to POSIX file (item argumentIndex of argv)
+    set candidateRecords to {}
+    set argumentIndex to 3
+
+    repeat candidateCount times
+        set sourcePath to item argumentIndex of argv
+        set expectedFilename to item (argumentIndex + 1) of argv
+        set expectedSize to (item (argumentIndex + 2) of argv) as integer
+        set hasTitle to (item (argumentIndex + 3) of argv) is "1"
+        set metadataTitle to item (argumentIndex + 4) of argv
+        set hasDescription to (item (argumentIndex + 5) of argv) is "1"
+        set metadataDescription to item (argumentIndex + 6) of argv
+        set keywordCount to (item (argumentIndex + 7) of argv) as integer
+        set metadataKeywords to {}
+        repeat with keywordOffset from 1 to keywordCount
+            set end of metadataKeywords to item (argumentIndex + 7 + keywordOffset) of argv
+        end repeat
+
+        set end of sourceFiles to POSIX file sourcePath
+        set end of candidateRecords to {sourcePath, expectedFilename, expectedSize, hasTitle, metadataTitle, hasDescription, metadataDescription, metadataKeywords, false}
+        set argumentIndex to argumentIndex + 8 + keywordCount
     end repeat
 
     tell application "/System/Applications/Photos.app"
@@ -66,10 +98,98 @@ on run argv
         end if
 
         set importedItems to import sourceFiles into targetAlbum skip check duplicates false
-        return (count of importedItems) as text
+        set metadataApplied to 0
+        set metadataNotApplied to 0
+
+        repeat with importedItem in importedItems
+            set matchingCandidate to missing value
+            set importedFilename to filename of importedItem
+            set importedSize to (size of importedItem) as integer
+
+            repeat with candidateRecord in candidateRecords
+                if (item 9 of candidateRecord) is false then
+                    if (item 2 of candidateRecord) is importedFilename and (item 3 of candidateRecord) is importedSize then
+                        set matchingCandidate to candidateRecord
+                        exit repeat
+                    end if
+                end if
+            end repeat
+
+            if matchingCandidate is missing value and candidateCount is 1 and (count of importedItems) is 1 then
+                set matchingCandidate to item 1 of candidateRecords
+            end if
+
+            if matchingCandidate is missing value then
+                set metadataNotApplied to metadataNotApplied + 1
+            else
+                set item 9 of matchingCandidate to true
+                set hasMetadata to (item 4 of matchingCandidate) or (item 6 of matchingCandidate) or ((count of item 8 of matchingCandidate) > 0)
+                if hasMetadata then
+                    try
+                        if item 4 of matchingCandidate then
+                            set name of importedItem to item 5 of matchingCandidate
+                        end if
+                        if item 6 of matchingCandidate then
+                            set description of importedItem to item 7 of matchingCandidate
+                        end if
+
+                        set metadataKeywords to item 8 of matchingCandidate
+                        if (count of metadataKeywords) > 0 then
+                            set mergedKeywords to keywords of importedItem
+                            if mergedKeywords is missing value then set mergedKeywords to {}
+                            repeat with metadataKeyword in metadataKeywords
+                                set keywordExists to false
+                                repeat with existingKeyword in mergedKeywords
+                                    ignoring case
+                                        if (existingKeyword as text) is (metadataKeyword as text) then
+                                            set keywordExists to true
+                                            exit repeat
+                                        end if
+                                    end ignoring
+                                end repeat
+                                if keywordExists is false then
+                                    set end of mergedKeywords to metadataKeyword as text
+                                end if
+                            end repeat
+                            set keywords of importedItem to mergedKeywords
+                        end if
+                        set metadataApplied to metadataApplied + 1
+                    on error
+                        set metadataNotApplied to metadataNotApplied + 1
+                    end try
+                else
+                    set metadataNotApplied to metadataNotApplied + 1
+                end if
+            end if
+        end repeat
+
+        return ((count of importedItems) as text) & tab & (metadataApplied as text) & tab & (metadataNotApplied as text)
     end tell
 end run
 """.strip()
+
+
+@dataclass(frozen=True)
+class ApplePhotosMetadata:
+    """
+    要写入 Apple Photos 资料库条目的原生元数据。
+
+    参数:
+        title: Photos 标题；None 表示保留导入值。
+        description: Photos 说明；None 表示保留导入值。
+        keywords: 与 Photos 已有关键词合并的 SuperPicky 关键词。
+
+    Apple Photos native metadata applied to one library item.
+
+    Parameters:
+        title: Photos title; None preserves the imported value.
+        description: Photos description; None preserves the imported value.
+        keywords: SuperPicky keywords merged with imported Photos keywords.
+    """
+
+    title: str | None
+    description: str | None
+    keywords: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -80,13 +200,19 @@ class ImportCandidate:
     参数 / Parameters:
         path: 要交给 Apple Photos 的真实文件绝对路径。
         photo_identity: SuperPicky 记录身份(source_dir, filename)。
+        source_size: 导入源文件字节数，用于匹配 Photos 返回条目。
+        metadata: 只写入本次新导入条目的 Photos 原生元数据。
 
         path: Absolute path passed to Apple Photos.
         photo_identity: SuperPicky record identity (source_dir, filename).
+        source_size: Source size in bytes used to match the returned Photos item.
+        metadata: Photos-native metadata applied only to a newly imported item.
     """
 
     path: Path
     photo_identity: tuple[str, str]
+    source_size: int
+    metadata: ApplePhotosMetadata
 
 
 @dataclass(frozen=True)
@@ -107,6 +233,7 @@ class ApplePhotosImportRequest:
     requested: int
     preflight_skipped: int
     batch_size: int = _DEFAULT_BATCH_SIZE
+    max_argument_bytes: int = _DEFAULT_MAX_ARGUMENT_BYTES
 
 
 @dataclass(frozen=True)
@@ -121,6 +248,8 @@ class ApplePhotosImportResult:
     photos_not_imported: int
     remaining: int
     completed_batches: int
+    metadata_applied: int
+    metadata_not_applied: int
     cancelled: bool
     error: str | None = None
 
@@ -129,6 +258,191 @@ def _photo_identity(photo: dict) -> tuple[str, str]:
     """返回稳定的照片身份键。/ Return a stable photo identity key."""
 
     return (str(photo.get("source_dir") or ""), str(photo.get("filename") or ""))
+
+
+def _nonempty_text(value: object) -> str | None:
+    """返回去除首尾空白的非空文本。/ Return non-empty outer-trimmed text."""
+
+    if value is None:
+        return None
+    text = str(value).replace("\x00", "").strip()
+    return text or None
+
+
+def _deduplicate_keywords(values: Iterable[object]) -> tuple[str, ...]:
+    """
+    按大小写不敏感规则去重并保留首次出现顺序。
+
+    Deduplicate case-insensitively while preserving first-seen order.
+    """
+
+    keywords: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        keyword = _nonempty_text(value)
+        if keyword is None:
+            continue
+        key = keyword.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        keywords.append(keyword)
+    return tuple(keywords)
+
+
+def _finite_number(value: object) -> float | None:
+    """安全转换有限浮点数。/ Safely coerce a finite floating-point value."""
+
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def build_compact_photos_description(
+    photo: dict,
+    *,
+    title: str | None,
+    prefer_english: bool = False,
+) -> str | None:
+    """
+    为 Apple Photos 构造最多两行的移动端友好摘要。
+
+    完整诊断 caption 继续保存在结果数据库和 XMP 中；Photos 只展示身份、
+    星级和少量核心指标，避免 iPhone 信息面板被长诊断文本占满。
+
+    Build an at-most-two-line, mobile-friendly Apple Photos summary. The full
+    diagnostic caption remains in the report database and XMP; Photos receives
+    only identification, rating, and a few core metrics.
+
+    参数 / Parameters:
+        photo: 结果数据库照片记录。/ Report-database photo record.
+        title: 已解析的 Photos 标题。/ Resolved Photos title.
+        prefer_english: 是否使用英文标签。/ Whether to use English labels.
+
+    返回 / Returns:
+        str | None: 紧凑说明；没有可展示字段时为 None。/ Compact description.
+    """
+
+    labels = (
+        {
+            "ratings": {
+                -1: "Rejected",
+                0: "Poor",
+                1: "Average",
+                2: "Good",
+                3: "Excellent",
+            },
+            "sharp": "Sharp",
+            "aesthetics": "Aesthetics",
+            "flying": "Flying",
+        }
+        if prefer_english
+        else {
+            "ratings": {
+                -1: "拒绝",
+                0: "问题",
+                1: "普通",
+                2: "良好",
+                3: "优选",
+            },
+            "sharp": "锐度",
+            "aesthetics": "美学",
+            "flying": "飞鸟",
+        }
+    )
+
+    headline_parts: list[str] = []
+    if title:
+        headline_parts.append(title)
+    try:
+        rating = int(photo.get("rating")) if photo.get("rating") is not None else None
+    except (TypeError, ValueError):
+        rating = None
+    rating_labels = labels["ratings"]
+    if rating in rating_labels:
+        rating_text = (
+            f"{rating}★ {rating_labels[rating]}"
+            if rating >= 0
+            else str(rating_labels[rating])
+        )
+        headline_parts.append(rating_text)
+
+    metric_parts: list[str] = []
+    confidence = _finite_number(photo.get("confidence"))
+    if confidence is not None:
+        confidence_percent = confidence * 100 if 0 <= confidence <= 1 else confidence
+        metric_parts.append(f"AI {confidence_percent:.0f}%")
+    sharpness = _finite_number(photo.get("head_sharp"))
+    if sharpness is not None:
+        metric_parts.append(f"{labels['sharp']} {sharpness:.2f}")
+    aesthetics = _finite_number(photo.get("nima_score"))
+    if aesthetics is not None:
+        metric_parts.append(f"{labels['aesthetics']} {aesthetics:.2f}")
+    if bool(photo.get("is_flying")):
+        metric_parts.append(str(labels["flying"]))
+
+    lines = [" · ".join(parts) for parts in (headline_parts, metric_parts) if parts]
+    return "\n".join(lines) or None
+
+
+def build_photos_metadata(
+    photo: dict, *, prefer_english: bool = False
+) -> ApplePhotosMetadata:
+    """
+    从结果数据库记录构造 Photos 标题、说明和可搜索关键词。
+
+    标题优先使用数据库现有 title；为空时按当前界面语言回退到鸟种鉴定。
+    星级保留为关键词，不映射为 Photos 的布尔型个人收藏。
+
+    Build Photos title, description, and searchable keywords from one report
+    record. Existing title wins; otherwise identification follows the current
+    UI language. Ratings remain keywords rather than Photos favorites.
+
+    参数 / Parameters:
+        photo: 结果数据库照片记录。/ Report-database photo record.
+        prefer_english: 鸟种标题是否优先英文。/ Prefer English for species title.
+
+    返回 / Returns:
+        ApplePhotosMetadata: 可安全写入新 Photos 条目的元数据。
+    """
+
+    species_cn = _nonempty_text(photo.get("bird_species_cn"))
+    species_en = _nonempty_text(photo.get("bird_species_en"))
+    species_title = (
+        (species_en or species_cn) if prefer_english else (species_cn or species_en)
+    )
+    title = _nonempty_text(photo.get("title")) or species_title
+    description = build_compact_photos_description(
+        photo,
+        title=title,
+        prefer_english=prefer_english,
+    )
+
+    keywords: list[object] = [species_cn, species_en]
+    rating_value = photo.get("rating")
+    try:
+        rating = int(rating_value) if rating_value is not None else None
+    except (TypeError, ValueError):
+        rating = None
+    if rating == -1:
+        keywords.append("SuperPicky Rejected")
+    elif rating is not None and rating >= 0:
+        keywords.append(f"SuperPicky Rating {rating}★")
+
+    try:
+        is_picked = int(photo.get("picked") or 0) == 1
+    except (TypeError, ValueError):
+        is_picked = False
+    if is_picked:
+        keywords.append("SuperPicky Picked")
+
+    return ApplePhotosMetadata(
+        title=title,
+        description=description,
+        keywords=_deduplicate_keywords(keywords),
+    )
 
 
 def _absolute_candidate(photo: dict, value: object) -> Path | None:
@@ -163,15 +477,23 @@ def _display_siblings(path: Path) -> Iterable[Path]:
         yield stem.with_suffix(extension)
 
 
+def _raw_siblings(path: Path) -> Iterable[Path]:
+    """按项目 RAW 格式顺序生成同主名文件。/ Yield same-stem RAW paths."""
+
+    stem = path.with_suffix("")
+    for extension in _SIBLING_RAW_EXTENSIONS:
+        yield stem.with_suffix(extension)
+
+
 def resolve_photo_import_path(photo: dict) -> Path | None:
     """
-    为照片选择唯一导入文件，优先 JPEG/HEIF，再回退 RAW。
+    为照片选择唯一导入文件，优先 RAW，再回退 JPEG/HEIF。
 
-    临时预览和裁剪缓存故意不参与候选。先检查记录本身是否指向显示格式，
-    再检查 RAW 同目录同主名的显示边车，最后才回退到原始图像。
+    临时预览和裁剪缓存故意不参与候选。先检查记录中的 RAW，再寻找同主名
+    RAW；没有 RAW 时才选择直接记录或同主名的 JPEG/HEIF。
 
-    Select one import file for a photo, preferring JPEG/HEIF and falling back
-    to RAW. Temporary previews and crop caches are intentionally excluded.
+    Select one import file for a photo, preferring RAW and falling back to
+    JPEG/HEIF. Temporary previews and crop caches are intentionally excluded.
 
     参数 / Parameters:
         photo: 结果浏览器中的已解析照片记录。/ Resolved browser photo record.
@@ -190,12 +512,12 @@ def resolve_photo_import_path(photo: dict) -> Path | None:
     ]
 
     for path in base_paths:
-        if path.suffix.lower() in _DISPLAY_EXTENSIONS and _is_supported_file(path):
+        if path.suffix.lower() in _RAW_EXTENSIONS and _is_supported_file(path):
             return path.resolve()
 
     seen_siblings: set[str] = set()
     for path in base_paths:
-        for sibling in _display_siblings(path):
+        for sibling in _raw_siblings(path):
             key = os.path.normcase(os.path.realpath(sibling))
             if key in seen_siblings:
                 continue
@@ -204,12 +526,23 @@ def resolve_photo_import_path(photo: dict) -> Path | None:
                 return sibling.resolve()
 
     for path in base_paths:
-        if _is_supported_file(path):
+        if path.suffix.lower() in _DISPLAY_EXTENSIONS and _is_supported_file(path):
             return path.resolve()
+
+    for path in base_paths:
+        for sibling in _display_siblings(path):
+            key = os.path.normcase(os.path.realpath(sibling))
+            if key in seen_siblings:
+                continue
+            seen_siblings.add(key)
+            if _is_supported_file(sibling):
+                return sibling.resolve()
     return None
 
 
-def preflight_photos(photos: Sequence[dict]) -> ImportPreflight:
+def preflight_photos(
+    photos: Sequence[dict], *, prefer_english: bool = False
+) -> ImportPreflight:
     """
     解析、规范化并去重导入文件。/ Resolve, canonicalize, and deduplicate files.
 
@@ -226,9 +559,21 @@ def preflight_photos(photos: Sequence[dict]) -> ImportPreflight:
         key = os.path.normcase(os.path.realpath(path))
         if key in seen_paths:
             continue
+        try:
+            source_size = path.stat().st_size
+        except OSError:
+            continue
         seen_paths.add(key)
         candidates.append(
-            ImportCandidate(path=path, photo_identity=_photo_identity(photo))
+            ImportCandidate(
+                path=path,
+                photo_identity=_photo_identity(photo),
+                source_size=source_size,
+                metadata=build_photos_metadata(
+                    photo,
+                    prefer_english=prefer_english,
+                ),
+            )
         )
 
     requested = len(photos)
@@ -278,13 +623,100 @@ def build_osascript_arguments(
         raise ValueError("Apple Photos album name cannot be empty")
     if not candidates:
         raise ValueError("Apple Photos import batch cannot be empty")
-    return [
+    arguments = [
         "-e",
         _APPLE_PHOTOS_IMPORT_SCRIPT,
         "--",
         clean_name,
-        *(os.fspath(candidate.path) for candidate in candidates),
+        str(len(candidates)),
     ]
+    for candidate in candidates:
+        metadata = candidate.metadata
+        arguments.extend(
+            [
+                os.fspath(candidate.path),
+                candidate.path.name,
+                str(candidate.source_size),
+                "1" if metadata.title is not None else "0",
+                metadata.title or "",
+                "1" if metadata.description is not None else "0",
+                metadata.description or "",
+                str(len(metadata.keywords)),
+                *metadata.keywords,
+            ]
+        )
+    return arguments
+
+
+def _argument_bytes(album_name: str, candidates: Sequence[ImportCandidate]) -> int:
+    """估算 exec argv UTF-8 字节数。/ Estimate exec argv UTF-8 byte size."""
+
+    return sum(
+        len(argument.encode("utf-8")) + 1
+        for argument in build_osascript_arguments(album_name, candidates)
+    )
+
+
+def build_import_batches(
+    album_name: str,
+    candidates: Sequence[ImportCandidate],
+    *,
+    batch_size: int,
+    max_argument_bytes: int,
+) -> list[tuple[ImportCandidate, ...]]:
+    """
+    构造安全批次，并隔离无法按文件名与大小区分的候选。
+
+    Build safe batches and isolate candidates sharing the same filename and
+    byte size, so each returned Photos item can be matched deterministically.
+
+    异常 / Raises:
+        ValueError: 批次上限无效，或单个候选超过 argv 安全预算。
+    """
+
+    if batch_size <= 0:
+        raise ValueError("Apple Photos import batch size must be positive")
+    if max_argument_bytes <= 0:
+        raise ValueError("Apple Photos argument byte limit must be positive")
+
+    match_key_counts = Counter(
+        (candidate.path.name.casefold(), candidate.source_size)
+        for candidate in candidates
+    )
+    batches: list[tuple[ImportCandidate, ...]] = []
+    current: list[ImportCandidate] = []
+
+    def flush_current() -> None:
+        if current:
+            batches.append(tuple(current))
+            current.clear()
+
+    for candidate in candidates:
+        match_key = (candidate.path.name.casefold(), candidate.source_size)
+        if match_key_counts[match_key] > 1:
+            flush_current()
+            if _argument_bytes(album_name, [candidate]) > max_argument_bytes:
+                raise ValueError(
+                    f"Apple Photos metadata is too large for {candidate.path.name}"
+                )
+            batches.append((candidate,))
+            continue
+
+        proposed = [*current, candidate]
+        if current and (
+            len(proposed) > batch_size
+            or _argument_bytes(album_name, proposed) > max_argument_bytes
+        ):
+            flush_current()
+            proposed = [candidate]
+        if _argument_bytes(album_name, proposed) > max_argument_bytes:
+            raise ValueError(
+                f"Apple Photos metadata is too large for {candidate.path.name}"
+            )
+        current.append(candidate)
+
+    flush_current()
+    return batches
 
 
 def is_automation_permission_error(message: str) -> bool:
@@ -331,6 +763,8 @@ class ApplePhotosImporter(QObject):
         self._attempted = 0
         self._newly_imported = 0
         self._completed_batches = 0
+        self._metadata_applied = 0
+        self._metadata_not_applied = 0
         self._cancel_requested = False
         self._completion_emitted = False
         self._suppress_completion = False
@@ -347,7 +781,7 @@ class ApplePhotosImporter(QObject):
 
         异常 / Raises:
             RuntimeError: 非 macOS、已有任务或请求无有效候选。
-            ValueError: 相册名或 batch_size 无效。
+            ValueError: 相册名、批次上限或 argv 字节上限无效。
         """
 
         if sys.platform != "darwin":
@@ -357,27 +791,31 @@ class ApplePhotosImporter(QObject):
         album_name = sanitize_album_name(request.album_name)
         if not album_name:
             raise ValueError("Apple Photos album name cannot be empty")
-        if request.batch_size <= 0:
-            raise ValueError("Apple Photos import batch size must be positive")
         if not request.candidates:
             raise ValueError("Apple Photos import requires at least one candidate")
 
+        batches = build_import_batches(
+            album_name,
+            request.candidates,
+            batch_size=request.batch_size,
+            max_argument_bytes=request.max_argument_bytes,
+        )
         self._request = ApplePhotosImportRequest(
             album_name=album_name,
             candidates=request.candidates,
             requested=request.requested,
             preflight_skipped=request.preflight_skipped,
             batch_size=request.batch_size,
+            max_argument_bytes=request.max_argument_bytes,
         )
-        self._batches = [
-            tuple(request.candidates[index : index + request.batch_size])
-            for index in range(0, len(request.candidates), request.batch_size)
-        ]
+        self._batches = batches
         self._next_batch_index = 0
         self._current_batch_size = 0
         self._attempted = 0
         self._newly_imported = 0
         self._completed_batches = 0
+        self._metadata_applied = 0
+        self._metadata_not_applied = 0
         self._cancel_requested = False
         self._completion_emitted = False
         self._suppress_completion = False
@@ -459,7 +897,12 @@ class ApplePhotosImporter(QObject):
             return
 
         try:
-            imported_count = int(stdout.splitlines()[-1])
+            response_fields = stdout.splitlines()[-1].split("\t")
+            if len(response_fields) != 3:
+                raise ValueError
+            imported_count, metadata_applied, metadata_not_applied = (
+                int(value) for value in response_fields
+            )
         except (IndexError, ValueError):
             self._finish(
                 cancelled=False,
@@ -471,8 +914,24 @@ class ApplePhotosImporter(QObject):
                 cancelled=False, error=f"Invalid Photos import count: {imported_count}"
             )
             return
+        if (
+            metadata_applied < 0
+            or metadata_not_applied < 0
+            or metadata_applied + metadata_not_applied != imported_count
+        ):
+            self._finish(
+                cancelled=False,
+                error=(
+                    "Invalid Photos metadata counts: "
+                    f"{metadata_applied} applied, "
+                    f"{metadata_not_applied} not applied"
+                ),
+            )
+            return
 
         self._newly_imported += imported_count
+        self._metadata_applied += metadata_applied
+        self._metadata_not_applied += metadata_not_applied
         self._completed_batches += 1
         self.progress.emit(self._attempted, len(self._request.candidates))
         self._start_next_batch()
@@ -507,6 +966,8 @@ class ApplePhotosImporter(QObject):
             photos_not_imported=max(0, self._attempted - self._newly_imported),
             remaining=max(0, eligible - self._attempted),
             completed_batches=self._completed_batches,
+            metadata_applied=self._metadata_applied,
+            metadata_not_applied=self._metadata_not_applied,
             cancelled=cancelled,
             error=error,
         )
