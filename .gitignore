@@ -29,6 +29,8 @@ build/
 
 # 测试和临时文件
 test_*.py
+# Apple Photos 导入回归测试需要纳入版本控制 / Keep Apple Photos regression coverage
+!test_apple_photos_importer.py
 analyze_*.py
 add_*.py
 write_*.py

@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QLabel, QPushButton, QStatusBar,
     QSlider, QComboBox, QMessageBox, QSizePolicy, QApplication,
-    QStackedWidget, QMenu
+    QStackedWidget, QMenu, QInputDialog, QLineEdit, QProgressDialog
 )
 from PySide6.QtCore import Qt, Signal, Slot, QProcess, QSize, QTimer
 from PySide6.QtGui import QAction, QKeyEvent, QIcon
@@ -704,6 +704,8 @@ class ResultsBrowserWindow(QMainWindow):
         self._is_merged: bool = False
         self._sub_dirs: list = []
         self._fullscreen_nav_photos: list = []
+        self._apple_photos_importer = None
+        self._apple_photos_progress = None
 
         self._setup_window()
         self._setup_menu()
@@ -905,6 +907,22 @@ class ResultsBrowserWindow(QMainWindow):
         self._compare_btn.hide()
         self._compare_btn.clicked.connect(self._enter_comparison)
         layout.addWidget(self._compare_btn)
+
+        # Apple Photos 导入严格限于 macOS；模块只在用户触发时惰性加载，Windows
+        # 启动和打包运行路径不导入任何 AppleScript 控制代码。
+        # Apple Photos import is macOS-only. Its controller is loaded lazily on
+        # user action so Windows startup never imports AppleScript control code.
+        self._apple_photos_btn = None
+        if sys.platform == "darwin":
+            self._apple_photos_btn = QPushButton(self.i18n.t("browser.photos_import_btn"))
+            self._apple_photos_btn.setIcon(load_tinted_icon("image-plus.svg", ICON_IDLE, 16))
+            self._apple_photos_btn.setIconSize(QSize(16, 16))
+            self._apple_photos_btn.setObjectName("secondary")
+            self._apple_photos_btn.setFixedHeight(32)
+            self._apple_photos_btn.setToolTip(self.i18n.t("browser.photos_import_tooltip"))
+            self._apple_photos_btn.setEnabled(False)
+            self._apple_photos_btn.clicked.connect(self._start_apple_photos_import)
+            layout.addWidget(self._apple_photos_btn)
 
         # 缩略图尺寸:标签 + 滑块绑成一组,紧贴显示
         size_box = QHBoxLayout()
@@ -1219,7 +1237,8 @@ class ResultsBrowserWindow(QMainWindow):
             self._detail_panel.show_photo(selected_photo)
         else:
             self._detail_panel.clear()
-            
+        self._update_apple_photos_button()
+
     @Slot(int)
     def _toggle_burst(self, burst_id: int):
         if len([p for p in self._raw_filtered_photos if p.get("burst_id") == burst_id]) <= 1:
@@ -1637,6 +1656,196 @@ class ResultsBrowserWindow(QMainWindow):
         # C5：仅当选中 2 张时显示对比按钮
         self._compare_btn.setVisible(n == 2)
 
+    def _apple_photos_target_photos(self) -> list[dict]:
+        """
+        返回 Apple Photos 导入目标：多选优先，否则使用当前可见过滤结果。
+
+        折叠连拍组在 ``_filtered_photos`` 中只有封面，因此未展开时只导入用户
+        实际看到的代表图；展开后则按每张可见成员导入。
+
+        Return Apple Photos targets: a multi-selection takes precedence,
+        otherwise use the currently visible filtered list. Collapsed bursts
+        contribute only their visible representative.
+        """
+
+        selected = self._thumb_grid.get_multi_selected_photos()
+        if len(selected) >= 2:
+            return list(selected)
+        return list(self._filtered_photos)
+
+    def _update_apple_photos_button(self) -> None:
+        """按结果和任务状态更新 macOS 导入按钮。/ Update import action availability."""
+
+        button = getattr(self, "_apple_photos_btn", None)
+        if button is None:
+            return
+        importer = self._apple_photos_importer
+        is_running = bool(importer is not None and importer.is_running)
+        button.setEnabled(bool(self._filtered_photos) and not is_running)
+
+    @Slot()
+    def _start_apple_photos_import(self) -> None:
+        """
+        预检目标、确认相册名并异步启动 Apple Photos 导入。
+
+        Preflight targets, confirm the album name, and start a non-blocking
+        Apple Photos import.
+        """
+
+        if sys.platform != "darwin":
+            return
+
+        from ui.apple_photos_importer import (
+            ApplePhotosImporter,
+            ApplePhotosImportRequest,
+            default_album_name,
+            preflight_photos,
+            sanitize_album_name,
+        )
+
+        target_photos = self._apple_photos_target_photos()
+        preflight = preflight_photos(target_photos)
+        if not preflight.candidates:
+            QMessageBox.warning(
+                self,
+                self.i18n.t("browser.photos_import_unavailable_title"),
+                self.i18n.t("browser.photos_import_no_files").format(
+                    count=preflight.requested,
+                ),
+            )
+            return
+
+        suggested_name = default_album_name(self._directory)
+        album_name, accepted = QInputDialog.getText(
+            self,
+            self.i18n.t("browser.photos_import_confirm_title"),
+            self.i18n.t("browser.photos_import_confirm_message").format(
+                count=len(preflight.candidates),
+                skipped=preflight.skipped,
+            ),
+            QLineEdit.Normal,
+            suggested_name,
+        )
+        if not accepted:
+            return
+        album_name = sanitize_album_name(album_name)
+        if not album_name:
+            QMessageBox.warning(
+                self,
+                self.i18n.t("browser.photos_import_unavailable_title"),
+                self.i18n.t("browser.photos_import_empty_album"),
+            )
+            return
+
+        importer = self._apple_photos_importer
+        if importer is None:
+            importer = ApplePhotosImporter(self)
+            importer.progress.connect(self._on_apple_photos_progress)
+            importer.completed.connect(self._on_apple_photos_completed)
+            self._apple_photos_importer = importer
+
+        request = ApplePhotosImportRequest(
+            album_name=album_name,
+            candidates=preflight.candidates,
+            requested=preflight.requested,
+            preflight_skipped=preflight.skipped,
+        )
+        progress = QProgressDialog(
+            self.i18n.t("browser.photos_import_progress").format(
+                completed=0,
+                total=len(preflight.candidates),
+            ),
+            self.i18n.t("browser.photos_import_cancel"),
+            0,
+            len(preflight.candidates),
+            self,
+        )
+        progress.setWindowTitle(self.i18n.t("browser.photos_import_confirm_title"))
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.canceled.connect(importer.cancel)
+        self._apple_photos_progress = progress
+        progress.show()
+
+        try:
+            importer.start(request)
+            self._update_apple_photos_button()
+        except (RuntimeError, ValueError) as error:
+            progress.close()
+            progress.deleteLater()
+            self._apple_photos_progress = None
+            self._update_apple_photos_button()
+            QMessageBox.critical(
+                self,
+                self.i18n.t("browser.photos_import_failed_title"),
+                str(error),
+            )
+
+    @Slot(int, int)
+    def _on_apple_photos_progress(self, completed: int, total: int) -> None:
+        """同步批次进度到进度框。/ Synchronize batch progress to the dialog."""
+
+        progress = self._apple_photos_progress
+        if progress is None:
+            return
+        progress.setMaximum(total)
+        progress.setValue(completed)
+        progress.setLabelText(
+            self.i18n.t("browser.photos_import_progress").format(
+                completed=completed,
+                total=total,
+            )
+        )
+
+    @Slot(object)
+    def _on_apple_photos_completed(self, result) -> None:
+        """关闭进度框并展示成功、取消或错误摘要。/ Present the final import summary."""
+
+        progress = self._apple_photos_progress
+        if progress is not None:
+            progress.close()
+            progress.deleteLater()
+            self._apple_photos_progress = None
+        self._update_apple_photos_button()
+
+        if result.error:
+            from ui.apple_photos_importer import is_automation_permission_error
+
+            message = self.i18n.t("browser.photos_import_failed_message").format(
+                imported=result.newly_imported,
+                error=result.error,
+            )
+            if is_automation_permission_error(result.error):
+                message += "\n\n" + self.i18n.t("browser.photos_import_permission_help")
+            QMessageBox.critical(
+                self,
+                self.i18n.t("browser.photos_import_failed_title"),
+                message,
+            )
+            return
+
+        if result.cancelled:
+            QMessageBox.information(
+                self,
+                self.i18n.t("browser.photos_import_cancelled_title"),
+                self.i18n.t("browser.photos_import_cancelled_message").format(
+                    imported=result.newly_imported,
+                    remaining=result.remaining,
+                ),
+            )
+            return
+
+        QMessageBox.information(
+            self,
+            self.i18n.t("browser.photos_import_done_title"),
+            self.i18n.t("browser.photos_import_done_message").format(
+                imported=result.newly_imported,
+                not_imported=result.photos_not_imported,
+                skipped=result.preflight_skipped,
+            ),
+        )
+
     def _show_context_menu(self, photo: dict, pos):
         base_dir = photo.get('_base_dir', self._directory)
         _show_context_menu_impl(self, photo, pos, base_dir)
@@ -1966,6 +2175,13 @@ class ResultsBrowserWindow(QMainWindow):
 
     def cleanup(self):
         """释放线程和 DB 连接。"""
+        importer = self._apple_photos_importer
+        if importer is not None:
+            try:
+                importer.shutdown()
+            except Exception:
+                pass
+            self._apple_photos_importer = None
         try:
             self._thumb_grid.cleanup()
         except Exception:
@@ -1993,4 +2209,3 @@ class ResultsBrowserWindow(QMainWindow):
 # ============================================================
 #  ResultsBrowserWidget — 嵌入式浏览器（供主窗口 QStackedWidget 使用）
 # ============================================================
-
