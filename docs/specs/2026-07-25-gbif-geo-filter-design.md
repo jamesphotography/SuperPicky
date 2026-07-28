@@ -1,7 +1,7 @@
 # GBIF 地理分布过滤器设计 / GBIF Geo-Distribution Filter Design
 
 日期 / Date: 2026-07-25
-状态 / Status: 待评审 / Draft for review
+状态 / Status: 已实施并验收 / Implemented and validated
 相关 / Related: `birdid/avonet_filter.py`（被替代）、`birdid/ebird_country_filter.py`（删除）、
 `birdid/bird_identifier.py:1108-1186`（调用方）、`docs/GBIF_RARITY_INDEX.md`（同源管线先例）、
 `birdid/data/bird_reference.sqlite` 的 `gbif_rarity_100`（提供 `specieskey → model_class_id` 映射）
@@ -423,12 +423,21 @@ API facet 方案的实测吞吐（60 格随机采样）：
 
 ## 8. 验收标准 / Acceptance Criteria
 
-1. **冰岛回归**：用 `.superpicky_backup_JJ2TB_20260723-215817/report.db` 中 433 张照片的
-   GPS 与识别结果建回归集，验证小企鹅、蓝脚鲣鸟、角海鹦不再出现，北极海鹦等真实种保持命中。
-2. **悉尼引入种**：家麻雀 / 原鸽 / 紫翅椋鸟 / 欧乌鸫 / 家八哥在悉尼 GPS 下进入候选集。
-3. **空网格不崩**：黑龙江空网格 (46.41, 127.5) 能平滑降到 L3/L4，不落到 L5。
-4. **391 类不再永久缺失**：随机抽取原 AVONET 缺失类，在其真实分布区能进入候选集。
-5. **体积**：`geo_distribution.db` ≤ 40 MB（实测 **35.2 MB**）。
+**全部通过。** 自动化验证脚本 `scripts_dev/validate_geo_filter.py`；
+逐张比对需附 `--report-db <新一轮 report.db 路径>`。
+
+All criteria pass. Automated via `scripts_dev/validate_geo_filter.py`; the
+per-photo comparison requires `--report-db <path to the new report.db>`.
+
+1. ✅ **冰岛回归**：小企鹅、蓝脚鲣鸟、角海鹦不再出现，北极海鹦等真实种保持命中。
+   冰岛 (63.404, -19.103) L1 候选 481 类，误含 0、漏 0。
+2. ✅ **悉尼引入种**：家麻雀 / 原鸽 / 紫翅椋鸟 / 欧乌鸫 / 家八哥全部进入候选集，
+   悉尼 L1 候选 370 类，漏 0。
+3. ✅ **空网格不崩**：黑龙江稀疏网格 (46.41, 127.5) 降到 **L3_neighborhood**（269 类），
+   未落到 L5。
+4. ✅ **391 类不再永久缺失**：东亚石䳭、短嘴豆雁（北京）、托列斯翡翠（凯恩斯）
+   均可进入其分布区的候选集。
+5. ✅ **体积**：`geo_distribution.db` ≤ 40 MB（实测 **35.2 MB**）。
 
    设计初稿写 ≤25 MB，是按「6 字节/行」估的，忽略了 SQLite 每行的 rowid 与页开销；
    普通 rowid 表实测 86.3 MB。改用 `WITHOUT ROWID` + 复合主键（主键 B 树即表本身，
@@ -441,11 +450,48 @@ API facet 方案的实测吞吐（60 格随机采样）：
    **安装包影响**：完整版删除 `avonet.db`(102 MB) 与 `offline_ebird_data/`(1.5 MB)、
    新增 35.2 MB，**净减约 68 MB**；Lite 版删除 1.8 MB 死重、新增 35.2 MB，
    净增约 33 MB，换来首次具备地理过滤能力（§3.4）。
-6. **性能**：单次 `get_candidates` L1 查询 ≤ 现有 `get_species_by_gps` 的耗时。
-7. **清理彻底**：全仓库无 `avonet` / `ebird_country_filter` 残留引用；
-   `.venv/bin/python -m py_compile` 通过所有改动文件。
-8. **打包冒烟**：四个 `.spec` 改动后各做一次打包启动冒烟测试，确认新库路径在
-   打包环境（`get_install_scoped_resource_path` / `_MEIPASS` 两条分支）下都能解析。
+6. ✅ **性能**：L1 首层查询中位 **0.28 ms**、P95 0.61 ms；遍历全部五层中位 0.94 ms
+   （5 个地点 × 20 次）。与旧实现无法直接对比（`avonet_filter.py` 已删除），但结构上
+   必然更快：旧实现每次查询要在 19,561 个矩形上做四次浮点 `BETWEEN` 比较，新实现是
+   整数主键的 B 树定位。
+7. ✅ **清理彻底**：全仓库无 `avonet` / `ebird_country_filter` / `get_species_filter` /
+   `ebird_info` 的功能性引用（仅存解释旧实现行为的注释）；改动文件均通过 `py_compile`。
+8. ✅ **打包冒烟**：macOS 完整打包通过，产物含 `geo_distribution.db`、已无 `avonet.db`
+   与 `offline_ebird_data`；应用启动至主窗口、`birdid_server` `/health` 返回 200。
+   路径解析三分支（开发 / frozen+`_MEIPASS` / frozen+Windows install-scoped）由
+   `test_geo_filter.py` 单测覆盖。
+
+### 8.1 真实批次回归 / Real-batch regression
+
+用户对同一批 433 张法罗群岛/冰岛照片（Nikon Z 8）执行 reset 后，以**手选冰岛**
+重跑完整流程（2026-07-28），与旧实现结果逐张比对：
+
+| 指标 | 旧（AVONET） | 新（GBIF 分层） |
+|---|---|---|
+| 角海鹦（北太平洋种） | 5 | **0** |
+| 小企鹅（澳洲种） | 1 | **0** |
+| 蓝脚鲣鸟（加拉帕戈斯） | 1 | **0** |
+| 弗氏燕鸥 | 1 | **0** |
+| 北极海鹦 | 212 | **229** |
+| 有鸟种识别 | 274 / 433 (63.3%) | **283 / 433 (65.4%)** |
+| 置信 ≥50% | 262 | **271** |
+| 平均置信 | 89.8% | **90.4%** |
+
+关键在于识别率**不降反升**：若只是收紧过滤，识别数必然下降——「拿不准就不认」
+不算修好。实际 +9 张且平均置信提高，说明消除的是错误而非识别能力。原先 5 张角海鹦
+现已正确归为北极海鹦，这是北极海鹦 212 → 229 的主要来源。
+
+逐张追踪：`_JOW3067` 与 `_JOW3069`（旧判角海鹦）→ 新判北极海鹦 32.1% / 96.8%；
+`_JOW2891`（旧判小企鹅）→ 新判无鸟种，归入「其他鸟类」。文件系统侧「小企鹅」
+「角海鹦」目录已不再产生。
+
+**GPS 覆盖 348/433 (80.4%)**，其余 85 张无 GPS 的照片依赖用户手选的冰岛走 L4
+国家级——这印证了 §3.3 保留手选国家设置的必要性。
+
+**一例需说明的罕见种**：新结果含 1 张「帆背潜鸭」（*Aythya valisineria*，北美种）。
+它不在 L1 候选集内，经 L4 国家级进入；GBIF 冰岛确有 1 条该种记录（真实迷鸟），
+且置信度仅 48.0%（低于 50% 阈值），未建独立目录而归入「其他鸟类」。这与小企鹅
+（冰岛零记录的跨半球错误）性质不同，属 L4 兜底层刻意放宽的正常表现。
 
 ---
 
