@@ -67,53 +67,55 @@ on joinLines(outputLines)
 end joinLines
 
 on applyMetadata(targetItem, candidateRecord, requestedMask)
-    set successfulMask to 0
-    set failedMask to 0
+    tell application "/System/Applications/Photos.app"
+        set successfulMask to 0
+        set failedMask to 0
 
-    if requestedMask mod 2 is 1 then
-        try
-            set name of targetItem to item 6 of candidateRecord
-            set successfulMask to successfulMask + 1
-        on error
-            set failedMask to failedMask + 1
-        end try
-    end if
+        if requestedMask mod 2 is 1 then
+            try
+                set name of targetItem to item 6 of candidateRecord
+                set successfulMask to successfulMask + 1
+            on error
+                set failedMask to failedMask + 1
+            end try
+        end if
 
-    if (requestedMask div 2) mod 2 is 1 then
-        try
-            set description of targetItem to item 7 of candidateRecord
-            set successfulMask to successfulMask + 2
-        on error
-            set failedMask to failedMask + 2
-        end try
-    end if
+        if (requestedMask div 2) mod 2 is 1 then
+            try
+                set description of targetItem to item 7 of candidateRecord
+                set successfulMask to successfulMask + 2
+            on error
+                set failedMask to failedMask + 2
+            end try
+        end if
 
-    if (requestedMask div 4) mod 2 is 1 then
-        try
-            set metadataKeywords to item 8 of candidateRecord
-            set mergedKeywords to keywords of targetItem
-            if mergedKeywords is missing value then set mergedKeywords to {}
-            repeat with metadataKeyword in metadataKeywords
-                set keywordExists to false
-                repeat with existingKeyword in mergedKeywords
-                    ignoring case
-                        if (existingKeyword as text) is (metadataKeyword as text) then
-                            set keywordExists to true
-                            exit repeat
-                        end if
-                    end ignoring
+        if (requestedMask div 4) mod 2 is 1 then
+            try
+                set metadataKeywords to item 8 of candidateRecord
+                set mergedKeywords to keywords of targetItem
+                if mergedKeywords is missing value then set mergedKeywords to {}
+                repeat with metadataKeyword in metadataKeywords
+                    set keywordExists to false
+                    repeat with existingKeyword in mergedKeywords
+                        ignoring case
+                            if (existingKeyword as text) is (metadataKeyword as text) then
+                                set keywordExists to true
+                                exit repeat
+                            end if
+                        end ignoring
+                    end repeat
+                    if keywordExists is false then
+                        set end of mergedKeywords to metadataKeyword as text
+                    end if
                 end repeat
-                if keywordExists is false then
-                    set end of mergedKeywords to metadataKeyword as text
-                end if
-            end repeat
-            set keywords of targetItem to mergedKeywords
-            set successfulMask to successfulMask + 4
-        on error
-            set failedMask to failedMask + 4
-        end try
-    end if
+                set keywords of targetItem to mergedKeywords
+                set successfulMask to successfulMask + 4
+            on error
+                set failedMask to failedMask + 4
+            end try
+        end if
 
+    end tell
     return {successfulMask, failedMask}
 end applyMetadata
 

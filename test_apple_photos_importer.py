@@ -9,6 +9,7 @@ process cleanup, and platform isolation.
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import time
 from datetime import date
@@ -376,6 +377,45 @@ def test_arguments_keep_unicode_quotes_and_newlines_out_of_script(
         "Common Tern",
         "SuperPicky Rating 3★",
     ]
+
+
+def test_metadata_handler_compiles_native_photos_property_codes(
+    tmp_path: Path,
+) -> None:
+    """
+    确保 handler 在 Photos 作用域内编译原生元数据属性。
+
+    Ensure the handler compiles native metadata properties in Photos scope.
+
+    仅检查 AppleScript 语法不足以发现作用域错误；编译产物必须包含标题、
+    说明和关键词对应的 Photos Apple Event 属性代码。
+
+    Syntax-only compilation misses terminology-scope regressions. The compiled
+    script must contain Photos Apple Event property codes for all three fields.
+    """
+
+    if sys.platform != "darwin":
+        return
+    compiled_script = tmp_path / "photos-metadata-helper.scpt"
+    result = subprocess.run(
+        [
+            "/usr/bin/osacompile",
+            "-o",
+            os.fspath(compiled_script),
+            "-e",
+            photos_importer._APPLE_PHOTOS_IMPORT_SCRIPT,
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    compiled_bytes = compiled_script.read_bytes()
+    assert b"pnam" in compiled_bytes
+    assert b"IPde" in compiled_bytes
+    assert b"IPkw" in compiled_bytes
 
 
 def test_album_helpers_are_deterministic() -> None:
