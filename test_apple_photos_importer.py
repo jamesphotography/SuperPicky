@@ -20,7 +20,6 @@ from PySide6.QtWidgets import QApplication
 
 from ui import apple_photos_importer as photos_importer
 
-
 _app = QApplication.instance() or QApplication([])
 
 
@@ -73,8 +72,11 @@ def _write_fake_osascript(tmp_path: Path) -> Path:
     """
     写入可预测的 osascript 替身。/ Write a deterministic osascript stand-in.
 
-    argv 布局为 ``-e SCRIPT -- ALBUM PATH...``。DENY 模拟 TCC 拒绝，
-    SLOW 用于取消/关闭测试，其余情况返回本批路径数。
+    argv 布局为 ``-e SCRIPT -- OPERATION ...``。替身返回逐条 Photos ID
+    和字段掩码，并模拟部分失败、持久失败、崩溃及慢批次。
+
+    Arguments use ``-e SCRIPT -- OPERATION ...``. The helper returns item IDs
+    and field masks while simulating partial failures, crashes, and slow batches.
     """
 
     helper = tmp_path / "fake_osascript.py"
@@ -83,22 +85,72 @@ def _write_fake_osascript(tmp_path: Path) -> Path:
 import sys
 import time
 
-album = sys.argv[4]
+operation = sys.argv[4]
+with open({str(tmp_path / "operations.log")!r}, "a", encoding="utf-8") as handle:
+    handle.write("\\t".join(sys.argv[4:]) + "\\n")
+
+def parse_records(start, count):
+    records = []
+    offset = start
+    for _ in range(count):
+        candidate_index = int(sys.argv[offset])
+        reference = sys.argv[offset + 1]
+        metadata_mask = int(sys.argv[offset + 4])
+        keyword_count = int(sys.argv[offset + 7])
+        records.append((candidate_index, reference, metadata_mask))
+        offset += 8 + keyword_count
+    return records
+
+if operation == "repair":
+    candidate_count = int(sys.argv[5])
+    records = parse_records(6, candidate_count)
+    if any(reference.startswith("SLOWREPAIR-") for _, reference, _ in records):
+        time.sleep(30)
+    print(f"REPAIR\\t{{candidate_count}}")
+    for candidate_index, photos_id, requested_mask in records:
+        failed_mask = requested_mask if photos_id.startswith("PERSIST-") else 0
+        successful_mask = requested_mask ^ failed_mask
+        print(
+            f"ITEM\\t{{candidate_index}}\\t{{photos_id}}"
+            f"\\t{{successful_mask}}\\t{{failed_mask}}"
+        )
+    raise SystemExit(0)
+
+album = sys.argv[5]
+candidate_count = int(sys.argv[6])
+records = parse_records(7, candidate_count)
 if album == "DENY":
     print("Not authorized to send Apple events. (-1743)", file=sys.stderr)
     raise SystemExit(1)
-if album == "SLOW":
-    time.sleep(30)
-candidate_count = int(sys.argv[5])
+if album == "CRASH":
+    raise SystemExit(7)
+if album == "MALFORMED":
+    print("not a structured response")
+    raise SystemExit(0)
+if album in {{"SLOW", "CANCEL_GRACE"}}:
+    time.sleep(0.2 if album == "CANCEL_GRACE" else 30)
+
 if album == "DUPLICATE":
     imported = max(0, candidate_count - 1)
-    print(f"{{imported}}\\t{{imported}}\\t0")
-elif album == "METAFAIL":
-    print(f"{{candidate_count}}\\t{{max(0, candidate_count - 1)}}\\t1")
-elif album == "BADCOUNTS":
-    print(f"{{candidate_count}}\\t{{candidate_count}}\\t1")
 else:
-    print(f"{{candidate_count}}\\t{{candidate_count}}\\t0")
+    imported = candidate_count
+print(f"IMPORT\\t{{imported}}")
+for item_offset, (candidate_index, _path, requested_mask) in enumerate(records[:imported]):
+    photos_prefix = "PERSIST" if album == "METAFAIL" else album
+    photos_id = f"{{photos_prefix}}-{{candidate_index}}"
+    if album in {{"PARTIAL", "METAFAIL", "SLOWREPAIR"}} and item_offset == 0:
+        failed_mask = requested_mask & 4
+        successful_mask = requested_mask ^ failed_mask
+    else:
+        successful_mask = requested_mask
+        failed_mask = 0
+    print(
+        f"ITEM\\t{{candidate_index}}\\t{{photos_id}}"
+        f"\\t{{successful_mask}}\\t{{failed_mask}}"
+    )
+
+if album == "BADCOUNTS":
+    print("ITEM\\t999\\textra\\t0\\t0")
 """,
         encoding="utf-8",
     )
@@ -309,14 +361,15 @@ def test_arguments_keep_unicode_quotes_and_newlines_out_of_script(
     assert os.fspath(path.resolve()) not in arguments[1]
     assert arguments[2:] == [
         "--",
+        "import",
         '鸟类 "精选" 夏季',
         "1",
+        "0",
         os.fspath(path.resolve()),
         path.name,
         str(path.stat().st_size),
-        "1",
+        "7",
         '普通燕鸥 "精选"\n标题',
-        "1",
         "第一行\n第二行",
         "3",
         "普通燕鸥",
@@ -406,16 +459,18 @@ def test_importer_batches_and_reports_photos_not_imported(
     assert result.newly_imported == 205
     assert result.completed_batches == 3
     assert result.metadata_applied == 205
+    assert result.metadata_partially_applied == 0
     assert result.metadata_not_applied == 0
     assert result.photos_not_imported == 0
+    assert result.indeterminate == 0
     assert result.remaining == 0
     assert progress == [(0, 205), (100, 205), (200, 205), (205, 205)]
 
 
-def test_importer_reports_duplicates_and_metadata_failure(
+def test_importer_reports_duplicates_and_persistent_metadata_failure(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """分别统计 Photos 重复项与新条目元数据失败。/ Report distinct outcomes."""
+    """分别统计重复项及自动重试后的部分元数据。/ Report distinct outcomes."""
 
     monkeypatch.setattr(photos_importer.sys, "platform", "darwin")
     helper = _write_fake_osascript(tmp_path)
@@ -429,6 +484,7 @@ def test_importer_reports_duplicates_and_metadata_failure(
     assert duplicate_result.newly_imported == 2
     assert duplicate_result.photos_not_imported == 1
     assert duplicate_result.metadata_applied == 2
+    assert duplicate_result.metadata_partially_applied == 0
     assert duplicate_result.metadata_not_applied == 0
 
     metadata_importer = photos_importer.ApplePhotosImporter(osascript_path=str(helper))
@@ -440,7 +496,137 @@ def test_importer_reports_duplicates_and_metadata_failure(
     assert metadata_result.newly_imported == 3
     assert metadata_result.photos_not_imported == 0
     assert metadata_result.metadata_applied == 2
-    assert metadata_result.metadata_not_applied == 1
+    assert metadata_result.metadata_partially_applied == 1
+    assert metadata_result.metadata_not_applied == 0
+    assert metadata_result.retryable_metadata == 1
+
+
+def test_partial_metadata_failure_repairs_by_exact_photos_id(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """失败字段自动按 Photos ID 修复，不重新导入源文件。/ Repair by exact ID."""
+
+    monkeypatch.setattr(photos_importer.sys, "platform", "darwin")
+    helper = _write_fake_osascript(tmp_path)
+    importer = photos_importer.ApplePhotosImporter(osascript_path=str(helper))
+    results = []
+    importer.completed.connect(results.append)
+
+    importer.start(_request("PARTIAL", 2))
+    _wait_for(lambda: bool(results))
+
+    result = results[0]
+    assert result.newly_imported == 2
+    assert result.metadata_applied == 2
+    assert result.metadata_partially_applied == 0
+    assert result.retryable_metadata == 0
+    operations = (tmp_path / "operations.log").read_text(encoding="utf-8").splitlines()
+    assert [line.split("\t", 1)[0] for line in operations] == ["import", "repair"]
+    assert "PARTIAL-0" in operations[1]
+    assert os.fspath(_candidate(0).path) not in operations[1]
+
+
+def test_import_helper_round_trips_chinese_metadata_as_utf8(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """中文元数据经 helper argv 写入并以 UTF-8 读回。/ Round-trip Chinese UTF-8."""
+
+    monkeypatch.setattr(photos_importer.sys, "platform", "darwin")
+    helper = _write_fake_osascript(tmp_path)
+    candidate = photos_importer.ImportCandidate(
+        path=tmp_path / "普通燕鸥.ARW",
+        photo_identity=("鸟图", "普通燕鸥.ARW"),
+        source_size=1234,
+        metadata=photos_importer.ApplePhotosMetadata(
+            title="普通燕鸥",
+            description="普通燕鸥 · 3★ 优选\nAI 94% · 飞鸟",
+            keywords=("普通燕鸥", "SuperPicky 优选"),
+        ),
+    )
+    request = photos_importer.ApplePhotosImportRequest(
+        album_name="中文元数据",
+        candidates=(candidate,),
+        requested=1,
+        preflight_skipped=0,
+    )
+    importer = photos_importer.ApplePhotosImporter(osascript_path=str(helper))
+    results = []
+    importer.completed.connect(results.append)
+
+    importer.start(request)
+    _wait_for(lambda: bool(results))
+
+    written_arguments = (tmp_path / "operations.log").read_text(encoding="utf-8")
+    assert "普通燕鸥" in written_arguments
+    assert "普通燕鸥 · 3★ 优选\nAI 94% · 飞鸟" in written_arguments
+    assert "SuperPicky 优选" in written_arguments
+    assert results[0].metadata_applied == 1
+
+
+def test_persistent_failure_supports_metadata_only_manual_retry(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """持久失败可手动仅重试元数据，且不增加导入数。/ Retry metadata only."""
+
+    monkeypatch.setattr(photos_importer.sys, "platform", "darwin")
+    helper = _write_fake_osascript(tmp_path)
+    importer = photos_importer.ApplePhotosImporter(osascript_path=str(helper))
+    results = []
+    importer.completed.connect(results.append)
+
+    importer.start(_request("METAFAIL", 1))
+    _wait_for(lambda: len(results) == 1)
+    assert results[0].retryable_metadata == 1
+    importer.retry_metadata()
+    _wait_for(lambda: len(results) == 2)
+
+    assert results[1].newly_imported == 1
+    assert results[1].metadata_partially_applied == 1
+    operations = (tmp_path / "operations.log").read_text(encoding="utf-8").splitlines()
+    assert [line.split("\t", 1)[0] for line in operations] == [
+        "import",
+        "repair",
+        "repair",
+        "repair",
+        "repair",
+    ]
+    assert all("PERSIST-0" in line for line in operations[1:])
+
+
+def test_metadata_failure_without_any_success_is_reported_separately(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """所有请求字段失败时不误报为部分成功。/ Separate total metadata failure."""
+
+    monkeypatch.setattr(photos_importer.sys, "platform", "darwin")
+    helper = _write_fake_osascript(tmp_path)
+    candidate = photos_importer.ImportCandidate(
+        path=Path("/tmp/metadata-failure.ARW"),
+        photo_identity=("source", "metadata-failure.ARW"),
+        source_size=99,
+        metadata=photos_importer.ApplePhotosMetadata(
+            title=None,
+            description=None,
+            keywords=("SuperPicky Picked",),
+        ),
+    )
+    importer = photos_importer.ApplePhotosImporter(osascript_path=str(helper))
+    results = []
+    importer.completed.connect(results.append)
+    importer.start(
+        photos_importer.ApplePhotosImportRequest(
+            album_name="METAFAIL",
+            candidates=(candidate,),
+            requested=1,
+            preflight_skipped=0,
+        )
+    )
+    _wait_for(lambda: bool(results))
+
+    assert results[0].metadata_applied == 0
+    assert results[0].metadata_partially_applied == 0
+    assert results[0].metadata_not_applied == 1
+    assert results[0].retryable_metadata == 1
 
 
 def test_importer_rejects_inconsistent_metadata_counts(
@@ -458,7 +644,7 @@ def test_importer_rejects_inconsistent_metadata_counts(
     _wait_for(lambda: bool(results))
 
     assert results[0].error is not None
-    assert "Invalid Photos metadata counts" in results[0].error
+    assert "Unexpected Photos response" in results[0].error
 
 
 def test_importer_stops_on_permission_failure(tmp_path: Path, monkeypatch) -> None:
@@ -475,11 +661,15 @@ def test_importer_stops_on_permission_failure(tmp_path: Path, monkeypatch) -> No
 
     assert results[0].completed_batches == 0
     assert results[0].newly_imported == 0
+    assert results[0].indeterminate == 3
+    assert results[0].remaining == 0
     assert photos_importer.is_automation_permission_error(results[0].error or "")
 
 
-def test_importer_cancel_stops_remaining_batches(tmp_path: Path, monkeypatch) -> None:
-    """取消终止当前 helper 且不启动余下批次。/ Cancellation leaves later batches unstarted."""
+def test_importer_cancel_finishes_active_batch_and_stops_future_batches(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """普通取消解析当前批次，仅留下未启动批次。/ Gracefully finish active batch."""
 
     monkeypatch.setattr(photos_importer.sys, "platform", "darwin")
     helper = _write_fake_osascript(tmp_path)
@@ -487,14 +677,38 @@ def test_importer_cancel_stops_remaining_batches(tmp_path: Path, monkeypatch) ->
     results = []
     importer.completed.connect(results.append)
 
-    importer.start(_request("SLOW", 101))
+    importer.start(_request("CANCEL_GRACE", 101))
     importer.cancel()
     _wait_for(lambda: bool(results))
 
     assert results[0].cancelled is True
     assert results[0].attempted == 100
+    assert results[0].newly_imported == 100
+    assert results[0].indeterminate == 0
     assert results[0].remaining == 1
     assert importer.is_running is False
+
+
+def test_process_failure_and_malformed_response_are_indeterminate(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """崩溃或损坏响应不会被误报为未导入。/ Keep unknown batches indeterminate."""
+
+    monkeypatch.setattr(photos_importer.sys, "platform", "darwin")
+    helper = _write_fake_osascript(tmp_path)
+    for album in ("CRASH", "MALFORMED"):
+        importer = photos_importer.ApplePhotosImporter(osascript_path=str(helper))
+        results = []
+        importer.completed.connect(results.append)
+        importer.start(_request(album, 3))
+        _wait_for(lambda current_results=results: bool(current_results))
+
+        result = results[0]
+        assert result.error
+        assert result.attempted == 0
+        assert result.photos_not_imported == 0
+        assert result.indeterminate == 3
+        assert result.remaining == 0
 
 
 def test_importer_shutdown_kills_helper_without_completion(
@@ -509,6 +723,35 @@ def test_importer_shutdown_kills_helper_without_completion(
     importer.completed.connect(results.append)
 
     importer.start(_request("SLOW", 1))
+    importer.shutdown()
+
+    assert importer.is_running is False
+    assert importer._process.state() == photos_importer.QProcess.NotRunning
+    assert results == []
+
+
+def test_importer_shutdown_during_metadata_repair_is_deterministic(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """修复阶段关闭也同步清理 helper。/ Clean up deterministically during repair."""
+
+    monkeypatch.setattr(photos_importer.sys, "platform", "darwin")
+    helper = _write_fake_osascript(tmp_path)
+    importer = photos_importer.ApplePhotosImporter(osascript_path=str(helper))
+    results = []
+    importer.completed.connect(results.append)
+
+    importer.start(_request("SLOWREPAIR", 1))
+
+    def repair_started() -> bool:
+        """判断替身是否已进入修复阶段。/ Return whether repair has started."""
+
+        log_path = tmp_path / "operations.log"
+        if not log_path.exists():
+            return False
+        return "\nrepair\t" in log_path.read_text(encoding="utf-8")
+
+    _wait_for(repair_started)
     importer.shutdown()
 
     assert importer.is_running is False

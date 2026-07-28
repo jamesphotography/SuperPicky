@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QProcess, QTimer, Signal
+from PySide6.QtCore import QObject, QProcess, Signal
 
 from constants import (
     HEIF_EXTENSIONS,
@@ -51,25 +51,98 @@ _SIBLING_DISPLAY_EXTENSIONS = (
 _IMPORT_FOLDER_NAME = "SuperPicky Imports"
 _DEFAULT_BATCH_SIZE = 100
 _DEFAULT_MAX_ARGUMENT_BYTES = 256 * 1024
+_MAX_AUTOMATIC_METADATA_REPAIR_PASSES = 2
+_METADATA_TITLE = 1
+_METADATA_DESCRIPTION = 2
+_METADATA_KEYWORDS = 4
 
 
 _APPLE_PHOTOS_IMPORT_SCRIPT = r"""
-on run argv
-    if (count of argv) < 3 then error "Missing album name, candidate count, or import files"
+on joinLines(outputLines)
+    set previousDelimiters to AppleScript's text item delimiters
+    set AppleScript's text item delimiters to linefeed
+    set outputText to outputLines as text
+    set AppleScript's text item delimiters to previousDelimiters
+    return outputText
+end joinLines
 
-    set targetAlbumName to item 1 of argv
-    set candidateCount to (item 2 of argv) as integer
+on applyMetadata(targetItem, candidateRecord, requestedMask)
+    set successfulMask to 0
+    set failedMask to 0
+
+    if requestedMask mod 2 is 1 then
+        try
+            set name of targetItem to item 6 of candidateRecord
+            set successfulMask to successfulMask + 1
+        on error
+            set failedMask to failedMask + 1
+        end try
+    end if
+
+    if (requestedMask div 2) mod 2 is 1 then
+        try
+            set description of targetItem to item 7 of candidateRecord
+            set successfulMask to successfulMask + 2
+        on error
+            set failedMask to failedMask + 2
+        end try
+    end if
+
+    if (requestedMask div 4) mod 2 is 1 then
+        try
+            set metadataKeywords to item 8 of candidateRecord
+            set mergedKeywords to keywords of targetItem
+            if mergedKeywords is missing value then set mergedKeywords to {}
+            repeat with metadataKeyword in metadataKeywords
+                set keywordExists to false
+                repeat with existingKeyword in mergedKeywords
+                    ignoring case
+                        if (existingKeyword as text) is (metadataKeyword as text) then
+                            set keywordExists to true
+                            exit repeat
+                        end if
+                    end ignoring
+                end repeat
+                if keywordExists is false then
+                    set end of mergedKeywords to metadataKeyword as text
+                end if
+            end repeat
+            set keywords of targetItem to mergedKeywords
+            set successfulMask to successfulMask + 4
+        on error
+            set failedMask to failedMask + 4
+        end try
+    end if
+
+    return {successfulMask, failedMask}
+end applyMetadata
+
+on run argv
+    if (count of argv) < 2 then error "Missing operation or candidate count"
+    set operationName to item 1 of argv
+
+    if operationName is "import" then
+        if (count of argv) < 4 then error "Missing album name, candidate count, or import files"
+        set targetAlbumName to item 2 of argv
+        set candidateCount to (item 3 of argv) as integer
+        set argumentIndex to 4
+    else if operationName is "repair" then
+        set candidateCount to (item 2 of argv) as integer
+        set argumentIndex to 3
+    else
+        error "Unsupported Apple Photos operation"
+    end if
+
     set sourceFiles to {}
     set candidateRecords to {}
-    set argumentIndex to 3
 
     repeat candidateCount times
-        set sourcePath to item argumentIndex of argv
-        set expectedFilename to item (argumentIndex + 1) of argv
-        set expectedSize to (item (argumentIndex + 2) of argv) as integer
-        set hasTitle to (item (argumentIndex + 3) of argv) is "1"
-        set metadataTitle to item (argumentIndex + 4) of argv
-        set hasDescription to (item (argumentIndex + 5) of argv) is "1"
+        set candidateIndex to (item argumentIndex of argv) as integer
+        set sourceReference to item (argumentIndex + 1) of argv
+        set expectedFilename to item (argumentIndex + 2) of argv
+        set expectedSize to (item (argumentIndex + 3) of argv) as integer
+        set metadataMask to (item (argumentIndex + 4) of argv) as integer
+        set metadataTitle to item (argumentIndex + 5) of argv
         set metadataDescription to item (argumentIndex + 6) of argv
         set keywordCount to (item (argumentIndex + 7) of argv) as integer
         set metadataKeywords to {}
@@ -77,93 +150,76 @@ on run argv
             set end of metadataKeywords to item (argumentIndex + 7 + keywordOffset) of argv
         end repeat
 
-        set end of sourceFiles to POSIX file sourcePath
-        set end of candidateRecords to {sourcePath, expectedFilename, expectedSize, hasTitle, metadataTitle, hasDescription, metadataDescription, metadataKeywords, false}
+        if operationName is "import" then set end of sourceFiles to POSIX file sourceReference
+        set end of candidateRecords to {candidateIndex, sourceReference, expectedFilename, expectedSize, metadataMask, metadataTitle, metadataDescription, metadataKeywords, false}
         set argumentIndex to argumentIndex + 8 + keywordCount
     end repeat
 
     tell application "/System/Applications/Photos.app"
-        activate
-        if exists folder "SuperPicky Imports" then
-            set targetFolder to folder "SuperPicky Imports"
-        else
-            set targetFolder to make new folder named "SuperPicky Imports"
-        end if
-
-        set matchingAlbums to every album of targetFolder whose name is targetAlbumName
-        if (count of matchingAlbums) > 0 then
-            set targetAlbum to item 1 of matchingAlbums
-        else
-            set targetAlbum to make new album named targetAlbumName at targetFolder
-        end if
-
-        set importedItems to import sourceFiles into targetAlbum skip check duplicates false
-        set metadataApplied to 0
-        set metadataNotApplied to 0
-
-        repeat with importedItem in importedItems
-            set matchingCandidate to missing value
-            set importedFilename to filename of importedItem
-            set importedSize to (size of importedItem) as integer
-
+        if operationName is "repair" then
+            set outputLines to {"REPAIR" & tab & (candidateCount as text)}
             repeat with candidateRecord in candidateRecords
-                if (item 9 of candidateRecord) is false then
-                    if (item 2 of candidateRecord) is importedFilename and (item 3 of candidateRecord) is importedSize then
-                        set matchingCandidate to candidateRecord
-                        exit repeat
+                set candidateIndex to item 1 of candidateRecord
+                set mediaItemID to item 2 of candidateRecord
+                set requestedMask to item 5 of candidateRecord
+                try
+                    set targetItem to media item id mediaItemID
+                    set maskResult to my applyMetadata(targetItem, candidateRecord, requestedMask)
+                    set end of outputLines to "ITEM" & tab & (candidateIndex as text) & tab & mediaItemID & tab & ((item 1 of maskResult) as text) & tab & ((item 2 of maskResult) as text)
+                on error
+                    set end of outputLines to "ITEM" & tab & (candidateIndex as text) & tab & mediaItemID & tab & "0" & tab & (requestedMask as text)
+                end try
+            end repeat
+            return my joinLines(outputLines)
+        else
+            activate
+            if exists folder "SuperPicky Imports" then
+                set targetFolder to folder "SuperPicky Imports"
+            else
+                set targetFolder to make new folder named "SuperPicky Imports"
+            end if
+
+            set matchingAlbums to every album of targetFolder whose name is targetAlbumName
+            if (count of matchingAlbums) > 0 then
+                set targetAlbum to item 1 of matchingAlbums
+            else
+                set targetAlbum to make new album named targetAlbumName at targetFolder
+            end if
+
+            set importedItems to import sourceFiles into targetAlbum skip check duplicates false
+            set outputLines to {"IMPORT" & tab & ((count of importedItems) as text)}
+
+            repeat with importedItem in importedItems
+                set matchingCandidate to missing value
+                set importedFilename to filename of importedItem
+                set importedSize to (size of importedItem) as integer
+
+                repeat with candidateRecord in candidateRecords
+                    if (item 9 of candidateRecord) is false then
+                        if (item 3 of candidateRecord) is importedFilename and (item 4 of candidateRecord) is importedSize then
+                            set matchingCandidate to candidateRecord
+                            exit repeat
+                        end if
                     end if
+                end repeat
+
+                if matchingCandidate is missing value and candidateCount is 1 and (count of importedItems) is 1 then
+                    set matchingCandidate to item 1 of candidateRecords
+                end if
+
+                set mediaItemID to id of importedItem as text
+                if matchingCandidate is missing value then
+                    set end of outputLines to "ITEM" & tab & "-1" & tab & mediaItemID & tab & "0" & tab & "0"
+                else
+                    set item 9 of matchingCandidate to true
+                    set requestedMask to item 5 of matchingCandidate
+                    set maskResult to my applyMetadata(importedItem, matchingCandidate, requestedMask)
+                    set end of outputLines to "ITEM" & tab & ((item 1 of matchingCandidate) as text) & tab & mediaItemID & tab & ((item 1 of maskResult) as text) & tab & ((item 2 of maskResult) as text)
                 end if
             end repeat
 
-            if matchingCandidate is missing value and candidateCount is 1 and (count of importedItems) is 1 then
-                set matchingCandidate to item 1 of candidateRecords
-            end if
-
-            if matchingCandidate is missing value then
-                set metadataNotApplied to metadataNotApplied + 1
-            else
-                set item 9 of matchingCandidate to true
-                set hasMetadata to (item 4 of matchingCandidate) or (item 6 of matchingCandidate) or ((count of item 8 of matchingCandidate) > 0)
-                if hasMetadata then
-                    try
-                        if item 4 of matchingCandidate then
-                            set name of importedItem to item 5 of matchingCandidate
-                        end if
-                        if item 6 of matchingCandidate then
-                            set description of importedItem to item 7 of matchingCandidate
-                        end if
-
-                        set metadataKeywords to item 8 of matchingCandidate
-                        if (count of metadataKeywords) > 0 then
-                            set mergedKeywords to keywords of importedItem
-                            if mergedKeywords is missing value then set mergedKeywords to {}
-                            repeat with metadataKeyword in metadataKeywords
-                                set keywordExists to false
-                                repeat with existingKeyword in mergedKeywords
-                                    ignoring case
-                                        if (existingKeyword as text) is (metadataKeyword as text) then
-                                            set keywordExists to true
-                                            exit repeat
-                                        end if
-                                    end ignoring
-                                end repeat
-                                if keywordExists is false then
-                                    set end of mergedKeywords to metadataKeyword as text
-                                end if
-                            end repeat
-                            set keywords of importedItem to mergedKeywords
-                        end if
-                        set metadataApplied to metadataApplied + 1
-                    on error
-                        set metadataNotApplied to metadataNotApplied + 1
-                    end try
-                else
-                    set metadataNotApplied to metadataNotApplied + 1
-                end if
-            end if
-        end repeat
-
-        return ((count of importedItems) as text) & tab & (metadataApplied as text) & tab & (metadataNotApplied as text)
+            return my joinLines(outputLines)
+        end if
     end tell
 end run
 """.strip()
@@ -247,11 +303,60 @@ class ApplePhotosImportResult:
     preflight_skipped: int
     photos_not_imported: int
     remaining: int
+    indeterminate: int
     completed_batches: int
     metadata_applied: int
+    metadata_partially_applied: int
     metadata_not_applied: int
+    retryable_metadata: int
     cancelled: bool
     error: str | None = None
+
+
+@dataclass(frozen=True)
+class _MetadataRepairTarget:
+    """
+    通过精确 Photos ID 重试失败字段的内部记录。
+
+    Internal record for retrying failed fields through an exact Photos ID.
+    """
+
+    candidate_index: int
+    photos_id: str
+    successful_mask: int
+    failed_mask: int
+
+
+@dataclass(frozen=True)
+class _HelperItemResult:
+    """单个 helper 条目响应。/ One item returned by the helper."""
+
+    candidate_index: int
+    photos_id: str
+    successful_mask: int
+    failed_mask: int
+
+
+@dataclass(frozen=True)
+class _HelperResponse:
+    """已验证的 helper 批次响应。/ One validated helper batch response."""
+
+    operation: str
+    reported_count: int
+    items: tuple[_HelperItemResult, ...]
+
+
+def _metadata_mask(metadata: ApplePhotosMetadata) -> int:
+    """计算有值的 Photos 元数据字段掩码。/ Return the populated metadata field mask."""
+
+    mask = 0
+    if metadata.title is not None:
+        mask |= _METADATA_TITLE
+    if metadata.description is not None:
+        mask |= _METADATA_DESCRIPTION
+    if metadata.keywords:
+        mask |= _METADATA_KEYWORDS
+    return mask
 
 
 def _photo_identity(photo: dict) -> tuple[str, str]:
@@ -609,7 +714,9 @@ def default_album_name(source_directory: str, today: date | None = None) -> str:
 
 
 def build_osascript_arguments(
-    album_name: str, candidates: Sequence[ImportCandidate]
+    album_name: str,
+    candidates: Sequence[ImportCandidate],
+    candidate_indices: Sequence[int] | None = None,
 ) -> list[str]:
     """
     构造固定脚本和独立 argv，避免 AppleScript 注入。
@@ -623,29 +730,129 @@ def build_osascript_arguments(
         raise ValueError("Apple Photos album name cannot be empty")
     if not candidates:
         raise ValueError("Apple Photos import batch cannot be empty")
+    indices = tuple(
+        range(len(candidates)) if candidate_indices is None else candidate_indices
+    )
+    if len(indices) != len(candidates):
+        raise ValueError("Apple Photos candidate indices do not match the batch")
     arguments = [
         "-e",
         _APPLE_PHOTOS_IMPORT_SCRIPT,
         "--",
+        "import",
         clean_name,
         str(len(candidates)),
     ]
-    for candidate in candidates:
+    for candidate_index, candidate in zip(indices, candidates, strict=True):
         metadata = candidate.metadata
         arguments.extend(
             [
+                str(candidate_index),
                 os.fspath(candidate.path),
                 candidate.path.name,
                 str(candidate.source_size),
-                "1" if metadata.title is not None else "0",
+                str(_metadata_mask(metadata)),
                 metadata.title or "",
-                "1" if metadata.description is not None else "0",
                 metadata.description or "",
                 str(len(metadata.keywords)),
                 *metadata.keywords,
             ]
         )
     return arguments
+
+
+def _build_repair_arguments(
+    candidates: Sequence[ImportCandidate],
+    targets: Sequence[_MetadataRepairTarget],
+) -> list[str]:
+    """
+    为精确 Photos ID 元数据修复构造静态脚本参数。
+
+    Build static-script arguments for metadata repair by exact Photos ID.
+    """
+
+    if not targets:
+        raise ValueError("Apple Photos metadata repair batch cannot be empty")
+    arguments = [
+        "-e",
+        _APPLE_PHOTOS_IMPORT_SCRIPT,
+        "--",
+        "repair",
+        str(len(targets)),
+    ]
+    for target in targets:
+        candidate = candidates[target.candidate_index]
+        metadata = candidate.metadata
+        arguments.extend(
+            [
+                str(target.candidate_index),
+                target.photos_id,
+                "",
+                "0",
+                str(target.failed_mask),
+                metadata.title or "",
+                metadata.description or "",
+                str(len(metadata.keywords)),
+                *metadata.keywords,
+            ]
+        )
+    return arguments
+
+
+def _parse_helper_response(stdout: str) -> _HelperResponse:
+    """
+    解析并验证 helper 的逐条结构化响应。
+
+    Parse and validate the helper's structured item-by-item response.
+
+    异常 / Raises:
+        ValueError: 响应为空、字段损坏、掩码冲突或条目数量不一致。
+    """
+
+    lines = [line for line in stdout.splitlines() if line]
+    if not lines:
+        raise ValueError("empty response")
+    header = lines[0].split("\t")
+    if len(header) != 2 or header[0] not in {"IMPORT", "REPAIR"}:
+        raise ValueError("invalid response header")
+    try:
+        reported_count = int(header[1])
+    except ValueError as error:
+        raise ValueError("invalid response count") from error
+    items: list[_HelperItemResult] = []
+    for line in lines[1:]:
+        fields = line.split("\t")
+        if len(fields) != 5 or fields[0] != "ITEM":
+            raise ValueError("invalid item response")
+        try:
+            candidate_index = int(fields[1])
+            successful_mask = int(fields[3])
+            failed_mask = int(fields[4])
+        except ValueError as error:
+            raise ValueError("invalid item value") from error
+        if (
+            successful_mask < 0
+            or failed_mask < 0
+            or successful_mask & failed_mask
+            or (successful_mask | failed_mask)
+            > (_METADATA_TITLE | _METADATA_DESCRIPTION | _METADATA_KEYWORDS)
+        ):
+            raise ValueError("invalid metadata field masks")
+        items.append(
+            _HelperItemResult(
+                candidate_index=candidate_index,
+                photos_id=fields[2],
+                successful_mask=successful_mask,
+                failed_mask=failed_mask,
+            )
+        )
+    if len(items) != reported_count:
+        raise ValueError("response item count does not match header")
+    return _HelperResponse(
+        operation=header[0].lower(),
+        reported_count=reported_count,
+        items=tuple(items),
+    )
 
 
 def _argument_bytes(album_name: str, candidates: Sequence[ImportCandidate]) -> int:
@@ -719,6 +926,43 @@ def build_import_batches(
     return batches
 
 
+def _build_repair_batches(
+    candidates: Sequence[ImportCandidate],
+    targets: Sequence[_MetadataRepairTarget],
+    *,
+    batch_size: int,
+    max_argument_bytes: int,
+) -> list[tuple[_MetadataRepairTarget, ...]]:
+    """按数量和 argv 字节预算拆分元数据修复。/ Batch metadata repairs safely."""
+
+    batches: list[tuple[_MetadataRepairTarget, ...]] = []
+    current: list[_MetadataRepairTarget] = []
+    for target in targets:
+        proposed = [*current, target]
+        proposed_bytes = sum(
+            len(argument.encode("utf-8")) + 1
+            for argument in _build_repair_arguments(candidates, proposed)
+        )
+        if current and (
+            len(proposed) > batch_size or proposed_bytes > max_argument_bytes
+        ):
+            batches.append(tuple(current))
+            current = [target]
+        else:
+            current = proposed
+        single_bytes = sum(
+            len(argument.encode("utf-8")) + 1
+            for argument in _build_repair_arguments(candidates, current)
+        )
+        if single_bytes > max_argument_bytes:
+            raise ValueError(
+                "Apple Photos metadata repair arguments exceed the safe byte limit"
+            )
+    if current:
+        batches.append(tuple(current))
+    return batches
+
+
 def is_automation_permission_error(message: str) -> bool:
     """识别 macOS Apple Events 权限拒绝。/ Detect macOS Apple Events denial."""
 
@@ -736,13 +980,13 @@ def is_automation_permission_error(message: str) -> bool:
 
 class ApplePhotosImporter(QObject):
     """
-    使用单个可复用 QProcess 顺序导入多个批次。/ Sequential batched importer.
+    使用单个 QProcess 顺序导入并按精确 Photos ID 修复元数据。
 
-    ``completed`` 对成功、失败和取消均只发射一次；窗口关闭时调用 ``shutdown``
-    会同步终止 helper 且不再回调 UI。
+    Import sequentially with one QProcess and repair metadata by exact Photos ID.
 
-    ``completed`` is emitted exactly once for success, failure, or cancellation.
-    ``shutdown`` synchronously terminates the helper and suppresses UI callbacks.
+    普通取消会等待当前批次返回，以保留可信计数；窗口关闭仍同步强制清理。
+    Normal cancellation lets the active batch report a trustworthy outcome;
+    window shutdown still performs deterministic hard cleanup.
     """
 
     progress = Signal(int, int)
@@ -759,12 +1003,20 @@ class ApplePhotosImporter(QObject):
         self._request: ApplePhotosImportRequest | None = None
         self._batches: list[tuple[ImportCandidate, ...]] = []
         self._next_batch_index = 0
-        self._current_batch_size = 0
-        self._attempted = 0
+        self._current_import_batch: tuple[ImportCandidate, ...] = ()
+        self._current_candidate_indices: tuple[int, ...] = ()
+        self._repair_batches: list[tuple[_MetadataRepairTarget, ...]] = []
+        self._next_repair_batch_index = 0
+        self._current_repair_batch: tuple[_MetadataRepairTarget, ...] = ()
+        self._repair_pass = 0
+        self._phase = "idle"
+        self._confirmed_processed = 0
+        self._confirmed_not_imported = 0
+        self._indeterminate = 0
         self._newly_imported = 0
         self._completed_batches = 0
-        self._metadata_applied = 0
-        self._metadata_not_applied = 0
+        self._metadata_targets: dict[int, _MetadataRepairTarget] = {}
+        self._unmatched_metadata_items = 0
         self._cancel_requested = False
         self._completion_emitted = False
         self._suppress_completion = False
@@ -810,29 +1062,65 @@ class ApplePhotosImporter(QObject):
         )
         self._batches = batches
         self._next_batch_index = 0
-        self._current_batch_size = 0
-        self._attempted = 0
+        self._current_import_batch = ()
+        self._current_candidate_indices = ()
+        self._repair_batches = []
+        self._next_repair_batch_index = 0
+        self._current_repair_batch = ()
+        self._repair_pass = 0
+        self._phase = "import"
+        self._confirmed_processed = 0
+        self._confirmed_not_imported = 0
+        self._indeterminate = 0
         self._newly_imported = 0
         self._completed_batches = 0
-        self._metadata_applied = 0
-        self._metadata_not_applied = 0
+        self._metadata_targets = {}
+        self._unmatched_metadata_items = 0
         self._cancel_requested = False
         self._completion_emitted = False
         self._suppress_completion = False
         self.progress.emit(0, len(request.candidates))
-        self._start_next_batch()
+        self._start_next_import_batch()
 
     def cancel(self) -> None:
-        """取消后续批次并终止当前 helper。/ Cancel remaining work and terminate the helper."""
+        """
+        当前 helper 完成后停止，不再启动后续批次。
+
+        Stop after the active helper completes, without starting another batch.
+        """
 
         if not self.is_running:
             return
         self._cancel_requested = True
         if self._process.state() == QProcess.NotRunning:
             self._finish(cancelled=True)
-            return
-        self._process.terminate()
-        QTimer.singleShot(1500, self._kill_if_running)
+
+    @property
+    def has_retryable_metadata(self) -> bool:
+        """返回是否仍有可按 ID 修复的字段。/ Return whether exact-ID repairs remain."""
+
+        return bool(self._failed_metadata_targets())
+
+    def retry_metadata(self) -> None:
+        """
+        仅重试已导入条目的失败字段，不重新导入文件。
+
+        Retry failed fields on imported items without importing source files again.
+
+        异常 / Raises:
+            RuntimeError: 导入仍在运行，或没有可修复元数据。
+        """
+
+        if self.is_running:
+            raise RuntimeError("Apple Photos import is still running")
+        if self._request is None or not self.has_retryable_metadata:
+            raise RuntimeError("No Apple Photos metadata is available to retry")
+        self._cancel_requested = False
+        self._completion_emitted = False
+        self._suppress_completion = False
+        self._repair_pass = 0
+        self._phase = "repair"
+        self._begin_repair_pass()
 
     def shutdown(self) -> None:
         """
@@ -848,9 +1136,10 @@ class ApplePhotosImporter(QObject):
                 self._process.waitForFinished(1000)
         self._request = None
         self._completion_emitted = True
+        self._phase = "idle"
 
-    def _start_next_batch(self) -> None:
-        """启动下一批，或在全部完成后汇总。/ Start the next batch or finalize."""
+    def _start_next_import_batch(self) -> None:
+        """启动下一导入批次，或转入元数据修复。/ Start import or begin repair."""
 
         if self._cancel_requested:
             self._finish(cancelled=True)
@@ -858,14 +1147,76 @@ class ApplePhotosImporter(QObject):
         if self._request is None:
             return
         if self._next_batch_index >= len(self._batches):
-            self._finish(cancelled=False)
+            self._begin_repair_pass()
             return
 
         batch = self._batches[self._next_batch_index]
         self._next_batch_index += 1
-        self._current_batch_size = len(batch)
-        self._attempted += self._current_batch_size
-        arguments = build_osascript_arguments(self._request.album_name, batch)
+        candidate_lookup = {
+            id(candidate): index
+            for index, candidate in enumerate(self._request.candidates)
+        }
+        indices = tuple(candidate_lookup[id(candidate)] for candidate in batch)
+        self._current_import_batch = batch
+        self._current_candidate_indices = indices
+        self._phase = "import"
+        arguments = build_osascript_arguments(
+            self._request.album_name,
+            batch,
+            indices,
+        )
+        self._process.start(self._osascript_path, arguments)
+
+    def _failed_metadata_targets(self) -> tuple[_MetadataRepairTarget, ...]:
+        """返回仍有失败字段且具有 Photos ID 的目标。/ Return retryable failures."""
+
+        return tuple(
+            target
+            for target in self._metadata_targets.values()
+            if target.failed_mask and target.photos_id
+        )
+
+    def _begin_repair_pass(self) -> None:
+        """启动一次自动修复；达到上限后完成。/ Begin one bounded repair pass."""
+
+        if self._request is None:
+            return
+        targets = self._failed_metadata_targets()
+        if not targets or self._repair_pass >= _MAX_AUTOMATIC_METADATA_REPAIR_PASSES:
+            self._finish(cancelled=False)
+            return
+        self._repair_pass += 1
+        try:
+            self._repair_batches = _build_repair_batches(
+                self._request.candidates,
+                targets,
+                batch_size=self._request.batch_size,
+                max_argument_bytes=self._request.max_argument_bytes,
+            )
+        except ValueError as error:
+            self._finish(cancelled=False, error=str(error))
+            return
+        self._next_repair_batch_index = 0
+        self._current_repair_batch = ()
+        self._phase = "repair"
+        self.progress.emit(0, len(targets))
+        self._start_next_repair_batch()
+
+    def _start_next_repair_batch(self) -> None:
+        """启动下一个精确 ID 修复批次。/ Start the next exact-ID repair batch."""
+
+        if self._cancel_requested:
+            self._finish(cancelled=True)
+            return
+        if self._request is None:
+            return
+        if self._next_repair_batch_index >= len(self._repair_batches):
+            self._begin_repair_pass()
+            return
+        batch = self._repair_batches[self._next_repair_batch_index]
+        self._next_repair_batch_index += 1
+        self._current_repair_batch = batch
+        arguments = _build_repair_arguments(self._request.candidates, batch)
         self._process.start(self._osascript_path, arguments)
 
     def _on_process_finished(
@@ -874,9 +1225,6 @@ class ApplePhotosImporter(QObject):
         """解析一个批次的 Photos 返回值。/ Parse one completed Photos batch."""
 
         if not self.is_running:
-            return
-        if self._cancel_requested:
-            self._finish(cancelled=True)
             return
 
         stdout = (
@@ -890,64 +1238,158 @@ class ApplePhotosImporter(QObject):
             .strip()
         )
         if exit_code != 0:
+            self._mark_current_import_indeterminate()
             self._finish(
-                cancelled=False,
+                cancelled=self._cancel_requested,
                 error=stderr or f"osascript exited with code {exit_code}",
             )
             return
 
         try:
-            response_fields = stdout.splitlines()[-1].split("\t")
-            if len(response_fields) != 3:
-                raise ValueError
-            imported_count, metadata_applied, metadata_not_applied = (
-                int(value) for value in response_fields
-            )
-        except (IndexError, ValueError):
+            response = _parse_helper_response(stdout)
+            if self._phase == "import":
+                self._accept_import_response(response)
+            elif self._phase == "repair":
+                self._accept_repair_response(response)
+            else:
+                raise ValueError("helper completed outside an active phase")
+        except ValueError as error:
+            self._mark_current_import_indeterminate()
             self._finish(
-                cancelled=False,
-                error=f"Unexpected Photos response: {stdout or '<empty>'}",
-            )
-            return
-        if not 0 <= imported_count <= self._current_batch_size:
-            self._finish(
-                cancelled=False, error=f"Invalid Photos import count: {imported_count}"
-            )
-            return
-        if (
-            metadata_applied < 0
-            or metadata_not_applied < 0
-            or metadata_applied + metadata_not_applied != imported_count
-        ):
-            self._finish(
-                cancelled=False,
+                cancelled=self._cancel_requested,
                 error=(
-                    "Invalid Photos metadata counts: "
-                    f"{metadata_applied} applied, "
-                    f"{metadata_not_applied} not applied"
+                    f"Unexpected Photos response: {stdout or '<empty>'} " f"({error})"
                 ),
             )
             return
 
-        self._newly_imported += imported_count
-        self._metadata_applied += metadata_applied
-        self._metadata_not_applied += metadata_not_applied
+        if self._cancel_requested:
+            self._finish(cancelled=True)
+            return
+        if self._phase == "import":
+            self._start_next_import_batch()
+        else:
+            self._start_next_repair_batch()
+
+    def _accept_import_response(self, response: _HelperResponse) -> None:
+        """验证并累计一个导入批次。/ Validate and aggregate one import batch."""
+
+        if self._request is None or response.operation != "import":
+            raise ValueError("operation does not match import phase")
+        batch_size = len(self._current_import_batch)
+        if not 0 <= response.reported_count <= batch_size:
+            raise ValueError("invalid Photos import count")
+        valid_indices = set(self._current_candidate_indices)
+        seen_indices: set[int] = set()
+        for item in response.items:
+            if not item.photos_id:
+                raise ValueError("imported Photos item has no ID")
+            if item.candidate_index == -1:
+                if item.successful_mask or item.failed_mask:
+                    raise ValueError("unmatched Photos item returned metadata masks")
+                self._unmatched_metadata_items += 1
+                continue
+            if (
+                item.candidate_index not in valid_indices
+                or item.candidate_index in seen_indices
+            ):
+                raise ValueError("Photos item returned an invalid candidate index")
+            seen_indices.add(item.candidate_index)
+            expected_mask = _metadata_mask(
+                self._request.candidates[item.candidate_index].metadata
+            )
+            if item.successful_mask | item.failed_mask != expected_mask:
+                raise ValueError("initial metadata masks do not match requested fields")
+            self._metadata_targets[item.candidate_index] = _MetadataRepairTarget(
+                candidate_index=item.candidate_index,
+                photos_id=item.photos_id,
+                successful_mask=item.successful_mask,
+                failed_mask=item.failed_mask,
+            )
+        self._newly_imported += response.reported_count
+        self._confirmed_processed += batch_size
+        self._confirmed_not_imported += batch_size - response.reported_count
         self._completed_batches += 1
-        self.progress.emit(self._attempted, len(self._request.candidates))
-        self._start_next_batch()
+        self.progress.emit(
+            self._confirmed_processed,
+            len(self._request.candidates),
+        )
+        self._current_import_batch = ()
+        self._current_candidate_indices = ()
+
+    def _accept_repair_response(self, response: _HelperResponse) -> None:
+        """验证修复结果并只更新原失败字段。/ Validate and merge repair results."""
+
+        if response.operation != "repair":
+            raise ValueError("operation does not match repair phase")
+        if response.reported_count != len(self._current_repair_batch):
+            raise ValueError("metadata repair count does not match batch")
+        expected = {
+            target.candidate_index: target for target in self._current_repair_batch
+        }
+        seen: set[int] = set()
+        for item in response.items:
+            target = expected.get(item.candidate_index)
+            if (
+                target is None
+                or item.candidate_index in seen
+                or item.photos_id != target.photos_id
+                or item.successful_mask | item.failed_mask != target.failed_mask
+            ):
+                raise ValueError("metadata repair item does not match its exact target")
+            seen.add(item.candidate_index)
+            self._metadata_targets[item.candidate_index] = _MetadataRepairTarget(
+                candidate_index=item.candidate_index,
+                photos_id=item.photos_id,
+                successful_mask=target.successful_mask | item.successful_mask,
+                failed_mask=item.failed_mask,
+            )
+        if seen != set(expected):
+            raise ValueError("metadata repair response omitted a target")
+        completed = sum(
+            len(batch)
+            for batch in self._repair_batches[: self._next_repair_batch_index]
+        )
+        self.progress.emit(completed, sum(map(len, self._repair_batches)))
+        self._current_repair_batch = ()
+
+    def _mark_current_import_indeterminate(self) -> None:
+        """仅把无有效响应的导入批次标为不确定。/ Mark only an unparsed import batch."""
+
+        if self._phase == "import" and self._current_import_batch:
+            self._indeterminate += len(self._current_import_batch)
+            self._current_import_batch = ()
+            self._current_candidate_indices = ()
+
+    def _metadata_counts(self) -> tuple[int, int, int, int]:
+        """
+        返回完整、部分、失败及可重试条目数。
+
+        Return fully applied, partially applied, failed, and retryable counts.
+        """
+
+        applied = 0
+        partial = 0
+        failed = self._unmatched_metadata_items
+        retryable = 0
+        for target in self._metadata_targets.values():
+            if not target.failed_mask:
+                applied += 1
+            elif target.successful_mask:
+                partial += 1
+                retryable += 1
+            else:
+                failed += 1
+                retryable += 1
+        return applied, partial, failed, retryable
 
     def _on_process_error(self, error: QProcess.ProcessError) -> None:
-        """处理无法启动 helper 的路径。/ Handle helper startup failure."""
+        """处理 helper 启动失败，并保留不确定状态。/ Handle helper startup failure."""
 
         if not self.is_running or error != QProcess.FailedToStart:
             return
+        self._mark_current_import_indeterminate()
         self._finish(cancelled=False, error=self._process.errorString())
-
-    def _kill_if_running(self) -> None:
-        """取消宽限期后强制结束 helper。/ Kill the helper after the cancellation grace period."""
-
-        if self._cancel_requested and self._process.state() != QProcess.NotRunning:
-            self._process.kill()
 
     def _finish(self, *, cancelled: bool, error: str | None = None) -> None:
         """构造并仅发射一次最终结果。/ Build and emit one final result."""
@@ -957,20 +1399,29 @@ class ApplePhotosImporter(QObject):
         self._completion_emitted = True
         request = self._request
         eligible = len(request.candidates)
+        metadata_applied, metadata_partial, metadata_failed, retryable = (
+            self._metadata_counts()
+        )
         result = ApplePhotosImportResult(
             requested=request.requested,
             eligible=eligible,
-            attempted=self._attempted,
+            attempted=self._confirmed_processed,
             newly_imported=self._newly_imported,
             preflight_skipped=request.preflight_skipped,
-            photos_not_imported=max(0, self._attempted - self._newly_imported),
-            remaining=max(0, eligible - self._attempted),
+            photos_not_imported=self._confirmed_not_imported,
+            remaining=max(
+                0,
+                eligible - self._confirmed_processed - self._indeterminate,
+            ),
+            indeterminate=self._indeterminate,
             completed_batches=self._completed_batches,
-            metadata_applied=self._metadata_applied,
-            metadata_not_applied=self._metadata_not_applied,
+            metadata_applied=metadata_applied,
+            metadata_partially_applied=metadata_partial,
+            metadata_not_applied=metadata_failed,
+            retryable_metadata=retryable,
             cancelled=cancelled,
             error=error,
         )
-        self._request = None
+        self._phase = "idle"
         if not self._suppress_completion:
             self.completed.emit(result)

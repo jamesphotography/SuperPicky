@@ -1817,43 +1817,100 @@ class ResultsBrowserWindow(QMainWindow):
 
             message = self.i18n.t("browser.photos_import_failed_message").format(
                 imported=result.newly_imported,
+                not_imported=result.photos_not_imported,
+                indeterminate=result.indeterminate,
+                remaining=result.remaining,
                 metadata_applied=result.metadata_applied,
+                metadata_partial=result.metadata_partially_applied,
                 metadata_not_applied=result.metadata_not_applied,
                 error=result.error,
             )
             if is_automation_permission_error(result.error):
                 message += "\n\n" + self.i18n.t("browser.photos_import_permission_help")
+            title = self.i18n.t("browser.photos_import_failed_title")
+            icon = QMessageBox.Critical
+        elif result.cancelled:
+            title = self.i18n.t("browser.photos_import_cancelled_title")
+            message = self.i18n.t("browser.photos_import_cancelled_message").format(
+                imported=result.newly_imported,
+                not_imported=result.photos_not_imported,
+                indeterminate=result.indeterminate,
+                metadata_applied=result.metadata_applied,
+                metadata_partial=result.metadata_partially_applied,
+                metadata_not_applied=result.metadata_not_applied,
+                remaining=result.remaining,
+            )
+            icon = QMessageBox.Information
+        else:
+            title = self.i18n.t("browser.photos_import_done_title")
+            message = self.i18n.t("browser.photos_import_done_message").format(
+                imported=result.newly_imported,
+                not_imported=result.photos_not_imported,
+                indeterminate=result.indeterminate,
+                remaining=result.remaining,
+                metadata_applied=result.metadata_applied,
+                metadata_partial=result.metadata_partially_applied,
+                metadata_not_applied=result.metadata_not_applied,
+                skipped=result.preflight_skipped,
+            )
+            icon = QMessageBox.Information
+
+        if result.retryable_metadata:
+            message += "\n\n" + self.i18n.t(
+                "browser.photos_import_retry_metadata_message"
+            ).format(count=result.retryable_metadata)
+            dialog = QMessageBox(icon, title, message, parent=self)
+            retry_button = dialog.addButton(
+                self.i18n.t("browser.photos_import_retry_metadata"),
+                QMessageBox.AcceptRole,
+            )
+            dialog.addButton(QMessageBox.Close)
+            dialog.exec()
+            if dialog.clickedButton() is retry_button:
+                self._retry_apple_photos_metadata(result.retryable_metadata)
+            return
+
+        QMessageBox(icon, title, message, QMessageBox.Ok, self).exec()
+
+    def _retry_apple_photos_metadata(self, count: int) -> None:
+        """
+        启动仅元数据重试，不再次导入 RAW。
+
+        Start a metadata-only retry without importing RAW files again.
+        """
+
+        importer = self._apple_photos_importer
+        if importer is None:
+            return
+        progress = QProgressDialog(
+            self.i18n.t("browser.photos_import_progress").format(
+                completed=0,
+                total=count,
+            ),
+            self.i18n.t("browser.photos_import_cancel"),
+            0,
+            count,
+            self,
+        )
+        progress.setWindowTitle(self.i18n.t("browser.photos_import_confirm_title"))
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.canceled.connect(importer.cancel)
+        self._apple_photos_progress = progress
+        progress.show()
+        try:
+            importer.retry_metadata()
+            self._update_apple_photos_button()
+        except RuntimeError as error:
+            progress.close()
+            progress.deleteLater()
+            self._apple_photos_progress = None
             QMessageBox.critical(
                 self,
                 self.i18n.t("browser.photos_import_failed_title"),
-                message,
+                str(error),
             )
-            return
-
-        if result.cancelled:
-            QMessageBox.information(
-                self,
-                self.i18n.t("browser.photos_import_cancelled_title"),
-                self.i18n.t("browser.photos_import_cancelled_message").format(
-                    imported=result.newly_imported,
-                    metadata_applied=result.metadata_applied,
-                    metadata_not_applied=result.metadata_not_applied,
-                    remaining=result.remaining,
-                ),
-            )
-            return
-
-        QMessageBox.information(
-            self,
-            self.i18n.t("browser.photos_import_done_title"),
-            self.i18n.t("browser.photos_import_done_message").format(
-                imported=result.newly_imported,
-                not_imported=result.photos_not_imported,
-                metadata_applied=result.metadata_applied,
-                metadata_not_applied=result.metadata_not_applied,
-                skipped=result.preflight_skipped,
-            ),
-        )
 
     def _show_context_menu(self, photo: dict, pos):
         base_dir = photo.get('_base_dir', self._directory)
