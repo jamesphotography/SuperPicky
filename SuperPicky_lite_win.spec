@@ -193,6 +193,8 @@ app_hiddenimports = [
     'packaging.version',
     'birdid',
     'birdid.bird_identifier',
+    'birdid.geo_filter',       # 地理过滤：bird_identifier 顶层导入，其余调用点为函数内延迟导入
+    'tools.country_names',     # 国家显示名：仅被 region_data / birdid_server 函数内导入
     'birdid_server',
     'server_manager',
     'flask',

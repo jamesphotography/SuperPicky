@@ -160,3 +160,57 @@ def test_unavailable_db_yields_only_none(tmp_path):
     assert f.is_available() is False
     assert list(f.iter_candidates(-33.87, 151.21, "AU")) == [(None, TIER_NONE)]
     f.close()
+
+
+def test_default_db_path_dev_environment():
+    """开发环境：路径应指向仓库内的 birdid/data/geo_distribution.db"""
+    import os
+
+    from birdid.geo_filter import default_db_path
+
+    p = default_db_path()
+    assert p.endswith(os.path.join("birdid", "data", "geo_distribution.db"))
+    assert os.path.exists(p), f"开发环境下库应存在: {p}"
+
+
+def test_default_db_path_frozen_non_windows(monkeypatch, tmp_path):
+    """
+    打包非 Windows 分支：应走 _MEIPASS。
+
+    这条分支只在 PyInstaller onefile 运行时成立，单测里用 monkeypatch 模拟
+    sys.frozen 与 get_runtime_meipass，避免为验证一行路径拼接去跑一次完整打包。
+    """
+    import sys
+
+    import birdid.geo_filter as gf
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "platform", "darwin")
+    import config
+
+    monkeypatch.setattr(config, "get_runtime_meipass", lambda: str(tmp_path))
+    p = gf.default_db_path()
+    assert p.startswith(str(tmp_path)), f"应基于 _MEIPASS: {p}"
+    assert p.endswith("geo_distribution.db")
+
+
+def test_default_db_path_frozen_windows(monkeypatch, tmp_path):
+    """打包 Windows 分支：应走 get_install_scoped_resource_path"""
+    import os
+    import sys
+
+    import birdid.geo_filter as gf
+    import config
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "platform", "win32")
+    called = {}
+
+    def fake_scoped(rel):
+        called["rel"] = rel
+        return os.path.join(str(tmp_path), rel)
+
+    monkeypatch.setattr(config, "get_install_scoped_resource_path", fake_scoped)
+    p = gf.default_db_path()
+    assert called["rel"] == os.path.join("birdid", "data", "geo_distribution.db")
+    assert p.startswith(str(tmp_path))
