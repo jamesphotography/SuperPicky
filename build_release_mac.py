@@ -518,7 +518,6 @@ def load_required_models() -> list[dict[str, str]]:
         {"filename": "model20240824.pth", "dest_dir": "models"},
         {"filename": "superFlier_efficientnet.pth", "dest_dir": "models"},
         {"filename": "cub200_keypoint_resnet50_slim.pth", "dest_dir": "models"},
-        {"filename": "avonet.db", "dest_dir": "birdid/data"},
         {"filename": "cfanet_iaa_ava_res50-3cd62bb3.pth", "dest_dir": "models"},
         {"filename": "yolo11l-seg.pt", "dest_dir": "models"},
     ]

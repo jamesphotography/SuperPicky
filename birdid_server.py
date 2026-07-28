@@ -16,7 +16,7 @@ from io import BytesIO
 # 确保模块路径正确
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from tools.i18n import t
-from config import config, get_birdid_settings_path
+from config import config
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -41,51 +41,37 @@ DEFAULT_HOST = config.server.HOST
 
 
 def get_gui_settings():
-    """读取 GUI 界面设置的国家/地区过滤"""
-    import re
-    settings_path = str(get_birdid_settings_path())
-    
-    settings = {
-        'use_ebird': True,
-        'country_code': None,
-        'region_code': None
-    }
-    
-    if os.path.exists(settings_path):
-        try:
-            import json
-            with open(settings_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            settings['use_ebird'] = data.get('use_ebird', True)
-            
-            # 解析国家代码（从 country_list 映射）
-            # 设置文件存储的是显示名称，需要转换为代码
-            country_display = data.get('selected_country', '')
-            if country_display and country_display not in ('自动检测 (GPS)', '全球模式'):
-                # 常见国家映射
-                country_map = {
-                    '澳大利亚': 'AU', '美国': 'US', '英国': 'GB', '中国': 'CN',
-                    '香港': 'HK', '台湾': 'TW', '日本': 'JP'
-                }
-                settings['country_code'] = country_map.get(country_display)
-                
-                # 如果是其他国家（从"更多国家"选的），格式可能是 "国家名 (Country Name)"
-                if not settings['country_code'] and '(' in country_display:
-                    # 尝试加载 regions 数据匹配
-                    pass
-            
-            # 解析区域代码
-            region_display = data.get('selected_region', '')
-            if region_display and region_display != '整个国家':
-                # 格式: "South Australia (AU-SA)"
-                match = re.search(r'\(([A-Z]{2}-[A-Z0-9]+)\)', region_display)
-                if match:
-                    settings['region_code'] = match.group(1)
-        except Exception as e:
-            print(t("server.read_gui_settings_failed", error=e))
-    
-    return settings
+    """
+    读取识鸟的地理过滤设置 / Read the bird-ID geo-filter settings.
+
+    直接读 advanced_config（设置中心的单一事实源）。旧实现从已废弃的
+    birdid_dock_settings.json 读、且用中文显示名反查国家代码，与设置中心
+    形成两套平行状态；migrate_birdid_dock_settings 迁移后那个文件不再被
+    任何人读写，服务端拿到的实际是过期数据。
+
+    Reads advanced_config directly (the Settings Center's single source of
+    truth). The previous implementation read the deprecated
+    birdid_dock_settings.json and reverse-looked-up country codes from Chinese
+    display names, forming a parallel state store; after
+    migrate_birdid_dock_settings ran, that file was no longer read or written by
+    anyone, so the server was acting on stale data.
+
+    返回 / Returns:
+        dict: 含 use_geo_filter / country_code / region_code 三键 /
+            Dict with use_geo_filter / country_code / region_code.
+    """
+    try:
+        from advanced_config import get_advanced_config
+
+        cfg = get_advanced_config()
+        return {
+            'use_geo_filter': cfg.birdid_use_geo_filter,
+            'country_code': cfg.birdid_country_code,
+            'region_code': cfg.birdid_region_code,
+        }
+    except Exception as e:
+        print(t("server.read_gui_settings_failed", error=e))
+        return {'use_geo_filter': True, 'country_code': None, 'region_code': None}
 
 
 def get_gui_language():
@@ -108,58 +94,45 @@ def get_gui_language():
     return None
 
 
-def update_gui_settings_from_gps(region_code: str, region_name: str = None):
+def update_gui_settings_from_gps(country_code: str) -> None:
     """
-    将 GPS 检测到的区域同步到 GUI 设置文件
-    这样主界面的国家/地区选择会自动更新
-    
-    Args:
-        region_code: eBird 区域代码（如 "AU-SA" 或 "AU"）
-        region_name: 区域名称（可选，用于显示）
+    把 GPS 反查到的国家同步到设置中心 / Sync the GPS-derived country to settings.
+
+    旧实现用 eBirdCountryFilter 的矩形边界重新判定一次区域（含州/省级），再写入
+    已废弃的 birdid_dock_settings.json。现在国家已由 identify_bird 用
+    reverse_geocoder 反查好并放在 gps_info['country_code'] 里，无需重复判定；
+    州/省级随 GBIF 网格数据源一并移除（网格已按 GPS 精确到 1°）。
+
+    The old implementation re-derived the region from eBirdCountryFilter's
+    rectangular bounds (including sub-national codes) and wrote to the
+    deprecated birdid_dock_settings.json. The country is now resolved by
+    identify_bird via reverse_geocoder and carried in gps_info['country_code'],
+    so no second derivation is needed; sub-national codes were removed along
+    with the GBIF grid data source, which already resolves to 1 degree.
+
+    参数 / Parameters:
+        country_code (str): ISO 3166-1 alpha-2 国家代码 / ISO country code.
+
+    异常 / Exceptions:
+        不抛出异常；失败仅打印日志 / Never raises; failures are logged only.
     """
-    import json
-    settings_path = str(get_birdid_settings_path())
-    
+    if not country_code:
+        return
     try:
-        # 读取现有设置
-        settings = {}
-        if os.path.exists(settings_path):
-            with open(settings_path, 'r', encoding='utf-8') as f:
-                settings = json.load(f)
-        
-        # 解析区域代码
-        if '-' in region_code:
-            # 格式: "AU-SA" -> 国家 AU, 区域 SA
-            country_code = region_code.split('-')[0]
-        else:
-            # 只有国家代码
-            country_code = region_code
-        
-        # 国家代码到显示名称的映射
-        country_display_map = {
-            'AU': '澳大利亚', 'US': '美国', 'GB': '英国', 'CN': '中国',
-            'HK': '香港', 'TW': '台湾', 'JP': '日本', 'NZ': 'New Zealand'
-        }
-        
-        # 更新国家选择
-        country_display = country_display_map.get(country_code, country_code)
-        settings['selected_country'] = country_display
-        
-        # 如果有具体区域，更新区域选择
-        if '-' in region_code and region_name:
-            settings['selected_region'] = f"{region_name} ({region_code})"
-        else:
-            settings['selected_region'] = '整个国家'
-        
-        # 确保目录存在
-        os.makedirs(os.path.dirname(settings_path), exist_ok=True)
-        
-        # 保存设置
-        with open(settings_path, 'w', encoding='utf-8') as f:
-            json.dump(settings, f, ensure_ascii=False, indent=2)
-        
-        print(t("server.sync_gps_success", country=country_display, region=region_name if region_name else ""))
-        
+        from advanced_config import get_advanced_config
+        from tools.country_names import country_display_names
+
+        cfg = get_advanced_config()
+        english, chinese = country_display_names(country_code)
+        display = english if str(cfg.language or "").startswith("en") else chinese
+        cfg.set_birdid_region(
+            cfg.birdid_use_geo_filter,
+            country_code,
+            display,
+            None,
+            "",
+        )
+        print(t("server.sync_gps_success", country=display, region=""))
     except Exception as e:
         print(t("server.sync_gps_failed", error=e))
 
@@ -301,13 +274,13 @@ def recognize_bird():
         gui_settings = get_gui_settings()
         country_code = data.get('country_code', gui_settings['country_code'])
         region_code = data.get('region_code', gui_settings['region_code'])
-        use_ebird = data.get('use_ebird', gui_settings['use_ebird'])
+        use_geo_filter = data.get('use_geo_filter', gui_settings['use_geo_filter'])
         
         # 日志：显示识别参数
         print(t("server.log_params"))
         print(t("server.log_yolo", value=t("server.yes") if use_yolo else t("server.no")))
         print(t("server.log_gps", value=t("server.yes") if use_gps else t("server.no")))
-        print(t("server.log_ebird", value=t("server.yes") if use_ebird else t("server.no")))
+        print(t("server.log_ebird", value=t("server.yes") if use_geo_filter else t("server.no")))
         print(t("server.log_location", country=country_code or 'N/A', region=region_code or 'N/A'))
 
         # 执行识别（懒加载：首次请求会在此处完成模型栈导入）
@@ -321,7 +294,7 @@ def recognize_bird():
             top_k=top_k,
             country_code=country_code,
             region_code=region_code,
-            use_ebird=use_ebird,
+            use_geo_filter=use_geo_filter,
             name_format=get_advanced_config().name_format,
         )
         
@@ -403,16 +376,16 @@ def recognize_bird():
         
         # 如果没有结果，返回详细的错误信息
         if not formatted_results:
-            ebird_info = result.get('ebird_info')
-            if ebird_info and ebird_info.get('enabled'):
-                region = ebird_info.get('region_code', 'Unknown')
-                species_count = ebird_info.get('species_count', 0)
+            geo_info = result.get('geo_info')
+            if geo_info and geo_info.get('enabled'):
+                region = geo_info.get('country_code') or 'Unknown'
+                species_count = geo_info.get('species_count') or 0
                 error_msg = t("server.ebird_filter_error", region=region, species_count=species_count)
                 print(f"[API] ⚠️  {error_msg}")
                 return jsonify({
                     'success': False,
                     'error': error_msg,
-                    'ebird_info': ebird_info
+                    'geo_info': geo_info
                 })
             else:
                 return jsonify({
@@ -425,46 +398,25 @@ def recognize_bird():
             'results': formatted_results,
             'yolo_info': result.get('yolo_info'),
             'gps_info': result.get('gps_info'),
-            'ebird_info': result.get('ebird_info')
+            'geo_info': result.get('geo_info')
         }
 
-        # 回退警告（优先国家级，其次全局）
-        ebird_info = result.get('ebird_info') or {}
-        if ebird_info.get('country_fallback'):
-            country = ebird_info.get('country_code', '?')
-            response['warning'] = t("server.country_fallback_warning", country=country)
-        elif ebird_info.get('gps_fallback'):
-            species_count = ebird_info.get('species_count', 0)
-            response['warning'] = t("server.gps_fallback_warning", count=species_count)
+        # 过滤降级警告：命中 L3/L4/L5 说明候选层被放宽了
+        # Degradation warning: hitting L3/L4/L5 means the tier was widened
+        from birdid.geo_filter import (
+            TIER_COUNTRY, TIER_NEIGHBORHOOD, TIER_NONE, describe_tier,
+        )
+        geo_info = result.get('geo_info') or {}
+        if geo_info.get('tier') in (TIER_NEIGHBORHOOD, TIER_COUNTRY, TIER_NONE):
+            response['warning'] = describe_tier(geo_info)
 
-        # 如果照片有 GPS 信息，同步检测到的区域到主界面设置
+        # 同步 GPS 反查到的国家到设置中心；country_code 已由 identify_bird
+        # 用 reverse_geocoder 解析好，此处不再重复判定。
+        # Sync the GPS-derived country to the Settings Center; country_code was
+        # already resolved by identify_bird via reverse_geocoder.
         gps_info = result.get('gps_info')
-        if gps_info and gps_info.get('latitude') and gps_info.get('longitude'):
-            # 使用 GPS 坐标检测区域
-            try:
-                from birdid.ebird_country_filter import eBirdCountryFilter
-                ebird_filter = eBirdCountryFilter("", cache_dir="ebird_cache", offline_dir="offline_ebird_data")
-                detected_region, region_name_raw = ebird_filter.get_region_code_from_gps(
-                    gps_info['latitude'], gps_info['longitude']
-                )
-                if detected_region:
-                    # 州/省代码到完整名称的映射
-                    state_name_map = {
-                        # 澳大利亚
-                        'AU-WA': 'Western Australia',
-                        'AU-SA': 'South Australia',
-                        'AU-NSW': 'New South Wales',
-                        'AU-VIC': 'Victoria',
-                        'AU-QLD': 'Queensland',
-                        'AU-TAS': 'Tasmania',
-                        'AU-NT': 'Northern Territory',
-                        'AU-ACT': 'Australian Capital Territory',
-                        # 可以继续添加其他国家的州/省
-                    }
-                    region_name = state_name_map.get(detected_region, region_name_raw)
-                    update_gui_settings_from_gps(detected_region, region_name)
-            except Exception as e:
-                print(t("server.gps_detect_failed", error=e))
+        if gps_info and gps_info.get('country_code'):
+            update_gui_settings_from_gps(gps_info['country_code'])
 
         return jsonify(response)
 

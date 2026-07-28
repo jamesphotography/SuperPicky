@@ -313,9 +313,6 @@
     "mps_cache_cleared": "  🧹 [第{index}张] MPS 显存已清理",
     "cuda_cache_cleared": "  🧹 [第{index}张] CUDA 显存已清理",
     "db_load_failed": "数据库加载失败: {e}",
-    "avonet_loaded": "[Avonet] 离线物种过滤器已加载",
-    "avonet_init_failed": "[Avonet] 初始化失败: {e}",
-    "avonet_unavailable": "[Avonet] 离线过滤器不可用",
     "yolo_load_failed": "YOLO模型加载失败: {e}",
     "raw_embedded_jpeg": "[RAW] 使用内嵌 JPEG 预览: {w}x{h}",
     "raw_embedded_bitmap": "[RAW] 使用内嵌位图预览: {w}x{h}",
@@ -332,13 +329,6 @@
     "db_model_data_failed": "获取模型数据失败: {e}",
     "db_stats_failed": "获取统计信息失败: {e}",
     "db_region_check_failed": "检查物种区域失败 (学名: {name}): {e}",
-    "avonet_db_failed": "[AvonetFilter] 数据库连接失败: {e}",
-    "avonet_gps_failed": "[AvonetFilter] GPS 查询失败: {e}",
-    "avonet_unsupported_region": "[AvonetFilter] 不支持的区域代码: {code}",
-    "avonet_bbox_failed": "[AvonetFilter] 边界框查询失败: {e}",
-    "avonet_classid_failed": "[AvonetFilter] 加载 ebird_classid_mapping 失败: {e}",
-    "avonet_no_ebird_data": "[AvonetFilter] 无 eBird 离线数据: {code}",
-    "avonet_read_ebird_failed": "[AvonetFilter] 读取 {code} eBird 数据失败: {e}",
     "config_saved": "✅ 已保存高级配置: {path}",
     "config_load_failed": "⚠️  加载配置失败，使用默认值: {e}",
     "config_save_failed": "❌ 保存配置失败: {e}",
@@ -363,7 +353,12 @@
     "tmp_jpeg_found": "  发现 {count} 个临时JPEG文件（tmp_*.jpg），正在删除...",
     "tmp_jpeg_done": "  ✅ 临时JPEG删除完成: {count} 成功",
     "rescue_direct": "  补救扫描: 高分辨率重扫检出鸟 (置信度 {conf})",
-    "rescue_confirmed": "  补救扫描: {source} 候选经识鸟确认为 {species} ({conf}%) → 判有鸟"
+    "rescue_confirmed": "  补救扫描: {source} 候选经识鸟确认为 {species} ({conf}%) → 判有鸟",
+    "geo_db_failed": "[GeoFilter] 数据库连接失败: {e}",
+    "geo_cell_failed": "[GeoFilter] 网格查询失败: {e}",
+    "geo_country_failed": "[GeoFilter] 国家查询失败: {e}",
+    "geo_unavailable": "[GeoFilter] 地理分布库不可用，地理过滤将被跳过",
+    "geo_init_failed": "[GeoFilter] 初始化失败: {e}"
   },
   "server": {
     "server_already_running": "✅ 服务器已在端口 {port} 运行",
@@ -444,9 +439,7 @@
     "arg_host": "监听地址 (默认: {default})",
     "arg_port": "监听端口 (默认: {default})",
     "arg_debug": "启用调试模式",
-    "arg_no_preload": "跳过模型预加载",
-    "gps_fallback_warning": "GPS过滤在当前坐标无匹配（已检索{count}种），已自动切换为全球模式",
-    "country_fallback_warning": "当地分布数据无匹配，已自动回退到 eBird {country} 国家物种列表"
+    "arg_no_preload": "跳过模型预加载"
   },
   "ai": {
     "using_mps": "✅ 使用 MPS (Apple GPU) 加速",
@@ -613,7 +606,14 @@
     "birdid_section_region": "国家 / 地区",
     "birdid_country_label": "国家",
     "birdid_region_label": "地区",
-    "birdid_section_name_format": "鸟名显示格式"
+    "birdid_section_name_format": "鸟名显示格式",
+    "culling_algo_v1_warn_title": "切换到旧版 V1 评星",
+    "culling_algo_v1_warn_body": "V1 用同一个数值同时当「判废线」和「达标线」，因此只会产生 0★ 和 3★，不会出现 1★/2★ 中间档。\n\n当前美学阈值 {nima}、锐度阈值 {sharp}：低于阈值的照片会直接判 0★ 并移入「0星_放弃」文件夹。\n\n{advice}",
+    "culling_algo_v1_warn_high": "⚠️ 你当前的美学阈值 {nima} 偏高，实测这会让绝大多数照片被判废，建议切换后先把它调到 5.5 以下。",
+    "culling_algo_v1_warn_ok": "确认切换到 V1",
+    "culling_algo_v1_warn_cancel": "保持 V2",
+    "birdid_region_hint": "仅在照片没有 GPS 信息时生效；有 GPS 的照片自动按拍摄位置过滤",
+    "geo_attribution": "鸟类地理分布 - GBIF.org 观察记录 ({snapshot})，仅含 CC0-1.0 与 CC-BY-4.0 数据"
   },
   "advanced_settings": {
     "title": "参数设置",
@@ -1023,11 +1023,6 @@
     "country_prompt_message": "当前使用「自动检测 GPS」模式。\n\n如果您的照片没有 GPS 信息，建议选择国家/地区以获得更准确的识别结果。\n\n是否现在选择？",
     "info_yolo_ok": "慧眼: 检测到鸟类",
     "info_yolo_fail": "慧眼: 未检测到鸟类",
-    "info_gps": "GPS: {lat}, {lon} | {count}",
-    "info_gps_fallback": "⚠️ 当地无匹配，已切换全球模式（提示：可在上方选「全球模式」固定此设置）",
-    "info_country_fallback": "⚠️ 当地无精确匹配，使用 eBird {country} 国家鸟种过滤",
-    "info_region": "区域: {region} | {count}",
-    "info_global": "全球模式（无地理过滤）",
     "info_no_bird_hint": "建议降低检测敏感度或重新拍摄",
     "info_identify_fail": "识别失败",
     "info_no_result": "未能识别",
@@ -1047,7 +1042,13 @@
     "stats_species": "{count} 种: {names}",
     "screen_record_title": "需要屏幕录制权限",
     "win_shortcut_unsupported": "当前环境不支持 Windows 截图快捷键",
-    "query_birdname_btn": "查询鸟名"
+    "query_birdname_btn": "查询鸟名",
+    "geo_tier_cell_strong": "🗺️ 按拍摄地过滤（{count} 种）",
+    "geo_tier_cell_all": "🗺️ 按拍摄地过滤（{count} 种，含少见记录）",
+    "geo_tier_neighborhood": "⚠️ 拍摄地记录较少，已扩大到周边区域（{count} 种）",
+    "geo_tier_country": "⚠️ 已回退到国家级过滤 {country}（{count} 种）",
+    "geo_tier_none": "⚠️ 无地理过滤，按全球鸟种识别",
+    "info_gps_coords": "📍 GPS: {lat}, {lon}"
   },
   "rating_engine": {
     "reject_no_bird": "未检测到鸟类",
@@ -1075,9 +1076,9 @@
     "reason_fmt": "{rating_name}照片（{base_reason}{exposure}{focus}{visibility}{flying}）"
   },
   "rating_v2": {
-    "top_quota": "优选（排序前{percent}%）",
-    "mid_quota": "良好（排序前{percent}%）",
-    "rest_quota": "普通（排序前{percent}%）",
+    "top_quota": "优选（排名{percent}%）",
+    "mid_quota": "良好（排名{percent}%）",
+    "rest_quota": "普通（排名{percent}%）",
     "eye_capped": "良好（眼睛可见度低，封顶2星）",
     "burst_capped": "良好（连拍组3星已满，降为2星）"
   },
@@ -1108,7 +1109,6 @@
     "identify_fail": "❌ 识别失败: {error}",
     "yolo_info": "📍 YOLO检测: {info}",
     "gps_info": "🌍 GPS位置: {info}",
-    "ebird_info": "🗺️  eBird过滤: {region} ({count} 种)",
     "no_bird": "⚠️  未能识别出鸟类",
     "no_bird_hint": "💡 建议：降低检测敏感度或重新拍摄",
     "result_title": "\n🐦 识别结果 (Top-{count}):",

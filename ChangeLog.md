@@ -1,7 +1,69 @@
+# SuperPicky 4.5.0 RC10
+
+**What's new since RC9:**
+
+- **Bird distributions rebuilt from GBIF observations.** Species filtering used
+  AVONET native-range data, which systematically excluded naturalised species —
+  in Sydney the house sparrow, feral pigeon, common starling and common blackbird
+  were permanently masked and could never be identified, no matter how clear the
+  photo. It also covered only 10,573 of the model's 10,964 classes, so 391
+  species were unreachable everywhere on earth. Both datasets (AVONET and the
+  bundled offline eBird lists) are replaced by one built from GBIF CC0/CC-BY
+  occurrence records, covering 10,481 classes across 233 countries.
+- **Filtering no longer collapses in sparse regions.** The old filter took a
+  single candidate set and, when it was too narrow, gave up filtering entirely.
+  An Iceland grid cell held just 54 species, which triggered exactly that — and
+  produced Little Penguin, Blue-footed Booby and Horned Puffin on Faroe/Iceland
+  photos. Candidates are now layered and widened one tier at a time (strong
+  in-cell → all in-cell → 3×3 neighbourhood → country → unfiltered), so a sparse
+  cell degrades smoothly instead of falling off a cliff. On a 433-photo
+  Faroe/Iceland set all four cross-hemisphere errors are gone, while the
+  identification rate *rose* from 63.3% to 65.4% — the fix removes errors, not
+  recognition.
+- **Every country is selectable now.** The country list is generated from the
+  same dataset the filter uses, so the old three-way mismatch is structurally
+  impossible: previously 11 of the 49 listed countries had no data at all
+  (selecting them silently did nothing) while 14 countries with data could not
+  be selected. Iceland and the Faroe Islands, absent before, are among the 233
+  now available. The Settings Center also states plainly that a manually chosen
+  country applies only to photos without GPS.
+- **The Lite build gains geographic filtering.** It never shipped the AVONET
+  database, so its filter silently did nothing while still carrying 1.5 MB of
+  unused data. It now includes the new distribution database.
+- **Smaller install.** Removing AVONET (102 MB) and the offline eBird lists
+  (1.5 MB) in favour of a 35 MB database cuts roughly 68 MB from the full build.
+- **Fixed: GPS was ignored for relative paths.** The metadata reader validated
+  paths against the wrong working directory, so a relative path passed the check
+  and then silently returned nothing. Photos processed through the CLI with a
+  relative folder lost their GPS entirely — and with it all geographic
+  filtering — without any error message.
+
 # SuperPicky 4.5.0 RC9
 
 **What's new since RC8:**
 
+- **Star quotas re-tuned per skill level.** The 3-star share is now 40 % for
+  Beginner, 30 % for Intermediate and 20 % for Master, with the 2-star share
+  fixed at 30 % across all three — so the 1-star remainder grows from 30 % to
+  50 % as the level gets stricter. Custom mode now starts from the Master
+  preset (20 / 30) instead of 20 / 25. Note these are quota *ceilings*: the
+  absolute sharpness floor, the eye-visibility cap and the per-burst cap all
+  trim the actual count, so a batch will usually land below its quota.
+- **Clearer wording for the rating reason.** The per-photo note used a single
+  "top {n}%" phrasing for every star level, which read as a contradiction on
+  1-star photos ("top 84%"). All three now read "rank {n}%" — the number was
+  always a rank percentile, not a top-N share.
+- **Distant birds no longer score inflated sharpness.** Head sharpness uses a
+  gradient *density*, which rises as the bird gets smaller in frame — edges
+  span fewer pixels, so a 60px head could out-score an 800px one on the very
+  same subject. A controlled rescaling experiment measured the artifact at
+  87.4 points per e-fold of head size (raw ∝ size^-0.641); that amount is now
+  subtracted analytically. The correction is downward only and stops at 300px:
+  photos with a head region at or above that size are untouched, so existing
+  sharpness thresholds keep their meaning and normal framing is unaffected.
+  On a distant-seabird set the sharpness/size correlation drops from -0.53 to
+  +0.05. Note that head sharpness values for *small-in-frame* birds are no
+  longer comparable with those recorded by earlier versions.
 - **Star-quota split control (V2).** The single "3-star quota" slider is
   replaced by a three-segment quota bar. Drag its two dividers to set the
   3★ / 2★ / 1★ split directly — the three shares always add up to 100%, with

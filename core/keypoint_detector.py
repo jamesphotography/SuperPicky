@@ -72,6 +72,22 @@ class KeypointDetector:
     VISIBILITY_THRESHOLD = 0.3  # 至少一个关键点可见性需≥0.3才不算"全部不可见"
     RADIUS_MULTIPLIER = 1.2         # 有喙时的半径系数
     NO_BEAK_RADIUS_RATIO = 0.15     # 无喙时用检测框的15%
+    # ---- 锐度尺寸补偿 / sharpness size compensation ----
+    # Tenengrad 是梯度密度 mean(g²),不是总量:同一只鸟拍得越小,边缘跨越的像素
+    # 越少、梯度幅值越高,密度就越高——远拍小鸟的锐度分被系统性虚抬。受控缩放
+    # 实验(40 张 ROI≥600px 的样本缩放到 512~45px,画质无任何真实变化)实测
+    # raw ∝ s^-0.641;log 归一化系数 1000/ln(154016/100)=136.25,故纯几何伪影
+    # 为 0.641×136.25 ≈ 87.4 分/e倍尺寸。此处按此值扣除,只减不加:
+    # ROI ≥ REF 的照片一分不动,故阈值语义对多数照片不变、无需重标。
+    # K=0 即完全关闭,等价于旧公式(单参数回滚)。
+    # 详见 docs/plans/2026-07-24-sharpness-size-compensation.md
+    # Tenengrad is a gradient *density*; smaller ROIs inflate it because edges
+    # span fewer pixels. A controlled rescaling experiment measured
+    # raw ∝ s^-0.641, i.e. 87.4 score-points per e-fold of ROI size. We subtract
+    # exactly that geometric artifact, downward only: ROI >= REF is untouched,
+    # so existing thresholds keep their meaning. K=0 disables the whole thing.
+    SIZE_COMP_K = 87.4      # 分/e倍尺寸 / points per e-fold of size
+    SIZE_COMP_REF = 300.0   # 参考尺寸(px),ROI ≥ 此值不补偿 / no penalty above this
     
     @staticmethod
     def _get_default_model_path() -> str:
@@ -193,13 +209,21 @@ class KeypointDetector:
             visible_eye = None
         
         # 计算头部锐度
-        head_sharpness = 0.0
-        if visible_eye is not None:
-            head_sharpness = self._calculate_head_sharpness(
-                bird_crop, left_eye, right_eye, beak,
-                left_eye_vis, right_eye_vis, beak_visible,
-                box, seg_mask
-            )
+        # V4.8: 无条件计算。此前有 `if visible_eye is not None` 守卫，
+        # 双眼可见度均 <0.3 时直接返回 0.0，与低可见度分支的 LOW_VIS_PENALTY
+        # 逻辑互斥（那段分支因此永不可达）。实测 495 张批次中 23% 的照片
+        # 双眼 <0.3，其中绝大多数鸟喙清晰可见、画面本身锐利，却被 0 锐度
+        # 送进 0★ 判废。现改为总是计算，可见度不足时由内部惩罚系数降分。
+        # V4.8: always compute. The old `if visible_eye is not None` guard made
+        # the LOW_VIS_PENALTY branch unreachable and forced sharpness to 0 for
+        # every photo whose eyes both scored <0.3 — 23% of a real 495-shot
+        # batch, most of them sharp shots with a clearly visible beak. Low
+        # visibility is now handled by the penalty factor, not by zeroing.
+        head_sharpness = self._calculate_head_sharpness(
+            bird_crop, left_eye, right_eye, beak,
+            left_eye_vis, right_eye_vis, beak_vis,
+            box, seg_mask
+        )
         
         # V3.8: 计算双眼中较高的置信度，用于评分封顶逻辑
         best_eye_visibility = max(left_eye_vis, right_eye_vis)
@@ -226,14 +250,30 @@ class KeypointDetector:
         beak: Tuple[float, float],
         left_eye_vis: float,
         right_eye_vis: float,
-        beak_visible: bool,
+        beak_vis: float,
         box: Tuple[int, int, int, int] = None,
         seg_mask: np.ndarray = None
     ) -> float:
         """
-        计算头部区域锐度
-        
-        使用眼睛为圆心，眼喙距离×1.2为半径，与seg掩码取交集
+        计算头部区域锐度。
+
+        以眼睛为圆心、眼喙距离×1.2 为半径画圆，与 seg 掩码取交集后做 Tenengrad。
+
+        参数:
+        bird_crop (np.ndarray): 鸟的裁剪区域 (RGB)
+        left_eye / right_eye / beak (Tuple[float, float]): 归一化关键点坐标
+        left_eye_vis / right_eye_vis / beak_vis (float): 对应可见性 0-1
+            V4.8 起 beak_vis 为 float（此前误声明为 bool 且低可见度分支
+            引用未定义的 beak_vis，该分支一旦可达即 NameError）
+        box (Tuple[int, int, int, int]): 原始检测框 (x, y, w, h)，无喙时定半径用
+        seg_mask (np.ndarray): 分割掩码，与 bird_crop 同尺寸时取交集
+
+        返回:
+        float: 0-1000 的头部锐度；双眼可见度均 <0.3 时结果 ×0.8 作为惩罚
+
+        Compute head-region sharpness. beak_vis is a float since V4.8 — it was
+        declared as a bool while the low-visibility branch referenced an
+        undefined `beak_vis`, which would have raised NameError once reachable.
         """
         h, w = bird_crop.shape[:2]
 
@@ -280,7 +320,7 @@ class KeypointDetector:
         beak_px = (int(beak[0] * w), int(beak[1] * h))
         
         # 计算半径
-        if beak_visible:
+        if beak_vis >= self.VISIBILITY_THRESHOLD:
             radius = int(self._distance(eye_px, beak_px) * self.RADIUS_MULTIPLIER)
         elif box is not None:
             # 无喙时用检测框的15%
@@ -335,6 +375,11 @@ class KeypointDetector:
         if cv2.countNonZero(roi_mask) == 0:
             return 0.0
 
+        # ROI 长边,用于尺寸补偿(见 _size_compensation)。不改动图像本身。
+        # ROI long side, used by the size compensation below; the image itself
+        # is never resampled.
+        roi_side = max(roi.shape[:2])
+
         if len(roi.shape) == 3:
             gray = cv2.cvtColor(roi, cv2.COLOR_RGB2GRAY)
         else:
@@ -354,13 +399,44 @@ class KeypointDetector:
         if raw_sharpness <= MIN_VAL:
             return 0.0
         if raw_sharpness >= MAX_VAL:
-            return 1000.0
-            
-        log_val = math.log(raw_sharpness) - math.log(MIN_VAL)
-        log_max = math.log(MAX_VAL) - math.log(MIN_VAL)
-        
-        return (log_val / log_max) * 1000.0
-    
+            score = 1000.0
+        else:
+            log_val = math.log(raw_sharpness) - math.log(MIN_VAL)
+            log_max = math.log(MAX_VAL) - math.log(MIN_VAL)
+            score = (log_val / log_max) * 1000.0
+
+        # 扣除小 ROI 的几何虚高。放在这里(log 归一化之后、返回之前)是因为
+        # 伪影发生在像素层面、与 ISO 无关,必须先扣伪影再由下游乘 ISO 系数。
+        # Subtract the small-ROI geometric inflation here — after log
+        # normalisation and before the caller applies its ISO factor.
+        return self._size_compensation(score, roi_side)
+
+    @classmethod
+    def _size_compensation(cls, score: float, roi_side: int) -> float:
+        """
+        按头部 ROI 尺寸扣除 Tenengrad 的几何虚高。
+
+        Tenengrad 是梯度密度,ROI 越小密度越高(实测 raw ∝ s^-0.641),
+        导致远拍小鸟锐度虚高。这里按对数曲线扣回,只减不加:
+        ROI ≥ SIZE_COMP_REF 的照片原样返回。
+
+        参数:
+        score (float): log 归一化后的锐度分 (0-1000)
+        roi_side (int): 头部 ROI 的长边像素数
+
+        返回:
+        float: 补偿后的锐度分,下限 0
+
+        Remove the size-driven inflation of the Tenengrad density. Downward
+        only: an ROI at or above SIZE_COMP_REF is returned unchanged. Result
+        is clamped at 0 because very small ROIs can overshoot.
+        """
+        if cls.SIZE_COMP_K <= 0 or roi_side <= 0 or roi_side >= cls.SIZE_COMP_REF:
+            return score
+        penalty = cls.SIZE_COMP_K * math.log(cls.SIZE_COMP_REF / roi_side)
+        return max(0.0, score - penalty)
+
+
     @staticmethod
     def _distance(p1: Tuple[float, float], p2: Tuple[float, float]) -> float:
         """计算两点距离"""
