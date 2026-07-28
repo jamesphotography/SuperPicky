@@ -56,24 +56,67 @@ def _get_birdid_data_path(relative_path: str) -> str:
 
 def load_regions_data() -> dict[str, Any]:
     """
-    从 `birdid/data/ebird_regions.json` 加载国家/地区数据，失败时返回空结构。
+    从 `birdid/data/geo_distribution.db` 的 `country_species` 表生成国家列表。
 
-    Load country/region data from `birdid/data/ebird_regions.json`;
-    returns an empty structure on any failure.
+    旧实现读 `ebird_regions.json`，该文件与离线数据、`REGION_BOUNDS` 三方错位：
+    列出的 49 国里有 11 国无任何数据（选中即静默落空），另有 14 国有数据却选不到。
+    改为与网格数据同源后，国家列表恒等于实际可用的过滤数据，错位不再可能。
+
+    Build the country list from the `country_species` table of
+    geo_distribution.db. The previous implementation read `ebird_regions.json`,
+    which was out of sync with both the offline data and REGION_BOUNDS: 11 of its
+    49 countries had no data at all (selecting them silently did nothing), while
+    14 countries with data could not be selected. Sourcing it from the same
+    dataset as the grid makes that mismatch structurally impossible.
 
     返回 / Returns:
-        dict: 含 `"countries"` 列表的字典；失败时返回 `{"countries": []}` /
-              Dict with a `"countries"` list; returns `{"countries": []}` on failure.
+        dict: 含 `"countries"` 列表的字典，每项有 `code` / `name` / `name_cn` /
+              `species_count` 等字段；失败时返回 `{"countries": []}` /
+              Dict with a `"countries"` list; `{"countries": []}` on failure.
 
     异常 / Exceptions:
         不抛出异常；所有错误以 print 记录后返回空结构。
         Does not raise; all errors are printed and an empty structure is returned.
     """
-    regions_path = _get_birdid_data_path("ebird_regions.json")
-    if os.path.exists(regions_path):
-        try:
-            with open(regions_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as exc:  # noqa: BLE001
-            print(f"[region_data] 加载区域数据失败 / Failed to load region data: {exc}")
-    return {"countries": []}
+    import sqlite3
+
+    from birdid.geo_filter import default_db_path
+    from tools.country_names import country_display_names
+
+    db_path = default_db_path()
+    if not os.path.exists(db_path):
+        print(f"[region_data] 地理分布库不存在 / geo DB missing: {db_path}")
+        return {"countries": []}
+
+    try:
+        conn = sqlite3.connect(db_path)
+        rows = conn.execute(
+            "SELECT country, COUNT(*) FROM country_species "
+            "GROUP BY country HAVING COUNT(*) > 0 ORDER BY country"
+        ).fetchall()
+        conn.close()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[region_data] 读取国家列表失败 / Failed to read countries: {exc}")
+        return {"countries": []}
+
+    countries: list[dict[str, Any]] = []
+    for code, count in rows:
+        english, chinese = country_display_names(str(code))
+        countries.append(
+            {
+                "code": str(code),
+                "name": english,
+                "name_cn": chinese,
+                "is_continent": False,
+                # 州/省级数据本设计不提供：GBIF 网格已按 GPS 精确到 1°，
+                # 手选地区只在无 GPS 时作国家级回退用。
+                # No subnational data by design: the GBIF grid already resolves
+                # to 1 degree by GPS, and manual selection only serves as a
+                # country-level fallback for photos without GPS.
+                "has_regions": False,
+                "regions_count": 0,
+                "regions": [],
+                "species_count": int(count),
+            }
+        )
+    return {"countries": countries}

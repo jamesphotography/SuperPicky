@@ -369,7 +369,7 @@ class WorkerThread(threading.Thread):
         # 读取 BirdID 设置
         # V4.2: 从 ui_settings 读取识鸟开关状态（索引 8），而不是从文件
         birdid_auto_identify = self.ui_settings[8] if len(self.ui_settings) > 8 else False
-        birdid_use_ebird = True
+        birdid_use_geo_filter = True
         birdid_country_code = None
         birdid_region_code = None
 
@@ -383,7 +383,7 @@ class WorkerThread(threading.Thread):
         # (get_advanced_config) to avoid relying on the deprecated birdid_dock_settings.json
         # (whose writer _save_settings was removed in Task 8).
         _adv_birdid = get_advanced_config()
-        birdid_use_ebird = _adv_birdid.birdid_use_ebird
+        birdid_use_geo_filter = _adv_birdid.birdid_use_geo_filter
         birdid_country_code = _adv_birdid.birdid_country_code
         birdid_region_code = _adv_birdid.birdid_region_code
 
@@ -398,7 +398,7 @@ class WorkerThread(threading.Thread):
             detect_burst=self.ui_settings[7] if len(self.ui_settings) > 7 else True,  # V4.0: 默认开启
             # BirdID 设置
             auto_identify=birdid_auto_identify,
-            birdid_use_ebird=birdid_use_ebird,
+            birdid_use_geo_filter=birdid_use_geo_filter,
             birdid_country_code=birdid_country_code or "",
             birdid_region_code=birdid_region_code or "",
             birdid_confidence_threshold=float(birdid_confidence_threshold),  # V4.2

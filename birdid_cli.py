@@ -46,7 +46,7 @@ def identify_single_birdid2024(args, image_path: str) -> dict:
         image_path,
         use_yolo=args.yolo,
         use_gps=args.gps,
-        use_ebird=args.ebird,
+        use_geo_filter=args.ebird,
         country_code=args.country,
         region_code=args.region,
         top_k=args.top
@@ -151,15 +151,9 @@ def display_result(result: dict, verbose: bool = True):
             gps = result['gps_info']
             print(t("cli.gps_info", info=gps['info']))
 
-        if result.get('ebird_info'):
-            ebird = result['ebird_info']
-            if ebird.get('enabled'):
-                print(t("cli.ebird_info", region=ebird.get('region_code', 'N/A'), count=ebird.get('species_count', 0)))
-            # 回退提示（优先国家级，其次全局）
-            if ebird.get('country_fallback'):
-                print(f"⚠️  {t('server.country_fallback_warning', country=ebird.get('country_code', '?'))}")
-            elif ebird.get('gps_fallback'):
-                print(f"⚠️  {t('server.gps_fallback_warning', count=ebird.get('species_count', 0))}")
+        if result.get('geo_info'):
+            from birdid.geo_filter import describe_tier
+            print(describe_tier(result['geo_info']))
     
     results = result.get('results', [])
     if not results:
@@ -425,7 +419,7 @@ def cmd_organize(args):
                 image_path,
                 use_yolo=True,
                 use_gps=True,
-                use_ebird=args.ebird,
+                use_geo_filter=args.ebird,
                 country_code=args.country,
                 region_code=args.region,
                 top_k=1

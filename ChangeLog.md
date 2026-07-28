@@ -2,6 +2,28 @@
 
 **What's new since RC8:**
 
+- **Star quotas re-tuned per skill level.** The 3-star share is now 40 % for
+  Beginner, 30 % for Intermediate and 20 % for Master, with the 2-star share
+  fixed at 30 % across all three — so the 1-star remainder grows from 30 % to
+  50 % as the level gets stricter. Custom mode now starts from the Master
+  preset (20 / 30) instead of 20 / 25. Note these are quota *ceilings*: the
+  absolute sharpness floor, the eye-visibility cap and the per-burst cap all
+  trim the actual count, so a batch will usually land below its quota.
+- **Clearer wording for the rating reason.** The per-photo note used a single
+  "top {n}%" phrasing for every star level, which read as a contradiction on
+  1-star photos ("top 84%"). All three now read "rank {n}%" — the number was
+  always a rank percentile, not a top-N share.
+- **Distant birds no longer score inflated sharpness.** Head sharpness uses a
+  gradient *density*, which rises as the bird gets smaller in frame — edges
+  span fewer pixels, so a 60px head could out-score an 800px one on the very
+  same subject. A controlled rescaling experiment measured the artifact at
+  87.4 points per e-fold of head size (raw ∝ size^-0.641); that amount is now
+  subtracted analytically. The correction is downward only and stops at 300px:
+  photos with a head region at or above that size are untouched, so existing
+  sharpness thresholds keep their meaning and normal framing is unaffected.
+  On a distant-seabird set the sharpness/size correlation drops from -0.53 to
+  +0.05. Note that head sharpness values for *small-in-frame* birds are no
+  longer comparable with those recorded by earlier versions.
 - **Star-quota split control (V2).** The single "3-star quota" slider is
   replaced by a three-segment quota bar. Drag its two dividers to set the
   3★ / 2★ / 1★ split directly — the three shares always add up to 100%, with

@@ -16,6 +16,9 @@ __pycache__/
 .Python
 *.egg-info/
 build_dist*/*
+# 任意前缀的 PyInstaller 工作目录（build_smoke 等冒烟测试产物曾因缺此规则
+# 被误提交 130MB 二进制到历史）/ PyInstaller work dirs with any suffix
+build_*/
 dist*/*
 !dist/*.dmg
 build/

@@ -72,8 +72,8 @@ def resolve_processing_settings(args, config) -> ProcessingSettings:
     )
 
     # —— BirdID ——
-    use_ebird = _arg(args, "ebird")
-    use_ebird = True if use_ebird is None else use_ebird
+    use_geo_filter = _arg(args, "ebird")
+    use_geo_filter = True if use_geo_filter is None else use_geo_filter
 
     birdid_threshold = _arg(args, "birdid_threshold")
     birdid_threshold = (
@@ -93,7 +93,7 @@ def resolve_processing_settings(args, config) -> ProcessingSettings:
         detect_burst=bool(burst),
         auto_identify=bool(_arg(args, "auto_identify") or False),
         save_crop=bool(_arg(args, "save_crop") or False),
-        birdid_use_ebird=bool(use_ebird),
+        birdid_use_geo_filter=bool(use_geo_filter),
         birdid_country_code=_arg(args, "birdid_country") or "",
         birdid_region_code=_arg(args, "birdid_region") or "",
         birdid_confidence_threshold=float(birdid_threshold),

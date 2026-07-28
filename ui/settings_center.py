@@ -699,7 +699,7 @@ class SettingsCenter(QDialog):
         self._bid_source_group.addButton(self._bid_ebird)
         self._bid_source_group.addButton(self._bid_gbif)
 
-        if cfg.birdid_use_ebird:
+        if cfg.birdid_use_geo_filter:
             self._bid_ebird.setChecked(True)
         else:
             self._bid_gbif.setChecked(True)
@@ -790,6 +790,23 @@ class SettingsCenter(QDialog):
         country_row.addWidget(self._bid_country, 1)
         lay.addLayout(country_row)
 
+        # 生效条件提示：有 GPS 的照片按拍摄位置的 1°网格过滤，手选国家不参与；
+        # 这里明说，避免用户以为选了没生效（旧版本无任何提示，是常见困惑点）。
+        # Scope hint: photos with GPS are filtered by their location's 1-degree
+        # cell and the manual country is not used. Saying so explicitly avoids
+        # the common confusion of "I selected a country but nothing changed".
+        hint_row = QHBoxLayout()
+        hint_spacer = QLabel("")
+        hint_spacer.setFixedWidth(160)
+        hint_label = QLabel(self.i18n.t("settings.birdid_region_hint"))
+        hint_label.setStyleSheet(
+            f"color:{COLORS['text_secondary']};font-size:11px;"
+        )
+        hint_label.setWordWrap(True)
+        hint_row.addWidget(hint_spacer)
+        hint_row.addWidget(hint_label, 1)
+        lay.addLayout(hint_row)
+
         # 地区下拉 / Region dropdown
         region_row = QHBoxLayout()
         region_label = QLabel(self.i18n.t("settings.birdid_region_label"))
@@ -805,6 +822,13 @@ class SettingsCenter(QDialog):
         region_row.addWidget(region_label)
         region_row.addWidget(self._bid_region, 1)
         lay.addLayout(region_row)
+        # 地区行整体受 _populate_bid_regions 控制：当前数据源(GBIF 网格)不提供
+        # 州/省级分区，该行会被隐藏；保留控件是为了兼容旧配置里存过的 region_code。
+        # The whole row is toggled by _populate_bid_regions: the current data
+        # source (GBIF grid) has no sub-national divisions, so it stays hidden.
+        # The widgets remain for compatibility with region_code values stored by
+        # older versions.
+        self._bid_region_label = region_label
 
         # 国家切换时动态填充地区 / Dynamically populate regions on country change
         self._bid_country.currentTextChanged.connect(self._on_bid_country_changed)
@@ -904,6 +928,17 @@ class SettingsCenter(QDialog):
                                 )
                             self._bid_region.addItem(region_name, rc)
                     break
+
+        # 无州级数据时隐藏整行，避免展示一个永远只有「整个国家」的空下拉。
+        # GBIF 网格已按 GPS 精确到 1°，手选地区只在无 GPS 时作国家级回退。
+        # Hide the whole row when there is no sub-national data, rather than
+        # showing a dropdown whose only entry is "Entire country". The GBIF grid
+        # already resolves to 1 degree by GPS; manual selection is only a
+        # country-level fallback for photos without GPS.
+        has_subnational = self._bid_region.count() > 1
+        self._bid_region.setVisible(has_subnational)
+        if hasattr(self, "_bid_region_label"):
+            self._bid_region_label.setVisible(has_subnational)
 
     def _restore_birdid_country(self, cfg) -> None:
         """
@@ -1070,7 +1105,7 @@ class SettingsCenter(QDialog):
         cfg.save()
 
         # 数据源 / Data source
-        use_ebird: bool = self._bid_ebird.isChecked()
+        use_geo_filter: bool = self._bid_ebird.isChecked()
 
         # 国家 / Country
         country_display = self._bid_country.currentText()
@@ -1096,7 +1131,7 @@ class SettingsCenter(QDialog):
         region_code: str | None = self._bid_region.currentData()
 
         cfg.set_birdid_region(
-            use_ebird=use_ebird,
+            use_geo_filter=use_geo_filter,
             country_code=country_code,
             selected_country=country_display,
             region_code=region_code,
@@ -1156,6 +1191,22 @@ class SettingsCenter(QDialog):
         from advanced_config import get_advanced_config
 
         cfg = get_advanced_config()
+        # V4.8: 切到 V1 前先告知代价。V1 把同一个阈值同时当判废线和达标线
+        # (rating_engine 的 min_nima 与 nima_threshold 同源)，1★/2★ 恒为空集，
+        # 只会产生 0★/3★；实测 433 张批次在美学阈值 7.0 下 99.7% 被判 0★。
+        # 用户取消则保持 V2，复选框回滚。
+        # V4.8: warn before switching to V1. It feeds one value into both the
+        # reject line and the pass line, so 1★/2★ are always empty — only 0★/3★
+        # are reachable. On a real 433-shot batch an aesthetics threshold of 7.0
+        # rejected 99.7% of the photos. Cancelling keeps V2 and reverts the box.
+        if algo_key == "v1" and not self._confirm_switch_to_v1(cfg):
+            checkbox = getattr(self, "_algo_legacy_checkbox", None)
+            if checkbox is not None:
+                checkbox.blockSignals(True)
+                checkbox.setChecked(False)
+                checkbox.blockSignals(False)
+            return
+
         cfg.set_rating_algorithm(algo_key)
         cfg.save()
         self._rating_v2 = algo_key == "v2"
@@ -1165,6 +1216,59 @@ class SettingsCenter(QDialog):
             checkbox.setChecked(algo_key == "v1")
             checkbox.blockSignals(False)
         self._apply_algo_visibility()
+
+    # V1 美学阈值高于此值时追加「大量判废」的额外警告 / extra warning above this
+    _V1_NIMA_WARN_LEVEL = 5.5
+
+    def _confirm_switch_to_v1(self, cfg) -> bool:
+        """
+        切换到 V1 前的确认对话框。
+
+        说明 V1 只产生 0★/3★（1★/2★ 恒为空集），并回显当前两个阈值；
+        美学阈值偏高时追加一段「会导致大量判废」的警告。
+
+        参数:
+        cfg: advanced_config 单例，用于读取当前锐度/美学阈值
+
+        返回:
+        bool: True=用户确认切换到 V1；False=取消，维持 V2
+
+        Confirmation dialog shown before switching to V1. Explains that V1 can
+        only produce 0★/3★, echoes the current thresholds, and appends an extra
+        warning when the aesthetics threshold is high enough to reject most
+        photos. Returns True when the user confirms the switch.
+        """
+        from PySide6.QtWidgets import QMessageBox
+
+        from core.skill_presets import get_skill_level_thresholds
+
+        # 窗口不可见 = 没有用户在看（测试、程序化 setChecked、CLI 构造），
+        # 此时弹模态框会永久阻塞——没人可点。这种场景直接放行。
+        # Not visible = nobody is looking (tests, programmatic setChecked,
+        # headless construction). A modal dialog would block forever with no
+        # one to dismiss it, so skip the prompt and allow the switch.
+        if not self.isVisible():
+            return True
+
+        sharp, nima = get_skill_level_thresholds(cfg.skill_level, cfg)
+        advice = (
+            self.i18n.t("settings.culling_algo_v1_warn_high", nima=nima)
+            if float(nima) > self._V1_NIMA_WARN_LEVEL else ""
+        )
+
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle(self.i18n.t("settings.culling_algo_v1_warn_title"))
+        box.setText(self.i18n.t(
+            "settings.culling_algo_v1_warn_body",
+            nima=nima, sharp=int(sharp), advice=advice))
+        ok = box.addButton(self.i18n.t("settings.culling_algo_v1_warn_ok"),
+                           QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(self.i18n.t("settings.culling_algo_v1_warn_cancel"),
+                      QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(box.buttons()[-1])   # 默认保持 V2 / default to keeping V2
+        box.exec()
+        return box.clickedButton() is ok
 
     def _on_algo_legacy_toggled(self, _state: int) -> None:
         """
@@ -2256,6 +2360,41 @@ class SettingsCenter(QDialog):
 
     # ── 关于页 / About page ───────────────────────────────────────────────────
 
+    def _geo_attribution_text(self) -> str:
+        """
+        读取地理分布库的 meta 生成署名文本。
+
+        Build the geo-distribution attribution line from the database meta table.
+
+        返回 / Returns:
+            str: 含快照日期与许可的署名；库不可用时返回空串（调用方据此跳过该行）/
+                Attribution with snapshot date and license; empty string when the
+                database is unavailable, letting the caller skip the row.
+
+        异常 / Exceptions:
+            不抛出异常；任何读取失败都返回空串 / Never raises; returns "" on failure.
+        """
+        try:
+            import sqlite3
+
+            from birdid.geo_filter import default_db_path
+
+            path = default_db_path()
+            if not os.path.exists(path):
+                return ""
+            conn = sqlite3.connect(path)
+            try:
+                meta = dict(conn.execute("SELECT key, value FROM meta").fetchall())
+            finally:
+                conn.close()
+        except Exception:  # noqa: BLE001
+            return ""
+
+        snapshot = meta.get("snapshot_date", "")
+        if not snapshot:
+            return ""
+        return self.i18n.t("settings.geo_attribution", snapshot=snapshot)
+
     def _build_about_page(self) -> QWidget:
         """
         构建关于页，展示应用名称、版本号、致谢和许可证信息（只读，无保存逻辑）。
@@ -2412,6 +2551,21 @@ class SettingsCenter(QDialog):
         content_label.setWordWrap(True)
         content_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         lay.addWidget(content_label, 1)
+
+        # 地理分布数据署名：快照日期从 geo_distribution.db 的 meta 表动态读取，
+        # 因此不能并入静态的 about.content 文案。CC-BY 要求署名，见 spec §7。
+        # Geo-distribution attribution: the snapshot date is read dynamically from
+        # geo_distribution.db's meta table, so it cannot live in the static
+        # about.content string. CC-BY requires attribution — see spec section 7.
+        geo_attr = self._geo_attribution_text()
+        if geo_attr:
+            geo_label = QLabel(geo_attr)
+            geo_label.setStyleSheet(
+                f"color:{COLORS['text_secondary']};font-size:13px;line-height:1.6;"
+            )
+            geo_label.setWordWrap(True)
+            geo_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+            lay.addWidget(geo_label)
 
         lay.addStretch(1)
 

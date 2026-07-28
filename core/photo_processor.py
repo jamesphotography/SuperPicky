@@ -63,9 +63,9 @@ class ProcessingSettings:
     detect_burst: bool = True        # V4.0: 连拍检测开关（默认开启）
     # BirdID 自动识别设置
     auto_identify: bool = False       # 选片时自动识别鸟种（默认关闭）
-    birdid_use_ebird: bool = True     # 使用 eBird 过滤
-    birdid_country_code: str = None   # eBird 国家代码
-    birdid_region_code: str = None    # eBird 区域代码
+    birdid_use_geo_filter: bool = True  # 启用地理过滤（GPS 网格 + 国家级候选层）
+    birdid_country_code: str = None   # 手选国家代码（无 GPS 时用）
+    birdid_region_code: str = None    # 手选地区代码（无 GPS 时用）
     birdid_confidence_threshold: float = 50.0  # 置信度阈值（默认 50%，可在「高级设置 → 自动识鸟」调整 50-95%）
     # 鸟种英文名显示格式 (AviList mapping)
     name_format: str = "default"       # "default" | "avilist" | "clements" | "birdlife" | "scientific"
@@ -1231,7 +1231,7 @@ class PhotoProcessor:
                     image_path,
                     True,   # use_yolo
                     True,   # use_gps
-                    self.settings.birdid_use_ebird,
+                    self.settings.birdid_use_geo_filter,
                     self.settings.birdid_country_code,
                     self.settings.birdid_region_code,
                     1,      # top_k
@@ -2197,9 +2197,18 @@ class PhotoProcessor:
                     add_photo_stage('keypoint', (time.time() - keypoint_start) * 1000)
             
                 # Phase 3: 根据关键点可见性决定是否计算TOPIQ
-                # V4.0: 眼睛可见度 < 30% 时也跳过 TOPIQ（节省时间）
+                # V4.8: 移除 best_eye_visibility >= 0.3 这道守卫。它与锐度归零
+                # 是同一个误删链路的两环——双眼可见度低的照片连美学分都不算，
+                # topiq=None 在 compute_q 里按 0 参与百分位(rating_quota.py),
+                # Q 分白丢 0.35 权重，即便锐度修好也仍排在最末。实测新增计算
+                # 约占批次 23%，单张 TOPIQ 42ms(MPS)，1000 张批次多耗约 10s。
+                # V4.8: drop the best_eye_visibility >= 0.3 guard. It was the
+                # second half of the same false-reject chain: photos with low
+                # eye visibility got no aesthetics score at all, and a None
+                # topiq counts as 0 in the Q percentile, so they ranked last
+                # even after the sharpness fix. Costs ~10s per 1000-shot batch.
                 topiq = None
-                if detected and not all_keypoints_hidden and best_eye_visibility >= 0.3:
+                if detected and not all_keypoints_hidden:
                     # 双眼可见，需要计算NIMA以进行星级判定
                     topiq_start = time.time()
                     try:

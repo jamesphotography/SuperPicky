@@ -172,10 +172,18 @@ class TestPendingRatingLog(unittest.TestCase):
 
 class TestSkillQuota(unittest.TestCase):
     def test_mapping(self):
-        self.assertEqual(get_quota3_for_skill("beginner"), 25.0)
-        self.assertEqual(get_quota3_for_skill("intermediate"), 20.0)
-        self.assertEqual(get_quota3_for_skill("master"), 10.0)
+        # 2026-07-24 重定手感：新手 40 / 初级 30 / 大师 20
+        self.assertEqual(get_quota3_for_skill("beginner"), 40.0)
+        self.assertEqual(get_quota3_for_skill("intermediate"), 30.0)
+        self.assertEqual(get_quota3_for_skill("master"), 20.0)
         self.assertEqual(get_quota3_for_skill("unknown"), DEFAULT_QUOTA3)
+
+    def test_quota3_monotonic_by_skill(self):
+        """档位越高要求越严：3★ 配额必须严格递减，别再手滑调反。"""
+        self.assertGreater(get_quota3_for_skill("beginner"),
+                           get_quota3_for_skill("intermediate"))
+        self.assertGreater(get_quota3_for_skill("intermediate"),
+                           get_quota3_for_skill("master"))
 
     def test_custom_reads_config(self):
         class Cfg:
@@ -186,10 +194,19 @@ class TestSkillQuota(unittest.TestCase):
         self.assertEqual(set(SKILL_QUOTA3), {"beginner", "intermediate", "master"})
 
     def test_quota2_mapping(self):
+        # 2026-07-24：2★ 三档统一 30%，差异只体现在 3★ 与 1★ 余量上
         self.assertEqual(get_quota2_for_skill("beginner"), 30.0)
-        self.assertEqual(get_quota2_for_skill("intermediate"), 25.0)
-        self.assertEqual(get_quota2_for_skill("master"), 20.0)
+        self.assertEqual(get_quota2_for_skill("intermediate"), 30.0)
+        self.assertEqual(get_quota2_for_skill("master"), 30.0)
         self.assertEqual(get_quota2_for_skill("unknown"), DEFAULT_QUOTA2)
+
+    def test_quota_sums_leave_room_for_one_star(self):
+        """3★+2★ 必须 ≤95，给 1★ 留余量（与 QuotaBar 的段约束一致）。"""
+        for lvl, one_star in (("beginner", 30), ("intermediate", 40), ("master", 50)):
+            q3 = get_quota3_for_skill(lvl)
+            q2 = get_quota2_for_skill(lvl)
+            self.assertLessEqual(q3 + q2, 95.0, f"{lvl} 配额之和超限")
+            self.assertEqual(100 - q3 - q2, one_star, f"{lvl} 的 1★ 余量不符")
 
     def test_quota2_custom_reads_config(self):
         class Cfg:
@@ -199,9 +216,16 @@ class TestSkillQuota(unittest.TestCase):
     def test_quota2_presets_complete(self):
         self.assertEqual(set(SKILL_QUOTA2), {"beginner", "intermediate", "master"})
 
-    def test_intermediate_matches_legacy_default(self):
-        """进阶档 2★ 须等于旧硬编码 DEFAULT_QUOTA2,保证升级前后行为不变。
-        Intermediate 2★ must equal the legacy hardcoded default (no behavior drift)."""
+    def test_default_matches_recommended_level(self):
+        """
+        DEFAULT_QUOTA* 是未知档位的 fallback,须始终等于推荐档 intermediate,
+        否则 fallback 会给出与「推荐」不一致的手感。
+
+        (原名 test_intermediate_matches_legacy_default,锁的是「与 V2 上线时
+        的硬编码默认一致」；2026-07-24 已按用户要求主动重定三档手感,该兼容
+        约束不再适用,改为锁定 fallback 与推荐档同步。)
+        """
+        self.assertEqual(get_quota3_for_skill("intermediate"), DEFAULT_QUOTA3)
         self.assertEqual(get_quota2_for_skill("intermediate"), DEFAULT_QUOTA2)
 
 

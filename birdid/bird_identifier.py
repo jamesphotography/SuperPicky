@@ -20,6 +20,7 @@ import os
 import sys
 from typing import Any, Optional, List, Dict, Tuple, Set, cast
 from tools.i18n import t as _t
+from birdid.geo_filter import TIER_NONE, get_geo_filter
 from config import (
     get_best_device,
     get_lazy_registry,
@@ -313,31 +314,6 @@ def get_yolo_detector():
             else None
         ),
     )
-
-
-def get_species_filter():
-    registry = get_lazy_registry()
-
-    def _factory():
-        try:
-            from birdid.avonet_filter import AvonetFilter
-
-            filt = AvonetFilter()
-            if filt.is_available():
-                return filt
-            print("[BirdID] AVONET 地理过滤库不可用，GPS/地区过滤将被跳过 / AVONET geo-filter unavailable, GPS/region filtering will be skipped")
-        except Exception as e:
-            # V4.4: 同 get_database_manager()——以前完全静默，调用方用
-            # `if species_filter:` 跳过过滤，用户看不到"地理过滤没生效"的原因。
-            # registry 是进程级单例缓存，这条日志同样只会打印一次。
-            # V4.4: Same rationale as get_database_manager() — this used to be
-            # fully silent, and callers guard with `if species_filter:` and skip
-            # filtering with no visible cause. The registry caches the result for
-            # the process lifetime, so this also fires at most once.
-            print(f"[BirdID] 地理过滤器初始化失败 / species filter init failed: {e}")
-        return None
-
-    return registry.get_or_create("birdid.avonet_filter", _factory)
 
 
 class YOLOBirdDetector:
@@ -1024,11 +1000,74 @@ def _read_focus_point_for_path(
     return None
 
 
+def _identify_with_tiers(
+    image,
+    top_k: int,
+    lat: Optional[float],
+    lon: Optional[float],
+    country_code: Optional[str],
+    is_yolo_cropped: bool,
+    name_format: Optional[str],
+    photo_country_code: Optional[str],
+) -> Tuple[List[Dict], str, Optional[int]]:
+    """
+    遍历地理候选层，命中即停 / Walk the geo candidate tiers, stopping at the first hit.
+
+    旧实现一次性取候选集，过窄时直接崩到无过滤（冰岛网格仅 54 类即触发该路径，
+    产出小企鹅、蓝脚鲣鸟等跨半球错误）。改为逐层放宽后，稀疏网格会平滑降到
+    邻域或国家级，不再出现「候选集塌陷 → 完全放弃过滤」。
+
+    The old implementation took a single candidate set and collapsed straight to
+    unfiltered when it was too narrow (Iceland's 54-class cell triggered exactly
+    that, yielding cross-hemisphere errors). Widening tier by tier lets sparse
+    cells degrade smoothly to the neighbourhood or country level.
+
+    参数 / Parameters:
+        image: 待识别图像 / Image to identify.
+        top_k (int): 返回结果数 / Number of results.
+        lat (Optional[float]): 纬度 / Latitude.
+        lon (Optional[float]): 经度 / Longitude.
+        country_code (Optional[str]): 国家/地区代码 / Country or region code.
+        is_yolo_cropped (bool): 是否已由 YOLO 裁剪 / Whether YOLO already cropped.
+        name_format (Optional[str]): 鸟名格式 / Bird name format.
+        photo_country_code (Optional[str]): 拍摄国家，供 GBIF 罕见度使用 /
+            Shooting country, used for GBIF rarity.
+
+    返回 / Returns:
+        tuple: (结果列表, 命中的层标签, 该层候选数或 None) /
+            (results, tier label, candidate count or None).
+    """
+    geo = get_geo_filter()
+    if geo is None:
+        results = predict_bird(
+            image,
+            top_k=top_k,
+            species_class_ids=None,
+            is_yolo_cropped=is_yolo_cropped,
+            name_format=name_format,
+            photo_country_code=photo_country_code,
+        )
+        return results, TIER_NONE, None
+
+    for candidates, tier in geo.iter_candidates(lat, lon, country_code):
+        results = predict_bird(
+            image,
+            top_k=top_k,
+            species_class_ids=candidates,
+            is_yolo_cropped=is_yolo_cropped,
+            name_format=name_format,
+            photo_country_code=photo_country_code,
+        )
+        if results:
+            return results, tier, (len(candidates) if candidates else None)
+    return [], TIER_NONE, None
+
+
 def identify_bird(
     image_path: str,
     use_yolo: bool = True,
     use_gps: bool = True,
-    use_ebird: bool = True,
+    use_geo_filter: bool = True,
     country_code: Optional[str] = None,
     region_code: Optional[str] = None,
     top_k: int = 5,
@@ -1042,7 +1081,7 @@ def identify_bird(
         "results": [],
         "yolo_info": None,
         "gps_info": None,
-        "ebird_info": None,
+        "geo_info": None,
         "error": None,
     }
 
@@ -1080,9 +1119,7 @@ def identify_bird(
                         result["yolo_info"] = {"bird_count": 0}
                         return result
 
-        species_class_ids = None
         lat = lon = None
-        species_filter = None
         photo_country_code: Optional[str] = None
 
         # V4.2.7: 提前提取 GPS（无论是否启用 ebird 过滤），用于反查拍摄国家
@@ -1107,100 +1144,45 @@ def identify_bird(
             except Exception:
                 pass
 
-        if use_ebird:
-            try:
-                species_filter = get_species_filter()
-                if species_filter:
-                    if use_gps and _gps_coords_present(lat, lon):
-                        species_class_ids = species_filter.get_species_by_gps(lat, lon)
-
-                    # V4.4: GPS 命中的网格若无物种记录，get_species_by_gps 返回空
-                    # set() 而非 None；用 `is None` 判断会漏掉这种情况，导致该次
-                    # 识别悄悄退化为无过滤（不再触发下面的国家/地区回退）。改成真值
-                    # 判断，让"网格为空"与"从未查询"都能进入回退分支。
-                    # V4.4: get_species_by_gps returns an empty set() (not None)
-                    # when the GPS grid cell has no species records. An `is None`
-                    # check misses that case and silently disables filtering
-                    # instead of falling back to region/country. Use a truthiness
-                    # check so both "empty grid" and "never queried" fall through.
-                    if not species_class_ids and (region_code or country_code):
-                        effective_region = region_code or country_code
-                        try:
-                            ebird_ids, actual_region = (
-                                species_filter.get_species_by_region_ebird(
-                                    effective_region
-                                )
-                            )
-                            if ebird_ids:
-                                species_class_ids = ebird_ids
-                        except Exception as _e:
-                            pass
-                        if not species_class_ids:
-                            species_class_ids = species_filter.get_species_by_region(
-                                effective_region
-                            )
-
-                    if species_class_ids:
-                        result["ebird_info"] = {
-                            "enabled": True,
-                            "species_count": len(species_class_ids),
-                            "data_source": "avonet.db (offline)",
-                            "region_code": (
-                                region_code or country_code
-                                if not result.get("gps_info")
-                                else None
-                            ),
-                        }
-
-            except Exception as e:
-                pass
-
-        results = predict_bird(
-            image,
-            top_k=top_k,
-            species_class_ids=species_class_ids,
-            is_yolo_cropped=is_yolo_cropped,
-            name_format=name_format,
-            photo_country_code=photo_country_code,
-        )
-
-        if not results and species_class_ids:
-            country_cls_ids = None
-            country_cc = None
-            if _gps_coords_present(lat, lon) and species_filter is not None:
-                try:
-                    country_cls_ids, country_cc = (
-                        species_filter.get_species_by_country_ebird(lat, lon)
-                    )
-                except Exception as _e:
-                    pass
-
-            if country_cls_ids:
-                results = predict_bird(
-                    image,
-                    top_k=top_k,
-                    species_class_ids=country_cls_ids,
-                    is_yolo_cropped=is_yolo_cropped,
-                    name_format=name_format,
-                    photo_country_code=photo_country_code,
-                )
-                if results:
-                    if not result.get("ebird_info"):
-                        result["ebird_info"] = {}
-                    result["ebird_info"]["country_fallback"] = True
-                    result["ebird_info"]["country_code"] = country_cc
-
-            if not results:
-                results = predict_bird(
-                    image,
-                    top_k=top_k,
-                    species_class_ids=None,
-                    is_yolo_cropped=is_yolo_cropped,
-                    name_format=name_format,
-                    photo_country_code=photo_country_code,
-                )
-                if results and result.get("ebird_info"):
-                    result["ebird_info"]["gps_fallback"] = True
+        # 地理过滤：分层候选集逐层放宽，替代旧的「一次性候选 + 三级断裂兜底」。
+        # 无 GPS 时用用户手选的地区/国家从 L4 起步；两者都缺则直接无过滤。
+        # Geo filter: layered candidates widened tier by tier, replacing the old
+        # single candidate set with three disconnected fallbacks. Without GPS we
+        # start at L4 using the user's chosen region/country; lacking both, we
+        # go unfiltered.
+        effective_region = region_code or country_code or photo_country_code
+        if use_geo_filter:
+            results, tier, count = _identify_with_tiers(
+                image,
+                top_k=top_k,
+                lat=lat if use_gps else None,
+                lon=lon if use_gps else None,
+                country_code=effective_region,
+                is_yolo_cropped=is_yolo_cropped,
+                name_format=name_format,
+                photo_country_code=photo_country_code,
+            )
+            result["geo_info"] = {
+                "enabled": tier != TIER_NONE,
+                "tier": tier,
+                "species_count": count,
+                "country_code": effective_region,
+            }
+        else:
+            results = predict_bird(
+                image,
+                top_k=top_k,
+                species_class_ids=None,
+                is_yolo_cropped=is_yolo_cropped,
+                name_format=name_format,
+                photo_country_code=photo_country_code,
+            )
+            result["geo_info"] = {
+                "enabled": False,
+                "tier": TIER_NONE,
+                "species_count": None,
+                "country_code": None,
+            }
 
         result["success"] = True
         result["results"] = results

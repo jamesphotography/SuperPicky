@@ -15,7 +15,7 @@ def test_defaults_present():
     with tempfile.TemporaryDirectory() as tmp:
         c = _cfg(tmp)
         assert c.birdid_auto_identify is False
-        assert c.birdid_use_ebird is True
+        assert c.birdid_use_geo_filter is True
         assert c.birdid_selected_country == "自动检测 (GPS)"
         assert c.birdid_country_code is None
         assert c.birdid_region_code is None
@@ -43,7 +43,7 @@ def test_migration_moves_legacy_chinese_region(tmp_path):
     assert moved is True
     assert c.birdid_selected_country == "澳大利亚"
     assert c.birdid_region_code == "AU-QLD"
-    assert c.birdid_use_ebird is False
+    assert c.birdid_use_geo_filter is False
     assert c.birdid_selected_region == "昆士兰"
     assert c.birdid_country_code == "AU"
     # Idempotent: second migration should not overwrite

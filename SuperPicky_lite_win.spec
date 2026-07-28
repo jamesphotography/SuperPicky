@@ -63,9 +63,12 @@ all_datas = [
     (os.path.join(base_path, 'ioc'), 'ioc'),
     (os.path.join(base_path, 'models', 'yolo11l-seg.pt'), 'models'),
     (os.path.join(base_path, 'birdid', 'data', 'bird_reference.sqlite'), 'birdid/data'),
-    (os.path.join(base_path, 'birdid', 'data', 'ebird_classid_mapping.json'), 'birdid/data'),
-    (os.path.join(base_path, 'birdid', 'data', 'ebird_regions.json'), 'birdid/data'),
-    (os.path.join(base_path, 'birdid', 'data', 'offline_ebird_data'), 'birdid/data/offline_ebird_data'),
+    # 地理分布库：Lite 版首次纳入，此前既无 avonet.db 也用不上随包的 eBird 数据
+    # （AvonetFilter 找不到库即返回 None，整个过滤块被跳过），那 1.5MB 是死重。
+    # Geo-distribution DB: first included in Lite. Previously Lite shipped neither
+    # avonet.db nor a usable filter (AvonetFilter returned None without the DB, so
+    # the whole filter block was skipped), making the bundled eBird data dead weight.
+    (os.path.join(base_path, 'birdid', 'data', 'geo_distribution.db'), 'birdid/data'),
     (os.path.join(base_path, 'SuperBirdIDPlugin.lrplugin'), 'SuperBirdIDPlugin.lrplugin'),
     (os.path.join(base_path, 'requirements_base.txt'), '.'),
     (os.path.join(base_path, 'core', 'runtime_requirements.py'), 'core'),
@@ -190,7 +193,8 @@ app_hiddenimports = [
     'packaging.version',
     'birdid',
     'birdid.bird_identifier',
-    'birdid.ebird_country_filter',
+    'birdid.geo_filter',       # 地理过滤：bird_identifier 顶层导入，其余调用点为函数内延迟导入
+    'tools.country_names',     # 国家显示名：仅被 region_data / birdid_server 函数内导入
     'birdid_server',
     'server_manager',
     'flask',

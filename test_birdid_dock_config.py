@@ -35,7 +35,7 @@ def test_birdid_dock_settings_has_all_keys():
     get_advanced_config().set_birdid_region(True, "AU", "澳大利亚", "AU-QLD", "昆士兰")
     dock = BirdIDDockWidget()
     dock.reload_from_config()
-    required_keys = {"use_ebird", "auto_identify", "selected_country", "country_code",
+    required_keys = {"use_geo_filter", "auto_identify", "selected_country", "country_code",
                      "selected_region", "region_code"}
     missing = required_keys - set(dock.settings.keys())
     assert not missing, f"Missing keys in settings: {missing}"

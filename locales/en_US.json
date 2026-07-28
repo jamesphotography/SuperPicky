@@ -313,9 +313,6 @@
     "mps_cache_cleared": "  🧹 [Photo {index}] MPS memory cleared",
     "cuda_cache_cleared": "  🧹 [Photo {index}] CUDA memory cleared",
     "db_load_failed": "Database load failed: {e}",
-    "avonet_loaded": "[Avonet] Offline species filter loaded",
-    "avonet_init_failed": "[Avonet] Init failed: {e}",
-    "avonet_unavailable": "[Avonet] Offline filter unavailable",
     "yolo_load_failed": "YOLO model load failed: {e}",
     "raw_embedded_jpeg": "[RAW] Using embedded JPEG preview: {w}x{h}",
     "raw_embedded_bitmap": "[RAW] Using embedded bitmap preview: {w}x{h}",
@@ -332,13 +329,6 @@
     "db_model_data_failed": "Failed to get model data: {e}",
     "db_stats_failed": "Failed to get stats: {e}",
     "db_region_check_failed": "Region check failed (scientific name: {name}): {e}",
-    "avonet_db_failed": "[AvonetFilter] Database connection failed: {e}",
-    "avonet_gps_failed": "[AvonetFilter] GPS query failed: {e}",
-    "avonet_unsupported_region": "[AvonetFilter] Unsupported region code: {code}",
-    "avonet_bbox_failed": "[AvonetFilter] Bounding box query failed: {e}",
-    "avonet_classid_failed": "[AvonetFilter] Failed to load ebird_classid_mapping: {e}",
-    "avonet_no_ebird_data": "[AvonetFilter] No eBird offline data for: {code}",
-    "avonet_read_ebird_failed": "[AvonetFilter] Failed to read {code} eBird data: {e}",
     "config_saved": "✅ Advanced config saved: {path}",
     "config_load_failed": "⚠️  Failed to load config, using defaults: {e}",
     "config_save_failed": "❌ Failed to save config: {e}",
@@ -363,7 +353,12 @@
     "tmp_jpeg_found": "  Found {count} temp JPEG file(s) (tmp_*.jpg), deleting...",
     "tmp_jpeg_done": "  ✅ Temp JPEG cleanup done: {count} succeeded",
     "rescue_direct": "  Rescue scan: high-res rescan found a bird (conf {conf})",
-    "rescue_confirmed": "  Rescue scan: {source} candidate confirmed as {species} ({conf}%) → bird"
+    "rescue_confirmed": "  Rescue scan: {source} candidate confirmed as {species} ({conf}%) → bird",
+    "geo_db_failed": "[GeoFilter] Database connection failed: {e}",
+    "geo_cell_failed": "[GeoFilter] Cell query failed: {e}",
+    "geo_country_failed": "[GeoFilter] Country query failed: {e}",
+    "geo_unavailable": "[GeoFilter] Geo-distribution DB unavailable, geo filtering skipped",
+    "geo_init_failed": "[GeoFilter] Init failed: {e}"
   },
   "server": {
     "server_already_running": "✅ Server already running on port {port}",
@@ -444,9 +439,7 @@
     "arg_host": "Bind address (Default: {default})",
     "arg_port": "Bind port (Default: {default})",
     "arg_debug": "Enable debug mode",
-    "arg_no_preload": "Skip model preloading",
-    "gps_fallback_warning": "GPS filter found no match at this location ({count} species checked). Switched to global mode automatically.",
-    "country_fallback_warning": "No local Avonet match. Fell back to eBird {country} species list."
+    "arg_no_preload": "Skip model preloading"
   },
   "ai": {
     "using_mps": "✅ Using MPS (Apple GPU) acceleration",
@@ -613,7 +606,14 @@
     "birdid_section_region": "Country / Region",
     "birdid_country_label": "Country",
     "birdid_region_label": "Region",
-    "birdid_section_name_format": "Bird Name Display Format"
+    "birdid_section_name_format": "Bird Name Display Format",
+    "culling_algo_v1_warn_title": "Switch to legacy V1 rating",
+    "culling_algo_v1_warn_body": "V1 uses one value as both the reject line and the pass line, so it only ever produces 0★ and 3★ — there is no 1★/2★ in between.\n\nWith your current aesthetics threshold {nima} and sharpness threshold {sharp}, photos below the threshold are rated 0★ and moved into the \"0 star_rejected\" folder.\n\n{advice}",
+    "culling_algo_v1_warn_high": "⚠️ Your aesthetics threshold {nima} is high; measured on a real batch this rejects the vast majority of photos. Consider lowering it below 5.5 after switching.",
+    "culling_algo_v1_warn_ok": "Switch to V1",
+    "culling_algo_v1_warn_cancel": "Keep V2",
+    "birdid_region_hint": "Only applies to photos without GPS; photos with GPS are filtered by their location",
+    "geo_attribution": "Bird Distributions - GBIF.org occurrence data ({snapshot}), CC0-1.0 and CC-BY-4.0 records only"
   },
   "advanced_settings": {
     "title": "Settings",
@@ -801,9 +801,9 @@
     "reason_fmt": "{rating_name} Photo ({base_reason}{exposure}{focus}{visibility}{flying})"
   },
   "rating_v2": {
-    "top_quota": "Excellent (top {percent}%)",
-    "mid_quota": "Good (top {percent}%)",
-    "rest_quota": "Average (top {percent}%)",
+    "top_quota": "Excellent (rank {percent}%)",
+    "mid_quota": "Good (rank {percent}%)",
+    "rest_quota": "Average (rank {percent}%)",
     "eye_capped": "Good (low eye visibility, capped at 2 stars)",
     "burst_capped": "Good (burst 3-star cap reached, demoted to 2 stars)"
   },
@@ -1055,11 +1055,6 @@
     "country_prompt_message": "Currently using 'Auto Detect GPS' mode.\n\nIf your photos don't have GPS data, we recommend selecting a country/region for more accurate results.\n\nWould you like to select now?",
     "info_yolo_ok": "Detection: Bird found",
     "info_yolo_fail": "Detection: No bird found",
-    "info_gps": "GPS: {lat}, {lon} | {count}",
-    "info_gps_fallback": "⚠️ No local match, switched to global mode (Tip: select 'Global Mode' above to make it permanent)",
-    "info_country_fallback": "⚠️ No Avonet match, using eBird {country} country list",
-    "info_region": "Region: {region} | {count}",
-    "info_global": "Global mode (no geo filter)",
     "info_no_bird_hint": "Try lowering detection sensitivity or retake",
     "info_identify_fail": "Identification failed",
     "info_no_result": "No bird identified",
@@ -1079,7 +1074,13 @@
     "stats_species": "{count} species: {names}",
     "screen_record_title": "Screen Recording Access Needed",
     "win_shortcut_unsupported": "Windows screenshot shortcut not supported in this environment",
-    "query_birdname_btn": "Look up Bird Name"
+    "query_birdname_btn": "Look up Bird Name",
+    "geo_tier_cell_strong": "🗺️ Filtered by location ({count} species)",
+    "geo_tier_cell_all": "🗺️ Filtered by location ({count} species, incl. rare records)",
+    "geo_tier_neighborhood": "⚠️ Few records at this location, widened to nearby area ({count} species)",
+    "geo_tier_country": "⚠️ Fell back to country-level filter {country} ({count} species)",
+    "geo_tier_none": "⚠️ No geographic filter, identifying against all species",
+    "info_gps_coords": "📍 GPS: {lat}, {lon}"
   },
   "cli": {
     "banner": "  🐦 SuperPicky CLI v{version} - AI Photo Selector (Command Line)",
@@ -1108,7 +1109,6 @@
     "identify_fail": "❌ Identification Failed: {error}",
     "yolo_info": "📍 YOLO Detection: {info}",
     "gps_info": "🌍 GPS Location: {info}",
-    "ebird_info": "🗺️  eBird Filter: {region} ({count} species)",
     "no_bird": "⚠️  No bird identified",
     "no_bird_hint": "💡 Tip: try lowering detection sensitivity or retake the photo",
     "result_title": "\n🐦 Identification Results (Top-{count}):",

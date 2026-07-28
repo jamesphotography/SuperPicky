@@ -51,14 +51,14 @@ class IdentifyWorker(QThread):
     error = Signal(str)
 
     def __init__(self, image_path: str, top_k: int = 5,
-                 use_gps: bool = True, use_ebird: bool = True,
+                 use_gps: bool = True, use_geo_filter: bool = True,
                  country_code: Optional[str] = None, region_code: Optional[str] = None,
                  name_format: Optional[str] = None):
         super().__init__()
         self.image_path = image_path
         self.top_k = top_k
         self.use_gps = use_gps
-        self.use_ebird = use_ebird
+        self.use_geo_filter = use_geo_filter
         self.country_code = country_code
         self.region_code = region_code
         self.name_format = name_format
@@ -70,7 +70,7 @@ class IdentifyWorker(QThread):
                 self.image_path,
                 top_k=self.top_k,
                 use_gps=self.use_gps,
-                use_ebird=self.use_ebird,
+                use_geo_filter=self.use_geo_filter,
                 country_code=self.country_code,
                 region_code=self.region_code,
                 name_format=self.name_format,
@@ -845,15 +845,15 @@ class BirdIDDockWidget(QDockWidget):
         the runtime settings dict used by the identification pipeline.
 
         返回 / Returns:
-            dict: 含 use_ebird / auto_identify / selected_country / country_code /
+            dict: 含 use_geo_filter / auto_identify / selected_country / country_code /
                   selected_region / region_code 的配置字典 /
-                  Config dict with use_ebird / auto_identify / selected_country /
+                  Config dict with use_geo_filter / auto_identify / selected_country /
                   country_code / selected_region / region_code.
         """
         from advanced_config import get_advanced_config
         cfg = get_advanced_config()
         return {
-            "use_ebird": cfg.birdid_use_ebird,
+            "use_geo_filter": cfg.birdid_use_geo_filter,
             "auto_identify": cfg.birdid_auto_identify,
             "selected_country": cfg.birdid_selected_country,
             "country_code": cfg.birdid_country_code,
@@ -1203,7 +1203,7 @@ class BirdIDDockWidget(QDockWidget):
 
         # 填充 eBird checkbox
         # Populate eBird checkbox
-        self.ebird_checkbox.setChecked(self.settings.get("use_ebird", True))
+        self.ebird_checkbox.setChecked(self.settings.get("use_geo_filter", True))
 
         country_code = self.settings.get("country_code")
         saved_country = self.settings.get(
@@ -1281,7 +1281,7 @@ class BirdIDDockWidget(QDockWidget):
         """
         from advanced_config import get_advanced_config
 
-        use_ebird: bool = self.ebird_checkbox.isChecked()
+        use_geo_filter: bool = self.ebird_checkbox.isChecked()
 
         country_display: str = self.country_combo.currentText()
         country_code = self.country_list.get(country_display)
@@ -1296,7 +1296,7 @@ class BirdIDDockWidget(QDockWidget):
         # 同步更新 self.settings 缓存
         # Update self.settings cache to keep pipeline in sync
         self.settings = {
-            "use_ebird": use_ebird,
+            "use_geo_filter": use_geo_filter,
             "auto_identify": self.settings.get("auto_identify", False),
             "selected_country": country_display,
             "country_code": country_code,
@@ -1305,7 +1305,7 @@ class BirdIDDockWidget(QDockWidget):
         }
 
         get_advanced_config().set_birdid_region(
-            use_ebird,
+            use_geo_filter,
             country_code,
             country_display,
             region_code,
@@ -1489,7 +1489,7 @@ class BirdIDDockWidget(QDockWidget):
 
         # 从 self.settings 读取运行时配置（由 advanced_config 填充）
         # Read runtime config from self.settings (populated from advanced_config)
-        use_ebird: bool = self.settings.get("use_ebird", True)
+        use_geo_filter: bool = self.settings.get("use_geo_filter", True)
         use_gps = True
         country_code: Optional[str] = self.settings.get("country_code")
         region_code: Optional[str] = self.settings.get("region_code")
@@ -1500,7 +1500,7 @@ class BirdIDDockWidget(QDockWidget):
             file_path,
             top_k=5,
             use_gps=use_gps,
-            use_ebird=use_ebird,
+            use_geo_filter=use_geo_filter,
             country_code=country_code,
             region_code=region_code,
             name_format=advanced_config.name_format,
@@ -1747,32 +1747,17 @@ class BirdIDDockWidget(QDockWidget):
             else:
                 info_lines.append(t("birdid.info_yolo_ok"))
 
-        # 2. 地理过滤状态
-        gps_info = result.get('gps_info')
-        ebird_info = result.get('ebird_info')
+        # 2. 地理过滤状态：直接展示命中的候选层，比旧的布尔标记信息量更大
+        # 2. Geo filter status: show which candidate tier was used — richer than
+        #    the old country_fallback / gps_fallback booleans it replaces.
+        from birdid.geo_filter import describe_tier
 
+        gps_info = result.get('gps_info')
         if gps_info and gps_info.get('latitude'):
-            # GPS 过滤生效
-            count = ebird_info.get('species_count', 0) if ebird_info else 0
             lat = f"{gps_info['latitude']:.2f}"
             lon = f"{gps_info['longitude']:.2f}"
-            info_lines.append(t("birdid.info_gps", lat=lat, lon=lon, count=count))
-            # GPS 回退提示（优先显示国家级回退，其次全局）
-            if ebird_info and ebird_info.get('country_fallback'):
-                country = ebird_info.get('country_code', '?')
-                info_lines.append(t("birdid.info_country_fallback", country=country))
-            elif ebird_info and ebird_info.get('gps_fallback'):
-                info_lines.append(t("birdid.info_gps_fallback", count=count))
-        elif ebird_info and ebird_info.get('enabled'):
-            # 区域过滤生效
-            region = ebird_info.get('region_code', '')
-            count = ebird_info.get('species_count', 0)
-            if region:
-                info_lines.append(t("birdid.info_region", region=region, count=count))
-            else:
-                info_lines.append(t("birdid.info_region", region="—", count=count))
-        else:
-            info_lines.append(t("birdid.info_global"))
+            info_lines.append(t("birdid.info_gps_coords", lat=lat, lon=lon))
+        info_lines.append(describe_tier(result.get('geo_info')))
 
         # === 处理失败/无结果 ===
         if not result.get('success'):

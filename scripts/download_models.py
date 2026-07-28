@@ -196,16 +196,6 @@ MODELS_TO_DOWNLOAD = [
         "sha256": "25bee11a4846e9065185bf22512e0ce4f81a62da79aece8f1683209f375904a6",
     },
     {
-        "resource_id": "avonet_database",
-        "category": "Database",
-        "repo_id": "jamesphotography/SuperPicky-models",
-        "filename": "avonet.db",
-        "dest_dir": "birdid/data",
-        "feature_tags": ["birdid"],
-        "required": False,
-        "sha256": "6dd77175865bbfe034a3aa81bd293cad58ec66b912087727f078d4306086e8a0",
-    },
-    {
         "resource_id": "quality_model",
         "category": "Quality Assessment",
         "repo_id": "chaofengc/IQA-PyTorch-Weights",

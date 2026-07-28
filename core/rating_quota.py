@@ -38,23 +38,29 @@ PENALTY_EXPOSURE = -0.06      # 曝光问题减分 / exposure issue penalty
 EYE_CAP_THRESHOLD = 0.5   # 眼睛可见度低于此值 → 星级封顶 2★ / eye-visibility star cap
 QUOTA3_SHARP_FLOOR = 300.0    # 3★ 绝对兜底:归一化锐度下限 / absolute floor for 3★
 
-DEFAULT_QUOTA3 = 20.0     # 3★ 默认配额 % / default 3-star quota
-DEFAULT_QUOTA2 = 25.0     # 2★ 默认配额 %(接在 3★ 之后)/ 2-star quota after 3★
+DEFAULT_QUOTA3 = 30.0     # 3★ 默认配额 %(= 推荐档 intermediate)/ default 3-star quota
+DEFAULT_QUOTA2 = 30.0     # 2★ 默认配额 %(接在 3★ 之后)/ 2-star quota after 3★
 DEFAULT_BURST_CAP3 = 2    # 连拍组内 3★ 上限 / per-burst 3-star cap
 
 # 技能等级 → 3★ 配额映射 / skill level → 3-star quota
+# 2026-07-24 重定手感:档位越低给分越宽松(新手 40 / 初级 30 / 大师 20)。
+# 注意这是配额上限而非实得比例——3★ 仍受 QUOTA3_SHARP_FLOOR 绝对兜底、
+# 眼睛可见度封顶与连拍组上限约束,实际占比通常显著低于配额面值。
+# Quota *ceilings*, not realised shares: the absolute sharpness floor, the
+# eye-visibility cap and the per-burst cap all trim the actual 3-star count.
 SKILL_QUOTA3 = {
-    "beginner": 25.0,
-    "intermediate": 20.0,
-    "master": 10.0,
+    "beginner": 40.0,
+    "intermediate": 30.0,
+    "master": 20.0,
 }
 
 # 技能等级 → 2★ 配额映射(接在 3★ 之后;1★ = 100 − 3★ − 2★ 为算术余量)
+# 三档统一 30%,故 1★ 余量分别为 30 / 40 / 50。
 # skill level → 2-star quota (after 3★; 1★ is the remainder 100 − 3★ − 2★)
 SKILL_QUOTA2 = {
     "beginner": 30.0,
-    "intermediate": 25.0,
-    "master": 20.0,
+    "intermediate": 30.0,
+    "master": 30.0,
 }
 
 

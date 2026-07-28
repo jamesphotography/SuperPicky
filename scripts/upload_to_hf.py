@@ -13,8 +13,7 @@ def upload_to_hf():
     files_to_upload = [
         {"local_path": "models/model20240824.pth", "repo_path": "model20240824.pth"},
         {"local_path": "models/superFlier_efficientnet.pth", "repo_path": "superFlier_efficientnet.pth"},
-        {"local_path": "models/cub200_keypoint_resnet50_slim.pth", "repo_path": "cub200_keypoint_resnet50_slim.pth"},
-        {"local_path": "birdid/data/avonet.db", "repo_path": "avonet.db"}
+        {"local_path": "models/cub200_keypoint_resnet50_slim.pth", "repo_path": "cub200_keypoint_resnet50_slim.pth"}
     ]
     
     # 初始化 API

@@ -1060,6 +1060,12 @@ class ExifToolManager:
         """
         if not file_path or not os.path.exists(file_path) or not tags:
             return False
+        # 同 read_metadata：常驻进程的 cwd 是 exiftool 二进制目录，相对路径
+        # 会在此处的 exists 检查通过却在 exiftool 侧解析失败。
+        # As in read_metadata: the persistent process runs with the exiftool
+        # binary's cwd, so a relative path passes the check above yet fails to
+        # resolve on the exiftool side.
+        file_path = os.path.abspath(file_path)
 
         global_mode = self._get_metadata_write_mode()
         if global_mode == "none":
@@ -1432,9 +1438,24 @@ class ExifToolManager:
     def read_metadata(self, file_path: str, extra_args: List[str] = None) -> Optional[Dict]:
         """
         读取文件的元数据 (V4.0.7: 使用常驻进程，支持 extra_args)
+
+        路径必须转成绝对路径后再交给常驻进程：该进程的 cwd 被设为 exiftool
+        二进制所在目录（Windows 需在此找 DLL，见 __init__ 中 _exiftool_cwd），
+        与 Python 进程的 cwd 不同。相对路径会在 os.path.exists 这一关通过
+        （用 Python 的 cwd 判断），却在 exiftool 侧找不到文件而静默返回空 —
+        CLI 传相对目录时曾因此让整条 GPS/地理过滤链路失效。
+
+        The path must be absolute before reaching the persistent process: its
+        cwd is the exiftool binary's directory (needed on Windows to locate the
+        DLLs — see _exiftool_cwd in __init__), which differs from the Python
+        process cwd. A relative path passes the os.path.exists check here (which
+        uses Python's cwd) but silently resolves to nothing on the exiftool
+        side — this once disabled the whole GPS / geo-filter chain whenever the
+        CLI was given a relative directory.
         """
         if not os.path.exists(file_path):
             return None
+        file_path = os.path.abspath(file_path)
 
         # 如果没有指定额外的参数，则默认读取几个常用评分标签
         if extra_args is None:
