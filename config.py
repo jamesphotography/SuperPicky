@@ -54,8 +54,8 @@ def get_app_install_dir() -> Path:
     """
     返回应用安装根目录 / Return the application install root.
 
-    Windows Lite 打包场景下，运行时、模型和数据库必须固定落在该目录内。
-    In Windows Lite builds, runtime files, models, and databases must stay under this directory.
+    Windows 打包场景下，运行时、模型和数据库必须固定落在该目录内。
+    In Windows builds, runtime files, models, and databases must stay under this directory.
     """
     if getattr(sys, "frozen", False):
         executable = Path(sys.executable).resolve()
@@ -148,7 +148,7 @@ def get_install_scoped_resource_path(
     """
     返回安装目录约束下的资源路径 / Return a resource path constrained to the install directory when required.
 
-    Windows Lite 打包环境下，模型/数据库/运行时等可变资源必须位于安装目录。
+    Windows 打包环境下，模型/数据库/运行时等可变资源必须位于安装目录。
     Other environments keep using the bundled resource layout.
     """
     if getattr(sys, "frozen", False) and sys.platform == "win32":
@@ -158,7 +158,7 @@ def get_install_scoped_resource_path(
 
 
 def get_packaged_model_relative_path(relative_path: str) -> str:
-    """返回 Windows Lite 打包环境下模型的内部相对路径 / Return the packaged relative path for models in Windows Lite builds."""
+    """返回 Windows 打包环境下模型的内部相对路径 / Return the packaged relative path for models in Windows builds."""
     normalized = relative_path.replace("\\", "/")
     if normalized.startswith("models/"):
         return "models/" + normalized.split("/", 1)[1]
