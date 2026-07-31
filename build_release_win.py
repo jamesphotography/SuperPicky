@@ -15,14 +15,12 @@ from __future__ import annotations
 import argparse
 import ast
 import hashlib
-import json
 import logging
 import os
 import re
 import shutil
 import subprocess
 import sys
-import urllib.request
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,12 +33,10 @@ INNO_DIR = ROOT_DIR / "inno"
 BUILD_INFO_FILE = ROOT_DIR / "core" / "build_info.py"
 DOWNLOAD_MODELS_SCRIPT = ROOT_DIR / "scripts" / "download_models.py"
 SPEC_FILE = ROOT_DIR / "SuperPicky_win64.spec"
-LITE_SPEC_FILE = ROOT_DIR / "SuperPicky_lite_win.spec"
 CPU_VENV_DIR = ROOT_DIR / ".venv"
 CUDA_VENV_DIR = ROOT_DIR / ".venv-cuda"
 DEFAULT_PATCH_OUTPUT_ROOT = ROOT_DIR / "output"
 STANDARD_INNO_TEMPLATE = INNO_DIR / "SuperPicky.iss"
-LITE_INNO_TEMPLATE = INNO_DIR / "SuperPicky-lite.iss"
 CUDA_INNO_TEMPLATE = INNO_DIR / "SuperPicky-cuda.iss"
 PATCH_INNO_TEMPLATE = INNO_DIR / "SuperPicky_CUDA_Patch.iss"
 INNO_LANGUAGE_FILE = INNO_DIR / "ChineseSimplified.isl"
@@ -49,13 +45,8 @@ CUDA_REQUIREMENTS_FILE = ROOT_DIR / "requirements_cuda.txt"
 PATCH_MANIFEST_RELATIVE_PATH = Path("_internal") / "cuda_patch_manifest.txt"
 CPU_INSTALLER_STAGING_DIRNAME = "installer_cpu"
 CUDA_INSTALLER_STAGING_DIRNAME = "installer_cuda"
-LITE_INSTALLER_STAGING_DIRNAME = "installer_lite"
 CUDA_PATCH_PORTABLE_DIRNAME = "cuda_patch"
 CUDA_PATCH_INSTALLER_STAGING_DIRNAME = "cuda_patch_installer"
-UV_RELEASE_VERSION = os.environ.get("SUPERPICKY_UV_VERSION", "latest")
-UV_RELEASE_ASSET = "uv-x86_64-pc-windows-msvc.zip"
-UV_LATEST_RELEASE_API = "https://api.github.com/repos/astral-sh/uv/releases/latest"
-UV_DOWNLOAD_ROOT = ROOT_DIR / "build_tools" / "uv"
 
 logger = logging.getLogger(__name__)
 
@@ -110,9 +101,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="SuperPicky Windows 构建脚本")
     parser.add_argument(
         "--build-type",
-        choices=["cpu", "cuda", "cuda-patch", "lite"],
-        default="lite",
-        help="构建类型：cpu, cuda, cuda-patch, lite (默认: lite)",
+        choices=["cpu", "cuda", "cuda-patch"],
+        default="cpu",
+        help="构建类型：cpu, cuda, cuda-patch (默认: cpu)",
     )
     parser.add_argument("--version", help="覆盖基础版本号，例如 4.2.0")
     parser.add_argument("--copy-dir", help="复制最终产物的目标目录")
@@ -169,150 +160,6 @@ def copy_file(src: Path, dst: Path) -> None:
         raise FileNotFoundError(f"复制源文件不存在: {src}")
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, dst)
-
-
-def validate_uv_binary(uv_exe: Path, expected_version: str) -> None:
-    """
-    校验 uv 二进制可直接执行，避免把本机构建工具的 shim 打进 Lite 包。
-
-    Validate that uv is directly executable so local build-tool shims are not
-    packaged into the Lite bundle.
-
-    参数:
-    uv_exe (Path): 待校验的 uv.exe 路径。
-    expected_version (str): 构建期固定的 uv 版本号。
-
-    Parameters:
-    uv_exe (Path): The uv.exe path to validate.
-    expected_version (str): The pinned uv version for this build.
-
-    异常:
-    RuntimeError: 当 uv 不存在、无法执行或版本不匹配时抛出。
-
-    Raises:
-    RuntimeError: Raised when uv is missing, not executable, or mismatched.
-    """
-    if not uv_exe.exists():
-        raise RuntimeError(f"uv 二进制不存在: {uv_exe}")
-    result = subprocess.run(
-        [str(uv_exe), "--version"],
-        text=True,
-        capture_output=True,
-        timeout=20,
-    )
-    output = " ".join(part.strip() for part in (result.stdout, result.stderr) if part.strip())
-    if result.returncode != 0:
-        raise RuntimeError(f"uv 自检失败: {uv_exe} -> {output or '(no output)'}")
-    if expected_version not in output:
-        raise RuntimeError(
-            f"uv 版本不匹配: 期望 {expected_version}, 实际输出 {output or '(no output)'}"
-        )
-
-
-def normalize_uv_version_tag(version_tag: str) -> str:
-    """
-    规范化 uv 发布标签，供缓存目录与 `uv --version` 输出校验使用。
-
-    Normalize a uv release tag for cache directories and `uv --version` checks.
-
-    参数:
-    version_tag (str): GitHub 发布标签或环境变量版本号。
-
-    Parameters:
-    version_tag (str): A GitHub release tag or environment version value.
-
-    返回:
-    str: 去除前导 `v` 后的版本号。
-
-    Return:
-    str: The version without a leading `v`.
-    """
-    normalized = version_tag.strip()
-    if normalized.lower().startswith("v"):
-        normalized = normalized[1:]
-    return normalized
-
-
-def resolve_lite_uv_release() -> tuple[str, str]:
-    """
-    解析 Lite 构建要下载的 uv 发布标签与校验版本。
-
-    Resolve the uv release tag and validation version for Lite builds.
-
-    返回:
-    tuple[str, str]: 第一个值是 GitHub 下载标签，第二个值是规范化版本号。
-
-    Return:
-    tuple[str, str]: The GitHub download tag and normalized version.
-    """
-    requested_version = UV_RELEASE_VERSION.strip()
-    if not requested_version:
-        raise RuntimeError("SUPERPICKY_UV_VERSION 不能为空")
-    if requested_version.lower() != "latest":
-        return requested_version, normalize_uv_version_tag(requested_version)
-
-    request = urllib.request.Request(
-        UV_LATEST_RELEASE_API,
-        headers={"User-Agent": "SuperPicky-build"},
-    )
-    with urllib.request.urlopen(request, timeout=60) as response:
-        release = json.loads(response.read().decode("utf-8"))
-    tag_name = str(release.get("tag_name") or "").strip()
-    if not tag_name:
-        raise RuntimeError("无法从 GitHub latest release 响应中解析 uv 版本")
-    return tag_name, normalize_uv_version_tag(tag_name)
-
-
-def ensure_lite_uv_binary() -> Path:
-    """
-    下载并缓存官方 Windows x64 uv 二进制，供 Lite spec 打包使用。
-
-    Download and cache the official Windows x64 uv binary for the Lite spec.
-
-    返回:
-    Path: 可直接执行的 uv.exe 路径。
-
-    Return:
-    Path: The directly executable uv.exe path.
-    """
-    release_tag, version = resolve_lite_uv_release()
-
-    uv_dir = UV_DOWNLOAD_ROOT / version
-    uv_exe = uv_dir / "uv.exe"
-    try:
-        validate_uv_binary(uv_exe, version)
-        logger.info("复用已缓存 uv: %s", uv_exe)
-        os.environ["SUPERPICKY_UV_BINARY"] = str(uv_exe)
-        return uv_exe
-    except Exception as exc:
-        logger.info("需要下载 uv %s: %s", version, exc)
-
-    uv_dir.mkdir(parents=True, exist_ok=True)
-    archive_path = uv_dir / UV_RELEASE_ASSET
-    temp_extract_dir = uv_dir / "__extract__"
-    remove_path(temp_extract_dir)
-
-    url = (
-        "https://github.com/astral-sh/uv/releases/download/"
-        f"{release_tag}/{UV_RELEASE_ASSET}"
-    )
-    logger.info("下载 uv %s: %s", version, url)
-    with urllib.request.urlopen(url, timeout=120) as response:
-        archive_path.write_bytes(response.read())
-
-    with zipfile.ZipFile(archive_path) as archive:
-        archive.extractall(temp_extract_dir)
-
-    extracted_uv = next(temp_extract_dir.rglob("uv.exe"), None)
-    if extracted_uv is None:
-        raise RuntimeError(f"uv 发布包中未找到 uv.exe: {archive_path}")
-    copy_file(extracted_uv, uv_exe)
-    remove_path(temp_extract_dir)
-
-    validate_uv_binary(uv_exe, version)
-    os.environ["SUPERPICKY_UV_BINARY"] = str(uv_exe)
-    logger.info("uv 已准备完成: %s", uv_exe)
-    return uv_exe
 
 
 def get_build_paths(label: str) -> BuildPaths:
@@ -462,8 +309,6 @@ def restore_build_info(backup_path: Path | None) -> None:
 
 
 def spec_file_for(build_type: str) -> Path:
-    if build_type == "lite":
-        return LITE_SPEC_FILE
     return SPEC_FILE
 
 
@@ -529,7 +374,7 @@ def ensure_cuda_environment(bootstrap_python: Path) -> Path:
 
 def clean_build_outputs() -> None:
     log_step("步骤 2: 清理旧的构建目录")
-    for label in ("cpu", "cuda", "cuda_patch", "lite"):
+    for label in ("cpu", "cuda", "cuda_patch"):
         paths = get_build_paths(label)
         remove_path(paths.work_dir)
         remove_path(paths.dist_dir)
@@ -658,8 +503,6 @@ def installer_staging_dir_name(label: str) -> str:
         return CPU_INSTALLER_STAGING_DIRNAME
     if label == "cuda":
         return CUDA_INSTALLER_STAGING_DIRNAME
-    if label == "lite":
-        return LITE_INSTALLER_STAGING_DIRNAME
     raise ValueError(f"不支持的标准安装包标签: {label}")
 
 
@@ -669,13 +512,11 @@ def inno_template_for(label: str) -> Path:
     Return the ISS template path for the given build label.
 
     参数 / Parameters:
-        label (str): 构建标签，"lite" / "cuda" 或其他 (cpu/full)
+        label (str): 构建标签，"cuda" 或其他 (cpu/full)
 
     返回 / Return:
         Path: ISS 模板文件路径
     """
-    if label == "lite":
-        return LITE_INNO_TEMPLATE
     if label == "cuda":
         return CUDA_INNO_TEMPLATE
     return STANDARD_INNO_TEMPLATE
@@ -690,7 +531,7 @@ def prepare_standard_installer_staging(source_bundle_dir: Path, staging_root: Pa
         source_bundle_dir (Path): PyInstaller 构建产物目录
         staging_root (Path): staging 根目录
         config (BuildConfig): 构建配置
-        label (str): 构建标签（"cpu", "cuda", "lite"）
+        label (str): 构建标签（"cpu", "cuda"）
 
     返回 / Return:
         Path: 生成的 ISS 脚本路径
@@ -825,7 +666,7 @@ def ensure_inno_templates() -> None:
 
     Verify all Inno Setup templates and dependency files exist.
     """
-    for path in (STANDARD_INNO_TEMPLATE, LITE_INNO_TEMPLATE, CUDA_INNO_TEMPLATE, PATCH_INNO_TEMPLATE, INNO_LANGUAGE_FILE):
+    for path in (STANDARD_INNO_TEMPLATE, CUDA_INNO_TEMPLATE, PATCH_INNO_TEMPLATE, INNO_LANGUAGE_FILE):
         if not path.exists():
             raise FileNotFoundError(f"缺少 Inno 相关文件: {path}")
 
@@ -839,7 +680,7 @@ def resolve_final_root(build_type: str, copy_dir: Path | None) -> Path | None:
 def build_single_target(config: BuildConfig, label: str, python_exe: Path) -> tuple[BuildPaths, Path, Path | None, Path]:
     check_python_environment(python_exe, label.upper())
     build_paths = get_build_paths(label)
-    build_bundle(python_exe, build_paths, spec_file_for(label if label == "lite" else config.build_type))
+    build_bundle(python_exe, build_paths, spec_file_for(config.build_type))
     final_root = resolve_final_root(config.build_type, config.copy_dir)
     final_bundle, zip_path, installer_script_path = publish_standard_build(
         label=label,
@@ -863,21 +704,6 @@ def run_cpu_or_cuda_build(config: BuildConfig) -> None:
     _, final_bundle, zip_path, installer_script_path = build_single_target(config, config.build_type, build_python)
     logger.info("[========================================]")
     logger.info("构建完成")
-    logger.info("[========================================]")
-    logger.info("可执行文件: %s", final_bundle / f"{APP_NAME}.exe")
-    logger.info("压缩文件: %s", zip_path if zip_path else "(已跳过)")
-    logger.info("安装包脚本: %s", installer_script_path)
-
-
-def run_lite_build(config: BuildConfig) -> None:
-    bootstrap_python = Path(sys.executable)
-    build_python = ensure_cpu_environment(bootstrap_python)
-
-    ensure_lite_uv_binary()
-    clean_build_outputs()
-    _, final_bundle, zip_path, installer_script_path = build_single_target(config, "lite", build_python)
-    logger.info("[========================================]")
-    logger.info("Lite 构建完成")
     logger.info("[========================================]")
     logger.info("可执行文件: %s", final_bundle / f"{APP_NAME}.exe")
     logger.info("压缩文件: %s", zip_path if zip_path else "(已跳过)")
@@ -962,8 +788,6 @@ def main() -> None:
     try:
         if config.build_type == "cuda-patch":
             run_cuda_patch_build(config)
-        elif config.build_type == "lite":
-            run_lite_build(config)
         else:
             run_cpu_or_cuda_build(config)
     finally:

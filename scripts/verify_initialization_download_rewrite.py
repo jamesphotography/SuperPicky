@@ -546,48 +546,6 @@ def verify_uv_install_subprocess_cancellation() -> None:
         )
 
 
-def verify_lite_spec_uses_downloaded_uv() -> None:
-    """
-    Verify Lite packaging does not collect uv from the build machine PATH.
-
-    校验 Lite 打包不会从构建机 PATH 收集 uv。
-    """
-    spec_text = (_PROJECT_ROOT / "SuperPicky_lite_win.spec").read_text(encoding="utf-8")
-    _assert(
-        "SUPERPICKY_UV_BINARY" in spec_text,
-        "Lite spec must require the downloaded uv binary path",
-    )
-    _assert(
-        "shutil.which('uv')" not in spec_text and 'shutil.which("uv")' not in spec_text,
-        "Lite spec must not discover uv from the build machine PATH",
-    )
-    _assert(
-        "which('uv')" not in spec_text and 'which("uv")' not in spec_text,
-        "Lite spec must not package local uv shims",
-    )
-
-
-def verify_lite_build_tracks_latest_uv() -> None:
-    """
-    Verify Lite build defaults to the latest upstream uv release.
-
-    校验 Lite 构建默认跟踪上游最新 uv 发布版本。
-    """
-    build_script = (_PROJECT_ROOT / "build_release_win.py").read_text(encoding="utf-8")
-    _assert(
-        'os.environ.get("SUPERPICKY_UV_VERSION", "latest")' in build_script,
-        "Lite build must default SUPERPICKY_UV_VERSION to latest",
-    )
-    _assert(
-        "https://api.github.com/repos/astral-sh/uv/releases/latest" in build_script,
-        "Lite build must resolve the latest uv release from GitHub",
-    )
-    _assert(
-        "normalize_uv_version_tag" in build_script,
-        "Lite build must normalize release tags before cache/version checks",
-    )
-
-
 def verify_progress_terminal_is_fast() -> None:
     """
     Verify terminal download progress reaches the phase end immediately.
@@ -955,17 +913,17 @@ def verify_direct_download_trusts_server_size_over_estimate() -> None:
 
 def verify_huggingface_hub_is_bundled() -> None:
     """
-    Verify bundled HF dependency is declared for lightweight builds.
+    Verify the HF dependency is declared for runtime model downloads.
 
-    校验轻量化构建声明了内置 HF 依赖。
+    校验运行时模型下载所需的 HF 依赖已声明。
+
+    注：原先还校验 Lite spec 的 hidden import，4.5.0 起 Lite 已停止构建，
+    该断言随 SuperPicky_lite_win.spec 一并移除。
+    Note: this used to also assert the Lite spec's hidden import; Lite is no
+    longer built as of 4.5.0, so that assertion went away with the spec file.
     """
     requirements = (_PROJECT_ROOT / "requirements_base.txt").read_text(encoding="utf-8")
-    spec_text = (_PROJECT_ROOT / "SuperPicky_lite_win.spec").read_text(encoding="utf-8")
     _assert("huggingface_hub" in requirements, "requirements_base.txt must include huggingface_hub")
-    _assert(
-        "'huggingface_hub'" in spec_text,
-        "Lite spec must include huggingface_hub hidden import",
-    )
 
 
 def verify_download_cancellation_reaches_resource_downloader() -> None:
@@ -1096,8 +1054,6 @@ def main() -> int:
         verify_uv_environment_sanitizes_installer_python_context,
         verify_uv_managed_python_path_repair_helpers,
         verify_uv_install_subprocess_cancellation,
-        verify_lite_spec_uses_downloaded_uv,
-        verify_lite_build_tracks_latest_uv,
         verify_progress_terminal_is_fast,
         verify_resource_integrity_floor,
         verify_hf_cli_size_parser,
