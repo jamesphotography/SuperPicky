@@ -11,8 +11,8 @@ control to the OS-native install flow.
 用 OS 原生的安装链路替代 hot patch（code_updates overlay）。
 Use the OS-native install flow instead of an in-app hot-patch overlay.
 - macOS: 下 .dmg, `open` 触发挂载，用户拖到 Applications。
-- Windows: 优先下 Setup_Lite_Win64_*.exe（保留 ~/AppData/Local 的 runtime
-  和模型），启动安装向导即可平滑覆盖；Lite 缺失才退到 Full。
+- Windows: 下 Setup_Full_Win64_*.exe（自带 PyTorch 与全部模型），启动安装
+  向导即可覆盖升级。4.5.0 起不再构建 Lite。
 
 与原 patch_manager.py 的关键差异:
 - 启用 TLS 证书验证（用 certifi 提供 CA bundle）。
@@ -93,8 +93,8 @@ def select_installer_asset(
 
     选择规则 / Rules:
     - macOS: 选 *.dmg，优先 arm64（mac 端只发布 full 包，仍保留 Lite 字样过滤作防御）。
-    - Windows: 优先 Setup_Lite_Win64_*.exe（用户已下载的 PyTorch + 模型
-      存在 ~/AppData/Local 中，升级 Lite 不会重新下载），否则退到 Full。
+    - Windows: 选 Setup_Full_Win64_*.exe。4.5.0 起不再构建 Lite，Release 上
+      只有 Full CPU（CUDA 因超 2 GiB 走网盘，不进 Release）。
 
     Args:
         assets: GitHub Release assets dict 数组。
@@ -135,16 +135,16 @@ def _select_mac_installer(assets: List[dict]) -> Optional[InstallerAsset]:
 
 
 def _select_windows_installer(assets: List[dict]) -> Optional[InstallerAsset]:
-    # 优先 Lite（首次启动按硬件下 CUDA/CPU PyTorch；Win Full 已废弃）。
-    # Prefer Lite — Lite picks CUDA or CPU PyTorch on first launch based on
-    # detected hardware. Win Full (CPU-only) is no longer built.
+    # 优先 Full（自带 PyTorch + 全部模型，安装即用）。4.5.0 起 Lite 已停止构建。
+    # Prefer Full — it bundles PyTorch and every model, so it works offline.
+    # Lite is no longer built as of 4.5.0.
     for asset in assets:
         name = asset.get("name", "")
-        if name.endswith(".exe") and "Lite_Win64" in name:
+        if name.endswith(".exe") and "Full_Win64" in name:
             return _make_asset(asset)
-    # 兜底：任意 SuperPicky Setup .exe（兼容老 release 仍有 Full_Win64 时的情况）。
-    # Fallback to any SuperPicky Setup .exe to handle older releases that still
-    # carry the discontinued Full_Win64 installer.
+    # 兜底：任意 SuperPicky Setup .exe（兼容仍挂着 Lite 的历史 release）。
+    # Fallback to any SuperPicky Setup .exe, for older releases that still
+    # carry the discontinued Lite installer.
     for asset in assets:
         name = asset.get("name", "")
         if name.endswith(".exe") and "Setup" in name:
