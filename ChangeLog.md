@@ -1,528 +1,454 @@
 # SuperPicky 4.5.0
 
-**4.5.0 is a focus release.** Building on the 4.3.0 LTS baseline, it
-concentrates on six things: a brand-new batch-relative star rating engine,
-a Lightroom-friendly flat workflow, a bird distribution database rebuilt from
-scratch, making the core culling pipeline faster and more dependable, unifying
-all settings into a brand-new Settings Center, and streamlining the interface
-around the core workflow.
+This release changes how stars are given out, adds a way to cull without moving
+your files, and rebuilds the data behind bird identification. It is also about
+30% faster.
 
 ---
 
-## ⭐ Batch-Relative Star Rating (new)
+## Stars now compare photos within the same batch
 
-- Star ratings are now assigned **relative to the current batch** instead of
-  fixed absolute thresholds: photos that pass the hard gates (bird present,
-  minimum confidence / sharpness, visible keypoints) are ranked by a combined
-  quality score (sharpness + aesthetics percentiles, small bonuses for flight
-  and precise focus), and the best N% get 3 stars.
-- **A three-segment quota bar sets the 3★ / 2★ / 1★ split.** Drag its two
-  dividers to distribute the batch directly — the three shares always add up to
-  100%, with 1★ as the automatic remainder. Ranges are bounded (3★ 5–50%,
-  2★ 5–60%, 1★ ≥ 5%). It lives in both the Settings Center culling page and the
-  home quick panel, kept in two-way sync.
-- **Quotas per skill level:** the 3-star share is 40% for Beginner, 30% for
-  Intermediate and 20% for Master, with the 2-star share fixed at 30% across all
-  three — so the 1-star remainder grows from 30% to 50% as the level gets
-  stricter. Custom mode starts from the Master preset (20 / 30).
-- These are quota **ceilings**, not targets: the absolute sharpness floor, the
-  eye-visibility cap and the per-burst cap all trim the actual count, so a batch
-  will usually land below its quota.
-- With Bird ID enabled the quota is applied **per species** — every species
-  keeps its own best shots (a rare species keeps at least its single best
-  photo), so a long burst of one common bird no longer crowds out the others.
-  Note: the more species in a batch, the further the effective 3-star share
-  can round up above the quota value.
-- Aesthetic scoring (TOPIQ) now evaluates the bird crop instead of the whole
-  frame, so backgrounds no longer dominate the score.
-- **Distant birds no longer score inflated sharpness.** Head sharpness uses a
-  gradient *density*, which rises as the bird gets smaller in frame — edges
-  span fewer pixels, so a 60px head could out-score an 800px one on the very
-  same subject. A controlled rescaling experiment measured the artifact at
-  87.4 points per e-fold of head size (raw ∝ size^-0.641); that amount is now
-  subtracted analytically. The correction is downward only and stops at 300px:
-  photos with a head region at or above that size are untouched, so existing
-  sharpness thresholds keep their meaning and normal framing is unaffected.
-  On a distant-seabird set the sharpness/size correlation drops from -0.53 to
-  +0.05. Note that head sharpness values for *small-in-frame* birds are no
-  longer comparable with those recorded by earlier versions.
-- Absolute floors remain: 3 stars still require a minimum normalized
-  sharpness, low eye visibility caps a photo at 2 stars, and burst groups
-  keep only a limited number of 3-star photos.
-- While processing, the log and preview show metrics only; final stars are
-  assigned in a single pass at the end — no more ratings jumping around
-  mid-run. When that pass finalizes a photo's star and reason, both are written
-  back to `report.db`, so the browser's per-photo note never disagrees with its
-  star rating.
-- The per-photo rating reason reads **"rank {n}%"** for every star level. It
-  previously read "top {n}%", which was self-contradictory on 1-star photos
-  ("top 84%") — the number was always a rank percentile, not a top-N share.
-- **The legacy absolute-threshold algorithm is still available.** The V1 / V2
-  switch sits directly under the threshold heading in Settings → Culling —
-  visible without expanding anything — and swaps the controls below it in
-  place: the quota bar for V2, the sharpness / aesthetics sliders for V1
-  (default V2).
+Before, a photo got 3 stars by clearing fixed sharpness and beauty scores. The
+problem: on a bad-light morning nothing cleared the bar, and on a great morning
+half the folder did.
 
-## 🗂 Flat Layout & Burst Control (new)
+Now SuperPicky ranks the photos in the folder against each other and hands out
+stars by proportion. You decide the proportion with a single bar that splits the
+batch into 3-star / 2-star / 1-star — drag its two dividers and the three shares
+always add up to 100%.
 
-- **New "Flat" folder layout — rate in place, no file moves.** Settings →
-  Output → Folder layout now offers a third option: photos are detected,
-  rated and tagged as usual (EXIF ratings, keywords, picks, XMP sidecars for
-  Sony RAW), but **no files are moved** — your Lightroom folder references
-  stay intact. Browsing and filtering by stars / species / focus / burst in
-  the Results Browser works exactly the same (it reads the app's own
-  database, not the folder structure). Rating or species changes made in the
-  browser also leave files in place under this layout.
-- **Burst detection decoupled from burst subfolders.** A new toggle
-  (Settings → Culling → "Group bursts into subfolders", default on) lets you
-  keep burst detection — grouping in the browser, per-burst 3-star cap —
-  while filing burst shots like normal photos instead of `burst_NNN`
-  subfolders.
-- **Best-of-burst pick, re-scored.** The frame chosen to represent a burst
-  group is selected by a tiered score — first the arbitrated focus tier, then
-  eye clarity plus head sharpness — instead of head sharpness alone. This
-  surfaces a sharper, better-focused keeper as the group's cover shot.
+The presets are: Beginner keeps 40% as 3-star, Intermediate 30%, Master 20%. The
+2-star share is 30% in all three.
 
-## 🏷 Color Labels — New Defaults (please note)
+Two things worth knowing:
 
-The default XMP color-label mapping is now intuitive — green means good,
-red means bad:
+- **These are ceilings, not targets.** A photo still has to be sharp enough, and
+  still gets capped at 2 stars if the eye isn't clearly visible. So a batch
+  usually ends up below the number you set. That is normal.
+- **With Bird ID on, the proportion applies per species.** Every species keeps
+  its own best shots, and a rare bird keeps at least one. A hundred shots of the
+  same common bird can no longer crowd out everything else.
 
-| Condition | Old label | New label |
+Other rating improvements:
+
+- Beauty scoring now looks at the bird, not the whole frame — a plain background
+  no longer drags a good bird photo down.
+- **Distant birds are no longer over-rated for sharpness.** The old measurement
+  quietly favoured small birds: the same bird, further away, would score higher.
+  That bias is now removed. One side effect — for birds that are small in the
+  frame, the sharpness number you see will be lower than in older versions. Your
+  thresholds still mean the same thing; only those inflated numbers changed.
+- Stars are assigned once, at the end of the run. During processing you see
+  measurements only, so ratings no longer jump around while you wait.
+- The reason shown for each photo now reads "rank 30%" instead of "top 30%",
+  which used to produce nonsense like "top 84%" on a 1-star photo.
+- The old fixed-threshold method is still there if you prefer it. The switch sits
+  right under the threshold heading in Settings, and swaps the controls below it.
+
+## Cull without moving your files
+
+Settings, Output, Folder layout now has a third choice: **Flat**.
+
+Photos get detected, rated and tagged exactly as usual — star ratings, keywords,
+picks, sidecar files for Sony RAW — but nothing is moved. Your Lightroom folders
+keep working, because none of the paths change.
+
+Browsing and filtering by stars, species, focus or burst works the same as
+always. SuperPicky reads its own database, not your folder structure.
+
+There is also a separate switch for burst photos: you can keep burst detection
+(grouping in the browser, the per-burst limit on 3-star photos) without having
+your bursts filed into `burst_001` style subfolders.
+
+And the photo chosen to represent a burst group is picked better now — it weighs
+focus and eye clarity, not just head sharpness.
+
+## Colour labels changed — please read
+
+The default colour labels are now the intuitive way round, green for good and red
+for bad:
+
+| Photo | Old label | New label |
 |---|---|---|
 | Bird in flight | Green | **Blue** |
 | Critical focus | Red | **Green** |
 | Soft / out of focus | (none) | **Red** |
-| Good focus / no bird | (none) | (none) |
+| Good focus, or no bird | (none) | (none) |
 
-A photo carries one label; flight takes priority. **If you built Lightroom
-smart collections on "green = flying", update them to blue.**
+Each photo gets one label, and flight wins over the others.
 
-## 🔑 Species Keywords (new)
+**If you built Lightroom smart collections on "green means flying", change them
+to blue.**
 
-- High-confidence Bird ID results are now written to the photo's standard
-  keywords (`XMP-dc:Subject`) as well as the Title, so you can filter by
-  species in Lightroom's keyword panel. Writes are merge-add: your own
-  keywords are never touched, and re-running a folder never duplicates.
-  Toggle: Settings → Bird ID → "Write species to photo keywords" (default
-  on).
+## Bird names go into your keywords
 
-## 🌍 Bird Distributions, Rebuilt from GBIF (new)
+When Bird ID is confident, the species name is now written to the photo's
+standard keywords as well as the title. You can filter by species in Lightroom's
+keyword panel.
 
-- **Species filtering no longer relies on AVONET native-range data**, which
-  systematically excluded naturalised species — in Sydney the house sparrow,
-  feral pigeon, common starling and common blackbird were permanently masked
-  and could never be identified, no matter how clear the photo. AVONET also
-  covered only 10,573 of the model's 10,964 classes, so 391 species were
-  unreachable everywhere on earth. Both datasets (AVONET and the bundled
-  offline eBird lists) are replaced by one built from GBIF CC0/CC-BY
-  occurrence records, covering 10,481 classes across 233 countries.
-- **Filtering no longer collapses in sparse regions.** The old filter took a
-  single candidate set and, when it was too narrow, gave up filtering entirely.
-  An Iceland grid cell held just 54 species, which triggered exactly that — and
-  produced Little Penguin, Blue-footed Booby and Horned Puffin on Faroe/Iceland
-  photos. Candidates are now layered and widened one tier at a time (strong
-  in-cell → all in-cell → 3×3 neighbourhood → country → unfiltered), so a sparse
-  cell degrades smoothly instead of falling off a cliff. On a 433-photo
-  Faroe/Iceland set all four cross-hemisphere errors are gone, while the
-  identification rate *rose* from 63.3% to 65.4% — the fix removes errors, not
-  recognition.
-- **Every country is selectable now.** The country list is generated from the
-  same dataset the filter uses, so the old three-way mismatch is structurally
-  impossible: previously 11 of the 49 listed countries had no data at all
-  (selecting them silently did nothing) while 14 countries with data could not
-  be selected. Iceland and the Faroe Islands, absent before, are among the 233
-  now available. The Settings Center also states plainly that a manually chosen
-  country applies only to photos without GPS.
-- **Fixed: GPS was ignored for relative paths.** The metadata reader validated
-  paths against the wrong working directory, so a relative path passed the check
-  and then silently returned nothing. Photos processed through the CLI with a
-  relative folder lost their GPS entirely — and with it all geographic
-  filtering — without any error message.
+Your own keywords are never touched, and running the same folder again does not
+create duplicates. Switch: Settings, Bird ID, "Write species to photo keywords".
 
-## ⚡ Performance
+## Bird identification: the location data was rebuilt
 
-- **Processing is ~30% faster** (measured: 495 ARW, 135s → 95s). Proprietary
-  RAW metadata now writes to XMP sidecars instead of rewriting the RAW body;
-  fixed a bug that fully rewrote cached preview JPEGs on every photo, and a
-  silent sidecar temp-file write failure.
-- **ExifTool now runs as two dedicated persistent processes (read / write).**
-  Batch metadata writes no longer block reads, eliminating a recurring
-  ~3-second stall every ~30 photos (real-world test, 152 photos: total time
-  75.5 s → 62.1 s).
-- **Faster, lighter full-screen browsing.** The full-screen viewer's preview
-  pipeline was reworked. A resident parallel preload pool keeps held-arrow-key
-  navigation on cache (0/25 → 25/25 reads), and high-resolution caching is now
-  capped at the 3200px long edge and back-filled on a 250ms dwell — cutting
-  resident memory by roughly 2.4 GB on large libraries. Also removed ~1050
-  lines of dead results-browser code.
-- Aesthetic scoring (TOPIQ) uses a new two-stage downscale — noticeably faster
-  on large images.
-- Fixed a side effect where importing the detection stack limited OpenCV to a
-  single thread; 45 MP image decoding is back to full speed.
-- Reduced repeated image decoding and debug I/O in the main pipeline.
-- The Bird ID resident service now lazy-loads its model stack — the service
-  port is ready within seconds of app launch, so the Lightroom plugin no
-  longer waits 10+ seconds to connect.
+SuperPicky narrows down species by where the photo was taken. The data behind
+that has been replaced entirely, because the old source had two real problems:
 
-## 🐦 Core Culling Pipeline
+- **Introduced birds were invisible.** The old data only covered where a species
+  originally came from. In Sydney that meant the house sparrow, feral pigeon,
+  common starling and common blackbird could never be identified — no matter how
+  sharp the photo.
+- **391 species were unreachable anywhere on earth**, simply missing from the
+  data.
 
-- **No-bird rescue scan (new).** When the first detection pass finds no bird
-  at the default resolution, SuperPicky rescans at 1024px with a low
-  threshold and uses the Bird ID classifier as a gatekeeper — recovering
-  birds that YOLO missed (small, distant, or confused with airplane/kite)
-  without letting false positives through. Toggle in Settings → Picking.
-- **Focus sharpness arbitration (#107).** When the EXIF focus-point verdict
-  says a shot is soft but the measured bird-head sharpness clears your
-  threshold, pixel evidence wins and the verdict is upgraded — fewer sharp
-  keepers wrongly demoted.
-- Fixed a batch of stability/accuracy issues in the main culling flow and
-  hardened model-file integrity checks.
-- A photo that fails processing is no longer mistakenly marked as completed —
-  it is counted as failed and will be retried on resume.
-- Fixed aesthetic-score pre-scaling on extreme aspect ratios (downscale only,
-  never upscale).
-- Intel Macs now default to CPU, sidestepping MPS pitfalls on older AMD GPUs.
-- The completion report uses a consistent timing definition and now shows
-  start and finish wall-clock times, so the total can be verified against a
-  clock.
-- Main-window position and state persist across sessions, including after
-  restoring from the system tray (community PRs #104 / #105 — thank you!).
+Both problems are gone. The new data is built from global bird observation
+records and covers 233 countries.
 
-## 🔎 Bird ID & Lightroom Plugin
+Two more fixes in the same area:
 
-- **iRateBird species aesthetic index (new).** An offline, CC-BY beauty
-  score (0–100) per species, shown in the detail panel and available as a
-  filter/sort key. It is display-and-sort only and independent of the
-  per-photo TOPIQ aesthetic score that drives star ratings.
-- **Species correction (#106).** Fix a misidentified species — or name a photo
-  that has none yet — from a grid tile's right-click menu ("Edit Species…").
-  Candidate cards follow the interface language.
-- GPS coordinates of exactly 0.0 (equator / prime meridian) are no longer
-  treated as "no GPS".
-- GPS / RAW preview extraction goes through the shared ExifTool persistent
-  process — fixes console-window flashing on Windows.
-- Closing the main window now hides it to the tray as a true resident app,
-  fixing "Lightroom plugin can't reach the resident service".
-- Fixed the plugin's write-bird-name / write-caption to EXIF, which had been
-  silently broken; also fixed an IPTC encoding trap where Chinese text could
-  be stored or read back as Latin-1 garbage.
-- Bird ID panel: restored the data-source / country / region quick controls;
-  unified rarity-icon sizing and cleaner region display.
+- **Sparse regions no longer break the filter.** In a place with few recorded
+  species, the old filter gave up and stopped filtering at all — which is how
+  Iceland photos ended up identified as Little Penguin and Blue-footed Booby. It
+  now widens its search step by step instead. On a 433-photo Iceland and Faroe
+  set, all four wrong-hemisphere errors are gone and the identification rate went
+  *up*.
+- **Every country can be selected now.** The country list is generated from the
+  same data the filter uses. Previously 11 countries in the list had no data
+  behind them (selecting them did nothing at all), and 14 countries that did have
+  data were missing from the list. Iceland and the Faroe Islands are among the
+  ones you can now pick.
 
-## ⚙️ Settings Center (new)
+Note that a manually chosen country only applies to photos with no GPS.
 
-- All scattered settings dialogs are unified into a single Settings Center
-  with left-side navigation: Culling / Bird ID / Output / External Apps /
-  About.
-- One single source of truth for every setting; the home-page Quick Adjust
-  panel (quota bar + flight / burst / Bird ID toggles) stays in two-way sync
-  with the Settings Center.
-- Skill level and thresholds are linked — manually editing a threshold
-  switches to "Custom" automatically.
-- **Bird-name display format.** Choose how species names are shown.
-- **Delete-confirmation toggle.** Turn the "confirm before deleting a photo"
-  dialog on or off.
-- **Clear all preview caches.** A one-click button removes the current
-  directory's AI preview/crop cache (`.superpicky/cache`) and the now-dangling
-  cache paths in `report.db`, without touching your original photos.
-- The Settings entry now lives in the Settings menu, with a new shortcut:
-  Cmd+, (macOS) / Ctrl+, (Windows).
-- Fixed radio-button selection being invisible in Windows dark mode.
-- Fixed a light-mode background glitch in the Settings Center; the aesthetics
-  threshold is now correctly labeled TOPIQ.
+Also fixed: when you ran SuperPicky from the command line with a relative folder
+path, GPS was silently ignored — and with it all location filtering, without any
+error message.
 
-## 🖼 Results Browser
+## About 30% faster
 
-- Change a photo's species directly in the browser — files move to the
-  matching species folder automatically.
-- Changing a star rating moves the files to the matching rating folder.
-- "Picked" is now a persistent flag with a crown badge on thumbnails.
-- Full SVG iconography (stars, filter chips, toolbars, focus status), and the
-  full-screen view gains a Photoshop-style left toolbar.
-- Fixed thumbnails not refreshing their badges after pick/rating changes;
-  burst badges are merged into a single indicator.
-- **Keyboard rating**: press 0–3 to set a photo's stars directly, Up/Down to
-  step the rating by one (Left/Right still navigate). Works in grid and
-  full-screen view.
-- Tile labels are a single clean line (species, or the filename when there is
-  no species yet), with the filename shown on hover; the detail panel gains a
-  species row just above GBIF Rarity (click to copy the name).
-- Focus terms are now consistent on both sides of the browser: Critical
-  Focus / Good Focus / Soft (the filter chips previously showed raw
-  BEST/GOOD/BAD in the English UI).
-- Fixed: the English filter panel no longer clips the 0★ chip; the species
-  aesthetic score is shown without a "/100" suffix.
+Measured on a real batch: 495 Sony RAW files, 135 seconds down to 95.
 
-## 🧹 Reset & Organization
+What changed: metadata for RAW files is now written to sidecar files instead of
+rewriting the RAW itself; a bug that rewrote every cached preview on every photo
+was fixed; and the metadata tool now runs as two processes instead of one, so
+writing no longer blocks reading. That last one removed a 3-second stall that hit
+roughly every 30 photos.
 
-- Reset ignores hidden files and OS metadata leftovers.
-- Fixed burst-folder members being left behind under the species-first
-  layout; Reset now ends with an unconditional flatten pass as a safety net.
+Full-screen browsing is also faster and much lighter on memory. Holding an arrow
+key now runs entirely off cached previews, and on large libraries SuperPicky uses
+about 2.4 GB less memory than before.
 
-## ✂️ Streamlined Interface
+## More birds get found
 
-To keep the app focused on the core culling workflow, this release removes
-the UI entry points for several non-core features: in-app update checks,
-smart enhance, crop suggestions, video analysis, and correction submission.
-If you used Video Bird Analysis in 4.3.0, its menu is intentionally absent in
-4.5.0 — this is not a bug. The underlying implementations remain in the
-codebase and may return in a future release.
+When the first pass finds no bird at all, SuperPicky now takes a second look at
+higher detail and uses the Bird ID model to confirm what it finds. This recovers
+birds that were missed for being small, distant, or mistaken for an aeroplane or
+a kite — without letting false positives through. Switch: Settings, Picking.
 
-## 📦 Packaging & Install
+Also, when the camera's focus point says a shot is soft but the measured
+sharpness of the bird's head is clearly fine, the measurement now wins. Fewer
+genuinely sharp photos get pushed down.
 
-- **The Windows Lite build is discontinued.** Lite shipped a small installer
-  and downloaded PyTorch and the models on first launch — but that made the
-  *total* download larger, not smaller: roughly 1.2 GB across two stages (a
-  220 MB installer, then the wheels and 642 MB of models) against 792 MB for
-  Full CPU in a single pass. The second stage depended on PyPI and mirror
-  availability, which is exactly where it kept failing on Chinese networks.
-  Windows now ships Full CPU on the Release page and Full CUDA through the
-  file-sharing links.
-  - **If you already run Lite, uninstall it before installing Full.** The two
-    use different installer identities but the same install directory, so
-    installing over the top leaves you with two SuperPicky entries in Add/Remove
-    Programs. After uninstalling you can also delete the PyTorch runtime Lite
-    downloaded under `%LOCALAPPDATA%`, which frees several GB — the Full build
-    bundles its own and will never read it.
-- **Smaller install.** Replacing AVONET (102 MB) and the offline eBird lists
-  (1.5 MB) with a single 35 MB distribution database cuts roughly 68 MB from
-  the full build.
+## Bird ID and the Lightroom plugin
+
+- **A species beauty index.** Every species now has a beauty score, shown in the
+  detail panel and usable for filtering and sorting. It describes the *species*,
+  not your photo, and has no effect on star ratings.
+- **Fixing a wrong species.** Right-click a photo and choose "Edit Species" to
+  correct an identification, or name a photo that has none yet.
+- Closing the main window now keeps SuperPicky running in the tray, which fixes
+  the Lightroom plugin being unable to reach it.
+- The plugin's "write bird name" and "write caption" had been silently broken.
+  Both work now, including Chinese text, which could previously come back as
+  garbled characters.
+- The Bird ID service starts within seconds instead of making the plugin wait
+  ten seconds or more.
+- Photos taken exactly on the equator or the prime meridian are no longer treated
+  as having no GPS.
+- On Windows, no more console windows flashing while reading photo metadata.
+
+## All settings in one place
+
+Every settings dialog has been merged into a single Settings window with
+categories down the left: Picking, Bird ID, Output, External Apps, About. The
+quick panel on the home page stays in sync with it, both ways.
+
+New settings in this release:
+
+- How bird names are displayed.
+- Whether to confirm before deleting a photo.
+- Clear all preview caches — removes the current folder's cached previews and
+  crops, and never touches your original photos.
+
+Skill level and thresholds are linked: edit a threshold by hand and it switches
+to Custom. Shortcut to open Settings: Cmd+, on Mac, Ctrl+, on Windows.
+
+Also fixed: radio buttons were invisible in Windows dark mode, and the Settings
+window showed a grey patch in light mode.
+
+## Results browser
+
+- Change a photo's species or star rating in the browser and the files move to
+  the matching folder automatically.
+- Press 0 to 3 to set stars directly; Up and Down move a rating by one. Works in
+  grid and full-screen view.
+- "Picked" is now a lasting flag, with a crown badge on the thumbnail.
+- Thumbnail labels are a single clean line — the species name, or the filename
+  when there is no species yet. Hover to see the filename.
+- The detail panel has a species row you can click to copy the name.
+- Focus wording is now consistent on both sides of the window: Critical Focus,
+  Good Focus, Soft.
+- New icons throughout, and a Photoshop-style toolbar on the left in full-screen
+  view.
+
+## Reset
+
+Reset now ignores hidden system files, and no longer leaves photos behind inside
+burst folders. It finishes with a pass that flattens everything, as a safety net.
+
+## A simpler interface
+
+To keep SuperPicky focused on culling, several side features have had their menu
+entries removed: in-app update checks, smart enhance, crop suggestions, video
+analysis, and correction submission.
+
+If you used Video Bird Analysis in 4.3.0, its menu is deliberately gone in 4.5.0.
+This is not a bug. The code is still there and it may come back later.
+
+## Windows: the Lite installer is gone
+
+Lite had a small installer and downloaded the AI engine and models on first
+launch. In practice that made the *total* download bigger, not smaller — about
+1.2 GB in two stages against 792 MB for the full version in one. Worse, the
+second stage depended on other servers being reachable, which is exactly where it
+kept failing for users in China.
+
+Windows now has two builds: CPU and CUDA, both complete and ready to run offline.
+
+**If you currently use Lite, uninstall it before installing the full version.**
+They use the same folder but count as different programs, so installing over the
+top leaves you with two SuperPicky entries in Add or Remove Programs. Once
+uninstalled, you can also delete the AI engine Lite downloaded — the full version
+brings its own and will never look at it. That frees several GB.
+
+The install is also about 68 MB smaller, thanks to the new bird location data
+replacing a much larger file.
 
 ---
 
-## Distribution Notes
+## Which download do I want
 
-- **Apple Silicon Mac**: single full installer (`.dmg`) — see Release assets.
-- **Intel Mac**: dedicated full installer (`.dmg`), running on CPU (FP32).
-  It is built and uploaded separately, so it may appear on the Release page a
-  little later than the others.
-- **Windows**:
-  - **CPU Full** — runs on any PC; on the Release page.
-  - **GPU (CUDA) Full** — for NVIDIA GPUs; distributed via Google Drive /
-    Baidu Netdisk because it exceeds GitHub's per-file limit.
-  - There is no Lite installer in 4.5.0 (see Packaging & Install above).
+- **Mac with Apple Silicon** (M1 and newer): the standard installer.
+- **Mac with Intel** (roughly pre-2020): the Intel installer. It runs on the CPU.
+  It is built separately, so it may appear on the release page a little later.
+- **Windows without an NVIDIA graphics card**: CPU version, on the release page.
+- **Windows with an NVIDIA graphics card**: CUDA version. It is too large for
+  GitHub, so it is on the file-sharing links instead.
+
+There is no Lite installer in 4.5.0.
 
 ---
 
 # SuperPicky 4.5.0（中文）
 
-**4.5.0 是一个聚焦版本。** 在 4.3.0 LTS 的基础上，集中做了六件事：全新的
-批内相对评星引擎、Lightroom 友好的平铺工作流、彻底重建的鸟种地理分布数据、
-让选鸟主流程更快更稳、把所有设置统一进全新的设置中心、并围绕核心工作流
-精简界面。
+这一版改了星级的评判方式，新增了不移动文件的选片模式，并重建了鸟种识别背后的
+数据。整体速度也快了约 30%。
 
 ---
 
-## ⭐ 批内相对评星（全新）
+## 星级改成在同一批照片里比较
 
-- 星级改为**批内相对**分配，不再依赖固定绝对阈值：通过硬门槛（有鸟、
-  最低置信度/锐度、关键点可见）的照片按综合质量分排序（锐度+美学百分位，
-  飞行/精准对焦小幅加分），排名最好的前 N% 获得 3 星。
-- **三段配额条决定 3★ / 2★ / 1★ 的分配。** 拖动两个分隔点即可直接分配整批
-  照片——三段占比恒为 100%，1★ 为自动余量。范围有界（3★ 5–50%、2★ 5–60%、
-  1★ ≥ 5%）。首页快速面板与设置中心精选页各有一份，双向同步。
-- **各档位配额：** 3★ 占比为新手 40%、进阶 30%、大师 20%，2★ 占比三档统一
-  为 30%——档位越严，1★ 余量从 30% 增至 50%。自定义模式以大师档
-  （20 / 30）为起点。
-- 这些是配额**上限**而非目标：绝对锐度底线、眼睛可见性封顶、连拍组内限量
-  都会削减实际数量，所以一批照片通常落在配额面值以下。
-- 开启识鸟时配额**按鸟种分组**执行——每个鸟种都保住自己最好的照片
-  （罕见鸟至少保底 1 张），常见鸟的大连拍不再挤占其他鸟种的 3 星名额。
-  注意：一批照片鸟种越多，向上取整后的实际 3 星占比会越高于配额面值。
-- 美学评分（TOPIQ）改为针对鸟体裁剪区打分，背景不再干扰分数。
-- **远处小鸟不再虚高锐度。** 鸟头锐度用的是梯度**密度**，鸟在画面里越小该值
-  越高——边缘跨越的像素更少，于是同一只鸟 60px 的头可能压过 800px 的头。
-  受控缩放实验测得该伪影为每 e 倍头部尺寸 87.4 分（原始值 ∝ size^-0.641），
-  现已按解析式扣除。校正只降不升，并在 300px 处封顶：头部区域达到或超过该
-  尺寸的照片完全不动，因此现有锐度阈值含义不变、正常构图不受影响。远处
-  海鸟批次上锐度与尺寸的相关系数从 -0.53 降到 +0.05。请注意：**画面占比小**
-  的鸟其鸟头锐度数值不再与旧版本记录的值可比。
-- 绝对底线保留：3 星仍要求最低归一化锐度，眼睛不可见封顶 2 星，
-  连拍组内 3 星限量。
-- 处理过程中日志与预览只显示指标，星级在收尾阶段一次性统一分配，
-  不再出现处理中星级跳动。收尾阶段确定星级与理由时，两者都会写回
-  `report.db`，浏览器里的单张说明不会再与星级自相矛盾。
-- 单张评星理由统一为**「排名 {n}%」**。此前所有星级都写「前 {n}%」，在 1 星
-  照片上会出现「前 84%」这种自相矛盾的说法——这个数字一直是排名百分位，
-  不是前 N% 占比。
-- **旧版绝对阈值算法仍可切换。** V1 / V2 开关就在设置中心 → 精选的阈值标题
-  正下方，无需展开任何折叠区即可看到，并就地切换下方控件：V2 显示配额条，
-  V1 显示锐度/美学滑块（默认 V2）。
+以前一张照片能拿 3 星，靠的是锐度和美学分超过固定分数线。问题是：光线差的那
+个早上，一张都过不了线；光线好的时候，半个文件夹都过线。
 
-## 🗂 平铺布局与连拍控制（全新）
+现在 SuperPicky 会把这个文件夹里的照片互相排名，按比例发星级。比例由一根配额
+条决定，它把整批照片分成 3 星 / 2 星 / 1 星三段，拖动两个分隔点即可，三段占比
+永远合计 100%。
 
-- **新增「平铺」目录布局——识别评分但不移动文件。** 设置中心 → 输出 →
-  分类目录布局新增第三项：照片照常检测、评星、打标签（EXIF 星级、关键字、
-  精选旗标，索尼 RAW 走 XMP 侧车），但**所有文件留在原地**——Lightroom
-  已导入目录的引用不受影响。结果浏览器按星级/鸟种/对焦/连拍的浏览筛选
-  完全不变（它读应用自己的数据库，不依赖目录结构）；平铺下在浏览器里
-  改星/改鸟种同样不移动文件。
-- **连拍检测与子目录归档解耦。** 精选页新增开关「连拍归入独立子文件夹」
-  （默认开）：关闭后保留连拍检测——浏览器分组、连拍组内 3 星限量照常——
-  但连拍照片按各自星级/鸟种正常归档，不再产生 `burst_NNN` 子目录。
-- **连拍组代表张重新评分。** 代表整组的那张改用分层评分选出——先看仲裁后的
-  对焦档位，再看眼睛清晰度加鸟头锐度——不再只看鸟头锐度，组封面因此更清晰、
-  对焦更准。
+预设是：新手档 3 星占 40%，进阶档 30%，大师档 20%。2 星占比三档都是 30%。
 
-## 🏷 颜色标签——新默认映射（请注意）
+两点需要知道：
 
-XMP 色标默认映射改为符合直觉——绿=好、红=差：
+- **这是上限，不是目标。** 照片仍然必须够清晰，眼睛看不清仍然最多 2 星。所以
+  实际结果通常低于你设定的比例，这是正常的。
+- **开了识鸟，比例按鸟种分别执行。** 每个鸟种都保住自己最好的照片，罕见鸟至少
+  留一张。一百张同一只常见鸟，再也挤不掉别的鸟种。
 
-| 条件 | 旧色标 | 新色标 |
+评星方面的其他改进：
+
+- 美学评分改成只看鸟，不看整个画面——背景平淡不会再拖累一张好的鸟照。
+- **远处的小鸟不再被高估锐度。** 旧的测量方式暗中偏袒小鸟：同一只鸟拍得更远，
+  分数反而更高。这个偏差已经消除。副作用是：画面里占比小的鸟，你看到的锐度数
+  值会比旧版本低。你的阈值含义没变，变的只是那些虚高的数字。
+- 星级在处理结束时一次性分配。处理过程中只显示测量值，星级不会再跳来跳去。
+- 每张照片的评星理由现在写「排名 30%」而不是「前 30%」，后者在 1 星照片上会
+  出现「前 84%」这种说不通的话。
+- 旧的固定分数线方式仍然保留。开关就在设置里阈值标题的正下方，切换后下面的控
+  件也跟着换。
+
+## 选片不移动你的文件
+
+设置 → 输出 → 分类目录布局，新增第三个选择：**平铺**。
+
+照片照常检测、评星、写标签——星级、关键字、精选旗标、索尼 RAW 的侧车文件都
+照写——但文件一个都不动。因为路径没变，你的 Lightroom 目录继续正常工作。
+
+按星级、鸟种、对焦、连拍浏览筛选和以前完全一样。SuperPicky 读的是它自己的数
+据库，不依赖你的目录结构。
+
+连拍另有一个独立开关：你可以保留连拍检测（浏览器里分组、连拍组内 3 星限量），
+同时不让连拍照片被塞进 `burst_001` 这样的子目录。
+
+代表整个连拍组的那张，现在挑得更准了——会综合考虑对焦和眼睛清晰度，不再只看
+鸟头锐度。
+
+## 颜色标签变了，请留意
+
+默认的颜色标签改成符合直觉的方向，绿色代表好，红色代表差：
+
+| 照片 | 旧标签 | 新标签 |
 |---|---|---|
 | 飞鸟 | 绿色 | **蓝色** |
 | 精准合焦 | 红色 | **绿色** |
-| 脱焦/失焦 | （无） | **红色** |
-| 普通合焦 / 无鸟 | （无） | （无） |
+| 脱焦、失焦 | （无） | **红色** |
+| 普通合焦，或没有鸟 | （无） | （无） |
 
-一张照片只有一种色标，飞鸟优先。**如果你在 Lightroom 建过「绿色=飞鸟」
-的智能收藏夹，请改为蓝色。**
+一张照片只有一种标签，飞鸟优先于其他。
 
-## 🔑 鸟种关键字（全新）
+**如果你在 Lightroom 建过「绿色代表飞鸟」的智能收藏夹，请改成蓝色。**
 
-- 高置信度识鸟结果除写 Title 外，同步写入标准关键字（`XMP-dc:Subject`），
-  Lightroom 关键字面板可直接按鸟种筛选。写入为合并追加：你自己打的关键字
-  绝不会被动，重跑同一目录也不会产生重复。开关：设置中心 → 识鸟 →
-  「识别后写入照片关键字」（默认开）。
+## 鸟名会写进你的关键字
 
-## 🌍 基于 GBIF 重建的鸟种分布（全新）
+识鸟结果置信度高时，鸟种名除了写进标题，现在也会写进照片的标准关键字。你可以
+在 Lightroom 的关键字面板里直接按鸟种筛选。
 
-- **鸟种筛选不再依赖 AVONET 原生分布数据。** 它系统性地排除了归化鸟种——
-  在悉尼，家麻雀、原鸽、紫翅椋鸟、乌鸫被永久屏蔽，照片再清楚也识别不出。
-  AVONET 还只覆盖模型 10,964 个类别中的 10,573 个，有 391 个鸟种在全球任何
-  地方都无法被识别。AVONET 与内置离线 eBird 名录两套数据一并替换为基于
-  GBIF CC0/CC-BY 观察记录构建的单一数据集，覆盖 233 个国家、10,481 个类别。
-- **稀疏地区不再筛崩。** 旧筛选只取单一候选集，集合太窄时直接放弃筛选。
-  冰岛某网格只有 54 个鸟种，正好触发该逻辑——于是法罗/冰岛的照片上出现了
-  小蓝企鹅、蓝脚鲣鸟和角海雀。现在候选集分层、逐级放宽（网格内强候选 →
-  网格内全部 → 3×3 邻域 → 国家 → 不筛选），稀疏网格平滑降级而不是断崖式
-  失效。433 张法罗/冰岛实测批次上，四例跨半球错误全部消失，识别率反而从
-  63.3% **升到** 65.4%——修的是错误，不是识别能力。
-- **所有国家现在都可选。** 国家列表由筛选实际使用的同一份数据集生成，旧的
-  三方错配在结构上不可能再出现：此前列出的 49 个国家里有 11 个根本没有数据
-  （选了静默无效），另有 14 个有数据的国家却选不到。此前缺失的冰岛与法罗
-  群岛也在现在可选的 233 个之内。设置中心还明确说明：手动选择的国家只对
-  没有 GPS 的照片生效。
-- **修复：相对路径下 GPS 被忽略。** 元数据读取用错了工作目录来校验路径，
-  相对路径通过校验后却静默返回空值。用 CLI 以相对目录处理的照片会完全丢掉
-  GPS——连同全部地理筛选——且没有任何错误提示。
+你自己打的关键字绝对不会被改动，同一个文件夹重跑也不会产生重复。开关：设置 →
+识鸟 →「识别后写入照片关键字」。
 
-## ⚡ 性能
+## 识鸟：地理数据整个重建了
 
-- **处理提速约 30%**（实测：495 张 ARW，135 秒 → 95 秒）。专有 RAW 元数据
-  改写 XMP 侧车而非重写 RAW 本体；修复了每张照片都完整重写缓存预览 JPEG
-  的 bug，以及侧车临时文件导致的静默写入失败。
-- **ExifTool 读写分离为两个专属常驻进程。** 批量写元数据不再阻塞读取，
-  消除了每约 30 张照片卡顿 3 秒的问题（152 张实测：总耗时 75.5 秒 →
-  62.1 秒）。
-- **全屏浏览更快更省内存。** 全屏查看器的预览链路重做：常驻并行预加载池让
-  长按方向键翻图全部命中缓存（0/25 → 25/25 命中），高分辨率缓存封顶长边
-  3200px、并在停留 250ms 后回填——大图库常驻内存降低约 2.4 GB。同时删除约
-  1050 行结果浏览器死代码。
-- 美学评分（TOPIQ）接入两段式缩放预降，大图打分明显提速。
-- 修复检测组件导入后 OpenCV 被限制为单线程的副作用，4500 万像素大图解码
-  速度恢复。
-- 减少主流程中重复的图像解码与调试 I/O。
-- 识鸟驻留服务改为懒加载，应用启动后端口秒级就绪，Lightroom 插件不再等待
-  十几秒。
+SuperPicky 会根据拍摄地点缩小鸟种范围。这部分数据已经整个替换，因为旧数据有两
+个实际的问题：
 
-## 🐦 选鸟主流程
+- **归化的鸟看不见。** 旧数据只记录一个鸟种最初来自哪里。在悉尼，这意味着家麻
+  雀、原鸽、紫翅椋鸟、乌鸫永远识别不出来——照片再清楚也没用。
+- **391 个鸟种在全球任何地方都识别不出来**，因为数据里根本没有它们。
 
-- **无鸟补救扫描（全新）。** 第一遍默认分辨率检测无鸟时，用 1024px 低阈值
-  重扫、并以识鸟分类器守门——救回被 YOLO 漏检的鸟（小、远、或与飞机/风筝
-  混淆），同时挡住误检。开关在 设置 → 精选。
-- **对焦锐度仲裁（#107）。** 当 EXIF 对焦点判定为脱焦、但实测鸟头锐度已过
-  阈值时，以像素证据为准升级判定——减少清晰好片被误降级。
-- 修复选鸟主流程一批稳定性/准确性问题，并加固模型文件完整性校验。
-- 单张照片处理异常不再被误标为「已完成」：计入失败统计，续跑可重试。
-- 修复极端长宽比图片美学评分预缩放方向错误（只降不升）。
-- Intel Mac 强制走 CPU，绕开老 AMD 显卡 MPS 的兼容陷阱。
-- 完成报告计时口径统一，并显示开始/结束时间，总耗时可对表自验。
-- 主窗口位置与状态持久化，从托盘重新显示后位置保存正常
-  （社区 PR #104 / #105，特此致谢）。
+这两个问题都没有了。新数据基于全球鸟类观测记录构建，覆盖 233 个国家。
 
-## 🔎 识鸟 / Lightroom 插件
+同一块地方还修了两处：
 
-- **iRateBird 鸟种颜值指数（全新）。** 离线 CC-BY 的鸟种颜值分（0–100），
-  在详情面板展示、并可作为筛选/排序键。它仅用于展示与排序，与驱动评星的
-  单张 TOPIQ 美学分相互独立。
-- **鸟种纠错（#106）。** 在网格卡右键菜单选「编辑鸟种…」即可修正识别错误的
-  鸟种，或给还没有鸟名的照片指定鸟种；候选卡片跟随界面语言。
-- 修复 GPS 坐标恰好为 0.0（赤道/本初子午线）被误判为无 GPS。
-- GPS / RAW 预览提取统一走 ExifTool 常驻进程，修复 Windows 下控制台窗口
-  闪烁。
-- 关闭主窗口改为隐藏到托盘真驻留，修复 Lightroom 插件连不上驻留服务。
-- 修复插件写鸟名/描述到 EXIF 长期静默失效的问题；并修复 IPTC 中文被按
-  Latin-1 存储/误读的编码陷阱。
-- 识鸟面板恢复数据源/国家/区域快速控件；罕见度图标大小统一、地区显示优化。
+- **鸟种稀少的地区不再让筛选失效。** 在记录鸟种很少的地方，旧的筛选会直接放弃、
+  完全不筛——冰岛的照片因此被识别成小蓝企鹅和蓝脚鲣鸟。现在它改为逐步放宽搜索
+  范围。433 张冰岛和法罗群岛的实测照片里，四个跨半球的错误全部消失，识别率反而
+  **提高**了。
+- **所有国家现在都能选。** 国家列表由筛选实际使用的同一份数据生成。此前列表里
+  有 11 个国家背后根本没有数据（选了完全没作用），另有 14 个有数据的国家却不在
+  列表里。冰岛和法罗群岛就在现在可选的国家之中。
 
-## ⚙️ 设置中心（全新）
+请注意，手动选择的国家只对没有 GPS 的照片生效。
 
-- 分散的设置窗口统一为设置中心：精选 / 识鸟 / 输出 / 外部应用 / 关于
-  五页，左侧导航。
-- 所有设置单一存储源；首页「快速调整」面板（配额条 + 飞行/连拍/识鸟开关）
-  与设置中心双向同步。
-- 技能等级与阈值联动，手动改阈值自动切换为「自定义」。
-- **鸟名显示格式。** 可选择鸟种名称的显示方式。
-- **删除确认开关。** 可开关「删除照片前确认」对话框。
-- **清理全部预览缓存。** 一键清除当前目录的 AI 预览/裁剪缓存
-  （`.superpicky/cache`）以及 `report.db` 中已失效的缓存路径，不动原图。
-- 设置入口固定在设置菜单，新增 Cmd+,（macOS）/ Ctrl+,（Windows）快捷键。
-- 修复 Windows 深色界面下单选按钮选中状态不可见。
-- 修复浅色模式下设置中心背景露灰；美学阈值标注更正为 TOPIQ。
+另外修复：用命令行以相对目录运行时，GPS 会被静默忽略，连同所有地理筛选一起失
+效，而且没有任何错误提示。
 
-## 🖼 选鸟结果浏览器
+## 速度快了约 30%
 
-- 支持直接修改鸟种，文件联动移动到对应鸟种目录。
-- 修改星级后文件自动移动到对应星级目录。
-- 「精选」改为持久化旗标，缩略图显示皇冠角标。
-- 界面图标全面 SVG 化（星级/筛选筹码/工具栏/对焦状态），大图模式改为
-  PS 风格左侧工具栏。
-- 修复精选/改星后缩略图角标不刷新；连拍角标合并显示。
-- **键盘打星**：数字键 0-3 直接设星，Up/Down 星级 ±1（Left/Right 仍为
-  翻图）；网格与大图模式均可用。
-- 缩略图标签精简为单行（有鸟名显示鸟名，还没有鸟名则显示文件名），文件名
-  在悬停时显示；右侧详情面板在全球罕见度上方新增鸟种行（点击可复制鸟名）。
-- 浏览器左右两侧对焦用语统一：精焦 / 合焦 / 失焦（英文界面此前左侧
-  显示的是原始枚举 BEST/GOOD/BAD）。
-- 修复：英文筛选面板不再裁掉 0★ 筹码；鸟种颜值分去掉「/100」后缀。
+真实批次实测：495 张索尼 RAW，135 秒降到 95 秒。
 
-## 🧹 重置与整理
+改了什么：RAW 的元数据改为写进侧车文件，不再重写 RAW 本身；修掉了每张照片都
+重写一遍缓存预览的 bug；元数据工具从一个进程改成两个，写入不再堵住读取。最后
+这一项消除了每约 30 张照片就卡顿 3 秒的问题。
 
-- 重置时忽略系统隐藏文件与 OS 元数据残留。
-- 修复「按鸟种优先」布局下连拍目录成员残留，重置末尾补摊平兜底。
+全屏浏览也更快、更省内存。长按方向键翻图现在完全走缓存，大图库下内存占用比以
+前少约 2.4 GB。
 
-## ✂️ 界面精简
+## 更多鸟能被找到
 
-为聚焦核心选鸟工作流，本版本移除了若干非核心功能的界面入口：应用内更新
-检查、智能修图、裁剪建议、视频分析、纠错提交。如果你在 4.3.0 用过
-「视频选鸟」，其菜单在 4.5.0 中是有意移除的，并非 bug。相关功能实现仍
-保留在代码中，未来版本可能重新开放。
+第一遍完全找不到鸟时，SuperPicky 会用更高的细节再看一遍，并用识鸟模型确认结果。
+这能救回那些因为太小、太远、或被当成飞机风筝而漏掉的鸟，同时挡住误检。开关：
+设置 → 精选。
 
-## 📦 打包与安装
+另外，当相机的对焦点判定这张脱焦、但实测鸟头锐度明显没问题时，以实测为准。真
+正清晰的照片被压下去的情况变少了。
 
-- **Windows Lite 版停止构建。** Lite 的安装包很小，PyTorch 与模型留到首次
-  启动再下载——但这让**总下载量**变大而非变小：分两段约 1.2 GB（220 MB
-  安装包，之后是 wheel 包与 642 MB 模型），而 Full CPU 一次到底只需
-  792 MB。第二段依赖 PyPI 与镜像可用性，而这正是它在国内网络下反复失败的
-  地方。Windows 现在在 Release 页提供 Full CPU，Full CUDA 走网盘链接。
-  - **已经在用 Lite 的用户，请先卸载再安装 Full。** 两者安装标识不同但
-    安装目录相同，直接覆盖会在「添加或删除程序」里留下两个 SuperPicky
-    条目。卸载后还可以删掉 Lite 下载在 `%LOCALAPPDATA%` 的 PyTorch 运行时，
-    可释放数 GB——Full 版自带运行时，永远不会去读它。
-- **安装体积减小。** 用单个 35 MB 的分布数据库替换 AVONET（102 MB）与离线
-  eBird 名录（1.5 MB），完整版体积减少约 68 MB。
+## 识鸟与 Lightroom 插件
+
+- **鸟种颜值指数。** 每个鸟种现在都有一个颜值分，在详情面板显示，也可以用来筛
+  选和排序。它描述的是**鸟种**，不是你的照片，对星级没有任何影响。
+- **改正认错的鸟种。** 在照片上右键选「编辑鸟种」即可改正，也可以给还没有鸟名
+  的照片指定鸟种。
+- 关闭主窗口现在会让 SuperPicky 留在托盘继续运行，修复了 Lightroom 插件连不上
+  的问题。
+- 插件的「写鸟名」和「写描述」此前一直静默失效，现在都正常了，中文也正常——以
+  前中文可能变成乱码。
+- 识鸟服务几秒内就绪，插件不用再等十几秒。
+- 恰好拍在赤道或本初子午线上的照片，不再被当成没有 GPS。
+- Windows 上读取照片元数据时不再闪黑框。
+
+## 所有设置集中到一处
+
+原先分散的设置窗口全部合并成一个设置窗口，左边是分类：精选、识鸟、输出、外部
+应用、关于。首页的快速面板与它双向同步。
+
+这一版新增的设置：
+
+- 鸟名的显示方式。
+- 删除照片前是否需要确认。
+- 清理全部预览缓存——只清掉当前文件夹缓存的预览和裁剪图，绝不碰你的原图。
+
+技能档位和阈值是联动的：手动改了阈值就自动切到「自定义」。打开设置的快捷键是
+逗号键：Mac 上按 Cmd 加逗号，Windows 上按 Ctrl 加逗号。
+
+另外修复：Windows 深色模式下单选按钮看不见选中状态；浅色模式下设置窗口有一块
+露灰。
+
+## 结果浏览器
+
+- 在浏览器里改鸟种或改星级，文件会自动移动到对应的文件夹。
+- 数字键 0 到 3 直接设星级，上下方向键把星级加一减一。网格和全屏模式都能用。
+- 「精选」改成持久保存的标记，缩略图上有皇冠角标。
+- 缩略图标签精简为一行——有鸟名就显示鸟名，还没有鸟名就显示文件名，鼠标悬停可
+  以看文件名。
+- 详情面板新增鸟种一行，点一下可以复制鸟名。
+- 窗口左右两边的对焦用语统一了：精焦、合焦、失焦。
+- 全新的图标，全屏模式左侧增加了 Photoshop 风格的工具栏。
+
+## 重置
+
+重置现在会忽略系统隐藏文件，也不会再把照片漏在连拍文件夹里。它最后会做一遍摊
+平，作为兜底。
+
+## 界面更简单
+
+为了让 SuperPicky 专注在选片上，几个非核心功能的菜单入口被移除了：应用内更新检
+查、智能修图、裁剪建议、视频分析、纠错提交。
+
+如果你在 4.3.0 用过「视频选鸟」，它的菜单在 4.5.0 里是有意去掉的，不是 bug。相
+关代码还在，以后可能会回来。
+
+## Windows：Lite 精简版没有了
+
+Lite 的安装包很小，AI 引擎和模型留到第一次启动再下载。但实际上这让**总下载量**
+变大了而不是变小：分两段大约 1.2 GB，而完整版一次到底只要 792 MB。更糟的是第二
+段依赖别的服务器能连上，而这正是国内用户反复失败的地方。
+
+Windows 现在有两个版本：CPU 版和 CUDA 版，都是完整的，装完就能离线使用。
+
+**如果你现在用的是 Lite，请先卸载再安装完整版。** 两者用同一个安装目录，但在系
+统看来是不同的程序，直接覆盖会让「添加或删除程序」里出现两个 SuperPicky。卸载
+之后，你还可以把 Lite 下载的那套 AI 引擎删掉——完整版自带一套，永远不会去读它，
+能腾出好几 GB。
+
+安装体积也小了约 68 MB，因为新的鸟种地理数据取代了一个大得多的文件。
 
 ---
 
-## 分发说明
+## 我该下载哪个
 
-- **Apple Silicon Mac**：单一完整安装包（`.dmg`），见 Release 资产。
-- **Intel Mac**：独立完整安装包（`.dmg`），走 CPU（FP32）运行。该包单独
-  构建上传，出现在 Release 页的时间可能略晚于其他平台。
-- **Windows**：
-  - **CPU 完整版** —— 适用于所有电脑，在 Release 页下载。
-  - **GPU（CUDA）完整版** —— 面向 NVIDIA 显卡；因超过 GitHub 单文件上限，
-    通过 Google Drive / 百度网盘分发。
-  - 4.5.0 没有 Lite 安装包（见上方「打包与安装」）。
+- **Apple Silicon 的 Mac**（M1 及更新）：标准安装包。
+- **Intel 的 Mac**（大致是 2020 年以前）：Intel 安装包，走 CPU 运行。它是单独构
+  建的，出现在下载页的时间可能会稍晚一点。
+- **没有 NVIDIA 显卡的 Windows**：CPU 版，在 Release 页下载。
+- **有 NVIDIA 显卡的 Windows**：CUDA 版。它太大放不进 GitHub，请走网盘链接。
+
+4.5.0 没有 Lite 安装包。
