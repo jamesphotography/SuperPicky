@@ -56,15 +56,16 @@
 
             <div class="hero-cta">
                 <a href="#download-beta" class="btn btn-primary btn-beta">
-                    <span class="lang-cn">下载 4.3.0 LTS 稳定版</span>
-                    <span class="lang-en">Download 4.3.0 LTS Stable</span>
-                    <span class="btn-version">Recommended</span>
+                    <span class="lang-cn">下载 4.5.0 正式版</span>
+                    <span class="lang-en">Download 4.5.0</span>
+                    <span class="btn-version">Latest</span>
                 </a>
-                <a href="v4.5.0-rc5.html" class="btn btn-secondary"
+                <a href="https://github.com/jamesphotography/SuperPicky/releases/tag/v4.5.0"
+                   class="btn btn-secondary" target="_blank" rel="noopener noreferrer"
                    style="border-color:rgba(240,165,0,0.55); color:#f0a500;">
-                    <span class="lang-cn">下载 4.5.0-RC5 测试版</span>
-                    <span class="lang-en">Download 4.5.0-RC5 Beta</span>
-                    <span class="btn-version">Release Candidate</span>
+                    <span class="lang-cn">查看 4.5.0 更新说明</span>
+                    <span class="lang-en">4.5.0 Release Notes</span>
+                    <span class="btn-version">What's New</span>
                 </a>
                 <a href="#features" class="btn btn-ghost">
                     <span class="lang-cn">了解更多</span>
@@ -75,7 +76,7 @@
             <!-- Software Interface Preview -->
             <div class="hero-preview">
                 <div class="hero-preview-frame">
-                    <img src="img/V410/Screen/birdid-main.png" alt="SuperPicky V4.3.0 Interface">
+                    <img src="img/V410/Screen/birdid-main.png" alt="SuperPicky V4.5.0 Interface">
                     <div class="hero-preview-glow"></div>
                 </div>
             </div>
@@ -341,23 +342,25 @@
         </div>
     </section>
 
-    <!-- Beta Download Section (动态渲染，数据来自 downloads_github.json / downloads_gitcode.json) -->
+    <!-- Download Section (动态渲染，数据来自 downloads_github.json) -->
     <section class="download-section" id="download-beta">
         <div class="container">
             <div class="section-header">
                 <span class="section-label">
-                    <span class="lang-cn">下载 <span id="beta-section-tag-cn">最新测试版</span></span>
-                    <span class="lang-en">Download <span id="beta-section-tag-en">Latest Beta</span></span>
+                    <span class="lang-cn">下载 <span id="beta-section-tag-cn">最新正式版</span></span>
+                    <span class="lang-en">Download <span id="beta-section-tag-en">Latest</span></span>
                 </span>
             </div>
             <div class="download-cards" id="beta-download-cards">
                 <!-- 由 JS 动态渲染 -->
             </div>
             <p style="text-align:center; margin-top:24px; font-size:0.95em;">
-                <a href="v4.5.0-rc5.html" style="color:#f0a500; text-decoration:none; transition:color 0.2s;"
+                <a href="https://github.com/jamesphotography/SuperPicky/releases/tag/v4.5.0"
+                   target="_blank" rel="noopener noreferrer"
+                   style="color:#f0a500; text-decoration:none; transition:color 0.2s;"
                    onmouseover="this.style.color='#ffc83d'" onmouseout="this.style.color='#f0a500'">
-                    <span class="lang-cn">尝鲜：4.5.0 RC5 最新测试版（全新评星算法 / Lightroom 平铺模式）→</span>
-                    <span class="lang-en">Try the 4.5.0 RC5 beta (new rating engine / Lightroom flat mode) →</span>
+                    <span class="lang-cn">4.5.0 新增：批内相对评星 / Lightroom 平铺模式 / GBIF 鸟种分布重建 →</span>
+                    <span class="lang-en">New in 4.5.0: batch-relative rating / Lightroom flat mode / GBIF distributions →</span>
                 </a>
             </p>
             <p style="text-align:center; margin-top:12px; font-size:0.9em;">
@@ -741,11 +744,10 @@
         var CN_PROXY_PREFIX = 'https://gh-proxy.com/';
 
         var PLATFORMS = [
-            { key: 'mac_arm64', labelCn: 'macOS · Apple Silicon (M1/M2/M3/M4/M5)',                labelEn: 'macOS · Apple Silicon (M1/M2/M3/M4/M5)',              badge: 'macOS',   cardClass: 'featured',          tooltipCn: null, tooltipEn: null,                                                                                                                                          primaryLink: 'github' },
-            { key: 'mac_intel', labelCn: 'macOS · Intel x64（2020 年前 Mac）',                     labelEn: 'macOS · Intel x64 (pre-2020 Macs)',                  badge: 'macOS',   cardClass: '',                  tooltipCn: '≈1.3 GB', tooltipEn: '≈1.3 GB' },
-            { key: 'win_cpu',   labelCn: 'Windows · x64 · CPU 自带 PyTorch + 模型',                labelEn: 'Windows · x64 · CPU · bundled PyTorch + models',      badge: 'Windows', cardClass: 'windows',           tooltipCn: '✅ 安装即用，无需联网下载 · 约 749 MB', tooltipEn: '✅ Install-and-run, no extra download · ≈749 MB' },
-            { key: 'win_lite',  labelCn: 'Windows · x64 · Lite 精简版（首启自动下载模型）',          labelEn: 'Windows · x64 · Lite (downloads models on first run)', badge: 'Windows', cardClass: 'windows',           tooltipCn: '≈196 MB · 首次启动按硬件自动下载 AI 引擎与模型', tooltipEn: '≈196 MB · downloads AI engine + models on first launch' },
-            { key: 'win_cuda',  labelCn: 'Windows · x64 · GPU CUDA 加速版（仅 NVIDIA 显卡）',     labelEn: 'Windows · x64 · GPU CUDA build (NVIDIA only)',        badge: 'Windows', cardClass: 'windows featured',  tooltipCn: 'Full CUDA ≈2.0 GB · 仅网盘分发，因超出 GitHub 单文件 2 GiB 上限', tooltipEn: 'Full CUDA ≈2.0 GB · netdisk-only (exceeds GitHub 2 GiB single-asset cap)', noGitHub: true, primaryLink: 'drive' },
+            { key: 'mac_arm64', labelCn: 'macOS · Apple Silicon (M1/M2/M3/M4/M5)',                labelEn: 'macOS · Apple Silicon (M1/M2/M3/M4/M5)',              badge: 'macOS',   cardClass: 'featured',          tooltipCn: '✅ 已签名公证，安装即用 · 约 798 MB', tooltipEn: '✅ Signed & notarized, install-and-run · ≈798 MB',                                                                              primaryLink: 'github' },
+            { key: 'mac_intel', labelCn: 'macOS · Intel x64（2020 年前 Mac）',                     labelEn: 'macOS · Intel x64 (pre-2020 Macs)',                  badge: 'macOS',   cardClass: '',                  tooltipCn: '约 1.2 GB · 走 CPU (FP32) 运行', tooltipEn: '≈1.2 GB · runs on CPU (FP32)' },
+            { key: 'win_cpu',   labelCn: 'Windows · x64 · CPU 自带 PyTorch + 模型',                labelEn: 'Windows · x64 · CPU · bundled PyTorch + models',      badge: 'Windows', cardClass: 'windows',           tooltipCn: '✅ 安装即用，无需联网下载 · 约 756 MB', tooltipEn: '✅ Install-and-run, no extra download · ≈756 MB' },
+            { key: 'win_cuda',  labelCn: 'Windows · x64 · GPU CUDA 加速版（仅 NVIDIA 显卡）',     labelEn: 'Windows · x64 · GPU CUDA build (NVIDIA only)',        badge: 'Windows', cardClass: 'windows featured',  tooltipCn: 'Full CUDA 约 2.0 GB · 仅网盘分发，因超出 GitHub 单文件 2 GiB 上限', tooltipEn: 'Full CUDA ≈2.0 GB · netdisk-only (exceeds GitHub 2 GiB single-asset cap)', noGitHub: true, primaryLink: 'drive' },
         ];
 
         function mkEl(tag, cls) { var e = document.createElement(tag); if (cls) e.className = cls; return e; }
@@ -766,10 +768,15 @@
         }
 
         function renderBetaCards(ghData) {
-            var tag = ghData.beta.tag;
-            var ghFiles = ghData.beta.files || {};
-            var driveMap = ghData.beta.drive || {};
-            var baiduMap = ghData.beta.baidu || {};
+            // 4.5.0 起清单根键为 latest（正式版）；保留 beta 兼容旧的缓存副本。
+            // Since 4.5.0 the manifest root key is `latest`; `beta` stays as a
+            // fallback so a stale cached copy still renders.
+            var rel = ghData.latest || ghData.beta;
+            if (!rel) return;
+            var tag = rel.tag;
+            var ghFiles = rel.files || {};
+            var driveMap = rel.drive || {};
+            var baiduMap = rel.baidu || {};
 
             ['beta-section-tag-cn', 'beta-section-tag-en', 'hero-beta-tag-cn', 'hero-beta-tag-en'].forEach(function (id) {
                 var e = document.getElementById(id); if (e) e.textContent = tag;
