@@ -1,26 +1,23 @@
 {
-  "beta": {
-    "tag": "v4.3.0",
-    "updated_at": "2026-06-11T00:00:00.0000000+00:00",
+  "latest": {
+    "tag": "v4.5.0",
+    "updated_at": "2026-08-01T00:00:00.0000000+00:00",
     "files": {
-      "mac_arm64": "SuperPicky_v4.3.0_arm64_5177def.dmg",
-      "mac_intel": "SuperPicky_v4.3.0_Intel_25e4772.dmg",
-      "win_cpu": "SuperPicky_Setup_Full_Win64_v4.3.0_5177def.exe",
-      "win_lite": "SuperPicky_Setup_Lite_Win64_v4.3.0_5177def.exe"
+      "mac_arm64": "SuperPicky_v4.5.0_arm64_6ff3387.dmg",
+      "mac_intel": "SuperPicky_v4.5.0_x86_64_6ff3387.dmg",
+      "win_cpu": "SuperPicky_Setup_Full_Win64_v4.5.0_6ff3387.exe"
     },
     "drive": {
-      "mac_arm64": "https://drive.google.com/file/d/1eEcBASLdF1akc8LyScKjUQHBipt4dbgb/view?usp=sharing",
-      "mac_intel": "https://drive.google.com/file/d/1MxbWP3w8txM-xVC-DLyJmg_K539FX8Jq/view?usp=sharing",
-      "win_cpu": "https://drive.google.com/file/d/1NQBTVH48xKVdLsWj9GaI-h1B8JSgt2b5/view?usp=sharing",
-      "win_cuda": "https://drive.google.com/file/d/1s5OdA0Rmb9ygg4EwzZriqHfXJA0Ad2Jc/view?usp=sharing",
-      "win_lite": "https://drive.google.com/file/d/1DiLHuOWS9gjqB68gvAC_WTszDKYWbWDw/view?usp=sharing"
+      "mac_arm64": "https://drive.google.com/file/d/1luvGjAixIWuxv3H4_QcP9YGKLw7LxRzi/view?usp=sharing",
+      "mac_intel": "https://drive.google.com/file/d/1JfGwX2n83ZotqIai4f64N_k5cC-4fToM/view?usp=sharing",
+      "win_cpu": "https://drive.google.com/file/d/1_AivYDY2xlOM0ZCj15FkC3sl8MXfsQev/view?usp=sharing",
+      "win_cuda": "https://drive.google.com/file/d/1syeTJX550u6mHXV3OTrW-xplNLVqkBeg/view?usp=sharing"
     },
     "baidu": {
-      "mac_arm64": "https://pan.baidu.com/s/1KzY5PYnNvpu_jhMQmgv2QA?pwd=w6cw",
-      "mac_intel": "https://pan.baidu.com/s/1AwQwqSEaB09wjzyLRaSkuw?pwd=4x2d",
-      "win_cpu": "https://pan.baidu.com/s/1DA6ncLegShvmHe8z6f4LKg?pwd=gec8",
-      "win_cuda": "https://pan.baidu.com/s/1168LAT46pTPR_iLkhp4psw?pwd=9vdw",
-      "win_lite": "https://pan.baidu.com/s/1Rdri0FB7KXoEFv3PVIqa9w?pwd=mcw9"
+      "mac_arm64": "https://pan.baidu.com/s/1T-_pLnIdOcvgr-cgz-ZcNw?pwd=3fyq",
+      "mac_intel": "https://pan.baidu.com/s/1FoXsSsBRpseujiZpbYpp5w?pwd=2d2k",
+      "win_cpu": "https://pan.baidu.com/s/1ZlKOEPbvj-RuNpnalul-Qw?pwd=dwu4",
+      "win_cuda": "https://pan.baidu.com/s/1igDhN2FMfqxiyEAOCdSZSw?pwd=54nf"
     }
   }
 }
