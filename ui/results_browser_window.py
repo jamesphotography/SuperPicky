@@ -1658,18 +1658,21 @@ class ResultsBrowserWindow(QMainWindow):
 
     def _apple_photos_target_photos(self) -> list[dict]:
         """
-        返回 Apple Photos 导入目标：多选优先，否则使用当前可见过滤结果。
+        返回 Apple Photos 导入目标：明确勾选优先，否则使用当前可见过滤结果。
 
         折叠连拍组在 ``_filtered_photos`` 中只有封面，因此未展开时只导入用户
-        实际看到的代表图；展开后则按每张可见成员导入。
+        实际看到的代表图；展开后则按每张可见成员导入。只要存在一个或多个
+        蓝色勾选项目，就严格按勾选集合导入，不包含双图对比自动补入的锚点。
 
-        Return Apple Photos targets: a multi-selection takes precedence,
-        otherwise use the currently visible filtered list. Collapsed bursts
-        contribute only their visible representative.
+        Return Apple Photos targets: one or more explicitly checked photos take
+        precedence; otherwise use the currently visible filtered list.
+        Collapsed bursts contribute only their visible representative. The
+        unchecked anchor automatically added for two-photo comparison is never
+        included in an import.
         """
 
-        selected = self._thumb_grid.get_multi_selected_photos()
-        if len(selected) >= 2:
+        selected = self._thumb_grid.get_explicitly_selected_photos()
+        if selected:
             return list(selected)
         return list(self._filtered_photos)
 

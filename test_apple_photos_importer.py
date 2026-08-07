@@ -800,7 +800,12 @@ def test_importer_shutdown_during_metadata_repair_is_deterministic(
 
 
 def test_browser_target_selection_precedence() -> None:
-    """两张及以上多选优先；否则导入当前可见结果。/ Multi-select takes precedence."""
+    """
+    一张或多张明确勾选均优先；无勾选时导入当前可见结果。
+
+    One or more explicitly checked photos take precedence; without a check,
+    the currently visible results are imported.
+    """
 
     from ui.results_browser_window import ResultsBrowserWindow
 
@@ -808,7 +813,7 @@ def test_browser_target_selection_precedence() -> None:
         def __init__(self, selected: list[dict]):
             self.selected = selected
 
-        def get_multi_selected_photos(self) -> list[dict]:
+        def get_explicitly_selected_photos(self) -> list[dict]:
             return self.selected
 
     class _Window:
@@ -823,12 +828,42 @@ def test_browser_target_selection_precedence() -> None:
         "selected-b",
     ]
 
+    fake._thumb_grid = _Grid([{"filename": "selected-only"}])
+    assert [
+        p["filename"] for p in ResultsBrowserWindow._apple_photos_target_photos(fake)
+    ] == ["selected-only"]
+
     fake._thumb_grid = _Grid([])
     assert [
         p["filename"] for p in ResultsBrowserWindow._apple_photos_target_photos(fake)
     ] == [
         "visible-a",
         "visible-b",
+    ]
+
+
+def test_grid_explicit_selection_excludes_comparison_anchor() -> None:
+    """
+    批量操作只返回蓝色勾选项目，不包含对比视图自动补入的锚点。
+
+    Batch operations return only blue-checked items and exclude the unchecked
+    anchor automatically supplied to the comparison view.
+    """
+
+    from ui.thumbnail_grid import ThumbnailGrid
+
+    class _GridState:
+        _photos = [
+            {"filename": "unchecked-anchor"},
+            {"filename": "checked-only"},
+        ]
+        _multi_selected = {"checked-only"}
+        _anchor_photo = _photos[0]
+
+    fake = _GridState()
+    assert ThumbnailGrid.get_multi_selected_photos(fake) == _GridState._photos
+    assert ThumbnailGrid.get_explicitly_selected_photos(fake) == [
+        {"filename": "checked-only"}
     ]
 
 
