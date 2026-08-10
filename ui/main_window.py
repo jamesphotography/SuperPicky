@@ -2763,44 +2763,6 @@ class SuperPickyMainWindow(QMainWindow):
         self._check_report_csv()
 
     @Slot()
-    def _open_post_adjustment(self):
-        """打开重新评星对话框"""
-        if not self.directory_path:
-            self._show_message(
-                self.i18n.t("messages.hint"),
-                self.i18n.t("messages.select_dir_first"),
-                "warning"
-            )
-            return
-
-        report_path = os.path.join(self.directory_path, ".superpicky", "report.db")
-        if not os.path.exists(report_path):
-            StyledMessageBox.warning(
-                self,
-                self.i18n.t("messages.hint"),
-                self.i18n.t("messages.no_report_csv")
-            )
-            return
-
-        # Task 7: 从 advanced_config 读取阈值，不再读取已删除的滑块控件
-        # Task 7: read thresholds from advanced_config; old slider widgets removed
-        _adv_pad = get_advanced_config()
-        from .post_adjustment_dialog import PostAdjustmentDialog
-        dialog = PostAdjustmentDialog(
-            self,
-            self.directory_path,
-            current_sharpness=int(_adv_pad.min_sharpness),
-            current_nima=_adv_pad.min_nima,
-            on_complete_callback=self._on_post_adjustment_complete,
-            log_callback=self._log
-        )
-        dialog.exec()
-
-    def _on_post_adjustment_complete(self):
-        """重新评星完成回调"""
-        self._log(self.i18n.t("messages.post_adjust_complete"))
-
-    @Slot()
     def _maybe_prompt_video_first_run(self):
         """
         V4.3 Phase 4: 首次发现视频时弹一次性提示

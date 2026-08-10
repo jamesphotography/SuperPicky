@@ -35,7 +35,6 @@ PATCH_ITEMS = (
     "birdid_server.py",
     "birdid_cli.py",
     "iqa_scorer.py",
-    "post_adjustment_engine.py",
     "server_manager.py",
     "superpicky_cli.py",
     "topiq_model.py",

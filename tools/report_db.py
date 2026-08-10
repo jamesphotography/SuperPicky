@@ -949,51 +949,6 @@ class ReportDB:
             self._safe_commit()
             return cursor.rowcount > 0
 
-    def update_ratings_batch(self, updates: List[dict]) -> int:
-        """
-        批量更新评分及相关数据。
-
-        用于重新评星场景（PostAdjustmentEngine）。
-
-        Args:
-            updates: 更新数据列表，每个字典必须包含 "filename" 键，
-                     以及要更新的字段（如 rating, adj_sharpness, adj_topiq）
-
-        Returns:
-            成功更新的记录数
-        """
-        if not updates:
-            return 0
-
-        now = _now_iso()
-        count = 0
-
-        with self._lock:
-            with self._conn:
-                for upd in updates:
-                    filename = upd.get("filename")
-                    if not filename:
-                        continue
-
-                    cleaned = self._clean_data(upd)
-                    cleaned["updated_at"] = now
-
-                    columns = [k for k in cleaned if k in COLUMN_NAMES and k not in ("filename", "id")]
-                    if not columns:
-                        continue
-
-                    values = [cleaned[k] for k in columns]
-                    set_clause = ", ".join(f"{c} = ?" for c in columns)
-
-                    sql = f"UPDATE photos SET {set_clause} WHERE filename = ?"
-                    values.append(filename)
-
-                    cursor = self._conn.execute(sql, values)
-                    if cursor.rowcount > 0:
-                        count += 1
-
-        return count
-
     def clear_cache_paths(self) -> int:
         """清空缓存相关路径字段（临时 JPG、调试裁切、YOLO 调试图）。"""
         with self._lock:

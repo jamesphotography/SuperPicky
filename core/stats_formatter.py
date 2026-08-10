@@ -53,46 +53,6 @@ def format_processing_summary(stats: Dict, include_time: bool = True) -> List[st
     return lines
 
 
-def format_restar_comparison(
-    old_stats: Dict[str, int],
-    new_stats: Dict[str, int],
-    changed_count: int
-) -> List[str]:
-    """
-    格式化重新评星对比表
-    
-    Args:
-        old_stats: 原始评分统计 {star_3, star_2, star_1, star_0}
-        new_stats: 新评分统计 {star_3, star_2, star_1, star_0}
-        changed_count: 需要更新的照片数量
-    
-    Returns:
-        格式化的行列表
-    """
-    def delta_str(old: int, new: int) -> str:
-        diff = new - old
-        if diff > 0:
-            return f"+{diff}"
-        elif diff < 0:
-            return f"{diff}"
-        else:
-            return "±0"
-    
-    lines = []
-    lines.append("")
-    lines.append("📊 评分统计对比:")
-    lines.append(f"{'星级':<12} {'原来':>8} {'现在':>8} {'变化':>8}")
-    lines.append("-" * 40)
-    lines.append(f"{'⭐⭐⭐ 3星':<10} {old_stats.get('star_3', 0):>8} {new_stats.get('star_3', 0):>8} {delta_str(old_stats.get('star_3', 0), new_stats.get('star_3', 0)):>8}")
-    lines.append(f"{'⭐⭐   2星':<10} {old_stats.get('star_2', 0):>8} {new_stats.get('star_2', 0):>8} {delta_str(old_stats.get('star_2', 0), new_stats.get('star_2', 0)):>8}")
-    lines.append(f"{'⭐     1星':<10} {old_stats.get('star_1', 0):>8} {new_stats.get('star_1', 0):>8} {delta_str(old_stats.get('star_1', 0), new_stats.get('star_1', 0)):>8}")
-    lines.append(f"{'0星':<12} {old_stats.get('star_0', 0):>8} {new_stats.get('star_0', 0):>8} {delta_str(old_stats.get('star_0', 0), new_stats.get('star_0', 0)):>8}")
-    lines.append("-" * 40)
-    lines.append(f"📝 需要更新: {changed_count} 张照片")
-    
-    return lines
-
-
 def format_reset_summary(restored: int, failed: int = 0, exif_reset: int = 0) -> List[str]:
     """
     格式化重置完成摘要
