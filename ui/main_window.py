@@ -277,15 +277,15 @@ class WorkerThread(threading.Thread):
             return  # 目前仅在 macOS 上支持 caffeinate
             
         try:
-            # V3.8.1: 先清理残留的 caffeinate 进程，避免累积
-            try:
-                subprocess.run(['killall', 'caffeinate'], 
-                              stdout=subprocess.DEVNULL, 
-                              stderr=subprocess.DEVNULL,
-                              timeout=2)
-            except Exception:
-                pass  # 如果没有残留进程，忽略错误
-            
+            # V4.6: 移除原 V3.8.1 的 `killall caffeinate`。它会杀掉本机所有
+            # caffeinate 进程(包括用户在终端里为别的长任务开的)，属于越界操作；
+            # 且它只是在给「退出时未清理」这个根因打补丁——根因已在
+            # _cleanup_on_quit 中无条件调用 _stop_caffeinate() 解决。
+            # V4.6: dropped the V3.8.1 `killall caffeinate`. It killed every
+            # caffeinate on the machine, including ones the user started for
+            # unrelated long-running tasks. It only papered over the real leak,
+            # which is now fixed by an unconditional _stop_caffeinate() in
+            # _cleanup_on_quit.
             self.caffeinate_process = subprocess.Popen(
                 ['caffeinate', '-d', '-i'],
                 stdout=subprocess.DEVNULL,
@@ -1365,6 +1365,24 @@ class SuperPickyMainWindow(QMainWindow):
                 self.worker.join(timeout=5)
             except Exception:
                 pass
+
+        # V4.6: 无条件停止 caffeinate，不能依赖 worker.run() 的 finally。
+        # worker 是 daemon 线程：上面的 join 一旦超时(处理大批 RAW 时很常见)，
+        # 主进程继续退出会直接终止该线程，finally 不会执行，caffeinate 就会残留，
+        # 用户的 Mac 从此不再自动休眠。进程句柄在主线程手上，terminate 不依赖
+        # worker 线程是否存活；_stop_caffeinate() 自带 None 判断，可安全重复调用。
+        # V4.6: stop caffeinate unconditionally — worker.run()'s finally is not a
+        # reliable release point. worker is a daemon thread, so once the join above
+        # times out (common with large RAW batches) the interpreter terminates it
+        # without running finally, leaking caffeinate and leaving the user's Mac
+        # unable to sleep. The handle lives on the main thread, so terminate does
+        # not need the worker alive; _stop_caffeinate() is idempotent.
+        if self.worker is not None:
+            try:
+                self.worker._stop_caffeinate()
+            except Exception as e:
+                print(f"⚠️  caffeinate cleanup failed: {e}")
+
         if hasattr(self, '_init_manager') and self._init_manager is not None:
             try:
                 self._init_manager.cancel()
