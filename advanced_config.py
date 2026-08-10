@@ -487,8 +487,15 @@ class AdvancedConfig:
         self.config["custom_sharpness"] = max(100, min(600, int(value)))
     
     def set_custom_aesthetics(self, value):
-        """设置自选模式下的美学阈值 (4.0-7.0)"""
-        self.config["custom_aesthetics"] = max(4.0, min(7.0, float(value)))
+        """设置自选模式下的美学阈值 (0.0-7.0) - 与 set_min_nima clamp 对齐"""
+        # V4.6: 下限 4.0→0.0,与 set_min_nima 及 UI 滑块(0-70,即 0.0-7.0)一致。
+        # 此前 4.0 会在拖到 0.0-3.9 时静默截断(滑块下半段 56% 行程失效),
+        # 导致 custom 档恢复时把用户阈值改写回 4.0,GUI 与 CLI 评星结果同时受影响。
+        # V4.6: lower bound 4.0→0.0, matching set_min_nima and the UI slider
+        # (0-70 => 0.0-7.0). The old 4.0 floor silently truncated the lower 56%
+        # of the slider, so restoring the custom preset overwrote the user's
+        # threshold back to 4.0 — affecting both GUI and CLI ratings.
+        self.config["custom_aesthetics"] = max(0.0, min(7.0, float(value)))
 
     # V4.1: 临时文件管理 getter/setter
     @property
