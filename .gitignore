@@ -34,6 +34,9 @@ build/
 test_*.py
 # Apple Photos 导入回归测试需要纳入版本控制 / Keep Apple Photos regression coverage
 !test_apple_photos_importer.py
+# 官网版本查询回归测试 / Keep site version-check regression coverage
+!test_site_version.py
+!test_about_version_check.py
 analyze_*.py
 add_*.py
 write_*.py

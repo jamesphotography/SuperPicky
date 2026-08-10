@@ -3727,7 +3727,9 @@ class SuperPickyMainWindow(QMainWindow):
             from config import config as _cfg
             download_page = _cfg.endpoints.UPDATE_DOWNLOAD_PAGE
         except Exception:
-            download_page = "https://superpicky.jamesphotography.com.au/#download"
+            # 官网域名是 superpicky.app；旧的 superpicky.jamesphotography.com.au
+            # 已无 DNS 记录，勿再写回。/ The legacy host no longer resolves.
+            download_page = "https://superpicky.app/#download"
 
         dialog = QDialog(self)
         dialog.setWindowTitle(self.i18n.t("update.update_center_title"))

@@ -140,6 +140,13 @@ class SettingsCenter(QDialog):
         start_page: 初始显示的页 key / Initial page key to show.
     """
 
+    # 官网版本查询结果信号：(has_update, latest_version, error)。
+    # 查询在后台线程执行，必须经信号回到主线程再更新控件，禁止跨线程操作 UI。
+    # Site version lookup result: (has_update, latest_version, error). The lookup
+    # runs on a worker thread and must return through this signal before touching
+    # any widget — never update UI from the worker thread.
+    site_version_checked = Signal(bool, str, str)
+
     def __init__(self, i18n, parent: QWidget | None = None, start_page: str = "culling") -> None:
         super().__init__(parent)
         self.i18n = i18n
@@ -150,6 +157,12 @@ class SettingsCenter(QDialog):
         # Fix D: Early-init coordination guards to eliminate late-init dependencies
         self._suppress: bool = False
         self._current_skill_key: str = "custom"
+
+        # 关于页版本查询控件（仅在关于页构建后存在），先置空避免 late-init 依赖。
+        # About-page version widgets (created with that page); pre-set to None.
+        self._about_check_btn: QPushButton | None = None
+        self._about_version_result: QLabel | None = None
+        self.site_version_checked.connect(self._on_site_version_checked)
 
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -2512,7 +2525,42 @@ class SettingsCenter(QDialog):
         header_layout.addStretch()
         lay.addWidget(header)
 
-        lay.addSpacing(24)
+        lay.addSpacing(16)
+
+        # ── 版本查询与官网入口 / Version lookup & download page ────────────────
+        # 4.3.0 起应用内不再自动检测更新（见 tools/update_checker），但用户仍需
+        # 一条获知新版并前往下载的通路。此处只做两件事：点击时只读查询官网发布
+        # 清单，以及打开官网下载页；不下载、不安装、不改动任何本地文件。
+        # Automatic update checks are disabled since 4.3.0, but users still need a
+        # way to learn about new versions. This row does only two things: a
+        # click-triggered read-only lookup of the site manifest, and opening the
+        # download page. It never downloads, installs, or modifies anything.
+        update_row = QHBoxLayout()
+        update_row.setContentsMargins(0, 0, 0, 0)
+        update_row.setSpacing(8)
+
+        self._about_check_btn = QPushButton(self.i18n.t("update.update_center_btn_check"))
+        self._about_check_btn.setObjectName("secondary")
+        self._about_check_btn.clicked.connect(self._on_about_check_version)
+        update_row.addWidget(self._about_check_btn)
+
+        visit_btn = QPushButton(self.i18n.t("update.update_center_btn_visit_site"))
+        visit_btn.setObjectName("secondary")
+        visit_btn.clicked.connect(self._on_about_visit_site)
+        update_row.addWidget(visit_btn)
+
+        self._about_version_result = QLabel(
+            self.i18n.t("update.update_center_result_pending")
+        )
+        self._about_version_result.setStyleSheet(
+            f"color:{COLORS['text_tertiary']};font-size:12px;"
+        )
+        self._about_version_result.setWordWrap(True)
+        update_row.addWidget(self._about_version_result, 1)
+
+        lay.addLayout(update_row)
+
+        lay.addSpacing(20)
 
         # ── 分隔线 / Divider ──────────────────────────────────────────────────
         divider = QFrame()
@@ -2574,6 +2622,109 @@ class SettingsCenter(QDialog):
         page_lay.setContentsMargins(0, 0, 0, 0)
         page_lay.addWidget(scroll)
         return page
+
+    # ── 关于页：版本查询 / About page: version lookup ──────────────────────────
+
+    def _on_about_visit_site(self) -> None:
+        """
+        打开官网下载页。
+
+        地址取自 config.endpoints.UPDATE_DOWNLOAD_PAGE，便于通过环境变量覆盖；
+        读取失败时回退到官网默认地址，保证按钮任何情况下都不会失效。
+
+        Open the official download page. The URL comes from
+        config.endpoints.UPDATE_DOWNLOAD_PAGE so it stays overridable, with a
+        hard-coded fallback so the button never becomes a dead end.
+        """
+
+        import webbrowser
+
+        try:
+            from config import config as _cfg
+
+            url = str(_cfg.endpoints.UPDATE_DOWNLOAD_PAGE)
+        except Exception:
+            url = "https://superpicky.app/#download"
+
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
+
+    def _on_about_check_version(self) -> None:
+        """
+        在后台线程查询官网发布清单，避免阻塞界面。
+
+        点击后立即禁用按钮并显示“检查中”，查询结果经 site_version_checked
+        信号回到主线程处理。整个过程只读，不下载也不安装任何东西。
+
+        Look up the site release manifest on a worker thread so the UI stays
+        responsive. The button is disabled and a checking hint is shown
+        immediately; the result returns via the site_version_checked signal.
+        The whole flow is read-only — nothing is downloaded or installed.
+        """
+
+        import threading
+
+        if getattr(self, "_about_check_btn", None) is None:
+            return
+
+        self._about_check_btn.setEnabled(False)
+        self._about_version_result.setText(self.i18n.t("update.update_center_checking"))
+
+        def _worker() -> None:
+            try:
+                from tools.site_version import check_site_version
+
+                result = check_site_version()
+                self.site_version_checked.emit(
+                    result.has_update,
+                    result.latest_version or "",
+                    result.error or "",
+                )
+            except Exception as exc:  # 兜底：worker 绝不能让异常逃逸
+                self.site_version_checked.emit(False, "", str(exc))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_site_version_checked(
+        self, has_update: bool, latest_version: str, error: str
+    ) -> None:
+        """
+        在主线程展示官网版本查询结果。
+
+        参数 / Parameters:
+            has_update (bool): 官网是否有更新版本 / Whether the site is newer.
+            latest_version (str): 官网版本号，失败时为空串 / Site version, empty on failure.
+            error (str): 失败原因，成功时为空串 / Failure reason, empty on success.
+        """
+
+        if getattr(self, "_about_check_btn", None) is not None:
+            self._about_check_btn.setEnabled(True)
+
+        if error:
+            self._about_version_result.setText(
+                self.i18n.t("update.update_center_result_failed")
+            )
+            self._about_version_result.setStyleSheet(
+                f"color:{COLORS['text_tertiary']};font-size:12px;"
+            )
+            return
+
+        if has_update:
+            self._about_version_result.setText(
+                self.i18n.t("update.new_version_available", version=latest_version)
+            )
+            self._about_version_result.setStyleSheet(
+                f"color:{COLORS['accent']};font-size:12px;"
+            )
+        else:
+            self._about_version_result.setText(
+                self.i18n.t("update.update_center_result_latest")
+            )
+            self._about_version_result.setStyleSheet(
+                f"color:{COLORS['text_tertiary']};font-size:12px;"
+            )
 
     def _placeholder(self, title: str) -> QWidget:
         """
