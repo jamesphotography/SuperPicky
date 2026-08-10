@@ -68,6 +68,14 @@ temp/
 .superpicky_temp/
 ebird_cache/
 
+# 选鸟目录的本地备份（形如 .superpicky_backup_<卷名>_<时间戳>/，内含 report.db
+# 等用户数据，体积大且与代码无关）。用通配符覆盖全部时间戳变体，避免
+# `git add -A` 误把备份数据提交进仓库。
+# Local backups of culling directories (.superpicky_backup_<volume>_<timestamp>/).
+# They hold user data such as report.db — large and unrelated to the code. The
+# wildcard covers every timestamped variant so `git add -A` cannot commit them.
+.superpicky_backup_*/
+
 # 虚拟环境
 .venv/
 .venv-cuda/
