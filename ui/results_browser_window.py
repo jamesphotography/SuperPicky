@@ -641,11 +641,31 @@ def _move_to_trash(filepath: str) -> bool:
         return False
     try:
         if sys.platform == "darwin":
-            # macOS: osascript 调用 Finder 移入回收站
-            escaped = filepath.replace('"', '\\"')
-            script = f'tell application "Finder" to delete POSIX file "{escaped}"'
+            # macOS: osascript 调用 Finder 移入回收站。
+            # 路径经 argv 传入，脚本本身是静态常量——绝不可把路径插值进脚本源。
+            # 旧写法只转义双引号(filepath.replace('"', '\\"'))，反斜杠未转义，
+            # 文件名中的 \" 组合会提前闭合 AppleScript 字符串，使其余部分作为
+            # 代码执行(已实测可执行任意表达式)。macOS 文件名允许 \ 和 "，
+            # 因此一个特制文件名即可在删除操作中触发任意代码执行。
+            # Pass the path through argv against a static script — never
+            # interpolate it into AppleScript source. The previous code escaped
+            # only double quotes, leaving backslashes untouched, so a \" pair in
+            # a filename closed the string early and executed the remainder as
+            # code. macOS permits both \ and " in filenames, so a crafted name
+            # meant arbitrary code execution during a delete.
+            # POSIX file 的转换必须放在 tell 块之外：在 tell application "Finder"
+            # 内部，POSIX file 会被 Finder 的术语解释，作用于变量时报 -1728。
+            # The POSIX file coercion must happen outside the tell block: inside
+            # tell application "Finder" it is resolved against Finder's own
+            # terminology and fails with -1728 when applied to a variable.
+            script = (
+                "on run argv\n"
+                "    set targetFile to POSIX file (item 1 of argv) as alias\n"
+                '    tell application "Finder" to delete targetFile\n'
+                "end run"
+            )
             result = subprocess.run(
-                ["osascript", "-e", script],
+                ["osascript", "-e", script, "--", filepath],
                 capture_output=True, text=True, timeout=10
             )
             return result.returncode == 0
