@@ -1,3 +1,4 @@
 /* Localized versions of Info.plist keys */
 CFBundleDisplayName = "SuperPicky";
 CFBundleName = "SuperPicky";
+NSAppleEventsUsageDescription = "SuperPicky needs permission to add your selected bird photos to Apple Photos.";

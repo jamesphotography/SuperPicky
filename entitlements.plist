@@ -14,6 +14,11 @@
     <key>com.apple.security.network.client</key>
     <true/>
 
+    <!-- 允许通过 Apple Events 将用户确认的照片导入 Apple 照片 -->
+    <!-- Allow Apple Events used to import user-confirmed files into Photos -->
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
+
     <!-- 禁用库验证（PyInstaller打包的应用需要） -->
     <key>com.apple.security.cs.disable-library-validation</key>
     <true/>

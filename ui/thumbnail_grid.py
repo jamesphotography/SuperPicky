@@ -1012,6 +1012,29 @@ class ThumbnailGrid(QScrollArea):
                 return [self._anchor_photo] + in_multi
         return in_multi
 
+    def get_explicitly_selected_photos(self) -> list[dict]:
+        """
+        返回所有带蓝色勾选标记的照片，并保持当前网格的显示顺序。
+
+        此接口只反映用户通过 Command/Ctrl、Shift 或全选明确勾选的项目，
+        不会像 ``get_multi_selected_photos`` 那样为双图对比自动补入未勾选的
+        锚点照片。因此，批量导入等操作可以精确遵循界面上的勾选状态。
+
+        Return every photo carrying the blue checked marker, preserving the
+        current grid order. Unlike ``get_multi_selected_photos``, this method
+        never injects the unchecked comparison anchor, so batch operations can
+        follow the visible checked state exactly.
+
+        返回 / Returns:
+            list[dict]: 明确勾选的照片记录 / explicitly checked photo records.
+        """
+
+        return [
+            photo
+            for photo in self._photos
+            if _photo_key(photo) in self._multi_selected
+        ]
+
     def select_all(self):
         """全选当前网格中所有可见照片（Command/Ctrl+A）。"""
         if not self._photos:
