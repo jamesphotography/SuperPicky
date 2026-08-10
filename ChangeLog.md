@@ -1,3 +1,22 @@
+# SuperPicky 4.6.0 RC1
+
+**What's new since 4.5.0:**
+
+- **Send your keepers straight to Apple Photos (macOS only).** The results
+  browser has a new "Add to Photos" button. It imports the RAW file whenever one
+  exists — on a 985-image test shoot every single imported item was the NEF, not
+  the paired JPEG — and writes the bird's name, your star rating and the quality
+  figures into the Photos title, description and keywords, so you can search for
+  a species inside Photos itself. Photos you have already sent across are
+  skipped, so running it a second time will not duplicate anything. If you have
+  ticked any thumbnails, only those are imported; if you have ticked none, the
+  whole filtered list goes. Each run creates or reuses an album named after the
+  folder and the date, filed under a "SuperPicky Imports" folder. Your RAW files
+  are never modified, and XMP sidecars are never sent to Photos. Contributed by
+  @orientaldollarbird.
+
+---
+
 # SuperPicky 4.5.0
 
 Stars are now given out by comparing photos within the same batch, you can cull
