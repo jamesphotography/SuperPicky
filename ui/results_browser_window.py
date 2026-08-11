@@ -1929,6 +1929,11 @@ class ResultsBrowserWindow(QMainWindow):
             progress.close()
             progress.deleteLater()
             self._apple_photos_progress = None
+            # 与 _start_apple_photos_import 的失败分支保持一致：任务未能启动时
+            # 必须把按钮恢复可用，否则导入入口会一直保持禁用。
+            # Mirror the failure path in _start_apple_photos_import: re-enable the
+            # action when the task fails to start, or it stays disabled forever.
+            self._update_apple_photos_button()
             QMessageBox.critical(
                 self,
                 self.i18n.t("browser.photos_import_failed_title"),
@@ -1999,6 +2004,11 @@ class ResultsBrowserWindow(QMainWindow):
         # 5. 缩略图同步
         self._thumb_grid.remove_photo(photo)
         self._fullscreen.set_photo_list(self._filtered_photos)
+        # 导入按钮的可用性取决于 _filtered_photos 是否为空，删空后必须同步禁用，
+        # 否则点击只会弹「没有可导入文件」。
+        # The import action keys off _filtered_photos; refresh it after deletion
+        # so an emptied list disables the button instead of failing on click.
+        self._update_apple_photos_button()
 
         # 6. 跳转逻辑：跳到被删除位置的下一张，已是末尾则跳上一张
         if self._filtered_photos:
@@ -2119,7 +2129,12 @@ class ResultsBrowserWindow(QMainWindow):
         # Sync the grid UI
         for photo in deleted_photos:
             self._thumb_grid.remove_photo(photo)
-            
+
+        # 同上：批量删除后同步导入按钮可用性。
+        # As above: refresh the import action after a batch deletion.
+        self._update_apple_photos_button()
+
+
         # Reset selection if it was deleted
         if self._thumb_grid._selected_key in deleted_identities:
             self._thumb_grid._selected_key = None

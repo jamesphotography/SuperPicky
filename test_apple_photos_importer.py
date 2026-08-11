@@ -17,6 +17,9 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import pytest
+
+from PySide6.QtCore import QProcess
 from PySide6.QtWidgets import QApplication
 
 from ui import apple_photos_importer as photos_importer
@@ -117,9 +120,13 @@ if operation == "repair":
         )
     raise SystemExit(0)
 
-album = sys.argv[5]
-candidate_count = int(sys.argv[6])
-records = parse_records(7, candidate_count)
+folder = sys.argv[5]
+album = sys.argv[6]
+candidate_count = int(sys.argv[7])
+records = parse_records(8, candidate_count)
+if folder != "SuperPicky Imports":
+    print(f"unexpected folder: {{folder}}", file=sys.stderr)
+    raise SystemExit(9)
 if album == "DENY":
     print("Not authorized to send Apple events. (-1743)", file=sys.stderr)
     raise SystemExit(1)
@@ -363,6 +370,9 @@ def test_arguments_keep_unicode_quotes_and_newlines_out_of_script(
     assert arguments[2:] == [
         "--",
         "import",
+        # 文件夹名与相册名一样经 argv 传入，不再硬编码在 AppleScript 源里
+        # The folder name travels through argv too, no longer hard-coded
+        "SuperPicky Imports",
         '鸟类 "精选" 夏季',
         "1",
         "0",
@@ -879,3 +889,109 @@ def test_windows_browser_has_no_apple_photos_action(monkeypatch) -> None:
     finally:
         window.cleanup()
         window.close()
+
+
+def test_cancel_force_terminates_a_helper_that_never_returns(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """
+    取消后 helper 若迟迟不返回，必须在宽限期后被强制终止。
+
+    普通取消会先等当前批次自行收尾以保留可信计数，但 Photos 可能卡在权限授权
+    对话框上永不返回。此前 cancel() 只设标志位，进度框会永久停住，用户只能强退
+    应用。现在宽限期结束后走 terminate→kill，任务照常收尾。
+
+    A cancelled import must not hang forever when the helper never returns
+    (e.g. Photos blocked on a permission dialog). Before this, cancel() only set
+    a flag and the progress dialog stayed up until the app was force-quit.
+    """
+
+    monkeypatch.setattr(photos_importer.sys, "platform", "darwin")
+    helper = _write_fake_osascript(tmp_path)
+    # SLOW 让替身 sleep 30s，模拟永不返回的 helper
+    importer = photos_importer.ApplePhotosImporter(
+        osascript_path=str(helper), cancel_grace_ms=50
+    )
+    results = []
+    importer.completed.connect(results.append)
+
+    importer.start(_request("SLOW", 3))
+    _wait_for(lambda: importer._process.state() != QProcess.NotRunning)
+    importer.cancel()
+
+    # 宽限期(50ms)后应被强制终止并收尾，远早于替身的 30s
+    _wait_for(lambda: bool(results), timeout=10.0)
+    assert results[0].cancelled is True
+    assert importer.is_running is False
+    assert importer._process.state() == QProcess.NotRunning
+    # 被强杀的批次无可信结果，必须记为不确定而非谎报成功或失败
+    assert results[0].indeterminate == 3
+    assert results[0].newly_imported == 0
+
+
+def test_cancel_grace_timer_does_not_kill_a_later_batch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """
+    正常完成的任务不得留下待触发的宽限计时器。
+
+    若计时器在任务收尾后仍存活，它会在下一次导入运行到一半时触发 terminate，
+    把一个健康的批次杀掉。
+    """
+
+    monkeypatch.setattr(photos_importer.sys, "platform", "darwin")
+    helper = _write_fake_osascript(tmp_path)
+    importer = photos_importer.ApplePhotosImporter(
+        osascript_path=str(helper), cancel_grace_ms=50
+    )
+    results = []
+    importer.completed.connect(results.append)
+
+    importer.start(_request("Birds", 2))
+    _wait_for(lambda: bool(results))
+    assert results[0].cancelled is False
+    assert importer._cancel_timer is None, "任务收尾后不应残留宽限计时器"
+
+
+def test_batch_indices_follow_candidate_positions(tmp_path: Path) -> None:
+    """
+    批次下标由位置推导，且与候选序列严格对应。
+
+    取代原先的 {id(candidate): index} 映射：既去掉每批重建全量字典的 O(n²)
+    开销，也消除同一候选对象被引用两次时下标互相覆盖的隐患。
+    """
+
+    derive = photos_importer.ApplePhotosImporter._derive_batch_indices
+    batches = [("a", "b", "c"), ("d",), ("e", "f")]
+    assert derive(batches, 6) == [(0, 1, 2), (3,), (4, 5)]
+
+    # 划分前提被破坏时必须报错，而不是静默产生错位的下标
+    with pytest.raises(ValueError):
+        derive(batches, 7)
+
+
+def test_import_folder_name_is_passed_through_argv(tmp_path: Path) -> None:
+    """
+    导入文件夹名必须经 argv 传入，不得硬编码在 AppleScript 源中。
+
+    此前脚本里硬编码了三处 "SuperPicky Imports"，与模块常量
+    _IMPORT_FOLDER_NAME 构成两份真相：改了常量而漏改脚本，照片会被导进另一个
+    文件夹且不报任何错。
+    """
+
+    path = tmp_path / "bird.jpg"
+    path.write_bytes(b"jpeg")
+    candidate = photos_importer.ImportCandidate(
+        path=path.resolve(),
+        photo_identity=("", path.name),
+        source_size=path.stat().st_size,
+        metadata=photos_importer.ApplePhotosMetadata(
+            title=None, description=None, keywords=()
+        ),
+    )
+    arguments = photos_importer.build_osascript_arguments("相册", [candidate])
+
+    # 脚本源里不得再出现文件夹名字面量
+    assert photos_importer._IMPORT_FOLDER_NAME not in arguments[1]
+    # 且必须作为 import 操作后的第一个参数传入
+    assert arguments[3:5] == ["import", photos_importer._IMPORT_FOLDER_NAME]

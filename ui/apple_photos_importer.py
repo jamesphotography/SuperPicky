@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QProcess, Signal
+from PySide6.QtCore import QObject, QProcess, QTimer, Signal
 
 from constants import (
     HEIF_EXTENSIONS,
@@ -49,6 +49,13 @@ _SIBLING_DISPLAY_EXTENSIONS = (
     ".HIF",
 )
 _IMPORT_FOLDER_NAME = "SuperPicky Imports"
+# 普通取消后等待当前 helper 自行返回的宽限期；超时则强制终止。
+# Photos 可能在等待权限授权对话框而永不返回，此时若只设标志位，进度框会一直
+# 停在原地，用户除了强退应用别无选择。
+# Grace period after a normal cancel before the helper is force-terminated.
+# Photos can block indefinitely on a permission dialog; without this timeout a
+# cancelled import would hang the progress dialog with no way out but force-quit.
+_CANCEL_GRACE_MS = 5000
 _DEFAULT_BATCH_SIZE = 100
 _DEFAULT_MAX_ARGUMENT_BYTES = 256 * 1024
 _MAX_AUTOMATIC_METADATA_REPAIR_PASSES = 2
@@ -124,10 +131,11 @@ on run argv
     set operationName to item 1 of argv
 
     if operationName is "import" then
-        if (count of argv) < 4 then error "Missing album name, candidate count, or import files"
-        set targetAlbumName to item 2 of argv
-        set candidateCount to (item 3 of argv) as integer
-        set argumentIndex to 4
+        if (count of argv) < 5 then error "Missing folder name, album name, candidate count, or import files"
+        set targetFolderName to item 2 of argv
+        set targetAlbumName to item 3 of argv
+        set candidateCount to (item 4 of argv) as integer
+        set argumentIndex to 5
     else if operationName is "repair" then
         set candidateCount to (item 2 of argv) as integer
         set argumentIndex to 3
@@ -175,10 +183,10 @@ on run argv
             return my joinLines(outputLines)
         else
             activate
-            if exists folder "SuperPicky Imports" then
-                set targetFolder to folder "SuperPicky Imports"
+            if exists folder targetFolderName then
+                set targetFolder to folder targetFolderName
             else
-                set targetFolder to make new folder named "SuperPicky Imports"
+                set targetFolder to make new folder named targetFolderName
             end if
 
             set matchingAlbums to every album of targetFolder whose name is targetAlbumName
@@ -742,6 +750,15 @@ def build_osascript_arguments(
         _APPLE_PHOTOS_IMPORT_SCRIPT,
         "--",
         "import",
+        # 文件夹名同样经 argv 传入，与相册名、路径一致。此前脚本里硬编码了三处
+        # "SuperPicky Imports"，与本模块的 _IMPORT_FOLDER_NAME 构成两份真相：
+        # 改了常量而漏改脚本，照片会被导进另一个文件夹且不报任何错。
+        # The folder name travels through argv like the album name and paths.
+        # It used to be hard-coded three times inside the script while this
+        # module also defined _IMPORT_FOLDER_NAME — two sources of truth, where
+        # updating only the constant would silently import into a different
+        # folder.
+        _IMPORT_FOLDER_NAME,
         clean_name,
         str(len(candidates)),
     ]
@@ -995,15 +1012,22 @@ class ApplePhotosImporter(QObject):
     completed = Signal(object)
 
     def __init__(
-        self, parent: QObject | None = None, osascript_path: str = "/usr/bin/osascript"
+        self,
+        parent: QObject | None = None,
+        osascript_path: str = "/usr/bin/osascript",
+        cancel_grace_ms: int = _CANCEL_GRACE_MS,
     ):
         super().__init__(parent)
         self._osascript_path = osascript_path
+        # 取消后的宽限期，可注入以便测试无需真等数秒。
+        # Injectable so tests need not wait the full production grace period.
+        self._cancel_grace_ms = cancel_grace_ms
         self._process = QProcess(self)
         self._process.finished.connect(self._on_process_finished)
         self._process.errorOccurred.connect(self._on_process_error)
         self._request: ApplePhotosImportRequest | None = None
         self._batches: list[tuple[ImportCandidate, ...]] = []
+        self._batch_indices: list[tuple[int, ...]] = []
         self._next_batch_index = 0
         self._current_import_batch: tuple[ImportCandidate, ...] = ()
         self._current_candidate_indices: tuple[int, ...] = ()
@@ -1022,6 +1046,7 @@ class ApplePhotosImporter(QObject):
         self._cancel_requested = False
         self._completion_emitted = False
         self._suppress_completion = False
+        self._cancel_timer: QTimer | None = None
 
     @property
     def is_running(self) -> bool:
@@ -1063,6 +1088,9 @@ class ApplePhotosImporter(QObject):
             max_argument_bytes=request.max_argument_bytes,
         )
         self._batches = batches
+        self._batch_indices = self._derive_batch_indices(
+            batches, len(request.candidates)
+        )
         self._next_batch_index = 0
         self._current_import_batch = ()
         self._current_candidate_indices = ()
@@ -1081,6 +1109,7 @@ class ApplePhotosImporter(QObject):
         self._cancel_requested = False
         self._completion_emitted = False
         self._suppress_completion = False
+        self._stop_cancel_grace_timer()
         self.progress.emit(0, len(request.candidates))
         self._start_next_import_batch()
 
@@ -1088,7 +1117,14 @@ class ApplePhotosImporter(QObject):
         """
         当前 helper 完成后停止，不再启动后续批次。
 
+        优先让活动批次自行返回以保留可信计数；但 helper 可能永不返回(例如
+        Photos 正在等待权限授权对话框)，因此设置 _CANCEL_GRACE_MS 宽限期，
+        超时后强制终止，避免进度框永久卡住、用户只能强退应用。
+
         Stop after the active helper completes, without starting another batch.
+        The active batch is given _CANCEL_GRACE_MS to report a trustworthy
+        outcome; if it never returns (e.g. Photos is blocked on a permission
+        dialog) it is force-terminated so the UI cannot hang forever.
         """
 
         if not self.is_running:
@@ -1096,6 +1132,53 @@ class ApplePhotosImporter(QObject):
         self._cancel_requested = True
         if self._process.state() == QProcess.NotRunning:
             self._finish(cancelled=True)
+            return
+        self._start_cancel_grace_timer()
+
+    def _start_cancel_grace_timer(self) -> None:
+        """启动取消宽限计时器(幂等)。/ Arm the cancel grace timer (idempotent)."""
+
+        if self._cancel_timer is not None:
+            return
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.timeout.connect(self._force_stop_after_cancel)
+        timer.start(self._cancel_grace_ms)
+        self._cancel_timer = timer
+
+    def _stop_cancel_grace_timer(self) -> None:
+        """停止并释放宽限计时器。/ Disarm and release the grace timer."""
+
+        timer = self._cancel_timer
+        self._cancel_timer = None
+        if timer is not None:
+            timer.stop()
+            timer.deleteLater()
+
+    def _force_stop_after_cancel(self) -> None:
+        """
+        宽限期结束仍未返回：强制终止 helper。
+
+        走与 shutdown() 相同的 terminate→kill 路径。终止会触发 finished 信号，
+        由 _on_process_finished 把该批次记为不确定并收尾，因此这里不直接
+        _finish，以免重复计数。
+
+        Force-terminate a helper that outlived the grace period, using the same
+        terminate→kill path as shutdown(). The resulting finished signal lets
+        _on_process_finished mark the batch indeterminate and wrap up, so this
+        method deliberately does not call _finish itself.
+        """
+
+        self._cancel_timer = None
+        if not self.is_running:
+            return
+        if self._process.state() == QProcess.NotRunning:
+            self._finish(cancelled=True)
+            return
+        self._process.terminate()
+        if not self._process.waitForFinished(1500):
+            self._process.kill()
+            self._process.waitForFinished(1000)
 
     @property
     def has_retryable_metadata(self) -> bool:
@@ -1122,6 +1205,7 @@ class ApplePhotosImporter(QObject):
         self._suppress_completion = False
         self._repair_pass = 0
         self._phase = "repair"
+        self._stop_cancel_grace_timer()
         self._begin_repair_pass()
 
     def shutdown(self) -> None:
@@ -1131,6 +1215,7 @@ class ApplePhotosImporter(QObject):
 
         self._suppress_completion = True
         self._cancel_requested = True
+        self._stop_cancel_grace_timer()
         if self._process.state() != QProcess.NotRunning:
             self._process.terminate()
             if not self._process.waitForFinished(1500):
@@ -1153,12 +1238,8 @@ class ApplePhotosImporter(QObject):
             return
 
         batch = self._batches[self._next_batch_index]
+        indices = self._batch_indices[self._next_batch_index]
         self._next_batch_index += 1
-        candidate_lookup = {
-            id(candidate): index
-            for index, candidate in enumerate(self._request.candidates)
-        }
-        indices = tuple(candidate_lookup[id(candidate)] for candidate in batch)
         self._current_import_batch = batch
         self._current_candidate_indices = indices
         self._phase = "import"
@@ -1168,6 +1249,48 @@ class ApplePhotosImporter(QObject):
             indices,
         )
         self._process.start(self._osascript_path, arguments)
+
+    @staticmethod
+    def _derive_batch_indices(
+        batches: Sequence[tuple[ImportCandidate, ...]], total: int
+    ) -> list[tuple[int, ...]]:
+        """
+        由批次长度推导每批候选在原序列中的下标。
+
+        build_import_batches 产出的是候选序列的**有序连续划分**：既不重排也不
+        重复或遗漏，因此第 k 批的下标就是紧接前一批之后的一段连续区间。以位置
+        推导取代原先的 ``{id(candidate): index}`` 映射，既去掉了每批重建全量
+        字典的 O(n²) 开销，也消除了同一候选对象被引用两次时下标被覆盖、元数据
+        写到错误照片上的隐患。
+
+        Derive each batch's indices from batch lengths. build_import_batches
+        returns an ordered, contiguous partition of the candidate sequence, so
+        batch k occupies the next contiguous slice. This replaces a per-batch
+        ``{id(candidate): index}`` map, removing both its O(n²) cost and the
+        risk of a duplicated candidate object silently colliding in that map.
+
+        参数 / Parameters:
+            batches: 已切分的批次。/ The batches produced for this request.
+            total: 候选总数。/ Total number of candidates.
+
+        返回 / Returns:
+            list[tuple[int, ...]]: 与 batches 一一对应的下标元组。
+
+        异常 / Raises:
+            ValueError: 批次总长与候选总数不符(划分前提被破坏)。
+        """
+
+        indices: list[tuple[int, ...]] = []
+        cursor = 0
+        for batch in batches:
+            indices.append(tuple(range(cursor, cursor + len(batch))))
+            cursor += len(batch)
+        if cursor != total:
+            raise ValueError(
+                "Apple Photos batches are not a contiguous partition of the "
+                f"candidates ({cursor} != {total})"
+            )
+        return indices
 
     def _failed_metadata_targets(self) -> tuple[_MetadataRepairTarget, ...]:
         """返回仍有失败字段且具有 Photos ID 的目标。/ Return retryable failures."""
@@ -1399,6 +1522,9 @@ class ApplePhotosImporter(QObject):
         if self._request is None or self._completion_emitted:
             return
         self._completion_emitted = True
+        # 任务已收尾，撤掉宽限计时器，避免它在下一批次运行时误杀进程。
+        # Disarm the grace timer so it cannot kill a later batch's process.
+        self._stop_cancel_grace_timer()
         request = self._request
         eligible = len(request.candidates)
         metadata_applied, metadata_partial, metadata_failed, retryable = (
