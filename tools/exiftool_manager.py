@@ -1560,6 +1560,7 @@ class ExifToolManager:
                  "-all:all", "-x", "Orientation", "-x", "ImageWidth", "-x", "ImageHeight",
                  dst_path],
                 check=True, capture_output=True, cwd=self._exiftool_cwd,
+                timeout=60,   # 单文件全标签复制；大 RAW 也远够用
             )
             return True
         except Exception as e:

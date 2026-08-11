@@ -2437,6 +2437,7 @@ class SettingsCenter(QDialog):
                 _commit = subprocess.check_output(
                     ["git", "rev-parse", "--short", "HEAD"],
                     stderr=subprocess.DEVNULL,
+                    timeout=5,   # 仅用于显示版本，卡住不值得拖住「关于」页
                 ).strip().decode("utf-8")
             except Exception:
                 _commit = "dev"

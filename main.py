@@ -211,7 +211,9 @@ def main():
             import subprocess
 
             hash_short = (
-                subprocess.check_output(["git", "rev-parse", "--short", "HEAD"])
+                subprocess.check_output(
+                    ["git", "rev-parse", "--short", "HEAD"], timeout=5
+                )
                 .strip()
                 .decode("utf-8")
             )

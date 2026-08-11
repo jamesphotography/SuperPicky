@@ -331,7 +331,7 @@ def cmd_reset(args):
         except Exception:
             try:
                 import subprocess
-                subprocess.run(['rm', '-rf', superpicky_dir], check=True)
+                subprocess.run(['rm', '-rf', superpicky_dir], check=True, timeout=120)
                 print("  🗑️ 已删除: .superpicky/ (force)")
                 deleted_dirs += 1
             except Exception as e2:

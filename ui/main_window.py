@@ -1493,6 +1493,7 @@ class SuperPickyMainWindow(QMainWindow):
                 commit_hash = subprocess.check_output(
                     ['git', 'rev-parse', '--short', 'HEAD'],
                     stderr=subprocess.DEVNULL,
+                    timeout=5,   # 仅用于显示版本，卡住不值得拖住启动
                     **subprocess_kwargs,
                 ).strip().decode('utf-8')
             except Exception:
@@ -2674,7 +2675,8 @@ class SuperPickyMainWindow(QMainWindow):
                         # 尝试系统命令强制删除
                         try:
                             import subprocess
-                            subprocess.run(['rm', '-rf', superpicky_dir], check=True)
+                            subprocess.run(['rm', '-rf', superpicky_dir], check=True,
+                                           timeout=120)
                             emit_log("  ✅ .superpicky/ (force)")
                             deleted_dirs += 1
                         except Exception as e2:
