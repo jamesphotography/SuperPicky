@@ -235,7 +235,87 @@ class ReportDB:
 
         # Schema 升级在独立事务中执行，避免嵌套 commit 冲突
         self._upgrade_schema_if_needed()
-    
+        # 逐版本迁移之后再按 PHOTO_COLUMNS 兜底补列（见该方法说明）
+        self._reconcile_photo_columns()
+
+    def _reconcile_photo_columns(self):
+        """
+        以 PHOTO_COLUMNS 为准补齐 photos 表缺失的列。
+
+        为什么需要这一步：建表走的是 ``CREATE TABLE IF NOT EXISTS``，对已存在
+        的旧表不做任何改动；而逐版本迁移只补各自版本显式列出的列。一旦有人往
+        PHOTO_COLUMNS 加了列却忘记同步写 ALTER(picked 列正是如此)，旧目录的
+        report.db 就永远拿不到该列，读取时抛
+        ``sqlite3.OperationalError: no such column``。本方法作为最终兜底，
+        使「PHOTO_COLUMNS 是唯一事实源」这一约定对新旧库都成立。
+
+        Reconcile the photos table against PHOTO_COLUMNS. Table creation uses
+        CREATE TABLE IF NOT EXISTS (a no-op on existing tables) and the
+        versioned migrations only add the columns each version enumerates, so a
+        column added to PHOTO_COLUMNS without a matching ALTER (exactly what
+        happened to `picked`) never reaches legacy databases and later raises
+        "no such column". This final pass makes PHOTO_COLUMNS the single source
+        of truth for both new and legacy databases.
+
+        返回 / Returns:
+            list[str]: 本次补齐的列名，便于日志与测试断言。
+        """
+
+        added = []
+        with self._lock:
+            existing = {
+                row[1] for row in self._conn.execute("PRAGMA table_info(photos)")
+            }
+            missing = [c for c in PHOTO_COLUMNS if c[0] not in existing]
+            if not missing:
+                return added
+
+            with self._conn:
+                for name, type_def, default in missing:
+                    upper = type_def.upper()
+                    # SQLite 的 ALTER TABLE ADD COLUMN 不支持 UNIQUE/PRIMARY KEY，
+                    # 也不允许在无默认值时添加 NOT NULL 列。这类列只可能出现在
+                    # 建表定义里(如 filename)，正常不会缺失；真缺失时只能重建表，
+                    # 这里明确告警而不是抛异常，避免整个目录打不开。
+                    # SQLite cannot ADD COLUMN with UNIQUE/PRIMARY KEY, nor a
+                    # NOT NULL column without a default. Such columns exist only
+                    # in the initial definition and should never be missing;
+                    # warn instead of raising so the directory still opens.
+                    if "UNIQUE" in upper or "PRIMARY KEY" in upper or (
+                        "NOT NULL" in upper and default is None
+                    ):
+                        print(
+                            f"⚠️ report.db 缺少列 {name}，但其约束({type_def})"
+                            f"无法通过 ALTER 添加，需重建数据库"
+                        )
+                        continue
+
+                    statement = f"ALTER TABLE photos ADD COLUMN {name} {type_def}"
+                    if default is not None:
+                        statement += f" DEFAULT {self._sql_literal(default)}"
+                    self._conn.execute(statement)
+                    added.append(name)
+
+        if added:
+            print(f"✅ report.db 补齐缺失列: {', '.join(added)}")
+        return added
+
+    @staticmethod
+    def _sql_literal(value):
+        """
+        把默认值渲染成 DDL 字面量。/ Render a default value as a DDL literal.
+
+        DDL 不支持参数占位，只能拼接，因此字符串需转义单引号。
+        DDL cannot use placeholders, so strings are quoted and escaped here.
+        """
+
+        if isinstance(value, bool):
+            return "1" if value else "0"
+        if isinstance(value, (int, float)):
+            return str(value)
+        escaped = str(value).replace("'", "''")
+        return f"'{escaped}'"
+
     def _upgrade_schema_if_needed(self):
         """检查并升级数据库 Schema（支持连续升级 v1 -> v2 -> v3 -> v4）"""
         with self._lock:
