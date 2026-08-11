@@ -2038,29 +2038,25 @@ class BirdIDDockWidget(QDockWidget):
         if not _test_ok:
             print("[Screenshot] ⚠️ 屏幕录制权限未授予，显示提示")
             from PySide6.QtWidgets import QMessageBox
-            is_en = self.i18n.current_lang.startswith('en')
 
             msg = QMessageBox(self)
             msg.setIcon(QMessageBox.Icon.Warning)
             msg.setWindowTitle(self.i18n.t("birdid.title"))
 
-            if is_en:
-                msg.setText("Screen Recording Access Needed")
-                msg.setInformativeText(
-                    "SuperPicky needs screen recording permission to capture screenshots.\n\n"
-                    "Tap \"Open Settings\" — find this app and flip the switch on.\n"
-                    "Then come back and try again!"
-                )
-                open_btn = msg.addButton("  Open Settings  ", QMessageBox.ButtonRole.AcceptRole)
-                msg.addButton("Later", QMessageBox.ButtonRole.RejectRole)
-            else:
-                msg.setText("需要屏幕录制权限")
-                msg.setInformativeText(
-                    "截图识鸟功能需要「屏幕录制」权限才能工作。\n\n"
-                    "点击下方按钮一键跳转设置页，为本应用开启权限后即可使用。"
-                )
-                open_btn = msg.addButton("  打开系统设置  ", QMessageBox.ButtonRole.AcceptRole)
-                msg.addButton("稍后再说", QMessageBox.ButtonRole.RejectRole)
+            # 文案统一走语言包：此前是手写的 is_en 分支，两套文案散在代码里，
+            # 改一处容易漏另一处，也无法随语言包一起维护。
+            # Copy now comes from the language pack; this used to be a hand-rolled
+            # is_en branch holding two copies of the text inline.
+            msg.setText(self.i18n.t("birdid.screenshot_permission_title"))
+            msg.setInformativeText(self.i18n.t("birdid.screenshot_permission_body"))
+            open_btn = msg.addButton(
+                self.i18n.t("birdid.screenshot_permission_open"),
+                QMessageBox.ButtonRole.AcceptRole,
+            )
+            msg.addButton(
+                self.i18n.t("birdid.screenshot_permission_later"),
+                QMessageBox.ButtonRole.RejectRole,
+            )
 
             msg.setStyleSheet(f"""
                 QMessageBox {{
@@ -2240,7 +2236,9 @@ class BirdIDDockWidget(QDockWidget):
             keybd(VK_LWIN,  0, KEYEVENTF_KEYUP, 0)
         except Exception as e:
             self._restore_win_window()
-            self.status_label.setText(f"截图快捷键发送失败: {e}")
+            self.status_label.setText(
+                self.i18n.t("birdid.screenshot_hotkey_failed", error=e)
+            )
             self.status_label.setStyleSheet(f"font-size: 11px; color: {COLORS['error']};")
             return
 
