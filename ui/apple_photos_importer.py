@@ -36,17 +36,19 @@ _SIBLING_RAW_EXTENSIONS = tuple(
     for raw_extension in RAW_EXTENSIONS
     for extension in (raw_extension.lower(), raw_extension.upper())
 )
-_SIBLING_DISPLAY_EXTENSIONS = (
-    ".jpg",
-    ".jpeg",
-    ".JPG",
-    ".JPEG",
-    ".heif",
-    ".heic",
-    ".hif",
-    ".HEIF",
-    ".HEIC",
-    ".HIF",
+# 与 _SIBLING_RAW_EXTENSIONS 一样从 constants 派生，而非手写字面量：以前这里
+# 硬编码了 10 个扩展名，constants 新增显示格式时不会同步。分组顺序保持
+# 「先 JPG 系列后 HEIF 系列」，组内优先级跟随 constants 的定义顺序。
+# Derived from constants like _SIBLING_RAW_EXTENSIONS instead of hand-written
+# literals, which would not follow new display formats added to constants. JPG
+# variants still precede HEIF ones; within each group the order follows constants.
+_SIBLING_DISPLAY_EXTENSIONS = tuple(
+    extension
+    for group in (JPG_EXTENSIONS, HEIF_EXTENSIONS)
+    for extension in (
+        *(base.lower() for base in group),
+        *(base.upper() for base in group),
+    )
 )
 _IMPORT_FOLDER_NAME = "SuperPicky Imports"
 # 普通取消后等待当前 helper 自行返回的宽限期；超时则强制终止。
@@ -875,12 +877,81 @@ def _parse_helper_response(stdout: str) -> _HelperResponse:
 
 
 def _argument_bytes(album_name: str, candidates: Sequence[ImportCandidate]) -> int:
-    """估算 exec argv UTF-8 字节数。/ Estimate exec argv UTF-8 byte size."""
+    """
+    估算 exec argv UTF-8 字节数(精确实现)。
+
+    这是字节预算的权威定义。批次切分不直接调用它——那样每加入一个候选就要重建
+    整个 argv 并把 4.5KB 的 AppleScript 源重新编码一遍，整体退化为 O(n²)；切分
+    改用下面的增量分解，并由测试保证两者结果一致。
+
+    Exact argv byte size — the authoritative definition of the budget. Batching
+    does not call this per candidate (that would rebuild the whole argv and
+    re-encode the 4.5KB script each time, making it O(n²)); it uses the
+    incremental decomposition below, which tests pin to this function.
+    """
 
     return sum(
         len(argument.encode("utf-8")) + 1
         for argument in build_osascript_arguments(album_name, candidates)
     )
+
+
+# AppleScript 源固定不变，其字节数只需在模块加载时算一次。
+# The script is a constant; encode it once at import time.
+_SCRIPT_ARGUMENT_BYTES = len(_APPLE_PHOTOS_IMPORT_SCRIPT.encode("utf-8")) + 1
+
+
+def _text_bytes(value: str) -> int:
+    """单个 argv 项的字节数(含 NUL 分隔符)。/ Bytes of one argv entry incl. NUL."""
+
+    return len(value.encode("utf-8")) + 1
+
+
+def _import_header_bytes(album_name: str) -> int:
+    """
+    import 操作的固定头部字节数(不含 candidateCount 字段)。
+
+    对应 argv 前缀 ``-e SCRIPT -- import FOLDER ALBUM``。相册名在此处同样经
+    sanitize_album_name 规范化，与 build_osascript_arguments 保持一致。
+
+    Fixed header bytes for an import (argv prefix ``-e SCRIPT -- import FOLDER
+    ALBUM``), excluding the candidateCount field.
+    """
+
+    return (
+        _text_bytes("-e")
+        + _SCRIPT_ARGUMENT_BYTES
+        + _text_bytes("--")
+        + _text_bytes("import")
+        + _text_bytes(_IMPORT_FOLDER_NAME)
+        + _text_bytes(sanitize_album_name(album_name))
+    )
+
+
+def _candidate_payload_bytes(candidate: ImportCandidate) -> int:
+    """
+    单个候选除下标外的字节数。
+
+    这部分只取决于候选自身，与它落在批次中的哪个位置无关，因此可以在切分前
+    一次性预计算并在累加中复用。
+
+    Per-candidate bytes excluding its index field. Independent of the candidate's
+    position in a batch, so it can be precomputed once and reused while packing.
+    """
+
+    metadata = candidate.metadata
+    total = (
+        _text_bytes(os.fspath(candidate.path))
+        + _text_bytes(candidate.path.name)
+        + _text_bytes(str(candidate.source_size))
+        + _text_bytes(str(_metadata_mask(metadata)))
+        + _text_bytes(metadata.title or "")
+        + _text_bytes(metadata.description or "")
+        + _text_bytes(str(len(metadata.keywords)))
+    )
+    for keyword in metadata.keywords:
+        total += _text_bytes(keyword)
+    return total
 
 
 def build_import_batches(
@@ -912,33 +983,60 @@ def build_import_batches(
     batches: list[tuple[ImportCandidate, ...]] = []
     current: list[ImportCandidate] = []
 
+    # argv 字节按「固定头部 + Σ(下标字段 + 候选载荷)」分解，各项只算一次，
+    # 装箱时增量累加，避免每加入一个候选就重建整个 argv(含 4.5KB 脚本源)。
+    # 与 _argument_bytes 的等价性由 test_incremental_byte_accounting_matches_exact
+    # 保证。/ Decompose argv bytes into a fixed header plus per-candidate terms,
+    # each computed once, so packing is linear instead of quadratic.
+    header_bytes = _import_header_bytes(album_name)
+    payload_bytes = [_candidate_payload_bytes(candidate) for candidate in candidates]
+
+    current_payload = 0
+    current_index_bytes = 0
+
+    def batch_bytes(extra_payload: int, size: int) -> int:
+        """当前批次再加入一个候选后的 argv 字节数。/ argv bytes after adding one."""
+
+        return (
+            header_bytes
+            + _text_bytes(str(size))
+            + current_payload
+            + extra_payload
+            + current_index_bytes
+            + _text_bytes(str(size - 1))
+        )
+
     def flush_current() -> None:
+        nonlocal current_payload, current_index_bytes
         if current:
             batches.append(tuple(current))
             current.clear()
+            current_payload = 0
+            current_index_bytes = 0
 
-    for candidate in candidates:
+    for position, candidate in enumerate(candidates):
+        candidate_payload = payload_bytes[position]
         match_key = (candidate.path.name.casefold(), candidate.source_size)
         if match_key_counts[match_key] > 1:
             flush_current()
-            if _argument_bytes(album_name, [candidate]) > max_argument_bytes:
+            if batch_bytes(candidate_payload, 1) > max_argument_bytes:
                 raise ValueError(
                     f"Apple Photos metadata is too large for {candidate.path.name}"
                 )
             batches.append((candidate,))
             continue
 
-        proposed = [*current, candidate]
         if current and (
-            len(proposed) > batch_size
-            or _argument_bytes(album_name, proposed) > max_argument_bytes
+            len(current) + 1 > batch_size
+            or batch_bytes(candidate_payload, len(current) + 1) > max_argument_bytes
         ):
             flush_current()
-            proposed = [candidate]
-        if _argument_bytes(album_name, proposed) > max_argument_bytes:
+        if batch_bytes(candidate_payload, len(current) + 1) > max_argument_bytes:
             raise ValueError(
                 f"Apple Photos metadata is too large for {candidate.path.name}"
             )
+        current_index_bytes += _text_bytes(str(len(current)))
+        current_payload += candidate_payload
         current.append(candidate)
 
     flush_current()

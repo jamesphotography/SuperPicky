@@ -995,3 +995,78 @@ def test_import_folder_name_is_passed_through_argv(tmp_path: Path) -> None:
     assert photos_importer._IMPORT_FOLDER_NAME not in arguments[1]
     # 且必须作为 import 操作后的第一个参数传入
     assert arguments[3:5] == ["import", photos_importer._IMPORT_FOLDER_NAME]
+
+
+def test_incremental_byte_accounting_matches_exact(tmp_path: Path) -> None:
+    """
+    批次切分用的增量字节分解必须与 _argument_bytes 精确一致。
+
+    切分不能对每个候选都重建整个 argv(含 4.5KB AppleScript 源)，否则退化为
+    O(n²)；改用「固定头部 + Σ(下标字段 + 候选载荷)」增量累加。本测试锁定两者
+    等价，防止优化在某些输入下低估字节数、让 argv 突破 exec 上限。
+    """
+
+    album = '鸟类 "精选"'
+    for count in (1, 2, 9, 10, 11, 99, 100, 101):
+        candidates = [_candidate(index) for index in range(count)]
+        exact = photos_importer._argument_bytes(album, candidates)
+        incremental = (
+            photos_importer._import_header_bytes(album)
+            + photos_importer._text_bytes(str(count))
+            + sum(
+                photos_importer._text_bytes(str(index))
+                + photos_importer._candidate_payload_bytes(candidate)
+                for index, candidate in enumerate(candidates)
+            )
+        )
+        assert incremental == exact, f"count={count} 时增量与精确不一致"
+
+
+def test_batching_is_linear_not_quadratic() -> None:
+    """
+    切分开销应随候选数线性增长，而非平方增长。
+
+    以 _argument_bytes 的调用次数作为代理指标：优化前每个候选都会调用它一次
+    (每次重建全量 argv)，优化后切分路径完全不再调用它。
+    """
+
+    calls = []
+    original = photos_importer._argument_bytes
+
+    def counting(album_name, candidates):
+        calls.append(len(candidates))
+        return original(album_name, candidates)
+
+    photos_importer._argument_bytes = counting
+    try:
+        photos_importer.build_import_batches(
+            "Birds",
+            tuple(_candidate(index) for index in range(300)),
+            batch_size=100,
+            max_argument_bytes=256 * 1024,
+        )
+    finally:
+        photos_importer._argument_bytes = original
+
+    assert calls == [], f"切分路径不应再调用 _argument_bytes，实际调用 {len(calls)} 次"
+
+
+def test_sibling_display_extensions_follow_constants() -> None:
+    """
+    显示格式边车扩展名必须由 constants 派生，不得手写字面量。
+
+    以前这里硬编码 10 个扩展名，constants 新增显示格式时不会同步，导致新格式的
+    同主名边车永远找不到。
+    """
+
+    from constants import HEIF_EXTENSIONS, JPG_EXTENSIONS
+
+    derived = photos_importer._SIBLING_DISPLAY_EXTENSIONS
+    for base in (*JPG_EXTENSIONS, *HEIF_EXTENSIONS):
+        assert base.lower() in derived, f"{base} 的小写变体缺失"
+        assert base.upper() in derived, f"{base} 的大写变体缺失"
+    assert len(derived) == 2 * (len(JPG_EXTENSIONS) + len(HEIF_EXTENSIONS))
+    # JPG 系列仍优先于 HEIF 系列
+    first_heif = min(derived.index(e.lower()) for e in HEIF_EXTENSIONS)
+    last_jpg = max(derived.index(e.upper()) for e in JPG_EXTENSIONS)
+    assert last_jpg < first_heif, "JPG 变体应排在 HEIF 之前"
