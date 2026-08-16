@@ -3313,7 +3313,12 @@ class SuperPickyMainWindow(QMainWindow):
 
         # 左对齐:使用步骤 + 评分规则(同一 div 内 <br> 分行,行距正常)
         rows = [f'<span style="color:{pri};font-weight:bold">{esc(t("help.usage_steps_title"))}</span>']
-        for i, key in enumerate(("step1", "step2", "step3", "step4"), 1):
+        # 第 2 步随评星算法换说法：V2 的参数区是星级配额条，锐度/美学滑块被隐藏
+        # （main_window._apply_algo_visibility），照 V1 文案去找滑块会找不到。
+        # Step 2 follows the rating algorithm: under V2 the parameters area shows
+        # the quota bar and the sharpness/aesthetics sliders are hidden.
+        _step2 = "step2_v2" if self.config.rating_algorithm == "v2" else "step2"
+        for i, key in enumerate(("step1", _step2, "step3", "step4"), 1):
             rows.append(f'<span style="color:{sec}">&nbsp;&nbsp;{i}. {esc(t("help." + key))}</span>')
         rows.append('')
         rows.append(f'<span style="color:{pri};font-weight:bold">{esc(t("help.rating_rules_title"))}</span>')

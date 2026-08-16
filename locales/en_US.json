@@ -666,6 +666,7 @@
     "usage_steps_title": "Usage Steps:",
     "step1": "Click 'Browse' to select source folder (supports RAW/JPG/HEIC)",
     "step2": "Adjust sharpness, aesthetics and pick parameters",
+    "step2_v2": "Drag the star quota bar; toggle BIF / burst / Bird ID as needed",
     "step3": "Click 'Start Culling' and wait for AI analysis to complete",
     "step4": "Pick the best birds in the results browser",
     "rating_rules_title": "Rating Rules:",
