@@ -2132,7 +2132,8 @@ class SuperPickyMainWindow(QMainWindow):
         # 确认弹窗 - 动态构建消息(HTML:emoji 换 SVG 图标,QLabel 自动按富文本渲染)
         import html as _html
         from ui.styles import COLORS as _C
-        _green = _C.get("focus_best", "#00cc44")
+        # 飞版图标用蓝，与 XMP:Label 映射一致 / flight icon in blue
+        _flight = _C.get("flight_blue", "#3b82f6")
         _accent = _C.get("accent", "#00d4aa")
         _sec = _C.get("text_secondary", "#a1a1a1")
 
@@ -2148,7 +2149,7 @@ class SuperPickyMainWindow(QMainWindow):
         _adv_confirm = get_advanced_config()
         extra_notes = []
         if _adv_confirm.flight_check:
-            extra_notes.append(_ico("bird.svg", _green) + _esc(self.i18n.t("dialogs.note_flight")))
+            extra_notes.append(_ico("bird.svg", _flight) + _esc(self.i18n.t("dialogs.note_flight")))
         if _adv_confirm.birdid_auto_identify:
             extra_notes.append(_ico("eye.svg", _accent) + _esc(self.i18n.t("dialogs.note_birdid")))
             # 显示当前国家/区域设置（从 advanced_config 读取，Task 8 后不再依赖 dock 内控件）
@@ -3283,8 +3284,10 @@ class SuperPickyMainWindow(QMainWindow):
         t = self.i18n.t
 
         gold = COLORS.get("star_gold", "#ffcc00")
-        green = COLORS.get("focus_best", "#00cc44")   # 飞版绿
-        red = "#ff5555"                                # 精焦红
+        # 与写入照片的 XMP:Label 对齐：飞版=蓝、精焦=绿（4.5.0 起的映射）
+        # Aligned with the XMP:Label written to photos: flight=blue, focus=green
+        flight = COLORS.get("flight_blue", "#3b82f6")
+        focus = COLORS.get("focus_best", "#00cc44")
         muted = COLORS.get("text_muted", "#8a8a8a")
         sec = COLORS.get("text_secondary", "#a1a1a1")
         pri = COLORS.get("text_primary", "#e0e0e0")
@@ -3314,15 +3317,37 @@ class SuperPickyMainWindow(QMainWindow):
             rows.append(f'<span style="color:{sec}">&nbsp;&nbsp;{i}. {esc(t("help." + key))}</span>')
         rows.append('')
         rows.append(f'<span style="color:{pri};font-weight:bold">{esc(t("help.rating_rules_title"))}</span>')
-        rules = [
-            (ico("star.svg", gold) * 3, esc(t("help.rule_3_star"))),
-            ('&nbsp;&nbsp;&nbsp;&nbsp;' + ico("crown.svg", gold),
-             esc(t("help.rule_picked", percentage=pct))),
-            (ico("star.svg", gold) * 2, esc(t("help.rule_2_star"))),
-            (ico("star.svg", gold), esc(t("help.rule_1_star"))),
+
+        # 星级三行按当前评星算法取文案：V2 是批内配额，V1 才是固定阈值双达标。
+        # 此前这里恒用 V1 文案，用户一开软件，控制台第一屏就与实际行为不符。
+        # The three star lines follow the active rating algorithm — V2 is a
+        # batch quota, only V1 is the fixed-threshold "both pass" rule. This
+        # used to always print the V1 wording, contradicting actual behaviour.
+        if self.config.rating_algorithm == "v2":
+            from core.rating_quota import (
+                get_quota3_for_skill, get_quota2_for_skill)
+            _q3 = int(get_quota3_for_skill(self.config.skill_level, self.config))
+            _q2 = int(get_quota2_for_skill(self.config.skill_level, self.config))
+            star_rules = [
+                (ico("star.svg", gold) * 3, esc(t("help.rule_v2_3_star", quota3=_q3))),
+                ('&nbsp;&nbsp;&nbsp;&nbsp;' + ico("crown.svg", gold),
+                 esc(t("help.rule_picked", percentage=pct))),
+                (ico("star.svg", gold) * 2, esc(t("help.rule_v2_2_star", quota2=_q2))),
+                (ico("star.svg", gold), esc(t("help.rule_v2_1_star"))),
+            ]
+        else:
+            star_rules = [
+                (ico("star.svg", gold) * 3, esc(t("help.rule_3_star"))),
+                ('&nbsp;&nbsp;&nbsp;&nbsp;' + ico("crown.svg", gold),
+                 esc(t("help.rule_picked", percentage=pct))),
+                (ico("star.svg", gold) * 2, esc(t("help.rule_2_star"))),
+                (ico("star.svg", gold), esc(t("help.rule_1_star"))),
+            ]
+
+        rules = star_rules + [
             (ico("circle-off.svg", muted), esc(t("help.rule_0_star"))),
-            (ico("bird.svg", green), esc(t("help.rule_flying"))),
-            (ico("scan-eye.svg", red), esc(t("help.rule_focus"))),
+            (ico("bird.svg", flight), esc(t("help.rule_flying"))),
+            (ico("scan-eye.svg", focus), esc(t("help.rule_focus"))),
             (ico("square-stack.svg", sec), esc(t("help.burst_info"))),
         ]
         for ic, txt in rules:
@@ -3346,8 +3371,13 @@ class SuperPickyMainWindow(QMainWindow):
         t = self.i18n.t
 
         gold = COLORS.get("star_gold", "#ffcc00")
-        green = COLORS.get("focus_best", "#00cc44")   # 飞版绿
-        red = "#ff5555"                                # 精焦红 / 鸟种红
+        # 飞版=蓝、精焦=绿，与写入照片的 XMP:Label 一致（4.5.0 映射）；
+        # red 仅保留给鸟种名，不再兼作精焦色。
+        # flight=blue, focus=green per the 4.5.0 XMP:Label mapping; `red` now
+        # only tints species names.
+        flight = COLORS.get("flight_blue", "#3b82f6")
+        focus = COLORS.get("focus_best", "#00cc44")
+        red = "#ff5555"                                # 鸟种红
         muted = COLORS.get("text_muted", "#8a8a8a")
         sec = COLORS.get("text_secondary", "#a1a1a1")
         accent = COLORS.get("accent", "#00d4aa")
@@ -3406,9 +3436,9 @@ class SuperPickyMainWindow(QMainWindow):
             rows.append('')
             rows.append(f'<span style="color:{sec}">{esc(t("report.bird_total", count=bird_total, percent=bird_total/total*100))}</span>')
             if flying > 0:
-                rows.append(f'<span style="color:{sec}">{ico("bird.svg", green)}{esc(t("help.rule_flying"))}: {flying}</span>')
+                rows.append(f'<span style="color:{sec}">{ico("bird.svg", flight)}{esc(t("help.rule_flying"))}: {flying}</span>')
             if focus_precise > 0:
-                rows.append(f'<span style="color:{sec}">{ico("scan-eye.svg", red)}{esc(t("help.rule_focus"))}: {focus_precise}</span>')
+                rows.append(f'<span style="color:{sec}">{ico("scan-eye.svg", focus)}{esc(t("help.rule_focus"))}: {focus_precise}</span>')
 
             # 识别鸟种(红色文字, language-aware)
             bird_species = stats.get('bird_species', [])

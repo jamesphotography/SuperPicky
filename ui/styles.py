@@ -29,6 +29,14 @@ COLORS = {
     'accent_dim': 'rgba(0, 212, 170, 0.15)',
     'accent_glow': 'rgba(0, 212, 170, 0.3)',
 
+    # 飞版语义色（与写入照片的 XMP:Label 保持一致）
+    # 4.5.0 起色标映射改为 蓝=飞版 > 绿=精焦 > 红=脱焦（见 core/photo_processor.py
+    # compute_xmp_label）。此前 UI 图标沿用旧映射，把 focus_best 的绿当飞版色用，
+    # 导致软件里飞版是绿图标、导入 Lightroom 后却是蓝标签，两边对不上。
+    # Flight colour, kept in sync with the XMP:Label written to photos:
+    # since 4.5.0 the mapping is blue=flight > green=critical focus > red=soft.
+    'flight_blue':  '#3b82f6',   # 飞版 — 蓝
+
     # 焦点状态语义色（全系统统一）
     'focus_best':   '#00cc44',   # 精焦 — 绿（相机 AF 确认色）
     'focus_good':   '#a8e066',   # 合焦 — 黄绿（淡于精焦深绿，区分明显）

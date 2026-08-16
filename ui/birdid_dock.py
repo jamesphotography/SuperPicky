@@ -1656,10 +1656,13 @@ class BirdIDDockWidget(QDockWidget):
         def pct(n):
             return f"{n/total*100:.1f}%" if total > 0 else "—"
 
-        # 完成信息改 HTML+SVG:星级金星 / 无鸟 circle-off / 飞版绿 bird / 精焦红 scan-eye / 鸟种红
+        # 完成信息改 HTML+SVG:星级金星 / 无鸟 circle-off / 飞版蓝 bird / 精焦绿 scan-eye / 鸟种红
+        # 飞版与精焦的用色与写入照片的 XMP:Label 一致（4.5.0 起 蓝=飞版、绿=精焦）
+        # Flight/focus icons follow the 4.5.0 XMP:Label mapping (blue / green)
         import html as _h
         gold = COLORS.get('star_gold', '#d4a800')
-        green = COLORS.get('focus_best', '#00cc44')
+        flight = COLORS.get('flight_blue', '#3b82f6')
+        focus = COLORS.get('focus_best', '#00cc44')
         red = '#ff5555'
         muted = COLORS['text_muted']
         sec = COLORS['text_secondary']
@@ -1686,10 +1689,10 @@ class BirdIDDockWidget(QDockWidget):
         if flying > 0 or focus_precise > 0:
             rows.append('<div>&nbsp;</div>')
             if flying > 0:
-                rows.append(f'<div style="color:{sec}">{_ico("bird.svg", green)}'
+                rows.append(f'<div style="color:{sec}">{_ico("bird.svg", flight)}'
                             f'{_esc(self.i18n.t("birdid.stats_flying").format(count=flying))}</div>')
             if focus_precise > 0:
-                rows.append(f'<div style="color:{sec}">{_ico("scan-eye.svg", red)}'
+                rows.append(f'<div style="color:{sec}">{_ico("scan-eye.svg", focus)}'
                             f'{_esc(self.i18n.t("birdid.stats_focus_precise").format(count=focus_precise))}</div>')
 
         if bird_species:
