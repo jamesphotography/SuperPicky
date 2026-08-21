@@ -240,13 +240,18 @@ bootstrap_telemetry(_main_window, on_ready=_main_window.run_startup_prompts)
 ```
 
 即**启动期弹窗（onboarding 等）被挂在遥测同意流程完成之后**（`main_window.py:4352` 的注释
-说明了这是为避免 onboarding 被重复触发）。移除阻塞式同意弹窗后，这条链路的时序改变：
-`on_ready` 必须仍然**恰好触发一次**，且不再有等待用户点击的阶段。实现时需确认——
+说明了这是为避免 onboarding 被重复触发）。
 
+现有实现**已经**保证了回调必触发：`_TelemetryBootstrap.run()`（`telemetry.py:139`）用
+`try/finally` 包住全部提前 return 分支，`bootstrap_telemetry()` 的 `except` 分支也会补调一次。
+因此这里的要求是**保持**这个保障，而不是新建：
+
+- 移除同意流程分支后，`try/finally` 结构必须原样保留；
 - 遥测被关闭（`telemetry_enabled = False`）时 `on_ready` 依然触发，否则 onboarding 永不出现；
-- 遥测初始化抛异常时 `on_ready` 依然触发（现有代码异常全吞，需确认回调不被一并吞掉）。
+- 回调仍需恰好触发一次（`_BOOTSTRAPPED` 幂等锁不得改动）。
 
-这是本次改动中最容易引入回归的一处：漏掉会导致新用户看不到 onboarding，且不会有任何报错。
+若重构时把 `try/finally` 拆散，后果是新用户看不到 onboarding 且无任何报错——这类静默回归
+必须由测试守住（见 §6）。
 
 上报字段沿用 `_build_common_fields()` 现有内容（`app_version` / `os` / `arch` /
 `python_version` / `locale`），不新增任何字段。
