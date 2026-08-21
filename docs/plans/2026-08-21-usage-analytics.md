@@ -19,6 +19,7 @@
 - **不得用 shell 脚本处理含中文的文件**，Python 或 Node 优先。
 - **App 端设置项唯一存储是 `advanced_config`**，禁止新增独立 json 存放设置（`CLAUDE.md` 强制）。
 - **App 端测试必须注入 `config_file`**，不得写入本机真实 `advanced_config.json`。
+- **已知的既有污染源（非本计划引入）**：`test_birdid_dock_config.py` 通过模块级单例 `get_advanced_config()` 写用户真实配置且无隔离。因此**跑全量 `pytest` 或任何命中它的 `-k` 扫描，都会把当时 `DEFAULT_CONFIG` 的内容写进本机真实设置**。这是仓库既有缺陷（用户备忘录 `tests-pollute-real-config.md` 已记录、尚未修复），不在本计划范围内，但执行 Task 8/10 的全量回归时会再次发生，属预期行为而非新问题。
 - **`downloads_github.json` 是已发行应用读取的线上契约**（`tools/site_version.py`）。**已核实：应用只读 `latest.tag`，不读 `drive`/`baidu`/`files`**，故改写后两者安全；`latest.tag` 与文件名结构不得改动。
 - **`site/downloads_github.json` 与 `site/index.html`、`site/faq.html` 等路径受 `tests/contracts.test.mjs` 保护**，不得删除或改名。
 - **四个下载渠道**：`github`、`ghproxy`（gh-proxy.com 大陆镜像，首页 JS 派生）、`gdrive`、`baidu`。
@@ -1596,8 +1597,10 @@ Expected: PASS（3 个用例）
 Run: `python3 -m py_compile advanced_config.py`
 Expected: 无输出
 
-Run: `python3 -m pytest test_advanced_config.py -v 2>/dev/null || python3 -m pytest -k advanced_config -v`
-Expected: 既有配置测试全绿
+Run: `python3 -m pytest test_telemetry_config.py -v`
+Expected: 3 个用例全绿
+
+**不要用 `pytest -k advanced_config` 做回归**（本计划初稿曾这么写，已实测出问题）：`test_advanced_config.py` 并不存在，该关键字扫描会命中 `test_birdid_dock_config.py`，而后者用模块级单例 `get_advanced_config()` 且**未注入 `config_file`**，其 `set_birdid_region` 会 `save()` 整个配置到用户真实的 `advanced_config.json`——于是本任务新加的 `telemetry_enabled` 被顺带写进了本机真实设置。见 §Global Constraints 的相关条目。
 
 - [ ] **Step 7: 提交**
 
