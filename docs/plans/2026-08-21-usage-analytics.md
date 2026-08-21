@@ -1312,12 +1312,20 @@ export function buildQueries(dataset) {
       WHERE index1 = 'app' AND blob5 = 'app_start' AND timestamp > now() - INTERVAL '30' DAY
       GROUP BY day ORDER BY day DESC`,
 
-    // 版本分布：近 7 天各版本的去重人数
+    // 版本分布：逐日 × 各版本的去重人数
+    //
+    // 必须 GROUP BY day。blob6 按日轮换，同一个人一周内会贡献 7 个不同的值，
+    // 因此跨日 uniq(blob6) 数的是「人×天」对而非人数——任何活跃超过一天的
+    // 用户都会被重复计入，而列名 people 会让读的人以为那是人数。
+    // 按天分组后单日内 blob6 = 一个人，每行都是真实人数；顺带给出版本渗透
+    // 曲线，正是发版后最该看的东西。
+    // GROUP BY day is mandatory: blob6 rotates daily, so a cross-day
+    // uniq(blob6) counts person-days, not people.
     versionMix: `
-      SELECT blob1 AS app_version, blob2 AS os, uniq(blob6) AS people
+      SELECT toDate(timestamp) AS day, blob1 AS app_version, blob2 AS os, uniq(blob6) AS people
       FROM ${dataset}
       WHERE index1 = 'app' AND blob5 = 'app_start' AND timestamp > now() - INTERVAL '7' DAY
-      GROUP BY app_version, os ORDER BY people DESC`,
+      GROUP BY day, app_version, os ORDER BY day DESC, people DESC`,
 
     // 官网访问：排除爬虫
     pageviews: `
