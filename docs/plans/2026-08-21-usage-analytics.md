@@ -1149,7 +1149,14 @@ export async function handleTelemetry(request, env) {
   for (const event of data.events) {
     safeWrite(env, {
       indexes: ['app'],
-      blobs: [data.app_version, data.os, data.arch, data.locale, event, data.id],
+      // python_version 必须在列。它是 REQUIRED_STRINGS 之一（缺失即拒收整个 payload），
+      // 漏写等于「强制客户端上报、服务端做完校验、然后扔掉」——数据集永远无法按
+      // Python 版本切分。新增字段一律追加在末尾，不得插入中间：app 的 blob 位序
+      // 被看板查询按位置依赖。
+      // python_version must be here: it is a REQUIRED_STRING, so omitting it means
+      // forcing clients to send a field the server validates then discards.
+      // Append new fields at the end only — dashboard queries depend on blob order.
+      blobs: [data.app_version, data.os, data.arch, data.locale, event, data.id, data.python_version],
       doubles: [1]
     });
   }
