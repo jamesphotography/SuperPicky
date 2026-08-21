@@ -769,7 +769,16 @@ Expected: FAIL——「仍有 71 条未改写」以及 `downloads_github.json` �
 
 - [ ] **Step 3: 写生成脚本**
 
-创建 `scripts/build-dl-map.mjs`：
+创建 `scripts/build-dl-map.mjs`。
+
+> **下方脚本有四个缺陷，实施时已修正（site 仓库 commit `7c5baa2`），此处保留原文并标注，以免重跑时重新引入：**
+>
+> 1. **非幂等且重跑即毁灭**——脚本从 `downloads.html` 提取绝对 URL 来建表，但第一次 `--apply` 之后页面里已经没有绝对 URL 了；再跑一次会生成一张空表，把 70 条线上 `/dl/` 链接**全部变成 404**。修法：以既有映射表为种子累加，并在写盘前自检、不通过则非零退出。
+> 2. **版本号未归一**——`v4.3.0 LTS` 这类带空格的版本会产出含字面空格的 id，并把统计里的 `version` 维度劈成两半。
+> 3. **id 方案在同格双包时碰撞**——v4.3.0 的 `Windows (CPU)` 单元格里有 Full 与 Lite 两个 GitHub 包，同一个 `win_cpu-<版本>-github` id 会让 Lite 静默覆盖 Full。需要额外的 `win_cpu_lite` 平台键。
+> 4. **`github.com` 判定过宽**——页脚的仓库链接也会被当成下载链接改掉。须限定为 `/releases/download/` 路径。
+>
+> 另：正文写的「71 条链接」实为 **70** 条（另有 5 条夸克网盘链接不在白名单内，见下）。
 
 ```javascript
 import { readFile, writeFile } from 'node:fs/promises';
