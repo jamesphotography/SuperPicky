@@ -96,6 +96,12 @@ class AdvancedConfig:
         "rescue_scan_enabled": True,   # 判无鸟/低置信度时触发 1024px 重扫 + 识鸟守门
         "rescue_birdid_gate": 10,      # 弱候选的识鸟确认门槛 (0-100, top1 置信度百分比)
 
+        # V4.6: 匿名使用统计 (spec: docs/specs/2026-08-21-usage-analytics-design.md)
+        # 默认开启、设置中心可关；上报内容为版本/系统/架构/语言与按日轮换的
+        # 匿名 ID，不含任何照片、路径或个人信息。
+        # V4.6: Anonymous usage stats — opt-out, no photo/path/personal data.
+        "telemetry_enabled": True,
+
         # 外部编辑应用（右键菜单 "用 X 打开"）
         # 每项格式：{"name": "显示名称", "path": "/Applications/...app"}
         "external_apps": [],
@@ -554,6 +560,36 @@ class AdvancedConfig:
     def set_completion_sound_enabled(self, value: bool) -> None:
         """设置处理完成提示音 / Completion sound after processing。"""
         self.config["completion_sound_enabled"] = bool(value)
+
+    @property
+    def telemetry_enabled(self) -> bool:
+        """
+        返回是否上报匿名使用统计。
+
+        返回:
+        bool: True 表示上报（默认），False 表示完全不发起网络请求。
+
+        Return whether anonymous usage stats are reported.
+
+        Return:
+        bool: True to report (default); False disables all network calls.
+        """
+        return self.config.get("telemetry_enabled", True)
+
+    def set_telemetry_enabled(self, value: bool) -> None:
+        """
+        设置是否上报匿名使用统计。
+
+        参数:
+        value (bool): True 开启，False 关闭。强制转 bool，
+                      以免 Qt 的 int 状态值（0/2）直接落库。
+
+        Set whether anonymous usage stats are reported.
+
+        Parameters:
+        value (bool): Coerced to bool so Qt's int check states never persist.
+        """
+        self.config["telemetry_enabled"] = bool(value)
 
     # V4.x: 鸟种英文名显示格式
     @property
