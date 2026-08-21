@@ -404,7 +404,7 @@ export function logPageview(request, env) {
 - [ ] **Step 4: 运行测试确认通过**
 
 Run: `npx vitest run tests/worker-logging.test.mjs`
-Expected: PASS（9 个用例）
+Expected: PASS（10 个用例：isBot 3 + refererHost 4 + safeWrite 3）
 
 - [ ] **Step 5: 接入 index.js**
 
