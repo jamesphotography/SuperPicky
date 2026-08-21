@@ -597,11 +597,31 @@ export function makeDownloadId(platform, version, channel) {
  * @returns {Promise<Response>} 302 跳转，或未知 id 时 404
  */
 export async function handleRedirect(url, request, env) {
-  const id = decodeURIComponent(url.pathname.slice('/dl/'.length));
-  const entry = DL_MAP[id];
+  // 解码失败必须先于查表返回 404。畸形百分号编码（如 /dl/100%request）会让
+  // decodeURIComponent 抛 URIError，不捕获就是公开端点上的未捕获异常。
+  // Decode failures 404 before the lookup: a lone % throws URIError.
+  let id;
+  try {
+    id = decodeURIComponent(url.pathname.slice('/dl/'.length));
+  } catch {
+    return new Response('Unknown download id', { status: 404 });
+  }
+
+  // 必须用自有属性检查，不能直接 DL_MAP[id]。DL_MAP 是 JSON 导入的普通对象，
+  // `__proto__`/`constructor`/`toString` 等原型链键取到的是 Object.prototype
+  // 上的成员，全是**真值**，会绕过下面的 404 守卫，最终以 entry.url === undefined
+  // 走到 Response.redirect 抛 TypeError——一个随手可猜的公开路径上的 500。
+  // 且 hasOwnProperty 必须从 Object.prototype 上取，不能写成 DL_MAP.hasOwnProperty(id)，
+  // 否则一个名为 hasOwnProperty 的表项就能把守卫本身顶掉。
+  // Own-property check is mandatory: prototype-chain keys are truthy and would
+  // slip past the guard below. Call hasOwnProperty off Object.prototype so a
+  // map entry named "hasOwnProperty" cannot subvert the guard itself.
+  const entry = Object.prototype.hasOwnProperty.call(DL_MAP, id) ? DL_MAP[id] : undefined;
 
   // 未知 id 返回 404 而不是跳首页：坏链接应当明确暴露，
   // 静默跳首页会让「链接写错了」这件事永远不被发现。
+  // 这条 return 必须在下面的 safeWrite 之前——否则非法 id 会先写出一条
+  // 三字段全 undefined 的垃圾数据点再崩溃。
   if (!entry) return new Response('Unknown download id', { status: 404 });
 
   safeWrite(env, {
