@@ -14,6 +14,7 @@
 
 - **两个仓库**：Phase A 全部在 `~/Documents/JamesAPPS/SuperPicky-Site`；Phase B 全部在 `~/Documents/JamesAPPS/SuperPicky2026`。**每个 Task 的 Files 段已标注仓库，提交也在对应仓库进行。**
 - **统计代码永远不能影响页面返回**：静态资源先取到再记账、记账走 `ctx.waitUntil()`、记账函数内部 try/catch 全吞。
+- **`run_worker_first` 命中的请求算 Worker 调用，免费额度 10 万/天，超出后返回 429 而不是回退到静态资源**（即整站不可用）。Task 1 的负规则把 css/js 与机器读取的文件排除在外，使调用数约等于页面浏览量，余量 10 万页面浏览/天。**任何扩大 `run_worker_first` 匹配范围的改动都会按比例吃掉这个余量。**
 - **UTF-8**：所有文件读写显式 `encoding='utf-8'`；中文注释 + 同格式英文注释（见 `CLAUDE.md`）。
 - **不得用 shell 脚本处理含中文的文件**，Python 或 Node 优先。
 - **App 端设置项唯一存储是 `advanced_config`**，禁止新增独立 json 存放设置（`CLAUDE.md` 强制）。
@@ -138,7 +139,36 @@ Expected: PASS（4 个用例）
 
 - [ ] **Step 5: 改 wrangler.jsonc**
 
-在 `wrangler.jsonc` 中 `"compatibility_date"` 之后加入 `main`，并在文件末尾 `"observability"` 之前加入数据集绑定。**`assets`、`routes`、`workers_dev`、`not_found_handling` 全部保持原样不动**：
+在 `wrangler.jsonc` 中 `"compatibility_date"` 之后加入 `main`，并在文件末尾 `"observability"` 之前加入数据集绑定。`routes`、`workers_dev` 保持原样不动；`assets` 块**只允许新增下面两个字段，既有的 `directory` / `not_found_handling` 及其注释一字不动**：
+
+```jsonc
+    // 在 Worker 脚本里访问静态资源必须显式声明这个绑定，
+    // 否则 env.ASSETS 是 undefined，所有走到 Worker 的请求直接 500。
+    // Required for env.ASSETS.fetch(); without it env.ASSETS is undefined.
+    "binding": "ASSETS",
+
+    // 默认是「静态资源优先」：命中文件的请求由资源层直接返回，**根本不经过
+    // Worker 脚本**。那样一来页面访问统计只能记到 404，正常页面一次都记不到。
+    // 故显式改为 Worker 优先，但用负规则把 css/js 与机器读取的文件排除掉——
+    //   1. 只有页面文档才算「访问」，css/js 是同一次访问的附属请求；
+    //   2. 更要紧的是计费：run_worker_first 命中的请求算 Worker 调用，
+    //      免费额度 10 万/天，**超出后返回 429 而不是回退到静态资源**——
+    //      也就是整站挂掉，不是丢统计。排除后约等于「1 次访问 1 次调用」，
+    //      余量为 10 万页面浏览/天。
+    // 负规则语义见 wrangler config-schema：「matches to negative rules will
+    // go to the Asset Worker」。
+    // Worker-first so pageviews are actually observable, minus sub-resources:
+    // run_worker_first requests are billable and 429 (not asset fallback)
+    // once the daily free tier is exhausted.
+    "run_worker_first": [
+      "/*",
+      "!/css/*",
+      "!/js/*",
+      "!/robots.txt",
+      "!/sitemap.xml",
+      "!/downloads_github.json"
+    ],
+```
 
 ```jsonc
   // 静态站自此有了 Worker 入口。加 main 之后本站不再是「不可能挂」的纯 assets
@@ -168,10 +198,13 @@ Run: `npx wrangler dev --port 8788`
 ```bash
 curl -s -o /dev/null -w "首页 %{http_code}\n"        http://127.0.0.1:8788/
 curl -s -o /dev/null -w "归档页 %{http_code}\n"      http://127.0.0.1:8788/downloads.html
+curl -s -o /dev/null -w "归档页(规范化) %{http_code}\n" http://127.0.0.1:8788/downloads
 curl -s -o /dev/null -w "死链 %{http_code}\n"        http://127.0.0.1:8788/no-such-page
 ```
 
-Expected: `首页 200` / `归档页 200` / **`死链 404`**
+Expected: `首页 200` / `归档页 307` / `归档页(规范化) 200` / **`死链 404`**
+
+**`/downloads.html` 返回 307 是本站既有行为，不是缺陷**：Workers 静态资源的 `html_handling` 默认会把 `foo.html` 规范化跳转到 `/foo`。已用「移除 `main` 的纯 assets 基线」对照确认改动前后一致。
 
 - [ ] **Step 7: 验证 404 页内容仍是自有 404 而非首页**
 
