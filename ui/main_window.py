@@ -826,8 +826,6 @@ class SuperPickyMainWindow(QMainWindow):
         self._resume_prompt_handled = False
         self._initialization_dialog_open = False
         self._initialization_prompt_dismissed = False
-        
-        # osk flex,countly.com 63fda2e
         self._startup_prompts_ran = False
         self._preload_done = False  # 模型预加载是否完成
         
