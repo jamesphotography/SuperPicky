@@ -2044,6 +2044,7 @@ opt-out 的前提是说明到位：开关下方写明采集内容与不采集内
 
 **Files:**
 - Delete: `scripts/prepare_telemetry_build.py`
+- Modify: `SuperPicky.spec:133-134`、`SuperPicky_win64.spec:135-136`（删除 `_telemetry_build` / `app_user_stat._telemetry_build` 两个 hidden import——该模块已无人 import，PyInstaller 对缺失的 hidden import 只警告不失败，故今天没人发现；Task 8 审查发现，此前不在任何任务的文件清单里，无人认领）
 - Modify: `.github/workflows/build-release.yml`（删除 L46-48 与 L197-199 两处注入步骤）
 - Modify: `app_user_stat/README_TELEMETRY.md`（全文重写）
 - Test: `test_no_countly_residue.py`（新建）
@@ -2082,10 +2083,22 @@ def test_prepare_script_removed() -> None:
     assert not (ROOT / "scripts/prepare_telemetry_build.py").exists()
 
 
-def test_telemetry_module_has_no_countly_reference() -> None:
-    """遥测模块不再提及 Countly。/ No Countly reference left."""
+def test_telemetry_module_has_no_functional_countly_residue() -> None:
+    """
+    遥测模块不再有**功能性**的 Countly 残留。
+
+    刻意不查字面词「countly」：telemetry.py 的端点常量旁保留了一段说明
+    「原 Countly Flex 域名已失效」的注释，那正处在后人最可能「把端点改回去」
+    的那一行，是防止重蹈覆辙的关键信息。本用例要防的是凭据、URL 与配置变量。
+
+    No *functional* Countly residue. The literal word is allowed: the comment
+    explaining why the endpoint moved sits exactly where someone would be
+    tempted to move it back.
+    """
     source = (ROOT / "app_user_stat/telemetry.py").read_text(encoding="utf-8")
-    assert "countly" not in source.lower()
+    assert "COUNTLY_" not in source
+    assert "countly.com" not in source
+    assert "_telemetry_build" not in source
 ```
 
 - [ ] **Step 2: 运行测试确认失败**
