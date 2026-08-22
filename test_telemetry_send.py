@@ -7,6 +7,8 @@ Telemetry delivery tests: daily-rotating ID and payload contract.
 """
 import re
 
+import pytest
+
 from app_user_stat.telemetry import _build_request_payload, _daily_rotating_id
 
 
@@ -59,9 +61,18 @@ def test_payload_matches_worker_contract() -> None:
 
 def test_on_ready_fires_even_when_telemetry_disabled(monkeypatch) -> None:
     """
-    遥测关闭时 on_ready 仍须触发，否则 onboarding 永不出现且无报错。
+    遥测关闭时 on_ready 仍须触发，且这条路径下绝不能真的发出请求。
 
-    on_ready must fire even when telemetry is off, or onboarding never shows.
+    telemetry_enabled 默认是 True（advanced_config.py），关闭是少数用户
+    主动选择的路径；这条测试同时守住两件事：on_ready 依旧触发，且
+    run() 在读到 telemetry_enabled=False 后必须在构造 _TelemetryClient /
+    发起网络请求之前就返回——否则「关掉就不发」这个前提不成立。
+
+    on_ready must fire even when telemetry is off, AND this path must
+    never actually send a request. telemetry_enabled defaults to True;
+    disabling it is an opt-out minority path. This test guards both: the
+    callback still fires, and run() returns before ever touching the
+    network when the switch is off.
     """
     import app_user_stat.telemetry as tm
 
@@ -71,7 +82,74 @@ def test_on_ready_fires_even_when_telemetry_disabled(monkeypatch) -> None:
     monkeypatch.setattr(tm, "_schedule_on_qt_event_loop", lambda fn: False)
     monkeypatch.setitem(__import__("sys").modules, "advanced_config",
                         type("M", (), {"AdvancedConfig": lambda: _Off()}))
-    tm._BOOTSTRAPPED = False
+    monkeypatch.setattr(tm, "_BOOTSTRAPPED", False)
+    monkeypatch.setattr(
+        tm.request, "urlopen",
+        lambda *a, **k: pytest.fail("disabled telemetry must not send"),
+    )
+
+    fired = []
+    tm.bootstrap_telemetry(parent=None, on_ready=lambda: fired.append(True))
+    assert fired == [True]
+
+
+def test_on_ready_fires_when_telemetry_enabled(monkeypatch) -> None:
+    """
+    默认配置（telemetry_enabled=True）下 on_ready 也必须触发。
+
+    多数用户走的是这条「启用」路径：_TelemetryClient().bootstrap() 之后
+    落到 finally。之前只测了关闭分支，等于没测到大多数用户实际会走的
+    代码。这里把 _TelemetryClient 换成不起线程、不碰文件系统的桩，只验证
+    on_ready 的触发时机。
+
+    on_ready must also fire on the default "enabled" path, which is what
+    most users actually hit. _TelemetryClient is stubbed out so this test
+    starts no thread and touches no filesystem.
+    """
+    import app_user_stat.telemetry as tm
+
+    class _On:
+        telemetry_enabled = True
+
+    class _StubClient:
+        def bootstrap(self) -> None:
+            pass
+
+    monkeypatch.setattr(tm, "_schedule_on_qt_event_loop", lambda fn: False)
+    monkeypatch.setattr(tm, "_TelemetryClient", _StubClient)
+    monkeypatch.setitem(__import__("sys").modules, "advanced_config",
+                        type("M", (), {"AdvancedConfig": lambda: _On()}))
+    monkeypatch.setattr(tm, "_BOOTSTRAPPED", False)
+
+    fired = []
+    tm.bootstrap_telemetry(parent=None, on_ready=lambda: fired.append(True))
+    assert fired == [True]
+
+
+def test_on_ready_fires_when_reading_the_switch_raises(monkeypatch) -> None:
+    """
+    读取 telemetry_enabled 本身抛异常时 on_ready 也必须触发且只触发一次。
+
+    这是此前完全没有测试覆盖的分支：AdvancedConfig() 构造或属性访问抛出
+    时，run() 的 try/finally 保证 finally 里调用一次 on_ready；run()
+    必须把异常挡在自己这一层（except 分支），不能让它继续往外逸出到
+    bootstrap_telemetry() 的外层 except 再调一次，否则回调会被触发两次。
+
+    on_ready must fire exactly once even if reading telemetry_enabled
+    itself raises — previously zero coverage. run()'s own except must
+    swallow the error locally so bootstrap_telemetry()'s outer except
+    does not also invoke the callback, which would double-fire it.
+    """
+    import app_user_stat.telemetry as tm
+
+    class _Boom:
+        def __init__(self) -> None:
+            raise RuntimeError("config read failed")
+
+    monkeypatch.setattr(tm, "_schedule_on_qt_event_loop", lambda fn: False)
+    monkeypatch.setitem(__import__("sys").modules, "advanced_config",
+                        type("M", (), {"AdvancedConfig": _Boom}))
+    monkeypatch.setattr(tm, "_BOOTSTRAPPED", False)
 
     fired = []
     tm.bootstrap_telemetry(parent=None, on_ready=lambda: fired.append(True))

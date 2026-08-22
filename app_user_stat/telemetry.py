@@ -60,11 +60,17 @@ def bootstrap_telemetry(parent: Any = None, on_ready: Optional[Callable[[], None
     是否上报只看 advanced_config.telemetry_enabled 这一个开关；实际网络
     投递发生在守护线程上，启动流程不会被 HTTP I/O 阻塞。所有异常均被吞掉。
 
+    `parent` 参数仅为调用点兼容保留（main.py:254 仍按位置/关键字传入）；
+    自建端点方案不再需要弹窗征求同意，`_TelemetryBootstrap` 内部已不使用它。
+
     Initialize telemetry once and return immediately (idempotent via the
     `_BOOTSTRAPPED` lock). Delivery is gated solely by
     advanced_config.telemetry_enabled; actual network I/O happens on a
     daemon thread so app startup is never blocked. All failures are
     intentionally swallowed.
+
+    `parent` is kept only for call-site compatibility (main.py:254 still
+    passes it); it is unused now that consent dialogs are gone.
     """
     global _BOOTSTRAPPED
 
@@ -74,7 +80,7 @@ def bootstrap_telemetry(parent: Any = None, on_ready: Optional[Callable[[], None
         _BOOTSTRAPPED = True
 
     try:
-        runner = _TelemetryBootstrap(parent=parent, on_ready=on_ready)
+        runner = _TelemetryBootstrap(on_ready=on_ready)
         if _schedule_on_qt_event_loop(runner.run):
             return
         runner.run()
@@ -91,8 +97,7 @@ class _TelemetryBootstrap:
     guarantee the on_ready callback always fires.
     """
 
-    def __init__(self, parent: Any, on_ready: Optional[Callable[[], None]]) -> None:
-        self._parent = parent
+    def __init__(self, on_ready: Optional[Callable[[], None]]) -> None:
         self._on_ready = on_ready
 
     def run(self) -> None:
@@ -104,9 +109,19 @@ class _TelemetryBootstrap:
                 return
 
             _TelemetryClient().bootstrap()
+        except Exception as exc:
+            # 本地捕获：即使读开关（AdvancedConfig() 构造/属性访问）本身
+            # 抛异常，也只在这里记一次日志，不让异常继续往外逸出——否则
+            # 会被 bootstrap_telemetry() 外层的 except 再捕一次，导致
+            # finally 与外层各调用一次 on_ready，回调被触发两次。
+            # Catch locally: even if reading the switch itself raises,
+            # log once here instead of letting it escape to
+            # bootstrap_telemetry()'s outer except, which would otherwise
+            # double-invoke on_ready (once from finally, once from there).
+            _debug_log(f"telemetry run failed: {exc}")
         finally:
             # 这个 try/finally 必须原样保留。启动期弹窗（onboarding）挂在
-            # on_ready 上（main.py:253），任何提前 return 都必须仍然触发它，
+            # on_ready 上（main.py:254），任何提前 return 都必须仍然触发它，
             # 否则新用户永远看不到 onboarding 且没有任何报错。
             # Keep this try/finally: onboarding hangs off on_ready.
             _invoke_callback(self._on_ready)
