@@ -27,19 +27,35 @@ def test_prepare_script_removed() -> None:
     assert not (ROOT / "scripts/prepare_telemetry_build.py").exists()
 
 
-def test_telemetry_module_has_no_functional_countly_residue() -> None:
+def test_telemetry_endpoint_and_no_functional_countly_residue() -> None:
     """
-    遥测模块不再有**功能性**的 Countly 残留。
+    遥测端点确实归属自建服务，且模块不再有**功能性**的 Countly 残留。
 
-    刻意不查字面词「countly」：telemetry.py 的端点常量旁保留了一段说明
-    「原 Countly Flex 域名已失效」的注释，那正处在后人最可能「把端点改回去」
-    的那一行，是防止重蹈覆辙的关键信息。本用例要防的是凭据、URL 与配置变量。
+    正面断言（更重要）：直接检查 `_TELEMETRY_ENDPOINT` 的值——这是我们真正
+    关心的事实，即端点指向自建服务而非第三方。任何人把它改回 Countly 或
+    别的第三方地址，这条立刻红，比在源码里搜字符串更直接、更抗改写。
 
-    No *functional* Countly residue. The literal word is allowed: the comment
-    explaining why the endpoint moved sits exactly where someone would be
-    tempted to move it back.
+    反面断言：源码不含 Countly 凭据变量名（`COUNTLY_`）或已删模块的引用
+    （`_telemetry_build`）。
+
+    刻意不查字面词「countly」或域名 `countly.com`：telemetry.py 的端点常量
+    旁保留了一段说明「原 Countly Flex 域名已失效」的注释（逐字对应
+    Task 8 提交时的原文），那正处在后人最可能「把端点改回去」的那一行，
+    是防止重蹈覆辙的关键信息，不能为了让断言更严格而删掉或改写它。
+
+    The positive assertion (the one that matters) checks the endpoint's
+    actual value — the fact we care about is that it points at our own
+    service, not a string-search proxy for that fact. The negative
+    assertions guard against Countly credentials or references to the
+    removed `_telemetry_build` module. The literal word "countly" (and the
+    domain "countly.com") is deliberately not checked: the historical
+    comment next to the endpoint constant explains why it moved, and sits
+    exactly where someone would be tempted to move it back.
     """
+    from app_user_stat.telemetry import _TELEMETRY_ENDPOINT
+
+    assert _TELEMETRY_ENDPOINT == "https://superpicky.app/t"
+
     source = (ROOT / "app_user_stat/telemetry.py").read_text(encoding="utf-8")
     assert "COUNTLY_" not in source
-    assert "countly.com" not in source
     assert "_telemetry_build" not in source
