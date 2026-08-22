@@ -37,6 +37,10 @@ test_*.py
 # 官网版本查询回归测试 / Keep site version-check regression coverage
 !test_site_version.py
 !test_about_version_check.py
+# 使用统计遥测回归测试 / Keep usage-analytics telemetry regression coverage
+!test_telemetry_config.py
+!test_telemetry_send.py
+!test_telemetry_settings_ui.py
 analyze_*.py
 add_*.py
 write_*.py

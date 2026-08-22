@@ -41,12 +41,6 @@ jobs:
             requirements.txt
             requirements_cuda.txt
 
-      - name: Prepare telemetry build override
-        env:
-          COUNTLY_APP_KEY: ${{ secrets.COUNTLY_APP_KEY }}
-          COUNTLY_SERVER_URL: ${{ secrets.COUNTLY_SERVER_URL }}
-        run: python scripts/prepare_telemetry_build.py --output _telemetry_build.py
-
       - name: Resolve release metadata
         id: release_meta
         env:
@@ -191,12 +185,6 @@ jobs:
           python-version: '3.12'
           cache: 'pip'
           cache-dependency-path: requirements_mac.txt
-
-      - name: Prepare telemetry build override
-        env:
-          COUNTLY_APP_KEY: ${{ secrets.COUNTLY_APP_KEY }}
-          COUNTLY_SERVER_URL: ${{ secrets.COUNTLY_SERVER_URL }}
-        run: python scripts/prepare_telemetry_build.py --output _telemetry_build.py
 
       - name: Resolve release metadata
         id: release_meta

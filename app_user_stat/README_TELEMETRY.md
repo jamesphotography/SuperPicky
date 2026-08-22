@@ -1,113 +1,43 @@
-# SuperPicky Telemetry Notes
+# SuperPicky 遥测说明 / Telemetry Notes
 
-This project's Countly telemetry implementation lives in
-`app_user_stat/telemetry.py`.
+实现位于 `app_user_stat/telemetry.py`，设计见
+`docs/specs/2026-08-21-usage-analytics-design.md`。
 
-Current anonymous fields already include `APP_VERSION` from
-`constants.py`:
+## 采集什么 / What is collected
 
-- Event segmentation: `app_version`
-- Session metrics: `_app_version`
+每次启动最多三个事件（`install` / `app_start` / `heartbeat_weekly`，后者 7 天一次），
+每个事件附带：应用版本、操作系统、CPU 架构、Python 版本、界面语言，以及一个
+**按日轮换**的匿名 ID（`sha256(本地安装ID + UTC日期)`）。
 
-That means version statistics are sourced from one place only:
-`constants.APP_VERSION`.
+本地安装 ID 存于 `telemetry_state.json`，**永不上报**。上报 ID 跨日即变，
+因此不构成持久标识符——这是「默认开启」得以成立的前提，代价是算不了留存。
 
-## How To Extend Telemetry
+**绝不采集**：用户名、邮箱、MAC 地址、硬件序列号、照片内容、文件路径、原始 EXIF。
 
-Keep all telemetry logic inside `app_user_stat/telemetry.py`. Do not spread
-new network calls, anonymous ID generation, or config loading into business
-code.
+## 开关 / Toggle
 
-### Add more anonymous fields
+由 `advanced_config` 的 `telemetry_enabled` 控制（默认 `True`），
+界面在设置中心「关于」页。**不要引入独立 json 存放这个开关**——
+设置的唯一存储是 `advanced_config`（见 `CLAUDE.md`）。
 
-If the new data should be attached to custom events, extend
-`_build_common_fields()`.
+## 端点 / Endpoint
 
-Example:
+`POST https://superpicky.app/t`，由官网 Worker 接收并写入 Cloudflare
+Analytics Engine。**该端点不做身份认证**：开源客户端藏不住密钥，任何人
+都能伪造数据点。因此这套数字的定位是趋势观察，而非可审计的精确指标。
 
-```python
-def _build_common_fields() -> Dict[str, str]:
-    return {
-        "app_version": APP_VERSION,
-        "os": platform.system() or "unknown",
-        "arch": platform.machine() or "unknown",
-        "python_version": platform.python_version(),
-        "locale": _detect_locale(),
-        "release_channel": "stable",
-    }
-```
+请求契约与字段白名单见 `SuperPicky-Site` 仓库的 `src/telemetry.js`；
+改动任一端都必须同步另一端，`test_telemetry_send.py` 守住 app 侧契约。
 
-If the new data should be attached to Countly session metrics, extend
-`_build_session_metrics()`.
+## 历史 / History
 
-Example:
+4.x 曾使用 Countly Flex（PR #78）。该实例的域名已不存在，导致数月间所有
+打包版向失效地址静默投递、零数据落地且无人察觉。2026-08 改为上述自建方案。
+**已发布的旧版本硬编码了失效域名，其数据永久缺失，无法补救。**
 
-```python
-def _build_session_metrics() -> Dict[str, str]:
-    return {
-        "_os": os_name,
-        "_os_version": os_version,
-        "_device": device_name,
-        "_app_version": APP_VERSION,
-    }
-```
-
-### Add more events
-
-To add another event:
-
-1. Add the event to `_build_due_events()`.
-2. If the event needs throttling or one-time semantics, persist that state in
-   `telemetry_state.json`.
-3. Reuse `_build_event()` instead of building payload fragments in business
-   code.
-
-For example, a one-time event should update the saved state only after a
-successful Countly response.
-
-### Rules For Safe Extensions
-
-- Keep it anonymous. Do not add username, email, MAC address, hardware serial,
-  photo content, photo paths, or raw EXIF data.
-- Keep startup non-blocking. Telemetry must stay on the existing background
-  delivery path.
-- Keep Countly config in one place. Use environment variables or
-  the project-root `_telemetry_build.py`.
-- If you expand the data scope in a user-visible way, update the consent copy
-  in `app_user_stat/consent_texts/`.
-
-## Verification
-
-Use the built-in self-test:
+## 验证 / Verification
 
 ```bash
-py -3 -m app_user_stat.telemetry
-py -3 -m app_user_stat.telemetry --send
+python3 -m app_user_stat.telemetry           # 自检，不发送
+python3 -m app_user_stat.telemetry --send    # 自检并实际发送
 ```
-
-The self-test output now prints `app_version`, so you can verify that the
-runtime value matches `constants.APP_VERSION` before sending data.
-
-## CI Build Injection
-
-GitHub release packaging should store telemetry credentials in repository
-secrets, not in tracked source files.
-
-Required repository secrets:
-
-- `COUNTLY_APP_KEY`
-- `COUNTLY_SERVER_URL`
-
-Both Windows release workflows now call:
-
-```bash
-py -3 scripts/prepare_telemetry_build.py --output _telemetry_build.py
-```
-
-The helper writes a temporary UTF-8 project-root `_telemetry_build.py` only
-when both secrets are present. If either secret is missing, the helper removes
-any stale generated override and the packaged app falls back to the existing
-placeholder telemetry configuration, which keeps telemetry unresolved instead
-of shipping real Countly credentials. Runtime code still accepts the packaged
-`app_user_stat._telemetry_build` path as a compatibility fallback, but CI
-should target the root override file.

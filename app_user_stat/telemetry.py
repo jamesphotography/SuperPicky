@@ -38,7 +38,8 @@ from urllib import request
 
 from constants import APP_VERSION
 
-# 自建端点。原 Countly Flex 实例（superpicky-*.flex.countly.com）的域名
+# 自建端点。原 Countly Flex 实例（superpicky-*.flex.countly[.]com，域名去活化避免被
+# 误当作可用地址原样复制）的域名
 # 已不存在，数月来所有打包版都在向它静默投递失败、零数据落地。
 # 域名属第三方、拿不回来，故已发布版本的数据永久缺失，无兼容负担。
 # Self-hosted endpoint; the former Countly Flex host no longer resolves.
