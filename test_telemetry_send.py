@@ -7,8 +7,6 @@ Telemetry delivery tests: daily-rotating ID and payload contract.
 """
 import re
 
-import pytest
-
 from app_user_stat.telemetry import _build_request_payload, _daily_rotating_id
 
 
@@ -61,35 +59,77 @@ def test_payload_matches_worker_contract() -> None:
 
 def test_on_ready_fires_even_when_telemetry_disabled(monkeypatch) -> None:
     """
-    遥测关闭时 on_ready 仍须触发，且这条路径下绝不能真的发出请求。
+    遥测关闭时 on_ready 仍须触发，且这条路径下绝不能碰线程、文件或网络。
 
     telemetry_enabled 默认是 True（advanced_config.py），关闭是少数用户
-    主动选择的路径；这条测试同时守住两件事：on_ready 依旧触发，且
-    run() 在读到 telemetry_enabled=False 后必须在构造 _TelemetryClient /
-    发起网络请求之前就返回——否则「关掉就不发」这个前提不成立。
+    主动选择的路径。「关掉就不发」是 opt-out 默认开启这件事唯一的立足点，
+    所以这条测试守的是两件事：on_ready 依旧触发，且 run() 在读到
+    telemetry_enabled=False 后必须**在构造 _TelemetryClient 之前**就返回。
 
-    on_ready must fire even when telemetry is off, AND this path must
-    never actually send a request. telemetry_enabled defaults to True;
-    disabling it is an opt-out minority path. This test guards both: the
-    callback still fires, and run() returns before ever touching the
-    network when the switch is off.
+    这条测试此前是**无法失败**的，值得记下来免得改回去：
+
+    1. 它只桩掉了 `request.urlopen`，用 `pytest.fail` 作为哨兵。但真正的
+       投递发生在 `_TelemetryClient.bootstrap()` 起的**守护线程**上。
+       `pytest.fail` 抛的 `Failed` 继承自 `BaseException`，`_send_due_events`
+       的 `except Exception` 接不住它，于是它在工作线程里静静死掉——
+       pytest 从头到尾看不见。也就是说，针对「删掉那个 early return」这个
+       最该被抓住的变异，测试照样是绿的。
+    2. 那个变异还会顺带读写用户**真实的** telemetry_state.json；
+    3. 守护线程可能活过 monkeypatch 拆卸，把 urlopen 还原成真的，
+       于是一次测试运行真的向线上发了一个 POST。
+
+    改法：把 `_TelemetryClient` 一并桩掉，让违约在**主线程**上、在任何
+    线程/文件系统访问发生**之前**就被记录下来；并且用「记录到列表 + 事后
+    断言」而不是「在哨兵里抛异常」——后者的成败取决于异常类的继承关系和
+    它跑在哪个线程上，那正是上一版栽的跟头。urlopen 哨兵保留为第二道防线，
+    同样只记录不抛。
+
+    The previous version of this test could not fail. It only stubbed
+    urlopen with `pytest.fail`, but delivery happens on a daemon thread and
+    `Failed` subclasses `BaseException`, so it died unseen in the worker and
+    the test stayed green against the one mutation it exists to catch —
+    while reading/creating the user's real state file and potentially firing
+    a genuine production POST after monkeypatch teardown. Now
+    `_TelemetryClient` is stubbed too, so any violation is recorded on the
+    main thread before a thread or the filesystem is ever touched, and the
+    assertion is made on a recorded list rather than on an exception whose
+    visibility depends on its base class and which thread raised it.
     """
     import app_user_stat.telemetry as tm
 
     class _Off:
         telemetry_enabled = False
 
+    # 违约记录。用列表而不是抛异常：列表在哪个线程上被追加都算数，
+    # 而异常只有在主线程上、且基类是 Exception 时才会被 pytest 看见。
+    # A list, not an exception: appends count from any thread.
+    violations: list = []
+
+    class _MustNotBeUsed:
+        """开关关闭时构造它就是违约——它一旦被构造，就意味着后面会起线程、
+        读写 telemetry_state.json 并发出请求。
+        Constructing this at all is the violation."""
+
+        def __init__(self) -> None:
+            violations.append("_TelemetryClient() 被构造")
+
+        def bootstrap(self) -> None:
+            violations.append("bootstrap() 被调用")
+
     monkeypatch.setattr(tm, "_schedule_on_qt_event_loop", lambda fn: False)
     monkeypatch.setitem(__import__("sys").modules, "advanced_config",
                         type("M", (), {"AdvancedConfig": lambda: _Off()}))
     monkeypatch.setattr(tm, "_BOOTSTRAPPED", False)
+    monkeypatch.setattr(tm, "_TelemetryClient", _MustNotBeUsed)
     monkeypatch.setattr(
         tm.request, "urlopen",
-        lambda *a, **k: pytest.fail("disabled telemetry must not send"),
+        lambda *a, **k: violations.append("urlopen() 被调用"),
     )
 
     fired = []
     tm.bootstrap_telemetry(parent=None, on_ready=lambda: fired.append(True))
+
+    assert violations == [], f"关闭遥测后仍发生了投递动作: {violations}"
     assert fired == [True]
 
 
