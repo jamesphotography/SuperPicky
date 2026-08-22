@@ -2043,6 +2043,7 @@ opt-out 的前提是说明到位：开关下方写明采集内容与不采集内
 ### Task 10: 清理 Countly 残留
 
 **Files:**
+- Modify: `.gitignore`——在既有的 `!test_*.py` 例外区补上本计划新增的三个测试文件（`test_telemetry_config.py`、`test_telemetry_send.py`、`test_telemetry_settings_ui.py`）。它们目前靠 `git add -f` 进入版本库，已被跟踪故能正常工作，但不在白名单里，与仓库既有约定不一致；一旦被移除再重加就会静默消失。
 - Delete: `scripts/prepare_telemetry_build.py`
 - Modify: `SuperPicky.spec:133-134`、`SuperPicky_win64.spec:135-136`（删除 `_telemetry_build` / `app_user_stat._telemetry_build` 两个 hidden import——该模块已无人 import，PyInstaller 对缺失的 hidden import 只警告不失败，故今天没人发现；Task 8 审查发现，此前不在任何任务的文件清单里，无人认领）
 - Modify: `.github/workflows/build-release.yml`（删除 L46-48 与 L197-199 两处注入步骤）
