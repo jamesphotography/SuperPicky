@@ -35,9 +35,54 @@ Analytics Engine。**该端点不做身份认证**：开源客户端藏不住密
 打包版向失效地址静默投递、零数据落地且无人察觉。2026-08 改为上述自建方案。
 **已发布的旧版本硬编码了失效域名，其数据永久缺失，无法补救。**
 
+## 如何发现它又死了 / How you'll know if it dies again
+
+上一节那件事之所以能持续数月，不是因为没有日志，而是因为**没有人会去看**：
+异常按设计全部吞掉（这是对的，统计绝不能拖垮启动），于是「管道断了」与
+「没人用」在本地表现得一模一样——都是安静。**下面这一节是这份文档存在的
+真正理由。**
+
+看板地址（token 见 Cloudflare Worker 的 `STATS_TOKEN` secret，勿写进仓库）：
+
+```
+https://superpicky.app/stats?token=<STATS_TOKEN>
+```
+
+怎么读：
+
+| 现象 | 结论 |
+| --- | --- |
+| `dailyActive` 有逐日数据，数量级与预期相符 | 管道通 |
+| **发版之后 `dailyActive` 仍为 0 或整个数组为空** | **是管道断了，不是没人用**——正式版发出去必然有人启动 |
+| `dailyActive` 正常但 `pageviews` 为 0 | Worker 在跑但 `run_worker_first` 或 `logPageview` 被改坏了 |
+| 某个键是 `{"error": "HTTP 401/403"}` | `CF_API_TOKEN` / `CF_ACCOUNT_ID` 失效或权限不足 |
+| `github` 是 `{"error": "HTTP 403"}` | GitHub 未认证请求的每小时 60 次限流，等一会儿再看 |
+| 整个 `/stats` 返回 401 | `STATS_TOKEN` 没配或 token 传错 |
+
+固定节奏：**每次发版后查一次**，把它写进发版清单
+（`docs/release-checklist.md` §4.1 最后一条就是这件事）。别的时候不查也行，
+但发版后这一次不能省——那正是唯一能把「管道断了」和「没人用」区分开的时刻，
+因为此刻你确知有人在启动新版本。
+
+顺带一提，客户端侧「投递失败」永远只在 `TELEMETRY_DEBUG=1` 时打一行日志
+（见 `_debug_log`），普通用户机器上不会有任何痕迹。**别指望用户报告它。**
+
+Because every error is swallowed by design, a dead pipeline and zero users
+look identical from the app side. The `/stats` dashboard above is the only
+place the difference shows up, and the moment it shows up is right after a
+release — that is when you know for certain that people are launching the
+app, so a `dailyActive` of zero means the pipeline, not the audience. Check
+it after every release.
+
 ## 验证 / Verification
 
 ```bash
 python3 -m app_user_stat.telemetry           # 自检，不发送
 python3 -m app_user_stat.telemetry --send    # 自检并实际发送
 ```
+
+这两条只证明**本机到端点这一段**是通的（能发出去、拿到 2xx），
+证明不了数据真的落进了 Analytics Engine——那一段只有上面的 `/stats` 能看到。
+
+These prove only that this machine can reach the endpoint, not that the data
+landed in Analytics Engine. Only `/stats` shows that.
