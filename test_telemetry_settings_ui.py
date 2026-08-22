@@ -56,6 +56,66 @@ def test_telemetry_desc_states_what_is_not_sent(filename: str) -> None:
     assert ("个人信息" in desc or "personal information" in desc)
 
 
+@pytest.mark.parametrize("filename", ["zh_CN.json", "en_US.json"])
+def test_onboarding_disclosure_keys_exist(filename: str) -> None:
+    """
+    首启告知的两个文案键在两种语言里都必须存在。
+
+    设计文档 §5.2：「opt-out 不等于不告知」。匿名统计默认开启，若新用户
+    只能在设置里翻到它，这个默认值在合规与社区观感上都站不住。缺任一键
+    在界面上就是一个空标签——看着正常，实则什么都没告知。
+
+    Both onboarding disclosure keys must exist in both locales; a missing
+    key renders as an empty label, i.e. silently no disclosure at all.
+    """
+    data = json.loads((LOCALES / filename).read_text(encoding="utf-8"))
+    assert "telemetry_notice" in data["onboarding"]
+    assert "telemetry_optout" in data["onboarding"]
+
+
+@pytest.mark.parametrize("filename", ["zh_CN.json", "en_US.json"])
+def test_onboarding_disclosure_states_what_is_not_collected(filename: str) -> None:
+    """
+    告知文案必须写明「默认发送」「不含照片/文件路径/个人信息」「去哪关」。
+
+    这三件事缺一件，告知就退化成一句无信息的套话。与
+    test_telemetry_desc_states_what_is_not_sent 同一把尺子，只是那条守设置
+    页、这条守首启第一屏。
+
+    The disclosure must state that it is on by default, what is NOT
+    collected, and where to switch it off.
+    """
+    data = json.loads((LOCALES / filename).read_text(encoding="utf-8"))
+    notice = data["onboarding"]["telemetry_notice"].lower()
+    optout = data["onboarding"]["telemetry_optout"].lower()
+
+    assert ("默认" in notice or "by default" in notice)
+    assert ("照片" in notice or "photo" in notice)
+    assert ("文件路径" in notice or "file path" in notice)
+    assert ("个人信息" in notice or "personal information" in notice)
+    # 关闭入口必须指到设置中心「关于」页，而不是含糊的「在设置里」。
+    assert ("关于" in optout or "about" in optout)
+
+
+def test_onboarding_welcome_page_renders_the_disclosure() -> None:
+    """
+    接线测试：欢迎页确实把这两个键渲染出来了，而不是只有文案躺在 JSON 里。
+
+    只读源码而不构造 QDialog——构造 WelcomeOnboardingDialog 会拉起
+    InitializationManager 并切换全局 i18n 语言（既往教训，见本文件头部）。
+    上面两条守文案，这条守「文案真的被用上了」：Task 9 原本就是标题写着
+    「设置中心开关与首启告知」、实际只做了前半截。
+
+    Wiring test: the welcome page actually renders both keys. Source-level
+    only — constructing the dialog would spin up InitializationManager and
+    switch the global i18n language.
+    """
+    source = (Path(__file__).parent / "ui/welcome_onboarding_dialog.py").read_text(encoding="utf-8")
+    builder = source.split("def _build_welcome_page")[1].split("\n    def ")[0]
+    assert "onboarding.telemetry_notice" in builder, "欢迎页没有渲染首启告知正文"
+    assert "onboarding.telemetry_optout" in builder, "欢迎页没有渲染关闭入口说明"
+
+
 class _FakeCheckbox:
     """桩控件：只提供 isChecked()，不依赖真实 QCheckBox/QApplication。
     Stub widget providing only isChecked(), no real QCheckBox/QApplication needed."""

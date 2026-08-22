@@ -1092,6 +1092,8 @@
     "lite_welcome_title": "Welcome to SuperPicky",
     "lite_welcome_subtitle": "The lightweight build will prepare its runtime, models, and databases on first launch.",
     "lite_welcome_hint": "You only need to confirm your preferences. The rest of the setup will run automatically.",
+    "telemetry_notice": "SuperPicky sends anonymous usage statistics by default: the app version, operating system, interface language, and a random ID that changes daily, used only to tell how many people use it. No photos, file paths, or personal information are ever sent.",
+    "telemetry_optout": "You can turn this off at any time under Settings \u2192 About.",
     "update_title": "Enable Auto Update",
     "update_subtitle": "If you turn this off, initialization will also skip automatic patch and component update checks.",
     "update_enabled_title": "Allow auto update",
