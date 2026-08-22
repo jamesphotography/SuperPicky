@@ -38,6 +38,42 @@ def test_prepare_script_removed() -> None:
     assert not (ROOT / "scripts/prepare_telemetry_build.py").exists()
 
 
+def test_specs_have_no_consent_texts_hidden_imports() -> None:
+    """
+    两个 .spec 都不得再 hiddenimports `app_user_stat.consent_texts`。
+
+    这三行紧挨着本分支已经删掉的 `_telemetry_build` 那批，指向的模块
+    (`consent_texts/{__init__,en_US,zh_CN}.py`) 同样已在本分支删除。
+    PyInstaller 对不存在的 hiddenimports 只是告警后继续，**没有运行时影响**
+    ——而「没有运行时影响」正是当初删掉那批悬空引用时用的理由，同一把尺子
+    必须量到这里。真正的代价是给下一个读它的人留下「还有个同意对话框」的
+    错误印象，而这次整轮返工的起因，就是配置看着齐全、实际早已失效。
+
+    Neither .spec may hidden-import the deleted consent_texts package. No
+    runtime impact (PyInstaller warns and continues) — which is exactly the
+    reasoning used when the neighbouring `_telemetry_build` entries were
+    removed. The cost is that "consent_texts" tells the next reader there is
+    still a consent dialog.
+    """
+    for spec_name in ("SuperPicky.spec", "SuperPicky_win64.spec"):
+        source = (ROOT / spec_name).read_text(encoding="utf-8")
+        assert "consent_texts" not in source, f"{spec_name} 仍引用已删除的 consent_texts"
+
+
+def test_consent_texts_package_is_gone() -> None:
+    """
+    `app_user_stat/consent_texts/` 目录本身也不该留在工作树里。
+
+    自建端点方案不再需要征求同意弹窗，整包已删；留一个只剩 __pycache__ 的
+    空壳目录会让干净检出与本地工作树长得不一样，也会让上面那条断言显得
+    「只是文案洁癖」，其实两者是同一件事。
+
+    The package directory itself must be gone, so a clean checkout and a
+    local working tree look the same.
+    """
+    assert not (ROOT / "app_user_stat/consent_texts").exists()
+
+
 def test_telemetry_endpoint_and_no_functional_countly_residue() -> None:
     """
     遥测端点确实归属自建服务，且模块不再有**功能性**的 Countly 残留。
