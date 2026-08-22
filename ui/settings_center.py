@@ -2616,6 +2616,36 @@ class SettingsCenter(QDialog):
             geo_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
             lay.addWidget(geo_label)
 
+        lay.addSpacing(20)
+
+        # ── 分隔线 / Divider ──────────────────────────────────────────────────
+        telemetry_divider = QFrame()
+        telemetry_divider.setFixedHeight(1)
+        telemetry_divider.setStyleSheet(f"background-color:{COLORS['border_subtle']};")
+        lay.addWidget(telemetry_divider)
+
+        lay.addSpacing(20)
+
+        # 匿名使用统计开关（默认开启，可关）。
+        # 放在「关于」页而非「精选」页：它不影响任何处理结果，
+        # 与版本/许可证一样属于「关于这个程序本身」的信息。
+        # Anonymous usage stats toggle — belongs with version/license info
+        # since it does not affect any processing result.
+        from advanced_config import get_advanced_config
+
+        cfg = get_advanced_config()
+
+        self._telemetry_checkbox = QCheckBox(self.i18n.t("settings.telemetry_label"))
+        self._telemetry_checkbox.setChecked(cfg.telemetry_enabled)
+        self._telemetry_checkbox.setStyleSheet(self._checkbox_qss())
+        self._telemetry_checkbox.stateChanged.connect(self._on_telemetry_changed)
+        lay.addWidget(self._telemetry_checkbox)
+
+        telemetry_hint = QLabel(self.i18n.t("settings.telemetry_desc"))
+        telemetry_hint.setWordWrap(True)
+        telemetry_hint.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 12px;")
+        lay.addWidget(telemetry_hint)
+
         lay.addStretch(1)
 
         scroll.setWidget(inner)
@@ -2623,6 +2653,37 @@ class SettingsCenter(QDialog):
         page_lay.setContentsMargins(0, 0, 0, 0)
         page_lay.addWidget(scroll)
         return page
+
+    def _on_telemetry_changed(self, _state: int) -> None:
+        """
+        切换匿名使用统计开关并落盘。
+
+        参数:
+        _state (int): Qt 的勾选状态（0 未选 / 2 已选），实际读取用
+        self._telemetry_checkbox.isChecked()，与本文件其余复选框槽函数
+        （如 _on_flight_check_changed）保持一致，避免 Qt6 tristate 枚举
+        与 int 直接转换时的边界问题。
+
+        返回:
+        None
+
+        Toggle anonymous usage stats and persist immediately.
+
+        Parameters:
+        _state (int): Qt check state (0 unchecked / 2 checked); the actual
+        value is read via self._telemetry_checkbox.isChecked() to match the
+        convention used by the other checkbox slots in this file (e.g.
+        _on_flight_check_changed), avoiding edge cases when casting Qt6's
+        tristate enum straight to bool.
+
+        Return:
+        None
+        """
+        from advanced_config import get_advanced_config
+
+        cfg = get_advanced_config()
+        cfg.set_telemetry_enabled(self._telemetry_checkbox.isChecked())
+        cfg.save()
 
     # ── 关于页：版本查询 / About page: version lookup ──────────────────────────
 

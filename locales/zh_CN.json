@@ -527,7 +527,9 @@
     "culling_algo_v1_warn_ok": "确认切换到 V1",
     "culling_algo_v1_warn_cancel": "保持 V2",
     "birdid_region_hint": "仅在照片没有 GPS 信息时生效；有 GPS 的照片自动按拍摄位置过滤",
-    "geo_attribution": "鸟类地理分布 - GBIF.org 观察记录 ({snapshot})，仅含 CC0-1.0 与 CC-BY-4.0 数据"
+    "geo_attribution": "鸟类地理分布 - GBIF.org 观察记录 ({snapshot})，仅含 CC0-1.0 与 CC-BY-4.0 数据",
+    "telemetry_label": "发送匿名使用统计",
+    "telemetry_desc": "仅发送版本号、操作系统、语言与一个每日变更的随机编号，用于了解有多少人在使用。不含任何照片、文件路径或个人信息。"
   },
   "advanced_settings": {
     "title": "参数设置",
