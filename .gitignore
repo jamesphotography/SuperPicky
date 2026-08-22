@@ -41,6 +41,7 @@ test_*.py
 !test_telemetry_config.py
 !test_telemetry_send.py
 !test_telemetry_settings_ui.py
+!test_no_countly_residue.py
 analyze_*.py
 add_*.py
 write_*.py
@@ -48,8 +49,6 @@ temp_file_manager.py
 *.csv
 .DS_Store
 .env
-_telemetry_build.py
-app_user_stat/_telemetry_build.py
 
 # 开发和调试文档
 BUILD_README.md

@@ -15,11 +15,22 @@ ROOT = Path(__file__).parent
 
 
 def test_workflow_has_no_countly_secrets() -> None:
-    """CI 不再注入 Countly 凭据。/ No Countly secrets in CI."""
+    """
+    CI 不再注入 Countly 凭据，也不再有任何 telemetry-build-override 接线。
+
+    `_telemetry_build` 单独断言：上一轮清理只删了 `prepare_telemetry_build`
+    字符串，漏掉了 Windows/macOS 两处 `cleanup-paths --path _telemetry_build.py`
+    清理步骤（其中 Windows 那步干脆就叫 `Clean telemetry build override`）——
+    功能上是 no-op，但步骤名和参数仍在暗示流水线里有个 telemetry override
+    文件，跟本任务要消灭的残留是同一类问题。
+
+    No Countly secrets in CI, and no telemetry-build-override wiring at all.
+    """
     workflow = (ROOT / ".github/workflows/build-release.yml").read_text(encoding="utf-8")
     assert "COUNTLY_APP_KEY" not in workflow
     assert "COUNTLY_SERVER_URL" not in workflow
     assert "prepare_telemetry_build" not in workflow
+    assert "_telemetry_build" not in workflow
 
 
 def test_prepare_script_removed() -> None:
