@@ -30,6 +30,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 
+from app_user_stat.telemetry import _build_request_payload
+
 LOCALES = Path(__file__).parent / "locales"
 
 
@@ -95,6 +97,62 @@ def test_onboarding_disclosure_states_what_is_not_collected(filename: str) -> No
     assert ("个人信息" in notice or "personal information" in notice)
     # 关闭入口必须指到设置中心「关于」页，而不是含糊的「在设置里」。
     assert ("关于" in optout or "about" in optout)
+
+
+def test_disclosure_field_list_matches_actual_payload() -> None:
+    """
+    披露文案不能用「仅/only」把发送字段钉成一份比真实 payload 更短的清单。
+
+    真实字段直接从 `_build_request_payload` 取（而不是在本文件里手抄一份），
+    这样以后 payload 加字段时，这条测试会因为字段列表变长而重新核对文案，
+    不会像手抄清单那样跟着一起漏改。Residual Fix 2 的起因正是 `arch` 与
+    `python_version` 已经在发送、但设置页/首启文案用「仅/only」把清单钉在
+    版本号+系统+语言+随机编号四项——文案与代码互相矛盾。
+
+    规则：文案里一旦出现「仅/only」这类穷尽性措辞，payload 里除 `v`（协议
+    版本号，不是用户数据）与 `events`（行为数据本身，由另一条测试专门覆盖
+    「不含照片」）之外的每个字段，都必须能在文案中找到对应的自然语言线索；
+    不出现穷尽性措辞则直接放行——这正是本次修复采用的方案（去掉「仅/only」，
+    改用非穷尽的「等/etc.」）。
+
+    The disclosure must not use "仅/only" to pin the sent-field list shorter
+    than what `_build_request_payload` actually sends. Fields are read from
+    the real payload builder, not retyped here, so a future field addition
+    re-triggers this check instead of silently bypassing a hand-copied list.
+    """
+    payload = _build_request_payload("test-install-id", ["app_start"])
+    # v = 协议/schema 版本号，不是关于用户的字段；events = 行为数据本身，
+    # 由 test_telemetry_desc_states_what_is_not_sent 一类的测试专门守着。
+    # v = protocol/schema version, not user data; events = the behavioral
+    # payload itself, already covered by the "no photos" tests.
+    field_names = [k for k in payload if k not in ("v", "events")]
+
+    field_hints = {
+        "id": ["随机编号", "random id"],
+        "app_version": ["版本号", "version"],
+        "os": ["操作系统", "operating system"],
+        "arch": ["arch", "架构"],
+        "python_version": ["python"],
+        "locale": ["语言", "language"],
+    }
+    exhaustive_markers = {"zh_CN.json": "仅", "en_US.json": "only"}
+
+    for filename, marker in exhaustive_markers.items():
+        data = json.loads((LOCALES / filename).read_text(encoding="utf-8"))
+        texts = {
+            "settings.telemetry_desc": data["settings"]["telemetry_desc"],
+            "onboarding.telemetry_notice": data["onboarding"]["telemetry_notice"],
+        }
+        for label, text in texts.items():
+            text_lower = text.lower()
+            if marker not in text:
+                continue  # 未声称穷尽，放行 / not claiming exhaustiveness, OK
+            for name in field_names:
+                hints = field_hints[name]
+                assert any(h in text or h.lower() in text_lower for h in hints), (
+                    f"{filename}:{label} 用「{marker}」声称穷尽，"
+                    f"但没提到实际发送的字段 {name}"
+                )
 
 
 def test_onboarding_welcome_page_renders_the_disclosure() -> None:

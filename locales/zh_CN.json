@@ -529,7 +529,7 @@
     "birdid_region_hint": "仅在照片没有 GPS 信息时生效；有 GPS 的照片自动按拍摄位置过滤",
     "geo_attribution": "鸟类地理分布 - GBIF.org 观察记录 ({snapshot})，仅含 CC0-1.0 与 CC-BY-4.0 数据",
     "telemetry_label": "发送匿名使用统计",
-    "telemetry_desc": "仅发送版本号、操作系统、语言与一个每日变更的随机编号，用于了解有多少人在使用。不含任何照片、文件路径或个人信息。"
+    "telemetry_desc": "发送版本号、操作系统、语言与一个每日变更的随机编号等，用于了解有多少人在使用。不含任何照片、文件路径或个人信息。"
   },
   "advanced_settings": {
     "title": "参数设置",
@@ -1092,7 +1092,7 @@
     "lite_welcome_title": "欢迎使用 SuperPicky",
     "lite_welcome_subtitle": "与君初相识，犹如故人归。请坐和放宽，好东西就要来了。",
     "lite_welcome_hint": "轻量版会在首次启动时帮你完成运行时、模型和数据库准备。你只需要确认偏好，其余步骤会自动完成。",
-    "telemetry_notice": "SuperPicky 默认会发送匿名使用统计：版本号、操作系统、界面语言，以及一个每日变更的随机编号，仅用于了解有多少人在使用。不含任何照片、文件路径或个人信息。",
+    "telemetry_notice": "SuperPicky 默认会发送匿名使用统计：版本号、操作系统、界面语言，以及一个每日变更的随机编号等，用于了解有多少人在使用。不含任何照片、文件路径或个人信息。",
     "telemetry_optout": "不想发送可随时在「设置 → 关于」页关闭。",
     "update_title": "是否启用自动更新",
     "update_subtitle": "如果关闭自动更新，初始化阶段也不会自动检查补丁或组件更新。",

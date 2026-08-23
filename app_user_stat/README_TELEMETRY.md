@@ -58,6 +58,7 @@ https://superpicky.app/stats?token=<STATS_TOKEN>
 | 某个键是 `{"error": "HTTP 401/403"}` | `CF_API_TOKEN` / `CF_ACCOUNT_ID` 失效或权限不足 |
 | `github` 是 `{"error": "HTTP 403"}` | GitHub 未认证请求的每小时 60 次限流，等一会儿再看 |
 | 整个 `/stats` 返回 401 | `STATS_TOKEN` 没配或 token 传错 |
+| `dailyActive` 无故下滑，且没有发版或公告能解释 | 查 Cloudflare 控制台 observability 下 `/t` 的 429 速率（限流已在 `wrangler.jsonc` 打开）——多半是限流器在共享出口 IP（校园网/机房 CGNAT）上误伤了合法用户，不是真的有人流失 |
 
 固定节奏：**每次发版后查一次**，把它写进发版清单
 （`docs/release-checklist.md` §4.1 最后一条就是这件事）。别的时候不查也行，

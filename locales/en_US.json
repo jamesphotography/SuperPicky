@@ -529,7 +529,7 @@
     "birdid_region_hint": "Only applies to photos without GPS; photos with GPS are filtered by their location",
     "geo_attribution": "Bird Distributions - GBIF.org occurrence data ({snapshot}), CC0-1.0 and CC-BY-4.0 records only",
     "telemetry_label": "Send anonymous usage statistics",
-    "telemetry_desc": "Sends only the app version, operating system, language, and a random ID that changes daily, so we can tell how many people use SuperPicky. No photos, file paths, or personal information are ever sent."
+    "telemetry_desc": "Sends the app version, operating system, language, and a random ID that changes daily, etc., so we can tell how many people use SuperPicky. No photos, file paths, or personal information are ever sent."
   },
   "advanced_settings": {
     "title": "Settings",
@@ -1092,7 +1092,7 @@
     "lite_welcome_title": "Welcome to SuperPicky",
     "lite_welcome_subtitle": "The lightweight build will prepare its runtime, models, and databases on first launch.",
     "lite_welcome_hint": "You only need to confirm your preferences. The rest of the setup will run automatically.",
-    "telemetry_notice": "SuperPicky sends anonymous usage statistics by default: the app version, operating system, interface language, and a random ID that changes daily, used only to tell how many people use it. No photos, file paths, or personal information are ever sent.",
+    "telemetry_notice": "SuperPicky sends anonymous usage statistics by default: the app version, operating system, interface language, and a random ID that changes daily, etc., used to tell how many people use it. No photos, file paths, or personal information are ever sent.",
     "telemetry_optout": "You can turn this off at any time under Settings \u2192 About.",
     "update_title": "Enable Auto Update",
     "update_subtitle": "If you turn this off, initialization will also skip automatic patch and component update checks.",
