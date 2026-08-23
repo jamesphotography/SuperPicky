@@ -54,6 +54,26 @@ from ui.icon_utils import (  # noqa: F401
 from ui.styles import COLORS  # noqa: F401
 
 
+# 各分页滚动内容容器的透明背景规则。
+# 必须带 `#id` 选择器：无选择器的裸声明会传播到该子树内**所有**子控件，且 Qt 中
+# 「离目标更近的祖先」的样式表优先级高于更远的祖先，于是它会压过主窗口
+# GLOBAL_STYLE 里的 `QComboBox QAbstractItemView` 规则，把下拉的弹出列表背景也
+# 打成透明；透明的 popup 在 macOS 上由系统绘制原生浅色窗口底，表现为「白底 +
+# 浅灰文字」几乎不可读（国家 / 鸟名显示格式两个下拉的实测现象）。
+# 带上选择器后规则只作用于容器自身，子控件正常回落到 GLOBAL_STYLE。
+#
+# Transparent-background rule for each page's scroll content widget.
+# The `#id` selector is mandatory: a selector-less declaration propagates to
+# EVERY descendant, and in Qt a nearer ancestor's stylesheet outranks a more
+# distant one, so it overrode the `QComboBox QAbstractItemView` rule inherited
+# from the main window's GLOBAL_STYLE and left combo popups transparent. On
+# macOS a transparent popup falls back to the native light window background,
+# rendering as white with pale grey text. Scoping it keeps the rule on the
+# container itself and lets children fall back to GLOBAL_STYLE.
+_PAGE_BODY_OBJECT_NAME = "settingsPageBody"
+_PAGE_BODY_QSS = f"QWidget#{_PAGE_BODY_OBJECT_NAME} {{ background: transparent; }}"
+
+
 def _radio_style() -> str:
     """
     设置中心单选按钮的统一样式：文字样式 + 圆圈指示器。
@@ -316,7 +336,8 @@ class SettingsCenter(QDialog):
         scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
 
         inner = QWidget()
-        inner.setStyleSheet("background: transparent;")
+        inner.setObjectName(_PAGE_BODY_OBJECT_NAME)
+        inner.setStyleSheet(_PAGE_BODY_QSS)
         lay = QVBoxLayout(inner)
         lay.setContentsMargins(24, 20, 24, 20)
         lay.setSpacing(16)
@@ -634,7 +655,8 @@ class SettingsCenter(QDialog):
         scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
 
         inner = QWidget()
-        inner.setStyleSheet("background: transparent;")
+        inner.setObjectName(_PAGE_BODY_OBJECT_NAME)
+        inner.setStyleSheet(_PAGE_BODY_QSS)
         lay = QVBoxLayout(inner)
         lay.setContentsMargins(24, 20, 24, 20)
         lay.setSpacing(16)
@@ -1550,7 +1572,8 @@ class SettingsCenter(QDialog):
         scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
 
         inner = QWidget()
-        inner.setStyleSheet("background: transparent;")
+        inner.setObjectName(_PAGE_BODY_OBJECT_NAME)
+        inner.setStyleSheet(_PAGE_BODY_QSS)
         lay = QVBoxLayout(inner)
         lay.setContentsMargins(24, 20, 24, 20)
         lay.setSpacing(16)
@@ -2000,7 +2023,8 @@ class SettingsCenter(QDialog):
         scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
 
         inner = QWidget()
-        inner.setStyleSheet("background: transparent;")
+        inner.setObjectName(_PAGE_BODY_OBJECT_NAME)
+        inner.setStyleSheet(_PAGE_BODY_QSS)
         lay = QVBoxLayout(inner)
         lay.setContentsMargins(24, 20, 24, 20)
         lay.setSpacing(16)
@@ -2458,7 +2482,8 @@ class SettingsCenter(QDialog):
         scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
 
         inner = QWidget()
-        inner.setStyleSheet("background: transparent;")
+        inner.setObjectName(_PAGE_BODY_OBJECT_NAME)
+        inner.setStyleSheet(_PAGE_BODY_QSS)
         lay = QVBoxLayout(inner)
         lay.setContentsMargins(32, 28, 32, 24)
         lay.setSpacing(0)

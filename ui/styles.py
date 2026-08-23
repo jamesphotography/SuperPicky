@@ -159,6 +159,40 @@ QLineEdit::placeholder {{
     color: {COLORS['text_muted']};
 }}
 
+/* ==================== 数字输入框 ==================== */
+/* QSpinBox 此前没有任何规则，它的深色只是「页面容器裸 background:transparent」
+   意外传播的副作用；该规则收窄到容器自身后，样式必须由这里显式提供，否则在
+   macOS 上回落到原生浅色渲染，变成白底浅字看不清（精选页「连拍 fps」实测）。
+   上下步进箭头不在这里覆盖：实测(macOS/Qt6)带样式表时它渲染为灰色占位方块，
+   写 ::up-arrow/::down-arrow 的 border 三角或只改 ::up-button 都无任何差别，
+   与全局 QComboBox::down-arrow 表现一致，属既有现象。
+   QSpinBox had no rule at all; its dark look was an accidental side effect of
+   the page container's bare `background: transparent`. Once that rule is
+   scoped, the style must come from here or macOS falls back to native light
+   rendering (pale digits on white). The stepper arrows are deliberately not
+   restyled: on macOS/Qt6 with a stylesheet attached they render as a grey
+   placeholder square, and neither ::up-arrow/::down-arrow border triangles nor
+   ::up-button tweaks change that — same as the global QComboBox::down-arrow. */
+QSpinBox, QDoubleSpinBox {{
+    background-color: {COLORS['bg_input']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 6px;
+    padding: 3px 6px;
+    color: {COLORS['text_primary']};
+    font-size: 13px;
+    selection-background-color: {COLORS['accent']};
+    selection-color: {COLORS['bg_void']};
+}}
+
+QSpinBox:focus, QDoubleSpinBox:focus {{
+    border-color: {COLORS['accent']};
+}}
+
+QSpinBox:disabled, QDoubleSpinBox:disabled {{
+    color: {COLORS['text_muted']};
+    border-color: {COLORS['border_subtle']};
+}}
+
 /* ==================== 按钮系统 ==================== */
 /* 主按钮 - 强调色 */
 QPushButton {{
