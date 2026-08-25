@@ -241,6 +241,105 @@ def _trigger_rating_move(
     threading.Thread(target=_do, daemon=True).start()
 
 
+def _photos_of_same_species(photos: list, target: dict) -> list:
+    """
+    从照片池里挑出与 target 同一鸟种的全部照片（用于整种合并）。
+
+    匹配以中文鸟名优先；target 没有中文名时（英文环境处理的批次）退回英文名。
+    没有鸟名的记录永远不匹配——空名不是一个「鸟种」。
+
+    参数 / Args:
+        photos: 照片字典列表（通常是浏览器的 _all_photos）
+        target: 用户右键点中的那张照片
+
+    返回 / Returns:
+        同鸟种的照片列表，保持原顺序
+
+    Pick every photo sharing the target's species. Chinese name takes
+    priority; falls back to English when the target has no Chinese name.
+    Records without a species never match.
+    """
+    target_cn = (target.get("bird_species_cn") or "").strip()
+    target_en = (target.get("bird_species_en") or "").strip()
+
+    if target_cn:
+        key, expected = "bird_species_cn", target_cn
+    elif target_en:
+        key, expected = "bird_species_en", target_en
+    else:
+        return []
+
+    return [p for p in photos if (p.get(key) or "").strip() == expected]
+
+
+def _merge_reason_text(reason: str) -> str:
+    """
+    把 core 回传的稳定原因代码翻成本地化文案。
+
+    core 只产出代码（target_exists / move_error:XxxError），中文/英文措辞留在
+    UI 层，避免把界面文案写进算法模块。
+
+    参数 / Args:
+        reason: 原因代码
+
+    返回 / Returns:
+        本地化的失败说明
+
+    Localize the stable reason codes produced by core.rating_mover.
+    """
+    i18n = get_i18n()
+    if reason.startswith("move_error:"):
+        return i18n.t('browser.merge_reason_move_error').format(
+            detail=reason.split(":", 1)[1]
+        )
+    if reason == "target_exists":
+        return i18n.t('browser.merge_reason_target_exists')
+    return reason
+
+
+def _merge_target_folders(photos: list, new_bird_name: str, layout: str) -> list:
+    """
+    计算整种合并后会用到的目标目录（相对根目录），用于确认弹窗提前展示。
+
+    目录名跟随当前界面语言，所以这里把真实路径摆给用户看，可以在动手之前
+    发现「英文界面整理的批次、现在用中文界面合并会生成中文目录」这类分叉。
+    还在根目录（未整理）的照片不会被移动，不计入预览。
+
+    参数 / Args:
+        photos:        待合并的照片列表（current_path 需为绝对路径，且含 _base_dir）
+        new_bird_name: 用于目录命名的新鸟名
+        layout:        "species-first" | "rating-first"
+
+    返回 / Returns:
+        去重并排序后的相对目录列表
+
+    Compute the target folders a merge would use, for the confirmation dialog.
+    Root-level (unorganized) photos are excluded — they never move.
+    """
+    from core.folder_layout import compute_target_folder, normalize_layout
+    from core.rating_mover import _is_in_root
+
+    layout = normalize_layout(layout)
+    folders: set = set()
+
+    for photo in photos:
+        current_abs = photo.get("current_path") or photo.get("original_path") or ""
+        base_dir = photo.get("_base_dir") or ""
+        if not current_abs or not base_dir:
+            continue
+        try:
+            current_rel = os.path.relpath(current_abs, base_dir)
+        except ValueError:
+            continue                      # Windows 跨盘符
+        if _is_in_root(current_rel):
+            continue                      # 未整理的照片不移动
+        folders.add(
+            compute_target_folder(photo.get("rating") or 0, new_bird_name or None, layout)
+        )
+
+    return sorted(folders)
+
+
 def _trigger_species_change(
     dir_path: str,
     photo: dict,
@@ -582,6 +681,29 @@ def _build_context_menu(parent_widget, photo: dict, directory: str):
 
     species_action.triggered.connect(_edit_species)
     menu.addAction(species_action)
+
+    # 整种合并:把这张照片所属鸟种的全部照片一次性改为另一个鸟种。
+    # 用于「整批都被认成同一个错误鸟种」的场景,避免逐张点「修改鸟种」。
+    # 没有鸟名的照片无种可合并,不显示该项。
+    # Whole-species merge: retag every photo of this species at once.
+    # Hidden for photos without a species (nothing to merge).
+    merge_species_name = (
+        photo.get("bird_species_en") if _i18n.current_lang.startswith("en")
+        else photo.get("bird_species_cn")
+    ) or ""
+    if merge_species_name:
+        merge_action = QAction(
+            _i18n.t('browser.ctx_merge_species').format(species=merge_species_name),
+            parent_widget,
+        )
+
+        def _merge_species(_checked=False, _p=photo):
+            handler = getattr(parent_widget, "_on_merge_species_requested", None)
+            if callable(handler):
+                handler(_p)
+
+        merge_action.triggered.connect(_merge_species)
+        menu.addAction(merge_action)
 
     # 用户配置的外部应用列表（设置 → 外部应用）
     external_apps = get_advanced_config().get_external_apps()
@@ -1581,6 +1703,141 @@ class ResultsBrowserWindow(QMainWindow):
         # 5. 后台执行文件移动（同时更新连拍组其他成员的 DB 鸟种字段及 current_path）
         # Background: move files and update burst group members' DB records.
         _trigger_species_change(base_dir, photo, new_cn, new_en, self._db, db_key)
+
+    def _on_merge_species_requested(self, photo: dict):
+        """
+        整种合并：把这张照片所属鸟种的**全部**照片一次性改为另一个鸟种。
+
+        用于「一整批都被认成同一个错误鸟种」的场景。范围是数据库里该鸟种的
+        全部照片，与当前左侧筛选无关——否则会只改掉一部分、剩下的散落在别处。
+
+        流程：收集同种照片 → 选目标鸟种 → 确认（含目标目录预览）→ 带进度执行
+        → 结果报告（成功/仅改名/失败清单）。按用户决定，本操作不写 corrections。
+
+        参数 / Args:
+            photo: 用户右键点中的照片（提供源鸟种）
+
+        Merge a whole species: retag every photo of this species at once.
+        Scope is DB-wide for that species, independent of the current filters.
+        """
+        from ui.bird_species_edit_dialog import BirdSpeciesEditDialog
+        from ui.custom_dialogs import StyledMessageBox
+        from PySide6.QtWidgets import QDialog
+        from advanced_config import get_advanced_config
+        from core.rating_mover import merge_bird_species
+
+        i18n = self.i18n
+        use_en = i18n.current_lang.startswith("en")
+        old_name = (
+            photo.get("bird_species_en") if use_en else photo.get("bird_species_cn")
+        ) or ""
+        if not old_name or not self._db:
+            return
+
+        # 1. 收集全部同鸟种照片（_all_photos 存的是相对路径，必须先解析成绝对路径）
+        resolved_pool = [self._resolve_photo_paths(p) for p in self._all_photos]
+        targets = _photos_of_same_species(resolved_pool, photo)
+        if not targets:
+            return
+
+        # 2. 选目标鸟种（复用单张编辑用的搜索弹窗）
+        dialog = BirdSpeciesEditDialog(parent=self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        new_cn = dialog.selected_cn
+        new_en = dialog.selected_en
+        if not new_cn and not new_en:
+            return
+        new_name = (new_en if use_en else new_cn) or ""
+
+        # 3. 确认：把张数、连拍组数和真实目标目录摆出来再动手
+        layout = get_advanced_config().folder_layout
+        folders = _merge_target_folders(targets, new_name, layout)
+        burst_count = len({p.get("burst_id") for p in targets if p.get("burst_id")})
+        burst_note = (
+            i18n.t('browser.merge_burst_note').format(bursts=burst_count)
+            if burst_count else ""
+        )
+        body = i18n.t('browser.merge_confirm_body').format(
+            old=old_name, count=len(targets), burst_note=burst_note,
+            new=new_name, folders="\n".join(folders) if folders else "—",
+        )
+        confirmed = StyledMessageBox.question(
+            self, i18n.t('browser.merge_confirm_title'), body
+        )
+        if confirmed != StyledMessageBox.Yes:
+            return
+
+        # 4. 执行：合并库的照片分属不同批次目录，按 _base_dir 分组各调一次
+        by_base: dict = {}
+        for p in targets:
+            by_base.setdefault(p.get("_base_dir") or self._directory, []).append(p)
+
+        progress = QProgressDialog(
+            i18n.t('browser.merge_progress_title'), i18n.t('buttons.cancel'),
+            0, len(targets), self,
+        )
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+
+        state = {"offset": 0}
+
+        def _on_progress(done: int, total: int, name: str) -> bool:
+            """进度回调；返回 False 表示用户点了取消。Return False to cancel."""
+            progress.setValue(state["offset"] + done)
+            progress.setLabelText(
+                i18n.t('browser.merge_progress_label').format(name=name)
+            )
+            QApplication.processEvents()
+            return not progress.wasCanceled()
+
+        total_moved = 0
+        total_db_only = 0
+        all_failed: list = []
+        cancelled = False
+
+        for base_dir, group in by_base.items():
+            result = merge_bird_species(
+                base_dir, group, new_cn, new_en, layout,
+                self._db, _photo_db_key, _on_progress,
+            )
+            total_moved += result["moved"]
+            total_db_only += result["db_only"]
+            all_failed.extend(result["failed"])
+            state["offset"] += len(group)
+            if result["cancelled"]:
+                cancelled = True
+                break
+
+        progress.close()
+
+        # 5. 刷新：重新读库并重放当前筛选（_apply_filters 会顺带刷新鸟种下拉）
+        self._all_photos = self._db.get_all_photos()
+        self._apply_filters(self._filter_panel.get_filters())
+
+        # 6. 结果报告：不静默，成功和失败都说清楚
+        lines: list = []
+        if total_moved:
+            lines.append(i18n.t('browser.merge_result_moved').format(count=total_moved))
+        if total_db_only:
+            lines.append(
+                i18n.t('browser.merge_result_db_only').format(count=total_db_only)
+            )
+        if all_failed:
+            lines.append(
+                i18n.t('browser.merge_result_failed').format(count=len(all_failed))
+            )
+            for name, reason in all_failed[:20]:
+                lines.append(f"  • {name} — {_merge_reason_text(reason)}")
+            if len(all_failed) > 20:
+                lines.append("  …")
+        if cancelled:
+            lines.append(i18n.t('browser.merge_result_cancelled'))
+
+        StyledMessageBox.information(
+            self, i18n.t('browser.merge_result_title'), "\n".join(lines)
+        )
 
     def _record_correction(self, photo: dict, new_cn: str, new_en: str,
                             new_latin: str) -> None:

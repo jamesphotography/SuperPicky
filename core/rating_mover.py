@@ -192,6 +192,7 @@ def change_bird_species(
     layout: str,
     report_db,
     db_key,
+    failures: Optional[list] = None,
 ) -> bool:
     """
     因鸟种变化，将照片（含连拍组整体）移动到新鸟种目录，并更新 DB 的双语鸟名字段。
@@ -204,18 +205,31 @@ def change_bird_species(
         layout:      "species-first" | "rating-first"
         report_db:   ReportDB / MergedReportDB 实例，或 None
         db_key:      透传给 report_db.update_photo 的稳定键
+        failures:    可选列表；移动失败时追加 (文件名, 原因代码)，供批量操作汇报
+                     Optional list collecting (basename, reason_code) on failure.
 
     返回 / Returns:
-        True 表示执行了更新（含仅 DB 更新），False 表示完全跳过
+        True 表示执行了更新（含仅 DB 更新），False 表示完全跳过或移动失败
     """
     burst_id = photo.get("burst_id")
     if burst_id:
         return _change_bird_species_burst(
-            dir_path, photo, new_bird_cn, new_bird_en, layout, report_db
+            dir_path, photo, new_bird_cn, new_bird_en, layout, report_db, failures
         )
     return _change_bird_species_single(
-        dir_path, photo, new_bird_cn, new_bird_en, layout, report_db, db_key
+        dir_path, photo, new_bird_cn, new_bird_en, layout, report_db, db_key, failures
     )
+
+
+def _record_failure(failures: Optional[list], basename: str, reason: str) -> None:
+    """
+    记录一条移动失败。reason 是稳定的原因代码（target_exists / move_error），
+    由 UI 层翻译成本地化文案，避免把中文写进 core。
+
+    Append one failure as a stable reason code; the UI localizes it.
+    """
+    if failures is not None:
+        failures.append((basename, reason))
 
 
 def _folder_bird_name(new_bird_cn: str, new_bird_en: str) -> str:
@@ -233,6 +247,7 @@ def _change_bird_species_single(
     layout: str,
     report_db,
     db_key,
+    failures: Optional[list] = None,
 ) -> bool:
     """
     非连拍照片的鸟名变更：更新 DB 双语字段 + 按需移动文件。
@@ -287,22 +302,33 @@ def _change_bird_species_single(
         new_abs_folder = os.path.join(dir_path, new_rel_folder)
         os.makedirs(new_abs_folder, exist_ok=True)
 
+        raw_moved = False
         for kind, src in files_to_move:
             basename = os.path.basename(src)
             dst = os.path.join(new_abs_folder, basename)
             if os.path.exists(dst):
+                # 目标已有同名文件：不覆盖，但必须回报（原来是静默 continue）
+                _record_failure(failures, basename, "target_exists")
                 continue
             try:
                 shutil.move(src, dst)
                 rel = os.path.join(new_rel_folder, basename)
                 if kind == "raw":
+                    raw_moved = True
                     path_update["current_path"] = rel
                     photo["current_path"] = os.path.join(dir_path, rel)
                 elif kind == "jpeg":
                     path_update["temp_jpeg_path"] = rel
                     photo["temp_jpeg_path"] = os.path.join(dir_path, rel)
-            except Exception:
-                pass
+            except Exception as exc:
+                _record_failure(
+                    failures, basename, f"move_error:{exc.__class__.__name__}"
+                )
+
+        # RAW 没搬走就不改 DB 鸟种，避免 DB 与磁盘目录说法不一致
+        # Leave the species untouched when the RAW stayed behind.
+        if not raw_moved:
+            return False
 
         # 更新 manifest
         raw_basename = os.path.basename(current_abs)
@@ -330,6 +356,7 @@ def _change_bird_species_burst(
     new_bird_en: str,
     layout: str,
     report_db,
+    failures: Optional[list] = None,
 ) -> bool:
     """
     连拍组的鸟名变更：整组文件夹整体移动，批量更新组内所有照片的 DB 记录。
@@ -371,14 +398,20 @@ def _change_bird_species_burst(
         new_burst_parent_abs = os.path.join(dir_path, new_rating_folder_rel)
         os.makedirs(new_burst_parent_abs, exist_ok=True)
         new_burst_abs = os.path.join(new_burst_parent_abs, burst_folder_name)
-        if not os.path.exists(new_burst_abs):
-            try:
-                shutil.move(burst_folder_abs, new_burst_parent_abs)
-                moved = True
-                # burst 文件夹移走后，清理旧星等目录和鸟种目录（若已空）
-                _cleanup_empty_dirs(dir_path, rating_folder_abs)
-            except Exception:
-                pass
+        if os.path.exists(new_burst_abs):
+            # 目标已有同名连拍文件夹：整组不动，回报失败
+            _record_failure(failures, burst_folder_name, "target_exists")
+            return False
+        try:
+            shutil.move(burst_folder_abs, new_burst_parent_abs)
+            moved = True
+            # burst 文件夹移走后，清理旧星等目录和鸟种目录（若已空）
+            _cleanup_empty_dirs(dir_path, rating_folder_abs)
+        except Exception as exc:
+            _record_failure(
+                failures, burst_folder_name, f"move_error:{exc.__class__.__name__}"
+            )
+            return False
 
     # 批量更新组内所有照片的 DB 记录
     burst_id = photo.get("burst_id")
@@ -451,3 +484,103 @@ def _update_manifest(dir_path: str, basename: str, new_folder: str) -> None:
                     json.dump(manifest, f, ensure_ascii=False, indent=2)
         except Exception:
             pass
+
+
+def merge_bird_species(
+    dir_path: str,
+    photos: list,
+    new_bird_cn: str,
+    new_bird_en: str,
+    layout: str,
+    report_db,
+    db_key_of,
+    progress_cb=None,
+) -> dict:
+    """
+    整种合并：把一批照片（通常是同一个被识别错的鸟种的全部照片）统一改为新鸟种。
+
+    参数 / Args:
+        dir_path:    批处理根目录（绝对路径）
+        photos:      待改鸟种的 photo 字典列表，current_path 已解析为绝对路径
+        new_bird_cn: 新中文鸟名
+        new_bird_en: 新英文鸟名
+        layout:      "species-first" | "rating-first"
+        report_db:   ReportDB / MergedReportDB 实例，或 None
+        db_key_of:   callable(photo) -> db_key，由调用方提供，避免 core 依赖 ui
+        progress_cb: callable(done, total, filename) -> bool，返回 False 表示用户取消
+
+    返回 / Returns:
+        {
+            "moved":     实际移动了文件的照片数,
+            "db_only":   只更新了 DB 鸟名、未移动文件的照片数（未整理的根目录照片）,
+            "failed":    [(文件名, 原因代码)],
+            "cancelled": 是否被用户中途取消,
+        }
+
+    Merge a whole species: retag every given photo to the new species.
+    """
+    moved = 0
+    db_only = 0
+    failed: list = []
+    total = len(photos)
+    done = 0
+    cancelled = False
+
+    for leader, members in _group_by_burst(photos):
+        group_failures: list = []
+        path_before = leader.get("current_path")
+        ok = change_bird_species(
+            dir_path, leader, new_bird_cn, new_bird_en, layout,
+            report_db, db_key_of(leader), group_failures,
+        )
+        failed.extend(group_failures)
+        if ok:
+            # 路径没变 = 未整理的根目录照片，只改了 DB 鸟名
+            if leader.get("current_path") == path_before:
+                db_only += len(members)
+            else:
+                # 连拍组由 change_bird_species 整组处理，组内每张都算搬成功
+                moved += len(members)
+            for member in members[1:]:
+                member["bird_species_cn"] = new_bird_cn
+                member["bird_species_en"] = new_bird_en
+        done += len(members)
+        if progress_cb is not None:
+            if progress_cb(done, total, leader.get("filename", "")) is False:
+                cancelled = True
+                break
+
+    return {
+        "moved": moved,
+        "db_only": db_only,
+        "failed": failed,
+        "cancelled": cancelled,
+    }
+
+
+def _group_by_burst(photos: list) -> list:
+    """
+    把照片按 burst_id 分组：同一连拍组只保留一个代表用于调用移动逻辑，
+    因为 change_bird_species 会整组搬迁——重复调用时第二张的 current_path
+    已失效，会被误判为失败。
+
+    返回 / Returns:
+        [(代表 photo, [组内全部 photo])]，非连拍照片自成一组。
+
+    Group photos by burst_id; a burst folder is moved as a whole, so calling
+    the mover once per member would fail on the second one.
+    """
+    groups: list = []
+    burst_members: dict = {}
+    for photo in photos:
+        burst_id = photo.get("burst_id")
+        if not burst_id:
+            groups.append((photo, [photo]))
+            continue
+        if burst_id in burst_members:
+            burst_members[burst_id].append(photo)
+            continue
+        members = [photo]
+        burst_members[burst_id] = members
+        groups.append((photo, members))
+    return groups
