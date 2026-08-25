@@ -15,6 +15,20 @@
   are never modified, and XMP sidecars are never sent to Photos. Contributed by
   @orientaldollarbird.
 
+- **Fix a whole misidentified species in one go.** When a batch gets the same
+  bird wrong from end to end, right-click any of those photos and pick
+  `Change all <species> to…`. It retags every photo of that species in the database —
+  not just the ones currently filtered on screen — and moves them into the new
+  species' folders, keeping burst groups together. Before anything moves you get
+  a confirmation showing how many photos are involved, how many burst groups,
+  and the exact target folders, so a batch organised in English won't quietly
+  grow a second set of folders in Chinese. When it finishes you are told what
+  moved, what was only retagged because it had never been organised, and
+  anything that failed and why. Related fix: changing a species used to fail
+  silently when a file with the same name already sat in the target folder — the
+  database was updated while the file stayed put. Now the file and the database
+  never disagree, and you are told about the collision.
+
 ---
 
 # SuperPicky 4.5.0
