@@ -29,6 +29,7 @@ from PySide6.QtGui import QAction, QKeyEvent, QIcon
 from ui.icon_utils import load_tinted_icon, ICON_IDLE
 
 from ui.styles import COLORS, GLOBAL_STYLE, FONTS
+from ui.combo_popup import style_combo_popup
 from ui.filter_panel import FilterPanel
 from ui.thumbnail_grid import ThumbnailGrid
 from ui.detail_panel import DetailPanel
@@ -1011,6 +1012,9 @@ class ResultsBrowserWindow(QMainWindow):
             }}
             QComboBox::drop-down {{ border: none; width: 20px; }}
         """)
+        # 弹出列表容器需逐个接线，祖先样式表够不到顶层 popup（见 ui/combo_popup.py）。
+        # Per-instance styling: ancestor sheets cannot reach a top-level popup.
+        style_combo_popup(self._dir_combo)
         self._dir_combo.currentIndexChanged.connect(self._on_subdir_changed)
         self._dir_combo.hide()
         layout.addWidget(self._dir_combo)

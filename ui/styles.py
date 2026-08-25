@@ -556,9 +556,24 @@ QComboBox::down-arrow {{
     margin-right: 8px;
 }}
 
+/* 弹出列表 itemView。边框与圆角由弹出**容器**负责（见 ui/combo_popup.py），
+   这里只铺同色底，避免容器描边与列表描边叠成双层。
+
+   容器为什么必须走 Python 而不能写在这里：Qt 把 popup 装在
+   QComboBoxPrivateContainer（QFrame）里，它是一个独立的顶层 popup 窗口，
+   祖先样式表中的选择器**够不到它**（实测：在 GLOBAL_STYLE 里写
+   `QComboBoxPrivateContainer {...}` 完全无效，容器仍由 macOS 用原生浅色
+   菜单面板绘制，深色列表上下各露出 6px 白边）。只有对容器实例本身调用
+   setStyleSheet 才生效，因此改由 ui.combo_popup.style_combo_popup() 接线。
+
+   Border/radius belong to the popup container (see ui/combo_popup.py); the view
+   only fills the same colour so no double outline appears. The container is a
+   separate top-level popup window that ancestor stylesheets cannot reach — a
+   `QComboBoxPrivateContainer` rule here is verifiably a no-op — so it must be
+   styled per instance instead. */
 QComboBox QAbstractItemView {{
     background-color: {COLORS['bg_elevated']};
-    border: 1px solid {COLORS['border']};
+    border: none;
     border-radius: 8px;
     padding: 4px;
     selection-background-color: {COLORS['accent']};

@@ -2176,7 +2176,13 @@ class SuperPickyMainWindow(QMainWindow):
                     self._open_settings_center("birdid")
                     return  # 等用户配置后再开始 / Wait for user to configure
         if _adv_confirm.burst_check:
-            extra_notes.append(_ico("square-stack.svg", _sec) + _esc(self.i18n.t("dialogs.note_burst")))
+            # 张数取实际配置(burst_min_count 可配 3-10),不写死 4——否则改了设置说明就在说谎。
+            # Use the configured minimum instead of a hard-coded 4.
+            extra_notes.append(
+                _ico("square-stack.svg", _sec)
+                + _esc(self.i18n.t("dialogs.note_burst",
+                                   count=_adv_confirm.burst_min_count))
+            )
 
         notes_block = ""
         if extra_notes:
@@ -3351,7 +3357,8 @@ class SuperPickyMainWindow(QMainWindow):
             (ico("circle-off.svg", muted), esc(t("help.rule_0_star"))),
             (ico("bird.svg", flight), esc(t("help.rule_flying"))),
             (ico("scan-eye.svg", focus), esc(t("help.rule_focus"))),
-            (ico("square-stack.svg", sec), esc(t("help.burst_info"))),
+            (ico("square-stack.svg", sec),
+             esc(t("help.burst_info", count=self.config.burst_min_count))),
         ]
         for ic, txt in rules:
             rows.append(f'<span style="color:{sec}">&nbsp;&nbsp;{ic}{txt}</span>')

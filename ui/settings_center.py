@@ -52,6 +52,7 @@ from ui.icon_utils import (  # noqa: F401
     radio_indicator_qss,
 )
 from ui.styles import COLORS  # noqa: F401
+from ui.combo_popup import style_combo_popup
 
 
 # 各分页滚动内容容器的透明背景规则。
@@ -822,6 +823,9 @@ class SettingsCenter(QDialog):
                     item.setSelectable(False)
 
         country_row.addWidget(country_label)
+        # 弹出列表容器需逐个接线，祖先样式表够不到顶层 popup（见 ui/combo_popup.py）。
+        # Per-instance styling: ancestor sheets cannot reach a top-level popup.
+        style_combo_popup(self._bid_country)
         country_row.addWidget(self._bid_country, 1)
         lay.addLayout(country_row)
 
@@ -852,6 +856,7 @@ class SettingsCenter(QDialog):
 
         self._bid_region = QComboBox()
         self._bid_region.addItem(self.i18n.t("birdid.region_entire_country"), None)
+        style_combo_popup(self._bid_region)
         self._bid_region.currentIndexChanged.connect(self._on_birdid_field_changed)
 
         region_row.addWidget(region_label)
@@ -903,6 +908,7 @@ class SettingsCenter(QDialog):
             self._bid_name_format.addItem(self.i18n.t(key), value)
         fmt_idx = self._bid_name_format.findData(cfg.name_format)
         self._bid_name_format.setCurrentIndex(fmt_idx if fmt_idx >= 0 else 0)
+        style_combo_popup(self._bid_name_format)
         self._bid_name_format.currentIndexChanged.connect(self._on_name_format_changed)
         fmt_row.addWidget(fmt_label)
         fmt_row.addWidget(self._bid_name_format, 1)
@@ -1606,6 +1612,7 @@ class SettingsCenter(QDialog):
         # 恢复已保存的布局选项 / Restore saved folder layout
         fl_idx = self._folder_layout_combo.findData(cfg.folder_layout)
         self._folder_layout_combo.setCurrentIndex(fl_idx if fl_idx >= 0 else 0)
+        style_combo_popup(self._folder_layout_combo)
         self._folder_layout_combo.currentIndexChanged.connect(self._on_folder_layout_changed)
 
         fl_row.addWidget(fl_label)
@@ -2062,6 +2069,7 @@ class SettingsCenter(QDialog):
         self._video_mode_combo.setCurrentIndex(vm_idx if vm_idx >= 0 else 0)
 
         mode_row.addWidget(mode_label)
+        style_combo_popup(self._video_mode_combo)
         mode_row.addWidget(self._video_mode_combo)
         mode_row.addStretch(1)
         lay.addLayout(mode_row)

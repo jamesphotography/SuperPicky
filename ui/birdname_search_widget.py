@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QTimer
 
 from ui.styles import COLORS, FONTS
+from ui.combo_popup import style_combo_popup
 from ui.icon_utils import tinted_png_path, glyph_pixmap
 from tools.i18n import get_i18n
 from config import get_birdname_settings_path, get_install_scoped_resource_path
@@ -318,12 +319,12 @@ class BirdNameSearchWidget(QWidget):
             QComboBox::drop-down {{ border: none; width: 18px; }}
             QComboBox QAbstractItemView {{
                 background-color: {COLORS['bg_elevated']};
-                border: 1px solid {COLORS['border']};
-                border-radius: 4px;
+                border: none;
+                border-radius: 8px;
                 selection-background-color: {COLORS['accent_dim']};
                 selection-color: {COLORS['text_primary']};
                 outline: none;
-                padding: 2px;
+                padding: 4px;
             }}
             QComboBox QAbstractItemView::item {{
                 padding: 4px 8px;
@@ -331,6 +332,9 @@ class BirdNameSearchWidget(QWidget):
                 min-height: 24px;
             }}
         """)
+        # 弹出列表容器需逐个接线，祖先样式表够不到顶层 popup（见 ui/combo_popup.py）。
+        # Per-instance styling: ancestor sheets cannot reach a top-level popup.
+        style_combo_popup(self.version_combo)
         self.version_combo.currentIndexChanged.connect(self._on_version_changed)
         title_row.addWidget(self.version_combo)
 

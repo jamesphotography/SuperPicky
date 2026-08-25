@@ -26,6 +26,7 @@ from PySide6.QtCore import Qt, Signal, QThread, QTimer, QSize
 from PySide6.QtGui import QPixmap, QDragEnterEvent, QDropEvent
 
 from ui.styles import COLORS, FONTS
+from ui.combo_popup import style_combo_popup
 from ui.icon_utils import stars_pixmap, tinted_png_path, load_tinted_icon, ICON_IDLE
 from tools.i18n import get_i18n
 
@@ -941,8 +942,9 @@ class BirdIDDockWidget(QDockWidget):
             QComboBox::drop-down {{ border: none; }}
             QComboBox QAbstractItemView {{
                 background-color: {COLORS['bg_elevated']};
-                border: 1px solid {COLORS['border']};
-                border-radius: 6px;
+                border: none;
+                border-radius: 8px;
+                padding: 4px;
                 color: {COLORS['text_primary']};
                 selection-background-color: {COLORS['accent_dim']};
                 selection-color: {COLORS['accent']};
@@ -959,8 +961,9 @@ class BirdIDDockWidget(QDockWidget):
         """
 
         filter_frame = QFrame()
+        filter_frame.setObjectName("birdidFilterFrame")
         filter_frame.setStyleSheet(f"""
-            QFrame {{
+            QFrame#birdidFilterFrame {{
                 background-color: {COLORS['bg_elevated']};
                 border-radius: 8px;
                 padding: 8px;
@@ -981,13 +984,21 @@ class BirdIDDockWidget(QDockWidget):
         self.country_combo = QComboBox()
         self._populate_country_combo()
         self.country_combo.setStyleSheet(_combo_style)
+        # 弹出列表容器需逐个接线，祖先样式表够不到顶层 popup（见 ui/combo_popup.py）。
+        # Per-instance styling: ancestor sheets cannot reach a top-level popup.
+        style_combo_popup(self.country_combo)
         self.country_combo.currentTextChanged.connect(self._on_country_changed)
         country_row.addWidget(self.country_combo, 1)
         filter_layout.addLayout(country_row)
 
         # ── 区域选择行（州级国家才显示）/ Region row (only for AU/US/CN) ──────
         self._region_row = QWidget()
-        self._region_row.setStyleSheet("background: transparent;")
+        # 带选择器，避免裸声明传播到 region_combo 的弹出列表容器（会露白边）。
+        # Scoped so it cannot leak into region_combo's popup container.
+        self._region_row.setObjectName("birdidRegionRow")
+        self._region_row.setStyleSheet(
+            "QWidget#birdidRegionRow { background: transparent; }"
+        )
         region_row_layout = QHBoxLayout(self._region_row)
         region_row_layout.setContentsMargins(0, 0, 0, 0)
         region_row_layout.setSpacing(6)
@@ -1001,6 +1012,7 @@ class BirdIDDockWidget(QDockWidget):
         self.region_combo = QComboBox()
         self.region_combo.addItem(self.i18n.t("birdid.region_entire_country"), None)
         self.region_combo.setStyleSheet(_combo_style)
+        style_combo_popup(self.region_combo)
         self.region_combo.currentTextChanged.connect(self._on_region_changed)
         region_row_layout.addWidget(self.region_combo, 1)
 

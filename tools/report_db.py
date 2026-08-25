@@ -795,17 +795,29 @@ class ReportDB:
 
         # Determine sort order
         sort_by = filters.get("sort_by") or "filename"
+        # 精选恒置顶：picked 是「3★ 中锐度 top% ∩ 美学 top%」的交集，比任何单项
+        # 指标都强，但按单项排序时它必然被"该项很高、另一项不够"的照片挤散
+        # （实测 12 张精选在锐度排序下落在第 2/4/8/…/44 名，罕见度排序下更散到
+        # 第 120 名），等于把精选这个结论稀释掉了。故把它提为首要排序键，组内
+        # 再按用户选择的维度排。
+        # 文件名排序不置顶：它的唯一用途是还原拍摄顺序，插队会毁掉这个语义。
+        # Picked photos sort first: `picked` is the intersection of the top-%
+        # sharpness and aesthetics ranks among 3★ shots — a stronger signal than
+        # either axis alone, yet sorting by one axis scatters them (measured:
+        # ranks 2/4/8/…/44 by sharpness, up to 120 by rarity). Filename order is
+        # left untouched since its whole purpose is chronological browsing.
+        picked_first = "COALESCE(picked, 0) DESC, "
         if sort_by == "sharpness_desc":
-            order_sql = "ORDER BY COALESCE(adj_sharpness, head_sharp, -1e99) DESC, filename ASC"
+            order_sql = f"ORDER BY {picked_first}COALESCE(adj_sharpness, head_sharp, -1e99) DESC, filename ASC"
         elif sort_by == "aesthetic_desc":
-            order_sql = "ORDER BY COALESCE(adj_topiq, nima_score, -1e99) DESC, filename ASC"
+            order_sql = f"ORDER BY {picked_first}COALESCE(adj_topiq, nima_score, -1e99) DESC, filename ASC"
         elif sort_by == "rarity_desc":
             # V4.2.7: 按 GBIF 罕见度降序（最罕见在前）— 无 GBIF 数据的排最后
-            order_sql = "ORDER BY COALESCE(gbif_rarity_100, -1e99) DESC, filename ASC"
+            order_sql = f"ORDER BY {picked_first}COALESCE(gbif_rarity_100, -1e99) DESC, filename ASC"
         elif sort_by == "species_beauty_desc":
             # V9: 按鸟种颜值(iRateBird)降序 — 无数据排最后
             # V9: sort by species beauty (iRateBird) desc — missing data last
-            order_sql = "ORDER BY COALESCE(aesthetic_index, -1e99) DESC, filename ASC"
+            order_sql = f"ORDER BY {picked_first}COALESCE(aesthetic_index, -1e99) DESC, filename ASC"
         else:
             order_sql = "ORDER BY filename ASC"
 

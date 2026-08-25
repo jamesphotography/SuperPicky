@@ -107,7 +107,7 @@
     "file_organization_msg": "After analysis, photos will be organized into folders:\n\n• 3-Star → 3_star_excellent\n• 2-Star → 2_star_good\n• 1-Star → 1_star_average\n• Rejects/No Bird → 0_star_reject\n{extra_notes}\nUse 'Reset' to restore original structure if needed.",
     "note_flight": "BIF (Flying) photos will get green label (ranking bonus)",
     "note_birdid": "2-Star+ photos will auto-identify bird species and write to EXIF Title",
-    "note_burst": "Smart Burst: Merged to highest-rated photo's folder (Min 4 photos)",
+    "note_burst": "Smart Burst: Merged to highest-rated photo's folder (Min {count} photos)",
     "unfinished_title": "Unfinished Task Detected",
     "unfinished_body": "This directory has an incomplete processing record. \"Continue\" resumes from where it stopped; \"Restart\" restores the directory first, then reprocesses.",
     "video_first_tip_title": "Video Processing — First-time Notice",
@@ -677,7 +677,7 @@
     "rule_flying": "Bird in Flight (batch-ranking bonus)",
     "rule_focus": "Critical Focus (focus on head) (batch-ranking bonus)",
     "rule_exposure": "⚠️ Over/Under-exposed = Auto downgrade 1 star",
-    "burst_info": "Smart Burst: merged to highest-rated photo's folder (min 4 photos)",
+    "burst_info": "Smart Burst: merged to highest-rated photo's folder (min {count} photos)",
     "rule_2_star": "Either sharpness or aesthetics meets threshold (2 stars)",
     "rule_1_star": "Bird detected but below threshold (1 star)",
     "rule_v2_3_star": "Top {quota3}% of the batch (3 stars) — per species when Bird ID is on",
@@ -1093,7 +1093,7 @@
     "lite_welcome_subtitle": "The lightweight build will prepare its runtime, models, and databases on first launch.",
     "lite_welcome_hint": "You only need to confirm your preferences. The rest of the setup will run automatically.",
     "telemetry_notice": "SuperPicky sends anonymous usage statistics by default: the app version, operating system, interface language, and a random ID that changes daily, etc., used to tell how many people use it. No photos, file paths, or personal information are ever sent.",
-    "telemetry_optout": "You can turn this off at any time under Settings \u2192 About.",
+    "telemetry_optout": "You can turn this off at any time under Settings → About.",
     "update_title": "Enable Auto Update",
     "update_subtitle": "If you turn this off, initialization will also skip automatic patch and component update checks.",
     "update_enabled_title": "Allow auto update",
@@ -1278,7 +1278,9 @@
     "matched_count": "{count} matched",
     "crop_advice_btn": "Crop Advice",
     "compare_rate_left": "Rate left photo {stars}★  [key: {shortcut}]",
-    "compare_rate_right": "Rate right photo {stars}★  [key: {shortcut}]"
+    "compare_rate_right": "Rate right photo {stars}★  [key: {shortcut}]",
+    "picked_only": "Picked only",
+    "picked_only_tip": "Show only picked photos (3★ shots that top both sharpness and aesthetics)"
   },
   "video": {
     "title_phase1": "Video Analysis (Phase 1 · YOLO bird/no-bird only)",

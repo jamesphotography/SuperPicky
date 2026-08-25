@@ -357,13 +357,21 @@ class MergedReportDB:
         # 排序
         sort_by = filters.get("sort_by") or "filename"
 
+        # 精选恒置顶，与单库 report_db.get_photos_by_filters 的排序规则保持一致
+        # （理由见那边的注释）。文件名/目录排序不置顶，保留浏览顺序。
+        # Picked first, mirroring report_db; directory/filename order untouched.
+        picked_first = "COALESCE(picked, 0) DESC, "
         if sort_by == "sharpness_desc":
-            order = "ORDER BY COALESCE(adj_sharpness, head_sharp, -1e99) DESC, filename ASC"
+            order = f"ORDER BY {picked_first}COALESCE(adj_sharpness, head_sharp, -1e99) DESC, filename ASC"
         elif sort_by == "aesthetic_desc":
-            order = "ORDER BY COALESCE(adj_topiq, nima_score, -1e99) DESC, filename ASC"
+            order = f"ORDER BY {picked_first}COALESCE(adj_topiq, nima_score, -1e99) DESC, filename ASC"
         elif sort_by == "rarity_desc":
             # V4.2.7: GBIF 罕见度降序，最罕见的鸟先看
-            order = "ORDER BY COALESCE(gbif_rarity_100, -1e99) DESC, filename ASC"
+            order = f"ORDER BY {picked_first}COALESCE(gbif_rarity_100, -1e99) DESC, filename ASC"
+        elif sort_by == "species_beauty_desc":
+            # 与单库对齐:此前合并库漏了这一分支,按鸟种颜值排序会静默落到目录序。
+            # Was missing here, so species-beauty sorting silently fell through.
+            order = f"ORDER BY {picked_first}COALESCE(aesthetic_index, -1e99) DESC, filename ASC"
         else:
             order = "ORDER BY source_dir ASC, filename ASC"
         
