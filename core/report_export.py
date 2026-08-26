@@ -23,6 +23,7 @@ from typing import Dict, List, Optional, Tuple
 from PIL import Image, ImageOps
 
 from core.rarity_tier import gbif_score_to_tier
+from tools.file_utils import sibling_jpeg
 
 # IUCN 徽标只对「易危及以上」显示，避免 LC 满屏噪音（spec 5.1 ②）。
 # Only render an IUCN badge for Vulnerable-and-worse categories.
@@ -109,16 +110,50 @@ class ReportData:
     detail: List[PhotoRef]
 
 
+def preview_candidates(row: dict) -> List[str]:
+    """
+    按优先级返回可用作预览的路径：temp_jpeg_path → 同名 JPG/JPEG 边车。
+
+    与 ui/thumbnail_grid.py:205 的 _thumbnail_candidates 保持同一优先级，
+    刻意不含任何带标注的调试图。路径需已是绝对路径。
+
+    Return existing preview paths in priority order, mirroring the grid's
+    resolver. Debug artifacts are deliberately excluded.
+    """
+    out: List[str] = []
+
+    def _add(path: Optional[str]) -> None:
+        if path and path not in out and os.path.exists(path):
+            out.append(path)
+
+    _add(row.get("temp_jpeg_path"))
+    for key in ("current_path", "original_path"):
+        val = row.get(key)
+        if val:
+            jpeg_sidecar = sibling_jpeg(val)
+            _add(jpeg_sidecar)
+    return out
+
+
 def _to_ref(row: dict) -> PhotoRef:
     """
     把一条 report.db 记录转成 PhotoRef（basename 化文件名）。
 
+    path 是可解码的预览路径：优先取 preview_candidates 的首选项，
+    回退到 current_path or original_path（保持向后兼容：没有预览时走占位符）。
+
     Convert a report.db row to PhotoRef, extracting only the basename for filename.
+    Path is set to a decodable preview if available, falling back to current/original path.
     """
     raw_name = row.get("filename") or ""
-    path = row.get("current_path") or row.get("original_path") or ""
+    candidates = preview_candidates(row)
+    preview_path = candidates[0] if candidates else ""
+    raw_path = row.get("current_path") or row.get("original_path") or ""
+    # 优先用可预览的路径；没有预览则回退到原始路径（支持无预览记录走占位符）
+    path = preview_path or raw_path
+
     return PhotoRef(
-        filename=os.path.basename(raw_name) or os.path.basename(path),
+        filename=os.path.basename(raw_name) or os.path.basename(raw_path),
         path=path,
         rating=int(row.get("rating") or 0),
         picked=bool(row.get("picked")),
@@ -292,32 +327,6 @@ class ImageJob:
     quality: int
 
 
-def preview_candidates(row: dict) -> List[str]:
-    """
-    按优先级返回可用作预览的路径：temp_jpeg_path → 同名 JPG 边车。
-
-    与 ui/thumbnail_grid.py:205 的 _thumbnail_candidates 保持同一优先级，
-    刻意不含任何带标注的调试图。路径需已是绝对路径。
-
-    Return existing preview paths in priority order, mirroring the grid's
-    resolver. Debug artifacts are deliberately excluded.
-    """
-    out: List[str] = []
-
-    def _add(path: Optional[str]) -> None:
-        if path and path not in out and os.path.exists(path):
-            out.append(path)
-
-    _add(row.get("temp_jpeg_path"))
-    for key in ("current_path", "original_path"):
-        val = row.get(key)
-        if val:
-            stem, _ = os.path.splitext(val)
-            _add(stem + ".jpg")
-            _add(stem + ".JPG")
-    return out
-
-
 def preview_availability(photos: List[dict]) -> Tuple[int, int]:
     """
     预检：统计有多少条记录存在可用预览。只做 os.path.exists，不解码。
@@ -348,8 +357,14 @@ def encode_preview(path: str, max_edge: int, quality: int) -> Optional[str]:
         Optional[str]: `data:image/jpeg;base64,...`；任何失败返回 None，
         由调用方渲染占位块（spec 7.2：绝不让一张坏数据毁掉整份报告）。
 
+    异常:
+        无（不抛异常）——任何失败（文件不存在、格式错误、解码异常等）均返回 None。
+
     Decode, downscale and re-encode one image as a base64 data URI.
     Returns None on any failure so a single bad file cannot abort the report.
+
+    Exceptions:
+        None (never raises) — any failure (missing file, corrupt data, etc.) returns None.
     """
     try:
         with Image.open(path) as im:
@@ -390,7 +405,7 @@ def collect_image_jobs(data: ReportData, *,
 
     def _add(kind: str, ref: PhotoRef) -> None:
         max_edge, quality = IMG_SPECS[kind]
-        job_id = f"{kind}:{ref.filename}"
+        job_id = f"{kind}:{ref.path}"
         if job_id not in jobs and ref.path:
             jobs[job_id] = ImageJob(job_id, ref.path, max_edge, quality)
 

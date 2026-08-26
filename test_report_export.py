@@ -175,7 +175,9 @@ def test_encode_preview_returns_none_on_missing_file(tmp_path):
 
 def test_collect_image_jobs_covers_every_shown_photo():
     """每张展示图都有 hd job；明细每张有 thumb job；封面有 cover job。"""
-    photos = [_photo(filename=f"a{i}.NEF", adj_topiq=float(i)) for i in range(6)]
+    # 每张照片需要唯一的路径，否则会在 job_id 中碰撞
+    photos = [_photo(filename=f"a{i}.NEF", current_path=f"/tmp/pick/a{i}.NEF",
+                     adj_topiq=float(i)) for i in range(6)]
     data = aggregate(photos)
     jobs = collect_image_jobs(data)
     kinds = {j.job_id.split(":", 1)[0] for j in jobs}
@@ -203,3 +205,76 @@ def test_preview_availability_counts_existing_files(tmp_path):
     ]
     available, total = preview_availability(rows)
     assert (available, total) == (1, 2)
+
+
+def test_to_ref_uses_jpeg_preview_over_raw_path(tmp_path):
+    """
+    Critical fix: temp_jpeg_path 指向真实 JPEG、current_path 指向不存在的 RAW 时，
+    PhotoRef.path 应为 JPEG 而非 RAW（否则 PIL 无法解码导致占位块）。
+    """
+    good_jpeg = _make_jpeg(tmp_path, name="photo.jpg", size=(100, 100))
+    missing_raw = str(tmp_path / "nonexistent.NEF")
+    photo = _photo(
+        filename="photo.NEF",
+        current_path=missing_raw,
+        temp_jpeg_path=good_jpeg
+    )
+    data = aggregate([photo])
+    # PhotoRef.path 应为可解码的 JPEG，而非不存在的 RAW
+    assert data.detail[0].path == good_jpeg
+    assert os.path.exists(data.detail[0].path)
+
+
+def test_preview_candidates_finds_jpeg_extension(tmp_path):
+    """Important fix: preview_candidates 应能找到 .jpeg 变体（除 .jpg/.JPG/.JPEG）。"""
+    import os
+    # 创建 .jpeg 版本
+    jpeg_ext = _make_jpeg(tmp_path, name="photo.jpeg", size=(100, 100))
+    photo = _photo(
+        filename="photo.NEF",
+        current_path=str(tmp_path / "photo.NEF"),
+        original_path=str(tmp_path / "photo.NEF"),
+        temp_jpeg_path=str(tmp_path / "missing.jpg")  # temp_jpeg_path 不存在
+    )
+    data = aggregate([photo])
+    # .jpeg 小写应被找到
+    assert data.detail[0].path == jpeg_ext
+
+
+def test_job_id_includes_path_to_avoid_collisions(tmp_path):
+    """
+    Important fix: job_id 用 path 而非 filename，避免不同目录同名文件碰撞。
+    两张同名照片来自不同目录应各自拿到独立的 job。
+    """
+    # 创建两个目录，各放一张同名照片
+    dir1 = tmp_path / "dir1"
+    dir2 = tmp_path / "dir2"
+    dir1.mkdir()
+    dir2.mkdir()
+
+    photo1_path = _make_jpeg(dir1, name="IMG_0001.jpg", size=(100, 100))
+    photo2_path = _make_jpeg(dir2, name="IMG_0001.jpg", size=(100, 100))
+
+    photos = [
+        _photo(
+            filename="IMG_0001.NEF",
+            current_path=photo1_path,
+            temp_jpeg_path=photo1_path
+        ),
+        _photo(
+            filename="IMG_0001.NEF",  # 同名
+            current_path=photo2_path,
+            temp_jpeg_path=photo2_path
+        ),
+    ]
+    data = aggregate(photos)
+    jobs = collect_image_jobs(data)
+
+    # 应有两个独立的 hd job（对应两个不同的文件）
+    hd_jobs = [j for j in jobs if j.job_id.startswith("hd:")]
+    assert len(hd_jobs) == 2
+    # 两个 job 应指向不同的路径
+    paths = {j.path for j in hd_jobs}
+    assert len(paths) == 2
+    assert photo1_path in paths
+    assert photo2_path in paths
