@@ -13,10 +13,14 @@ it can be unit-tested without a QApplication and reused by a future CLI.
 
 from __future__ import annotations
 
+import base64
+import io
 import os
 from collections import Counter
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
+
+from PIL import Image, ImageOps
 
 from core.rarity_tier import gbif_score_to_tier
 
@@ -266,3 +270,137 @@ def aggregate(photos: List[dict], *, include_gps: bool = False,
         burst_avg=burst_avg,
         detail=[_to_ref(r) for r in photos],
     )
+
+
+# 分档规格（spec 6.2）：(长边, JPEG 质量)
+# Size tiers: (max edge, JPEG quality)
+IMG_SPECS = {
+    "cover": (1800, 82),
+    "rep":   (900, 80),
+    "small": (400, 78),
+    "hd":    (1200, 80),
+    "thumb": (160, 72),
+}
+
+
+@dataclass(frozen=True)
+class ImageJob:
+    """一个待编码的图片任务 / A single image encoding job."""
+    job_id: str
+    path: str
+    max_edge: int
+    quality: int
+
+
+def preview_candidates(row: dict) -> List[str]:
+    """
+    按优先级返回可用作预览的路径：temp_jpeg_path → 同名 JPG 边车。
+
+    与 ui/thumbnail_grid.py:205 的 _thumbnail_candidates 保持同一优先级，
+    刻意不含任何带标注的调试图。路径需已是绝对路径。
+
+    Return existing preview paths in priority order, mirroring the grid's
+    resolver. Debug artifacts are deliberately excluded.
+    """
+    out: List[str] = []
+
+    def _add(path: Optional[str]) -> None:
+        if path and path not in out and os.path.exists(path):
+            out.append(path)
+
+    _add(row.get("temp_jpeg_path"))
+    for key in ("current_path", "original_path"):
+        val = row.get(key)
+        if val:
+            stem, _ = os.path.splitext(val)
+            _add(stem + ".jpg")
+            _add(stem + ".JPG")
+    return out
+
+
+def preview_availability(photos: List[dict]) -> Tuple[int, int]:
+    """
+    预检：统计有多少条记录存在可用预览。只做 os.path.exists，不解码。
+
+    参数:
+        photos (List[dict]): 照片记录（路径已解析为绝对路径）。
+
+    返回:
+        Tuple[int, int]: (可用数, 总数)。
+
+    Cheap pre-flight check counting how many rows have a usable preview.
+    Stat-only; nothing is decoded.
+    """
+    available = sum(1 for row in photos if preview_candidates(row))
+    return available, len(photos)
+
+
+def encode_preview(path: str, max_edge: int, quality: int) -> Optional[str]:
+    """
+    把一张图片解码、缩放、重编码为 base64 data URI。
+
+    参数:
+        path (str): 图片绝对路径。
+        max_edge (int): 输出长边上限（只缩不放）。
+        quality (int): JPEG 质量。
+
+    返回:
+        Optional[str]: `data:image/jpeg;base64,...`；任何失败返回 None，
+        由调用方渲染占位块（spec 7.2：绝不让一张坏数据毁掉整份报告）。
+
+    Decode, downscale and re-encode one image as a base64 data URI.
+    Returns None on any failure so a single bad file cannot abort the report.
+    """
+    try:
+        with Image.open(path) as im:
+            # draft() 让 libjpeg 直接按 1/2、1/4、1/8 DCT 缩放解码，是全流程性能
+            # 关键（spec 6.3）；仅对 JPEG 有效，其他格式为无操作。
+            # draft() decodes at reduced DCT scale for JPEG — the key optimization.
+            im.draft("RGB", (max_edge, max_edge))
+            im = ImageOps.exif_transpose(im)      # 等价于 QImageReader.setAutoTransform
+            im = im.convert("RGB")
+            im.thumbnail((max_edge, max_edge), Image.LANCZOS)
+            buf = io.BytesIO()
+            im.save(buf, "JPEG", quality=quality, optimize=True)
+        return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+    except Exception:
+        return None
+
+
+def collect_image_jobs(data: ReportData, *,
+                       with_detail_thumbs: bool = True) -> List[ImageJob]:
+    """
+    列出生成该报告所需的全部图片编码任务。
+
+    与编码本身分离，好让 UI 层逐个调用 encode_preview 以上报进度，
+    而本模块保持纯函数、不持有回调（spec 4.1）。
+
+    参数:
+        data (ReportData): 聚合结果。
+        with_detail_thumbs (bool): 是否为明细表生成缩略图。照片总数 > 600 时
+            由调用方传 False，明细表退化为纯文字（spec 6.4）。
+
+    返回:
+        List[ImageJob]: 去重后的任务列表。
+
+    Enumerate every image encoding job the report needs, kept separate from
+    encoding itself so the UI layer can report progress per job.
+    """
+    jobs: Dict[str, ImageJob] = {}
+
+    def _add(kind: str, ref: PhotoRef) -> None:
+        max_edge, quality = IMG_SPECS[kind]
+        job_id = f"{kind}:{ref.filename}"
+        if job_id not in jobs and ref.path:
+            jobs[job_id] = ImageJob(job_id, ref.path, max_edge, quality)
+
+    if data.cover:
+        _add("cover", data.cover)
+    for block in data.species:
+        for index, ref in enumerate(block.photos):
+            _add("rep" if index == 0 else "small", ref)
+            _add("hd", ref)
+    if with_detail_thumbs:
+        for ref in data.detail:
+            _add("thumb", ref)
+    return list(jobs.values())

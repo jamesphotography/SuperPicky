@@ -17,7 +17,10 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from core.report_export import aggregate
+from core.report_export import (
+    aggregate, collect_image_jobs, encode_preview, preview_availability, IMG_SPECS
+)
+from PIL import Image
 
 
 def _photo(**kw) -> dict:
@@ -118,3 +121,85 @@ def test_photoref_never_carries_directory_in_filename():
                              current_path="/Users/someone/Pictures/IMG_1.NEF")])
     assert data.detail[0].filename == "IMG_1.NEF"
     assert "/" not in data.detail[0].filename
+
+
+def _make_jpeg(tmp_path, name="p.jpg", size=(2000, 1400), orientation=None):
+    """
+    造一张真实 JPEG；orientation 非 None 时写入 EXIF Orientation 标签。
+
+    Create a real JPEG on disk, optionally carrying an EXIF Orientation tag.
+    """
+    p = tmp_path / name
+    im = Image.new("RGB", size, (120, 90, 60))
+    if orientation is not None:
+        exif = im.getexif()
+        exif[274] = orientation          # 274 = Orientation
+        im.save(p, "JPEG", exif=exif)
+    else:
+        im.save(p, "JPEG")
+    return str(p)
+
+
+def test_encode_preview_returns_data_uri_within_max_edge(tmp_path):
+    """用例 8 前半：输出为 data URI，且长边不超过上限。"""
+    import base64, io
+    src = _make_jpeg(tmp_path, size=(2000, 1400))
+    uri = encode_preview(src, 400, 78)
+    assert uri.startswith("data:image/jpeg;base64,")
+    raw = base64.b64decode(uri.split(",", 1)[1])
+    out = Image.open(io.BytesIO(raw))
+    assert max(out.size) <= 400
+
+
+def test_encode_preview_applies_exif_orientation(tmp_path):
+    """用例 8：Orientation=6 的横图必须被转正，宽高互换。"""
+    import base64, io
+    src = _make_jpeg(tmp_path, name="rot.jpg", size=(1200, 800), orientation=6)
+    uri = encode_preview(src, 600, 80)
+    raw = base64.b64decode(uri.split(",", 1)[1])
+    out = Image.open(io.BytesIO(raw))
+    assert out.height > out.width, "EXIF Orientation=6 未生效，图未被转正"
+
+
+def test_encode_preview_returns_none_on_broken_file(tmp_path):
+    """用例 11 基础：损坏文件返回 None，不抛异常。"""
+    bad = tmp_path / "broken.jpg"
+    bad.write_bytes(b"not a jpeg at all")
+    assert encode_preview(str(bad), 400, 78) is None
+
+
+def test_encode_preview_returns_none_on_missing_file(tmp_path):
+    """不存在的路径同样返回 None。"""
+    assert encode_preview(str(tmp_path / "nope.jpg"), 400, 78) is None
+
+
+def test_collect_image_jobs_covers_every_shown_photo():
+    """每张展示图都有 hd job；明细每张有 thumb job；封面有 cover job。"""
+    photos = [_photo(filename=f"a{i}.NEF", adj_topiq=float(i)) for i in range(6)]
+    data = aggregate(photos)
+    jobs = collect_image_jobs(data)
+    kinds = {j.job_id.split(":", 1)[0] for j in jobs}
+    assert {"cover", "rep", "small", "hd", "thumb"} == kinds
+    assert sum(1 for j in jobs if j.job_id.startswith("thumb:")) == 6
+    assert sum(1 for j in jobs if j.job_id.startswith("rep:")) == 1     # 1 个鸟种
+    assert sum(1 for j in jobs if j.job_id.startswith("small:")) == 3   # 4 张展示图中 3 张小图
+
+
+def test_collect_image_jobs_can_skip_detail_thumbs():
+    """with_detail_thumbs=False 时不产出 thumb job（照片数 > 600 的退化路径）。"""
+    data = aggregate([_photo(filename=f"a{i}.NEF") for i in range(3)])
+    jobs = collect_image_jobs(data, with_detail_thumbs=False)
+    assert not any(j.job_id.startswith("thumb:") for j in jobs)
+
+
+def test_preview_availability_counts_existing_files(tmp_path):
+    """预检只做 exists 统计，不解码。"""
+    good = _make_jpeg(tmp_path, name="ok.jpg", size=(50, 50))
+    rows = [
+        _photo(filename="ok.NEF", temp_jpeg_path=good, current_path=good),
+        _photo(filename="gone.NEF",
+               temp_jpeg_path=str(tmp_path / "missing.jpg"),
+               current_path=str(tmp_path / "missing.NEF")),
+    ]
+    available, total = preview_availability(rows)
+    assert (available, total) == (1, 2)
