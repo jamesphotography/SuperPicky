@@ -355,9 +355,19 @@ class ReportData:
 
 
 def _to_ref(row: dict) -> PhotoRef:
-    """把一条 report.db 记录转成 PhotoRef（basename 化文件名）。"""
+    """
+    把一条 report.db 记录转成 PhotoRef（basename 化文件名）。
+
+    注意 path 是「**可解码的预览路径**」而非原始文件路径：PIL 没有 RAW
+    解码器（本机实测 .nef/.cr2/.arw 的 registered_extensions() 均为 None），
+    直接把 current_path 交给 encode_preview 会让每张 RAW 都编码失败、
+    报告全是占位块。故优先取 preview_candidates() 的首个候选。
+    """
     raw_name = row.get("filename") or ""
-    path = row.get("current_path") or row.get("original_path") or ""
+    # preview_candidates 在 Task 2 定义；模块级函数运行时才解析名字，顺序无妨。
+    candidates = preview_candidates(row)
+    path = (candidates[0] if candidates
+            else (row.get("current_path") or row.get("original_path") or ""))
     return PhotoRef(
         filename=os.path.basename(raw_name) or os.path.basename(path),
         path=path,
@@ -663,6 +673,8 @@ import base64
 import io
 
 from PIL import Image, ImageOps
+
+from tools.file_utils import sibling_jpeg
 ```
 
 在文件中追加：
@@ -705,12 +717,11 @@ def preview_candidates(row: dict) -> List[str]:
             out.append(path)
 
     _add(row.get("temp_jpeg_path"))
+    # 复用既有的 sibling_jpeg：它已覆盖 .jpg/.jpeg/.JPG/.JPEG 四种变体，
+    # 自行拼后缀会漏掉 .jpeg，导致边车在缩略图网格里可见却在报告里丢失。
+    # tools/file_utils.py 无 Qt 依赖，不破坏本模块的纯函数层约束。
     for key in ("current_path", "original_path"):
-        val = row.get(key)
-        if val:
-            stem, _ = os.path.splitext(val)
-            _add(stem + ".jpg")
-            _add(stem + ".JPG")
+        _add(sibling_jpeg(row.get(key)))
     return out
 
 
@@ -785,8 +796,12 @@ def collect_image_jobs(data: ReportData, *,
     jobs: Dict[str, ImageJob] = {}
 
     def _add(kind: str, ref: PhotoRef) -> None:
+        # 用 path 而非 filename 做键：filename 按 D6 是 basename-only，
+        # 跨子目录的同名文件（多张卡/多次导入的 IMG_0001.NEF，合并模式下同时
+        # 入库）会撞键，第二张被静默丢弃并显示成第一张的图。
+        # job_id 不进 HTML（tag() 渲染的是 IMGS 下标），故用绝对路径安全。
         max_edge, quality = IMG_SPECS[kind]
-        job_id = f"{kind}:{ref.filename}"
+        job_id = f"{kind}:{ref.path}"
         if job_id not in jobs and ref.path:
             jobs[job_id] = ImageJob(job_id, ref.path, max_edge, quality)
 
