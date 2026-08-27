@@ -501,3 +501,88 @@ def test_hit_rate_counts_manual_high_ratings():
               _photo(filename="d.NEF", rating=1)]
     html = build_html(aggregate(photos), {})
     assert "75.0%" in html
+
+
+# ── Task 5: 打印适配与「存为 PDF」 ───────────────────────────────────────────
+
+def test_print_stylesheet_has_all_four_requirements():
+    """
+    用例 14：@media print 必须同时满足 spec 5.2 的四项，缺一则打印结果不可用。
+
+      1. 白底（深色底会打出整页黑）
+      2. page-break-inside: avoid（图文不被跨页拦腰截断）
+      3. 展开 <details>（否则明细区根本印不出来）
+      4. 隐藏交互控件（按钮、lightbox）
+    """
+    html = build_html(aggregate([_photo()]), {})
+    assert "@media print" in html
+    block = html.split("@media print", 1)[1]
+    assert "#fff" in block
+    assert "page-break-inside" in block
+    assert "details" in block
+    assert "no-print" in block
+
+
+def test_print_keeps_detail_heading():
+    """
+    展开明细区时标题必须留着：<h2> 长在 <summary> 里，整块 display:none
+    会让打印版多出一张没有名字的表。只去掉折叠箭头即可。
+
+    The detail table's heading lives inside <summary>; hiding the whole
+    summary would print an unlabeled table. Drop only the disclosure marker.
+    """
+    html = build_html(aggregate([_photo()]), {})
+    block = html.split("@media print", 1)[1].split("</style>", 1)[0]
+    assert "summary{display:none" not in block.replace(" ", "")
+    assert "list-style:none" in block
+
+
+def test_save_as_pdf_button_present():
+    """页顶「存为 PDF」按钮存在，且点击调用 window.print()。"""
+    html = build_html(aggregate([_photo()]), {})
+    assert 'id="pdfbtn"' in html
+    assert "window.print()" in html
+
+
+def test_pdf_button_is_hidden_when_printing():
+    """按钮自身必须带 no-print，否则会被印进 PDF。"""
+    html = build_html(aggregate([_photo()]), {})
+    assert 'id="pdfbtn" class="no-print"' in html
+
+
+def test_print_forces_lazy_images_to_materialize():
+    """
+    懒插入的代价：未进过视口的图 src 是空的，直接打印会得到大片空白。
+    因此按钮必须先把 IMGS 全部落位再 print()。
+    """
+    html = build_html(aggregate([_photo()]), {})
+    assert "img[data-idx]" in html
+    assert "IMGS[el.dataset.idx]" in html
+    # 落位必须发生在 print() 之前
+    assert html.index("IMGS[el.dataset.idx]") < html.rindex("window.print()")
+
+
+def test_save_as_pdf_button_localized():
+    """按钮文案跟随语言（spec D7）。"""
+    assert "存为 PDF" in build_html(aggregate([_photo()]), {}, is_zh=True)
+    assert "Save as PDF" in build_html(aggregate([_photo()]), {}, is_zh=False)
+
+
+def test_print_expands_details_via_js_not_css():
+    """
+    CSS 改不了 <details> 的 open（那是属性不是样式，display:block 只让
+    元素本身是块级，折叠内容依旧不渲染），所以打印样式再全，明细区在纸上
+    也是不存在的。必须在打印前用 JS 补 open、打印后恢复。
+
+    Safari 长期不支持 beforeprint/afterprint，故同时挂 matchMedia('print')
+    兜底；按钮路径直接调用，不依赖任何事件。
+
+    CSS cannot open a <details> (open is an attribute, not a style), so the
+    detail section must be expanded by JS before printing and restored after.
+    """
+    html = build_html(aggregate([_photo()]), {})
+    assert "beforeprint" in html
+    assert "afterprint" in html
+    assert "matchMedia" in html          # Safari 兜底
+    assert ".open=true" in html
+    assert ".open=false" in html         # 打印后恢复原折叠状态

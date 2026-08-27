@@ -1648,6 +1648,28 @@ def test_save_as_pdf_button_localized():
     """按钮文案跟随语言（spec D7）。"""
     assert "存为 PDF" in build_html(aggregate([_photo()]), {}, is_zh=True)
     assert "Save as PDF" in build_html(aggregate([_photo()]), {}, is_zh=False)
+
+
+def test_print_keeps_detail_heading():
+    """明细表标题长在 <summary> 里，整块隐藏会印出一张没名字的表。"""
+    html = build_html(aggregate([_photo()]), {})
+    block = html.split("@media print", 1)[1].split("</style>", 1)[0]
+    assert "summary{display:none" not in block.replace(" ", "")
+    assert "list-style:none" in block
+
+
+def test_print_expands_details_via_js_not_css():
+    """
+    CSS 改不了 <details> 的 open（属性不是样式），打印样式再全，明细区
+    在纸上也不存在。必须在打印前用 JS 补 open、打印后恢复；Safari 不支持
+    beforeprint/afterprint，故加 matchMedia('print') 兜底。
+    """
+    html = build_html(aggregate([_photo()]), {})
+    assert "beforeprint" in html
+    assert "afterprint" in html
+    assert "matchMedia" in html
+    assert ".open=true" in html
+    assert ".open=false" in html
 ```
 
 - [ ] **Step 2: 运行测试确认失败**
@@ -1671,14 +1693,18 @@ border-radius:6px;padding:8px 14px;font-size:13px;font-family:inherit}
 # 展开折叠区、隐藏交互控件。
 # Print support: white background, page-break control, expanded <details>,
 # and hidden interactive chrome. Missing any one makes printouts unusable.
+# 注意：展开折叠区不能靠 CSS——open 是属性不是样式，display:block 只让
+# details 元素本身是块级，折叠内容依旧不渲染。展开在 _JS_PRINT 里做。
+# summary 也不能整块隐藏：明细表的 <h2> 标题就长在里面，隐藏了打印版会
+# 多出一张没有名字的表；只去掉折叠箭头即可。
 _CSS_PRINT = """
 @media print{
   :root{--bg:#fff;--card:#fff;--text:#111;--muted:#555;--line:#ccc}
   body{background:#fff;color:#111}
   .no-print,#lb{display:none !important}
   th{cursor:default}
-  details{display:block !important}
-  details>summary{display:none !important}
+  details>summary{list-style:none}
+  details>summary::-webkit-details-marker{display:none}
   .sp,.cover,tr,.grid{page-break-inside:avoid;break-inside:avoid}
   img{max-height:none}
   .cover img,.cover .ph{max-height:12cm}
@@ -1697,11 +1723,34 @@ _CSS_PRINT = """
 # viewport have no src and would otherwise print blank.
 _JS_PRINT = """
 (function(){
-  var btn=document.getElementById('pdfbtn'); if(!btn)return;
-  btn.addEventListener('click',function(){
+  var reopened=[];
+  function materialize(){
     document.querySelectorAll('img[data-idx]').forEach(function(el){
       if(!el.src&&IMGS[el.dataset.idx]) el.src=IMGS[el.dataset.idx];
     });
+  }
+  function expand(){
+    materialize();
+    reopened=[];
+    document.querySelectorAll('details:not([open])').forEach(function(d){
+      d.open=true; reopened.push(d);
+    });
+  }
+  function restore(){
+    reopened.forEach(function(d){d.open=false;});
+    reopened=[];
+  }
+  window.addEventListener('beforeprint',expand);
+  window.addEventListener('afterprint',restore);
+  if(window.matchMedia){
+    var mq=window.matchMedia('print');
+    var onchange=function(e){ e.matches?expand():restore(); };
+    if(mq.addEventListener) mq.addEventListener('change',onchange);
+    else if(mq.addListener) mq.addListener(onchange);
+  }
+  var btn=document.getElementById('pdfbtn'); if(!btn)return;
+  btn.addEventListener('click',function(){
+    expand();
     setTimeout(function(){window.print();},300);
   });
 })();
