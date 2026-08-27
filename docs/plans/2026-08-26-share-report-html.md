@@ -92,7 +92,7 @@ class GearStats:
 class ReportData:
     dir_name: str
     total: int
-    by_rating: Dict[int, int]      # 键 -1/0/1/2/3
+    by_rating: Dict[int, int]      # 键 -1..5（4/5 为浏览器内手动升星）
     picked: int
     flying: int
     focus_precise: int
@@ -445,7 +445,7 @@ def aggregate(photos: List[dict], *, include_gps: bool = False,
     dropped here, not merely hidden at render time.
     """
     total = len(photos)
-    by_rating = {r: 0 for r in (-1, 0, 1, 2, 3)}
+    by_rating = {r: 0 for r in (-1, 0, 1, 2, 3, 4, 5)}
     for row in photos:
         rating = int(row.get("rating") or 0)
         if rating in by_rating:
@@ -1380,18 +1380,21 @@ def _stats_html(data: ReportData, is_zh: bool) -> str:
     Statistics section. Bars are plain CSS widths; no charting library.
     """
     title = "数据" if is_zh else "Statistics"
-    labels = {3: "★★★", 2: "★★", 1: "★", 0: "0",
+    labels = {5: "★★★★★", 4: "★★★★", 3: "★★★", 2: "★★", 1: "★", 0: "0",
               -1: ("无鸟" if is_zh else "No bird")}
     top = max(data.by_rating.values()) or 1
     bars = []
-    for rating in (3, 2, 1, 0, -1):
+    for rating in (5, 4, 3, 2, 1, 0, -1):
         count = data.by_rating.get(rating, 0)
+        if rating >= 4 and count == 0:
+            continue          # 手动档没用过就不画空条
         pct = (count / data.total * 100) if data.total else 0.0
         width = count / top * 320
         bars.append(f'<div><span style="width:52px">{labels[rating]}</span>'
                     f'<span class="bar" style="width:{width:.0f}px"></span>'
                     f'<span>{count} ({pct:.1f}%)</span></div>')
-    hit = (data.by_rating.get(3, 0) / data.total * 100) if data.total else 0.0
+    keepers = sum(data.by_rating.get(r, 0) for r in (3, 4, 5))
+    hit = (keepers / data.total * 100) if data.total else 0.0
     gear = data.gear
     kv = []
     if is_zh:

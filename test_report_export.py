@@ -439,3 +439,65 @@ def test_html_escapes_hostile_species_name():
     assert "<script>alert(1)</script>" not in html
     assert "<img onerror=x>" not in html
     assert "&lt;script&gt;" in html
+
+
+# ── 手动 4/5 星（浏览器内升星）纳入统计 ──────────────────────────────────────
+
+def test_aggregate_counts_manual_high_ratings():
+    """
+    4/5 星是用户在浏览器里手动升出来的档位（自动评分只产 -1..3）。
+
+    by_rating 一旦只开 -1..3，这些照片会被静默丢弃：条形图各档之和
+    对不上总张数，用户越是给好片升星、统计越失真。
+
+    4/5 stars come from manual promotion in the browser; dropping them
+    would make the bars sum to less than the total.
+    """
+    photos = [_photo(filename="a.NEF", rating=5),
+              _photo(filename="b.NEF", rating=4),
+              _photo(filename="c.NEF", rating=3)]
+    data = aggregate(photos)
+    assert data.by_rating[5] == 1
+    assert data.by_rating[4] == 1
+    assert data.by_rating[3] == 1
+    assert sum(data.by_rating.values()) == data.total
+
+
+def test_stats_bars_render_high_ratings_when_present():
+    """有 4/5 星时条形图出现对应档，且各档计数之和等于总张数。"""
+    import re
+    photos = [_photo(filename="a.NEF", rating=5),
+              _photo(filename="b.NEF", rating=4),
+              _photo(filename="c.NEF", rating=2)]
+    html = build_html(aggregate(photos), {})
+    assert "★★★★★" in html
+    assert "★★★★" in html
+    counts = [int(m) for m in re.findall(r'<span>(\d+) \(', html)]
+    assert sum(counts) == 3
+
+
+def test_stats_bars_hide_empty_high_ratings():
+    """
+    没有 4/5 星时不画这两条空条——绝大多数批次都没手动升过星，
+    多两条恒为 0 的条只会稀释信息。
+
+    Hide the 4/5 bars when unused; most batches never promote by hand.
+    """
+    html = build_html(aggregate([_photo(rating=3)]), {})
+    assert "★★★★" not in html
+
+
+def test_hit_rate_counts_manual_high_ratings():
+    """
+    命中率是「能用的片子占比」，4/5 星比 3 星更好，必须算进去，
+    否则用户每升一张星、命中率反而下降（spec 5.1 ③ 的口径修订）。
+
+    Hit rate counts 3★ and above; otherwise promoting a photo would
+    paradoxically lower it.
+    """
+    photos = [_photo(filename="a.NEF", rating=5),
+              _photo(filename="b.NEF", rating=4),
+              _photo(filename="c.NEF", rating=3),
+              _photo(filename="d.NEF", rating=1)]
+    html = build_html(aggregate(photos), {})
+    assert "75.0%" in html

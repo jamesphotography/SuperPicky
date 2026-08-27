@@ -239,7 +239,11 @@ def aggregate(photos: List[dict], *, include_gps: bool = False,
     dropped here, not merely hidden at render time.
     """
     total = len(photos)
-    by_rating = {r: 0 for r in (-1, 0, 1, 2, 3)}
+    # 计数桶开到 5 星：自动评分只产 -1..3，4/5 是用户在浏览器里手动升出来的
+    # （详情面板 ▲ / 对比视图 / 键盘 4、5），漏掉这两档会让各档之和小于总张数。
+    # Buckets go up to 5: the auto pipeline emits -1..3, while 4/5 come from
+    # manual promotion in the browser. Dropping them would break the sum.
+    by_rating = {r: 0 for r in (-1, 0, 1, 2, 3, 4, 5)}
     for row in photos:
         rating = int(row.get("rating") or 0)
         if rating in by_rating:
@@ -687,18 +691,29 @@ def _stats_html(data: ReportData, is_zh: bool) -> str:
     Statistics section. Bars are plain CSS widths; no charting library.
     """
     title = "数据" if is_zh else "Statistics"
-    labels = {3: "★★★", 2: "★★", 1: "★", 0: "0",
+    labels = {5: "★★★★★", 4: "★★★★", 3: "★★★", 2: "★★", 1: "★", 0: "0",
               -1: ("无鸟" if is_zh else "No bird")}
     top = max(data.by_rating.values()) or 1
     bars = []
-    for rating in (3, 2, 1, 0, -1):
+    for rating in (5, 4, 3, 2, 1, 0, -1):
         count = data.by_rating.get(rating, 0)
+        # 4/5 星是手动档，绝大多数批次为空——空的就不画，免得两条恒为 0
+        # 的条稀释信息；其余档位即使为 0 也保留，分布形状才完整。
+        # Hide unused manual tiers; keep the automatic ones even at zero so
+        # the shape of the distribution stays readable.
+        if rating >= 4 and count == 0:
+            continue
         pct = (count / data.total * 100) if data.total else 0.0
         width = count / top * 320
         bars.append(f'<div><span style="width:52px">{labels[rating]}</span>'
                     f'<span class="bar" style="width:{width:.0f}px"></span>'
                     f'<span>{count} ({pct:.1f}%)</span></div>')
-    hit = (data.by_rating.get(3, 0) / data.total * 100) if data.total else 0.0
+    # 命中率口径为「3 星及以上」：4/5 星是比 3 星更好的片子，若只数 3 星，
+    # 用户每手动升一张，命中率反而下降——那是反直觉的错数。
+    # Hit rate counts 3-and-above; counting only 3 would make promoting a
+    # photo lower the number.
+    keepers = sum(data.by_rating.get(r, 0) for r in (3, 4, 5))
+    hit = (keepers / data.total * 100) if data.total else 0.0
     gear = data.gear
     kv = []
     if is_zh:
