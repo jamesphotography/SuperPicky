@@ -198,3 +198,117 @@ class TestMovePhotoOnMetadataChange:
         assert "DSC_1234" in calls
         assert "current_path" in calls["DSC_1234"]
         assert "3星_优选" in calls["DSC_1234"]["current_path"]
+
+
+class TestHighRatingFolders:
+    """
+    4★/5★ 手动升星的目录归属。
+
+    详情面板 ▲ 可升到 5 星、对比视图有 1-5 星按钮，但 RATING_FOLDER_NAMES
+    一度只定义到 3 星，get_rating_folder_name 的兜底 folders.get(0) 会把
+    4/5 星照片静默搬进「0星_放弃」——比不移动更糟的反向操作。
+
+    Manual 4/5-star ratings must land in their own folders; the folder-name
+    table once stopped at 3 stars, so the get(0) fallback silently moved
+    them into the reject pile.
+    """
+
+    def test_moves_to_five_star_folder(self, tmp_path):
+        """星等从 3 改为 5 应移到「5星_杰作」，而不是回退到「0星_放弃」。"""
+        root = str(tmp_path)
+        src = _touch(os.path.join(root, "白腰雨燕", "3星_优选", "DSC_1234.NEF"))
+        photo = _photo(root, "白腰雨燕/3星_优选/DSC_1234.NEF")
+
+        result = move_photo_on_metadata_change(
+            root, photo, 5, "白腰雨燕", "species-first", None, "DSC_1234"
+        )
+
+        assert result is True
+        assert not os.path.exists(src)
+        assert os.path.exists(os.path.join(root, "白腰雨燕", "5星_杰作", "DSC_1234.NEF"))
+        assert not os.path.exists(os.path.join(root, "白腰雨燕", "0星_放弃"))
+
+    def test_moves_to_four_star_folder(self, tmp_path):
+        """星等从 2 改为 4 应移到「4星_精华」。"""
+        root = str(tmp_path)
+        src = _touch(os.path.join(root, "白腰雨燕", "2星_良好", "DSC_1234.NEF"))
+        photo = _photo(root, "白腰雨燕/2星_良好/DSC_1234.NEF")
+
+        result = move_photo_on_metadata_change(
+            root, photo, 4, "白腰雨燕", "species-first", None, "DSC_1234"
+        )
+
+        assert result is True
+        assert not os.path.exists(src)
+        assert os.path.exists(os.path.join(root, "白腰雨燕", "4星_精华", "DSC_1234.NEF"))
+
+    def test_high_rating_keeps_species_folder_in_rating_first(self, tmp_path):
+        """rating-first 布局下 4 星同样按鸟种分子目录（rating >= 2 分支）。"""
+        root = str(tmp_path)
+        _touch(os.path.join(root, "3星_优选", "白腰雨燕", "DSC_1234.NEF"))
+        photo = _photo(root, "3星_优选/白腰雨燕/DSC_1234.NEF")
+
+        move_photo_on_metadata_change(
+            root, photo, 4, "白腰雨燕", "rating-first", None, "DSC_1234"
+        )
+
+        assert os.path.exists(os.path.join(root, "4星_精华", "白腰雨燕", "DSC_1234.NEF"))
+
+    def test_five_star_updates_db_and_manifest(self, tmp_path):
+        """升到 5 星后 DB current_path 与 manifest folder 都指向新目录。"""
+        root = str(tmp_path)
+        _touch(os.path.join(root, "白腰雨燕", "3星_优选", "DSC_1234.NEF"))
+        photo = _photo(root, "白腰雨燕/3星_优选/DSC_1234.NEF")
+
+        manifest_path = os.path.join(root, ".superpicky_manifest.json")
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(
+                {"version": "2.0",
+                 "files": [{"filename": "DSC_1234.NEF", "folder": "白腰雨燕/3星_优选"}]},
+                f,
+            )
+
+        calls = {}
+
+        class FakeDB:
+            def update_photo(self, key, data):
+                calls[key] = data
+
+        move_photo_on_metadata_change(
+            root, photo, 5, "白腰雨燕", "species-first", FakeDB(), "DSC_1234"
+        )
+
+        assert "5星_杰作" in calls["DSC_1234"]["current_path"]
+        with open(manifest_path, encoding="utf-8") as f:
+            updated = json.load(f)
+        assert updated["files"][0]["folder"] == os.path.join("白腰雨燕", "5星_杰作")
+
+
+class TestRatingFolderNameTable:
+    """
+    星级 → 目录名映射表的完整性回归。
+
+    钉死 4/5 星不再回退到 0 星目录名（get_rating_folder_name 的兜底）。
+    Regression guard: every rating -1..5 must map to a distinct folder name.
+    """
+
+    def test_every_rating_has_its_own_folder_name(self):
+        """-1..5 每个星级都有目录名，且 4/5 星与 0 星目录名不同（中英双语）。"""
+        from constants import RATING_FOLDER_NAMES, RATING_FOLDER_NAMES_EN
+
+        for table in (RATING_FOLDER_NAMES, RATING_FOLDER_NAMES_EN):
+            for rating in (-1, 0, 1, 2, 3, 4, 5):
+                assert rating in table, f"星级 {rating} 缺少目录名 / missing folder name"
+            # -1 与 0 共用「放弃」目录是既定设计，其余星级必须各自独立
+            assert table[4] != table[0]
+            assert table[5] != table[0]
+            assert table[4] != table[3]
+            assert table[5] != table[4]
+
+    def test_get_rating_folder_name_no_silent_fallback(self):
+        """get_rating_folder_name 对 4/5 星不再静默回退到 0 星目录。"""
+        from constants import get_rating_folder_name
+
+        reject = get_rating_folder_name(0)
+        assert get_rating_folder_name(4) != reject
+        assert get_rating_folder_name(5) != reject

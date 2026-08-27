@@ -10,7 +10,16 @@ APP_VERSION = "4.6.0RC2"
 
 
 # 评分对应的文件夹名称映射（向后兼容，默认中文）
+# 4★/5★ 由用户在浏览器里手动升星产生（详情面板 ▲ 上限 5、对比视图 1-5 星按钮），
+# 自动评分阶段只产出 -1..3。缺了这两项时 get_rating_folder_name 的兜底会把
+# 手动升星的照片静默搬进「0星_放弃」，故必须与 UI 的星级上限保持一致。
+# 4/5 stars come from manual upgrades in the results browser (the detail panel
+# caps at 5, the comparison view has 1-5 buttons); the auto pipeline only emits
+# -1..3. Without these entries the get(0) fallback would silently move manually
+# promoted photos into the reject pile, so this table must track the UI's cap.
 RATING_FOLDER_NAMES = {
+    5: "5星_杰作",
+    4: "4星_精华",
     3: "3星_优选",
     2: "2星_良好",
     1: "1星_普通",
@@ -20,6 +29,8 @@ RATING_FOLDER_NAMES = {
 
 # 英文文件夹名称
 RATING_FOLDER_NAMES_EN = {
+    5: "5star_masterpiece",
+    4: "4star_choice",
     3: "3star_excellent",
     2: "2star_good",
     1: "1star_average",
@@ -48,7 +59,7 @@ def get_rating_folder_name(rating: int) -> str:
     获取指定评分的文件夹名称（根据当前语言）
 
     Args:
-        rating: 评分 (-1 to 3)
+        rating: 评分 (-1 to 5；4/5 为用户手动升星)
 
     Returns:
         str: 文件夹名称
