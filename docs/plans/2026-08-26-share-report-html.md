@@ -1191,6 +1191,25 @@ def test_species_name_follows_language():
                              bird_species_en="White-bellied Sea Eagle")])
     en = build_html(data, {}, is_zh=False)
     assert en.index("White-bellied Sea Eagle") < en.index("白腹海雕")
+
+
+def test_html_escapes_hostile_species_name():
+    """
+    用例 6 的鸟种名部分（从 Task 3 挪来）：鸟种名里的标签必须被转义。
+
+    原计划把这条放在 Task 3，但鸟种名要到本 Task 的画廊才进入输出，
+    在 Task 3 它会红在正确的实现上。目录名一路的转义已由 Task 3 的
+    test_html_escapes_hostile_dir_name 覆盖。
+
+    Moved from Task 3: species names only reach the output once the
+    gallery lands here.
+    """
+    data = aggregate([_photo(bird_species_cn="<script>alert(1)</script>",
+                             bird_species_en="<img onerror=x>")])
+    html = build_html(data, {})
+    assert "<script>alert(1)</script>" not in html
+    assert "<img onerror=x>" not in html
+    assert "&lt;script&gt;" in html
 ```
 
 - [ ] **Step 2: 运行测试确认失败**
