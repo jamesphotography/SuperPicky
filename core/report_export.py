@@ -453,6 +453,39 @@ footer{color:var(--muted);font-size:12px;text-align:center;
 padding:40px 0;border-top:1px solid var(--line);margin-top:48px}
 """
 
+# 区块样式（spec 5.1 ②③④）：画廊/数据条/明细表/lightbox。
+# Block styles for the gallery, stat bars, detail table and lightbox.
+_CSS_BASE += """
+.sec{margin:48px 0}
+.sec h2{font-size:20px;margin:0 0 20px;padding-bottom:10px;
+border-bottom:1px solid var(--line)}
+.sp{margin-bottom:40px}
+.sp .hd{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.sp .cn{font-size:18px;font-weight:600}
+.sp .en{font-size:13px;color:var(--muted);font-style:italic}
+.sp .cnt{font-size:12px;color:var(--muted)}
+.tier{font-size:12px;padding:1px 8px;border-radius:10px;border:1px solid currentColor}
+.iucn{font-size:11px;padding:1px 7px;border-radius:10px;
+background:#7f1d1d;color:#fecaca;font-weight:600}
+.grid{display:grid;grid-template-columns:2fr 1fr;gap:8px}
+.grid .rest{display:grid;grid-template-rows:repeat(3,1fr);gap:8px}
+.cap{font-size:11px;color:var(--muted);margin-top:4px}
+.bars div{display:flex;align-items:center;gap:10px;margin:6px 0;font-size:13px}
+.bars .bar{height:10px;background:var(--gold);border-radius:5px}
+.kv{display:flex;flex-wrap:wrap;gap:12px 32px;font-size:13px;color:var(--muted)}
+.kv b{color:var(--text);font-weight:600}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;
+white-space:nowrap}
+th{color:var(--muted);cursor:pointer;user-select:none}
+td.thumbcol{width:56px}
+td.thumbcol img,td.thumbcol .ph{width:48px;height:48px;object-fit:cover;min-height:0}
+.tablewrap{overflow-x:auto}
+#lb{position:fixed;inset:0;background:rgba(0,0,0,.94);display:none;
+align-items:center;justify-content:center;z-index:99;cursor:zoom-out}
+#lb img{max-width:94vw;max-height:94vh;width:auto}
+"""
+
 # 视口懒插入（spec 6.1）：图片一律不写 src，滚到视口才赋值、滚离即释放，
 # 使常驻位图恒定在几屏之内，与鸟种数、照片数完全无关。
 # Viewport-based lazy insertion keeps resident bitmaps constant regardless
@@ -467,6 +500,51 @@ _JS_LAZY = """
     });
   },{rootMargin:'200% 0px'});
   document.querySelectorAll('img[data-idx]').forEach(function(el){io.observe(el);});
+})();
+"""
+
+
+# 点击放大：从 IMGS 取 hd 版本，关闭即释放位图（spec 6.1）。
+# Lightbox pulls the hd variant from IMGS and releases it on close.
+_JS_LIGHTBOX = """
+(function(){
+  var lb=document.getElementById('lb'),im=lb.querySelector('img');
+  document.querySelectorAll('[data-hd]').forEach(function(el){
+    el.addEventListener('click',function(){
+      var i=el.dataset.hd; if(i<0||!IMGS[i])return;
+      im.src=IMGS[i]; lb.style.display='flex';
+    });
+  });
+  lb.addEventListener('click',function(){
+    lb.style.display='none'; im.removeAttribute('src');
+  });
+  document.addEventListener('keydown',function(e){
+    if(e.key==='Escape'&&lb.style.display==='flex'){
+      lb.style.display='none'; im.removeAttribute('src');
+    }
+  });
+})();
+"""
+
+# 明细表点击表头排序。纯前端行为，不改变任何统计口径。
+# Client-side table sorting; never affects the aggregated statistics.
+_JS_SORT = """
+(function(){
+  var t=document.getElementById('detail'); if(!t)return;
+  t.querySelectorAll('th').forEach(function(th,i){
+    th.addEventListener('click',function(){
+      var tb=t.tBodies[0],rows=[].slice.call(tb.rows);
+      var dir=th.dataset.dir==='asc'?-1:1; th.dataset.dir=dir===1?'asc':'desc';
+      rows.sort(function(a,b){
+        var x=a.cells[i].dataset.v||a.cells[i].textContent;
+        var y=b.cells[i].dataset.v||b.cells[i].textContent;
+        var nx=parseFloat(x),ny=parseFloat(y);
+        if(!isNaN(nx)&&!isNaN(ny))return (nx-ny)*dir;
+        return String(x).localeCompare(String(y))*dir;
+      });
+      rows.forEach(function(r){tb.appendChild(r);});
+    });
+  });
 })();
 """
 
@@ -539,31 +617,197 @@ def _cover_html(data: ReportData, reg: _ImageRegistry, is_zh: bool) -> str:
 </div></div></section>"""
 
 
+def _photo_cell(ref: PhotoRef, kind: str, reg: "_ImageRegistry") -> str:
+    """
+    一张展示图 + 参数小字；整块可点击，点击后 lightbox 取 hd 版本。
+
+    Render one shown photo with its EXIF caption; clicking opens the hd
+    variant in the lightbox.
+    """
+    hd = reg.uri_index(f"hd:{ref.filename}")
+    img = reg.tag(f"{kind}:{ref.filename}", ref.filename)
+    bits = []
+    if ref.shutter:
+        bits.append(f"{ref.shutter}s")
+    if ref.aperture:
+        bits.append(f"f/{ref.aperture}")
+    if ref.iso:
+        bits.append(f"ISO {ref.iso}")
+    if ref.focal_35mm:
+        bits.append(f"{ref.focal_35mm}mm")
+    cap = f'<div class="cap">{_esc(" · ".join(bits))}</div>' if bits else ""
+    return f'<div data-hd="{hd}">{img}{cap}</div>'
+
+
+def _species_html(data: ReportData, reg: "_ImageRegistry", is_zh: bool) -> str:
+    """
+    鸟种画廊：每种一块，区块按罕见度降序，块内 1 大 + 至多 3 小（spec 5.1 ②）。
+
+    鸟种数不封顶——常驻位图已由懒插入与内容量脱钩（spec D8 / 6.4）。
+
+    Species gallery: one block per species, ordered by rarity descending,
+    one hero plus up to three secondary photos. Species count is never capped.
+    """
+    from core.rarity_tier import tier_name, tier_name_color
+
+    if not data.species:
+        return ""
+    title = "本次鸟种" if is_zh else "Species"
+    unit = "张" if is_zh else " photos"
+    out = [f'<section class="sec wrap"><h2>{title} ({len(data.species)})</h2>']
+    for block in data.species:
+        primary = block.name_cn if is_zh else block.name_en
+        secondary = block.name_en if is_zh else block.name_cn
+        badges = ""
+        if block.tier is not None:
+            color = tier_name_color(block.tier, default="#8a8a8e")
+            badges += (f'<span class="tier" style="color:{_esc(color)}">'
+                       f'{_esc(tier_name(block.tier, is_zh))}</span>')
+        if block.iucn in IUCN_BADGE_SHOWN:
+            badges += f'<span class="iucn">{_esc(block.iucn)}</span>'
+        hero = _photo_cell(block.photos[0], "rep", reg) if block.photos else ""
+        rest = "".join(_photo_cell(r, "small", reg) for r in block.photos[1:])
+        out.append(
+            '<div class="sp"><div class="hd">'
+            f'<span class="cn">{_esc(primary)}</span>'
+            f'<span class="en">{_esc(secondary)}</span>{badges}'
+            f'<span class="cnt">{block.count}{unit}</span></div>'
+            f'<div class="grid">{hero}<div class="rest">{rest}</div></div></div>'
+        )
+    out.append("</section>")
+    return "".join(out)
+
+
+def _stats_html(data: ReportData, is_zh: bool) -> str:
+    """
+    数据区：星级分布条形图 + 命中率 + 器材 + 连拍（spec 5.1 ③）。
+
+    条形图用纯 CSS 宽度百分比绘制，不引入任何图表库。
+
+    Statistics section. Bars are plain CSS widths; no charting library.
+    """
+    title = "数据" if is_zh else "Statistics"
+    labels = {3: "★★★", 2: "★★", 1: "★", 0: "0",
+              -1: ("无鸟" if is_zh else "No bird")}
+    top = max(data.by_rating.values()) or 1
+    bars = []
+    for rating in (3, 2, 1, 0, -1):
+        count = data.by_rating.get(rating, 0)
+        pct = (count / data.total * 100) if data.total else 0.0
+        width = count / top * 320
+        bars.append(f'<div><span style="width:52px">{labels[rating]}</span>'
+                    f'<span class="bar" style="width:{width:.0f}px"></span>'
+                    f'<span>{count} ({pct:.1f}%)</span></div>')
+    hit = (data.by_rating.get(3, 0) / data.total * 100) if data.total else 0.0
+    gear = data.gear
+    kv = []
+    if is_zh:
+        kv.append(f'命中率 <b>{hit:.1f}%</b>')
+        if data.flying:
+            kv.append(f'飞版 <b>{data.flying}</b>')
+        if data.focus_precise:
+            kv.append(f'精焦 <b>{data.focus_precise}</b>')
+        if data.burst_groups:
+            kv.append(f'连拍 <b>{data.burst_groups}</b> 组 · 均 <b>{data.burst_avg:.1f}</b> 张')
+    else:
+        kv.append(f'Hit rate <b>{hit:.1f}%</b>')
+        if data.flying:
+            kv.append(f'In flight <b>{data.flying}</b>')
+        if data.focus_precise:
+            kv.append(f'Sharp focus <b>{data.focus_precise}</b>')
+        if data.burst_groups:
+            kv.append(f'Bursts <b>{data.burst_groups}</b> · avg <b>{data.burst_avg:.1f}</b>')
+    if gear.cameras:
+        kv.append(f'<b>{_esc(gear.cameras[0][0])}</b>')
+    if gear.lenses:
+        kv.append(f'<b>{_esc(gear.lenses[0][0])}</b>')
+    if gear.top_focal:
+        kv.append(f'<b>{gear.top_focal}mm</b>')
+    if gear.iso_min is not None:
+        kv.append(f'ISO <b>{gear.iso_min}–{gear.iso_max}</b>')
+    return (f'<section class="sec wrap"><h2>{title}</h2>'
+            f'<div class="bars">{"".join(bars)}</div>'
+            f'<div class="kv" style="margin-top:20px">{"".join(kv)}</div></section>')
+
+
+def _detail_html(data: ReportData, reg: "_ImageRegistry", is_zh: bool,
+                 with_thumbs: bool) -> str:
+    """
+    折叠明细表（spec 5.1 ④）。with_thumbs=False 时去掉缩略图列。
+
+    数值列写 data-v 属性供表头排序按数值而非字符串比较。
+
+    Collapsible detail table. Numeric cells carry data-v so header sorting
+    compares numbers rather than strings.
+    """
+    title = f"全部照片明细 ({data.total})" if is_zh else f"All photos ({data.total})"
+    heads = (["", "文件名", "鸟种", "★", "精选", "锐度", "美学", "ISO",
+              "快门", "光圈", "焦距", "时间"] if is_zh else
+             ["", "File", "Species", "★", "Picked", "Sharp", "Aesth", "ISO",
+              "Shutter", "Aperture", "Focal", "Time"])
+    if not with_thumbs:
+        heads = heads[1:]
+    rows = []
+    for ref in data.detail:
+        cells = []
+        if with_thumbs:
+            cells.append('<td class="thumbcol">'
+                         f'{reg.tag(f"thumb:{ref.filename}", ref.filename)}</td>')
+        species = (ref.species_cn if is_zh else ref.species_en) or "—"
+        sharp = ref.sharpness or 0.0
+        aesth = ref.aesthetic or 0.0
+        cells += [
+            f'<td>{_esc(ref.filename)}</td>',
+            f'<td>{_esc(species)}</td>',
+            f'<td data-v="{ref.rating}">{ref.rating if ref.rating >= 0 else "—"}</td>',
+            f'<td data-v="{1 if ref.picked else 0}">{"✓" if ref.picked else ""}</td>',
+            f'<td data-v="{sharp:.0f}">{sharp:.0f}</td>',
+            f'<td data-v="{aesth:.0f}">{aesth:.0f}</td>',
+            f'<td data-v="{ref.iso or 0}">{_esc(ref.iso if ref.iso else "—")}</td>',
+            f'<td>{_esc(ref.shutter or "—")}</td>',
+            f'<td>{_esc(ref.aperture or "—")}</td>',
+            f'<td data-v="{ref.focal_35mm or 0}">{_esc(ref.focal_35mm if ref.focal_35mm else "—")}</td>',
+            f'<td>{_esc(ref.captured_at or "—")}</td>',
+        ]
+        rows.append("<tr>" + "".join(cells) + "</tr>")
+    th = "".join(f"<th>{_esc(h)}</th>" for h in heads)
+    return (f'<section class="sec wrap"><details><summary>'
+            f'<h2 style="display:inline">{_esc(title)}</h2></summary>'
+            f'<div class="tablewrap"><table id="detail"><thead><tr>{th}</tr></thead>'
+            f'<tbody>{"".join(rows)}</tbody></table></div></details></section>')
+
+
 def build_html(data: ReportData, encoded: Dict[str, str], *,
                is_zh: bool = True, app_version: str = "",
-               generated_at: str = "") -> str:
+               generated_at: str = "", with_detail_thumbs: bool = True) -> str:
     """
     渲染完整的自包含 HTML 报告。
 
     参数:
         data (ReportData): aggregate() 的输出。
-        encoded (Dict[str, str]): job_id → data URI。缺失项渲染为占位块。
+        encoded (Dict[str, str]): job_id → data URI。缺失项渲染为占位块，
+            不中断渲染（spec 7.2）。
         is_zh (bool): 中文界面为 True，跟随导出时的界面语言（spec D7）。
         app_version (str): 写进页脚的版本号。
         generated_at (str): 写进页脚的生成时间。
+        with_detail_thumbs (bool): 明细表是否带缩略图列。照片总数 > 600 时
+            由调用方传 False（spec 6.4）。
 
     返回:
-        str: 完整 HTML 文档字符串。
+        str: 完整 HTML 文档字符串，可直接以 UTF-8 写入 .html 文件。
 
-    Render the complete self-contained HTML report. Missing images degrade to
-    placeholder blocks rather than aborting the render.
+    Render the complete self-contained HTML report.
     """
     reg = _ImageRegistry(encoded)
-    body = _cover_html(data, reg, is_zh)
+    # 顺序要紧：各区块在渲染时才向 reg 注册图片，故 reg.script() 必须最后调用。
+    # Order matters: blocks register images as they render, so script() comes last.
+    body = (_cover_html(data, reg, is_zh)
+            + _species_html(data, reg, is_zh)
+            + _stats_html(data, is_zh)
+            + _detail_html(data, reg, is_zh, with_detail_thumbs))
     title = _esc(data.dir_name) or "SuperPicky"
-    gen = _esc(generated_at)
-    ver = _esc(app_version)
-    by = f"由 SuperPicky {ver} 生成" if is_zh else f"Generated by SuperPicky {ver}"
+    by = (f"由 SuperPicky {_esc(app_version)} 生成" if is_zh
+          else f"Generated by SuperPicky {_esc(app_version)}")
     return f"""<!DOCTYPE html>
 <html lang="{'zh-Hans' if is_zh else 'en'}">
 <head>
@@ -574,8 +818,11 @@ def build_html(data: ReportData, encoded: Dict[str, str], *,
 </head>
 <body>
 {body}
-<footer>{by} · {gen}<br>https://superpicky.app</footer>
+<div id="lb"><img alt=""></div>
+<footer>{by} · {_esc(generated_at)}<br>https://superpicky.app</footer>
 <script>{reg.script()}</script>
 <script>{_JS_LAZY}</script>
+<script>{_JS_LIGHTBOX}</script>
+<script>{_JS_SORT}</script>
 </body>
 </html>"""

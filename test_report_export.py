@@ -359,3 +359,83 @@ def test_html_is_utf8_roundtrip(tmp_path):
     f.write_text(html, encoding="utf-8")
     assert f.read_text(encoding="utf-8") == html
     assert "白腹海雕_凯恩斯" in f.read_text(encoding="utf-8")
+
+
+# ── Task 4: 鸟种画廊、数据区、折叠明细 ───────────────────────────────────────
+
+def test_species_blocks_all_rendered_no_cap():
+    """
+    用例 9：40 个鸟种全部出块，无一被降级为纯文字。
+
+    spec D8 明确不对鸟种数封顶——内存问题已由 Task 3 的懒插入解决，
+    不该再为它砍掉用户拍到的鸟种。
+    """
+    photos = [_photo(filename=f"s{i}.NEF", bird_species_cn=f"鸟种{i}",
+                     bird_species_en=f"Bird{i}", gbif_rarity_100=float(i))
+              for i in range(40)]
+    data = aggregate(photos)
+    html = build_html(data, {})
+    assert len(data.species) == 40
+    for i in range(40):
+        assert f"鸟种{i}" in html
+
+
+def test_iucn_badge_threshold():
+    """用例 15：LC/NT/DD/NE 不渲染徽标；VU 及以上渲染。"""
+    lc = build_html(aggregate([_photo(iucn_category="LC")]), {})
+    assert 'class="iucn"' not in lc
+    for cat in ("VU", "EN", "CR", "EW", "EX"):
+        html = build_html(aggregate([_photo(iucn_category=cat)]), {})
+        assert 'class="iucn"' in html, f"{cat} 应显示徽标"
+        assert f">{cat}<" in html
+    for cat in ("NT", "DD", "NE"):
+        html = build_html(aggregate([_photo(iucn_category=cat)]), {})
+        assert 'class="iucn"' not in html, f"{cat} 不应显示徽标"
+
+
+def test_detail_table_rendered_with_thumbs_by_default():
+    """明细表默认带缩略图列。"""
+    data = aggregate([_photo(filename="a.NEF")])
+    html = build_html(data, {"thumb:a.NEF": "data:image/jpeg;base64,AAA"})
+    assert "<table" in html
+    assert "a.NEF" in html
+    assert 'class="thumbcol"' in html
+
+
+def test_detail_table_degrades_to_text_when_no_thumbs():
+    """
+    用例 9 后半：with_detail_thumbs=False 时明细表无缩略图列。
+
+    照片总数 > 600 时走此路径——针对文件体积而非内存（spec 6.4）。
+    """
+    data = aggregate([_photo(filename=f"a{i}.NEF") for i in range(3)])
+    html = build_html(data, {}, with_detail_thumbs=False)
+    assert "<table" in html
+    assert 'class="thumbcol"' not in html
+
+
+def test_species_name_follows_language():
+    """is_zh=False 时英文名在前（spec D7）。"""
+    data = aggregate([_photo(bird_species_cn="白腹海雕",
+                             bird_species_en="White-bellied Sea Eagle")])
+    en = build_html(data, {}, is_zh=False)
+    assert en.index("White-bellied Sea Eagle") < en.index("白腹海雕")
+
+
+def test_html_escapes_hostile_species_name():
+    """
+    用例 6 的鸟种名部分（从 Task 3 挪来）：鸟种名里的标签必须被转义。
+
+    原计划把这条放在 Task 3，但鸟种名要到本 Task 的画廊才进入输出，
+    在 Task 3 它会红在正确的实现上。目录名一路的转义已由 Task 3 的
+    test_html_escapes_hostile_dir_name 覆盖。
+
+    Moved from Task 3: species names only reach the output once the
+    gallery lands here.
+    """
+    data = aggregate([_photo(bird_species_cn="<script>alert(1)</script>",
+                             bird_species_en="<img onerror=x>")])
+    html = build_html(data, {})
+    assert "<script>alert(1)</script>" not in html
+    assert "<img onerror=x>" not in html
+    assert "&lt;script&gt;" in html
