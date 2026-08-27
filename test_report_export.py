@@ -17,8 +17,11 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(__file__))
 
+from dataclasses import replace
+
 from core.report_export import (
-    aggregate, collect_image_jobs, encode_preview, preview_availability, IMG_SPECS
+    aggregate, build_html, collect_image_jobs, encode_preview,
+    preview_availability, IMG_SPECS
 )
 from PIL import Image
 
@@ -278,3 +281,81 @@ def test_job_id_includes_path_to_avoid_collisions(tmp_path):
     assert len(paths) == 2
     assert photo1_path in paths
     assert photo2_path in paths
+
+
+# ── Task 3: HTML 骨架、转义与视口懒插入 ──────────────────────────────────────
+
+def test_no_image_src_in_dom():
+    """
+    用例 7（本设计最关键的一条不变量）：输出中不存在任何 <img ... src="data:。
+
+    所有 data URI 只能出现在 JS 数组里，<img> 一律靠 data-idx 由
+    IntersectionObserver 按视口插入。这条一旦被破坏，40 个鸟种的报告
+    常驻位图会飙到 178MB，手机必崩（spec 6.1）。
+    """
+    import re
+    data = aggregate([_photo(filename=f"a{i}.NEF") for i in range(3)])
+    html = build_html(data, {"cover:a0.NEF": "data:image/jpeg;base64,AAA"})
+    assert not re.search(r'<img[^>]*\ssrc\s*=', html), "有图片被直接写进了 src"
+    assert "IntersectionObserver" in html
+    assert "data-idx" in html
+
+
+def test_html_escapes_hostile_dir_name():
+    """
+    用例 6：目录名里的标签必须被转义，不能撕烂页面。
+
+    目录名是 Task 3 就渲染的外部输入（<h1> 与 <title> 各一处）。鸟种名
+    的同类转义在鸟种画廊落地后由 Task 4 覆盖。
+
+    Directory names are user-supplied and rendered by this task; species
+    names get the same treatment once the gallery lands in Task 4.
+    """
+    data = replace(aggregate([_photo()]),
+                   dir_name="<script>alert(1)</script>")
+    html = build_html(data, {})
+    assert "<script>alert(1)</script>" not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_html_escapes_hostile_filename():
+    """文件名同样来自外部，必须转义。"""
+    data = aggregate([_photo(filename="a<b>.NEF")])
+    html = build_html(data, {})
+    assert "a<b>.NEF" not in html
+    assert "a&lt;b&gt;.NEF" in html
+
+
+def test_gps_never_leaks_into_html_when_not_requested():
+    """
+    用例 5：未勾选 GPS 时，坐标数值不得出现在 HTML 全文任何位置
+    （包括注释、JS 字符串、data-* 属性）。
+    """
+    data = aggregate([_photo()], include_gps=False)
+    html = build_html(data, {})
+    assert "16.9186" not in html
+    assert "145.7781" not in html
+    assert "Cairns" in html          # 城市级地点仍应显示
+
+
+def test_gps_rendered_when_requested():
+    """勾选时坐标出现。"""
+    data = aggregate([_photo()], include_gps=True)
+    html = build_html(data, {}, is_zh=True)
+    assert "16.9186" in html
+
+
+def test_html_is_utf8_roundtrip(tmp_path):
+    """
+    用例 12：中文写入读回逐字一致，且声明了 charset。
+
+    中文取自目录名（Task 3 渲染的唯一中文来源）；鸟种名的中文在
+    Task 4 的画廊测试里覆盖。
+    """
+    data = replace(aggregate([_photo()]), dir_name="白腹海雕_凯恩斯")
+    html = build_html(data, {})
+    assert '<meta charset="utf-8">' in html
+    f = tmp_path / "报告_测试.html"
+    f.write_text(html, encoding="utf-8")
+    assert f.read_text(encoding="utf-8") == html
+    assert "白腹海雕_凯恩斯" in f.read_text(encoding="utf-8")

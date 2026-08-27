@@ -14,7 +14,9 @@ it can be unit-tested without a QApplication and reused by a future CLI.
 from __future__ import annotations
 
 import base64
+import html as _html
 import io
+import json
 import os
 from collections import Counter
 from dataclasses import dataclass
@@ -419,3 +421,161 @@ def collect_image_jobs(data: ReportData, *,
         for ref in data.detail:
             _add("thumb", ref)
     return list(jobs.values())
+
+
+# ── HTML 渲染 / HTML rendering ────────────────────────────────────────────────
+
+# 深色单一主题（spec 5.0）：独立 HTML 文件没有宿主主题可跟随，
+# 深色底让鸟类羽色与背景虚化显色更好。
+# Single dark theme: a standalone file has no host theme to follow, and a
+# dark ground renders plumage and bokeh better.
+_CSS_BASE = """
+:root{--bg:#0d0d0f;--card:#16161a;--text:#e8e8ea;--muted:#8a8a8e;
+--line:#26262b;--gold:#ffcc00;--accent:#00d4aa}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);
+font-family:"PingFang SC","Microsoft YaHei",-apple-system,BlinkMacSystemFont,
+"Segoe UI",Roboto,sans-serif;line-height:1.6}
+.wrap{max-width:1100px;margin:0 auto;padding:0 20px}
+.ph{background:var(--card);border:1px dashed var(--line);color:var(--muted);
+display:flex;align-items:center;justify-content:center;font-size:12px;
+min-height:80px;text-align:center;padding:8px;word-break:break-all}
+img{display:block;width:100%;height:auto;background:var(--card)}
+.cover{position:relative;margin-bottom:32px}
+.cover img,.cover .ph{max-height:70vh;object-fit:cover}
+.cover h1{font-size:28px;margin:16px 0 4px}
+.cover .sub{color:var(--muted);font-size:14px}
+.nums{display:flex;gap:28px;margin-top:16px;flex-wrap:wrap}
+.nums div{text-align:center}
+.nums b{display:block;font-size:30px;color:var(--accent)}
+.nums span{font-size:12px;color:var(--muted)}
+footer{color:var(--muted);font-size:12px;text-align:center;
+padding:40px 0;border-top:1px solid var(--line);margin-top:48px}
+"""
+
+# 视口懒插入（spec 6.1）：图片一律不写 src，滚到视口才赋值、滚离即释放，
+# 使常驻位图恒定在几屏之内，与鸟种数、照片数完全无关。
+# Viewport-based lazy insertion keeps resident bitmaps constant regardless
+# of how many species or photos the report contains.
+_JS_LAZY = """
+(function(){
+  var io=new IntersectionObserver(function(es){
+    es.forEach(function(e){
+      var el=e.target,i=el.dataset.idx;
+      if(e.isIntersecting){ if(!el.src&&IMGS[i]) el.src=IMGS[i]; }
+      else { el.removeAttribute('src'); }
+    });
+  },{rootMargin:'200% 0px'});
+  document.querySelectorAll('img[data-idx]').forEach(function(el){io.observe(el);});
+})();
+"""
+
+
+def _esc(value: object) -> str:
+    """HTML 转义。鸟种名/文件名/caption 均为外部输入，必须全部过这里。"""
+    return _html.escape(str(value if value is not None else ""))
+
+
+class _ImageRegistry:
+    """
+    收集 data URI 并分配索引，供 IMGS 数组与 data-idx 配对使用。
+
+    Collects data URIs and hands out indices so the DOM can reference them
+    by data-idx instead of embedding them in src attributes.
+    """
+
+    def __init__(self, encoded: Dict[str, str]) -> None:
+        self._encoded = encoded
+        self._uris: List[str] = []
+        self._index: Dict[str, int] = {}
+
+    def tag(self, job_id: str, alt: str, css_class: str = "") -> str:
+        """
+        返回一个 <img data-idx=..>；job_id 无对应图时返回占位块。
+
+        Return a lazy <img>, or a placeholder block when the image is missing.
+        """
+        uri = self._encoded.get(job_id)
+        if not uri:
+            return f'<div class="ph {css_class}">{_esc(alt)}</div>'
+        if job_id not in self._index:
+            self._index[job_id] = len(self._uris)
+            self._uris.append(uri)
+        cls = f' class="{css_class}"' if css_class else ""
+        return f'<img data-idx="{self._index[job_id]}" alt="{_esc(alt)}"{cls}>'
+
+    def uri_index(self, job_id: str) -> int:
+        """返回该 job 在 IMGS 中的下标；未注册返回 -1（供 lightbox 用）。"""
+        return self._index.get(job_id, -1)
+
+    def script(self) -> str:
+        """产出 IMGS 数组的 <script> 内容。"""
+        return "const IMGS=" + json.dumps(self._uris) + ";"
+
+
+def _cover_html(data: ReportData, reg: _ImageRegistry, is_zh: bool) -> str:
+    """封面：满幅大图 + 标题 + 地点 + 三个大数字（spec 5.1 ①）。"""
+    lab = ("总张数", "鸟种", "精选") if is_zh else ("Photos", "Species", "Picked")
+    img = reg.tag(f"cover:{data.cover.filename}", data.cover.filename) if data.cover else ""
+    when = ""
+    if data.shot_start:
+        when = _esc(data.shot_start)
+        if data.shot_end and data.shot_end != data.shot_start:
+            when += " – " + _esc(data.shot_end)
+    place = _esc(data.location)
+    if data.gps:
+        lat, lon, alt = data.gps
+        place += f" · {lat:.4f}, {lon:.4f}"
+        if alt is not None:
+            place += f" · {alt:.0f}m"
+    sub = " · ".join(x for x in (when, place) if x)
+    return f"""<section class="cover">{img}
+<div class="wrap"><h1>{_esc(data.dir_name)}</h1>
+<div class="sub">{sub}</div>
+<div class="nums">
+<div><b>{data.total}</b><span>{lab[0]}</span></div>
+<div><b>{len(data.species)}</b><span>{lab[1]}</span></div>
+<div><b>{data.picked}</b><span>{lab[2]}</span></div>
+</div></div></section>"""
+
+
+def build_html(data: ReportData, encoded: Dict[str, str], *,
+               is_zh: bool = True, app_version: str = "",
+               generated_at: str = "") -> str:
+    """
+    渲染完整的自包含 HTML 报告。
+
+    参数:
+        data (ReportData): aggregate() 的输出。
+        encoded (Dict[str, str]): job_id → data URI。缺失项渲染为占位块。
+        is_zh (bool): 中文界面为 True，跟随导出时的界面语言（spec D7）。
+        app_version (str): 写进页脚的版本号。
+        generated_at (str): 写进页脚的生成时间。
+
+    返回:
+        str: 完整 HTML 文档字符串。
+
+    Render the complete self-contained HTML report. Missing images degrade to
+    placeholder blocks rather than aborting the render.
+    """
+    reg = _ImageRegistry(encoded)
+    body = _cover_html(data, reg, is_zh)
+    title = _esc(data.dir_name) or "SuperPicky"
+    gen = _esc(generated_at)
+    ver = _esc(app_version)
+    by = f"由 SuperPicky {ver} 生成" if is_zh else f"Generated by SuperPicky {ver}"
+    return f"""<!DOCTYPE html>
+<html lang="{'zh-Hans' if is_zh else 'en'}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{title}</title>
+<style>{_CSS_BASE}</style>
+</head>
+<body>
+{body}
+<footer>{by} · {gen}<br>https://superpicky.app</footer>
+<script>{reg.script()}</script>
+<script>{_JS_LAZY}</script>
+</body>
+</html>"""
