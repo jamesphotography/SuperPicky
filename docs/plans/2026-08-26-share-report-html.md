@@ -1977,9 +1977,11 @@ The actual generation runs in a worker thread owned by the browser window.
 
 from typing import Dict
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QLabel,
                                QVBoxLayout)
+
+from core.report_export import DETAIL_THUMB_LIMIT, SIZE_WARN_BYTES
+from ui.icon_utils import checkbox_indicator_qss
 
 
 class ReportExportDialog(QDialog):
@@ -2020,7 +2022,7 @@ class ReportExportDialog(QDialog):
             warn.setStyleSheet("color:#ffcc00")
             layout.addWidget(warn)
 
-        if est_bytes >= 80 * 1024 * 1024:
+        if est_bytes >= SIZE_WARN_BYTES:      # 阈值只在 core 定义一处
             big = QLabel(i18n.t("report_export.too_big"))
             big.setWordWrap(True)
             big.setStyleSheet("color:#ffcc00")
@@ -2031,6 +2033,8 @@ class ReportExportDialog(QDialog):
         self._gps = QCheckBox(i18n.t("report_export.include_gps"))
         self._gps.setChecked(False)
         self._gps.setToolTip(i18n.t("report_export.include_gps_tip"))
+        # 全局默认是方框指示器，本项目统一用圆圈/带勾圆圈（见 CLAUDE.md）。
+        self._gps.setStyleSheet(checkbox_indicator_qss())
         layout.addWidget(self._gps)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -2049,7 +2053,6 @@ class ReportExportDialog(QDialog):
 
         Return the chosen export options.
         """
-        from core.report_export import DETAIL_THUMB_LIMIT
         return {
             "include_gps": self._gps.isChecked(),
             "with_detail_thumbs": self._total <= DETAIL_THUMB_LIMIT,

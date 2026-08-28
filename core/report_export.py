@@ -18,6 +18,7 @@ import html as _html
 import io
 import json
 import os
+import re
 from collections import Counter
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
@@ -926,3 +927,70 @@ def build_html(data: ReportData, encoded: Dict[str, str], *,
 <script>{_JS_PRINT}</script>
 </body>
 </html>"""
+
+
+# ── 导出前预检 / Pre-export estimates ────────────────────────────────────────
+
+# 各档单张编码后的经验均值（字节），用于导出前预估（spec 6.2 / 6.4）。
+# Empirical per-image byte averages used for the pre-export size estimate.
+_EST_BYTES = {"cover": 400_000, "rep": 110_000, "small": 32_000,
+              "hd": 150_000, "thumb": 12_000}
+
+# base64 编码膨胀系数 / base64 inflation factor.
+_BASE64_FACTOR = 1.33
+
+# 明细表带缩略图的照片数上限（spec 6.4，针对文件体积而非内存）。
+# Above this photo count the detail table drops its thumbnail column.
+DETAIL_THUMB_LIMIT = 600
+
+# 提示用户体积偏大的阈值（字节）：常见 IM 与邮件附件上限在 100MB 附近。
+# Warn above this size; common IM and email attachment limits sit near 100MB.
+SIZE_WARN_BYTES = 80 * 1024 * 1024
+
+
+def estimate_size(job_count_by_kind: Dict[str, int]) -> int:
+    """
+    按各档任务数预估最终 HTML 文件字节数。
+
+    参数:
+        job_count_by_kind (Dict[str, int]): 档位名 → 该档任务数。
+
+    返回:
+        int: 预估字节数（已计入 base64 膨胀）。
+
+    Estimate the final HTML size in bytes from per-tier job counts.
+    """
+    raw = sum(_EST_BYTES.get(kind, 0) * count
+              for kind, count in job_count_by_kind.items())
+    return int(raw * _BASE64_FACTOR)
+
+
+def build_output_path(directory: str, dir_name: str, is_zh: bool,
+                      today: str) -> str:
+    """
+    构造报告输出路径：目录根、非隐藏目录，文件名跟随界面语言（spec D5）。
+
+    参数:
+        directory (str): 选鸟目录绝对路径。
+        dir_name (str): 用于文件名的目录显示名。
+        is_zh (bool): 中文界面为 True。
+        today (str): YYYY-MM-DD。
+
+    返回:
+        str: 不与现有文件冲突的绝对路径（冲突时依次加 _2、_3…）。
+
+    Build the report output path in the picking directory's root. The filename
+    follows the UI language; collisions get a numeric suffix instead of
+    overwriting an existing report.
+    """
+    # 目录名可能含路径分隔符或非法字符，须净化，否则会穿出目标目录。
+    # Sanitize: a name containing separators must not escape the target dir.
+    safe = re.sub(r'[\\/:*?"<>|]', "_", dir_name).strip() or "report"
+    stem = (f"SuperPicky报告_{safe}_{today}" if is_zh
+            else f"SuperPicky-Report-{safe}-{today}")
+    candidate = os.path.join(directory, stem + ".html")
+    index = 2
+    while os.path.exists(candidate):
+        candidate = os.path.join(directory, f"{stem}_{index}.html")
+        index += 1
+    return candidate

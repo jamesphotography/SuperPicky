@@ -20,8 +20,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 from dataclasses import replace
 
 from core.report_export import (
-    aggregate, build_html, collect_image_jobs, encode_preview,
-    preview_availability, IMG_SPECS
+    aggregate, build_html, build_output_path, collect_image_jobs,
+    encode_preview, estimate_size, preview_availability, IMG_SPECS
 )
 from PIL import Image
 
@@ -586,3 +586,38 @@ def test_print_expands_details_via_js_not_css():
     assert "matchMedia" in html          # Safari 兜底
     assert ".open=true" in html
     assert ".open=false" in html         # 打印后恢复原折叠状态
+
+
+# ── Task 6: 输出路径与体积预估 ───────────────────────────────────────────────
+
+def test_build_output_path_language_and_collision(tmp_path):
+    """
+    spec D5：输出到目录根、非隐藏目录；文件名跟随界面语言；同名加 _2 不覆盖。
+    """
+    d = str(tmp_path)
+    zh = build_output_path(d, "晨拍", is_zh=True, today="2026-08-26")
+    assert os.path.dirname(zh) == d
+    assert os.path.basename(zh) == "SuperPicky报告_晨拍_2026-08-26.html"
+    assert ".superpicky" not in zh
+
+    en = build_output_path(d, "morning", is_zh=False, today="2026-08-26")
+    assert os.path.basename(en) == "SuperPicky-Report-morning-2026-08-26.html"
+
+    with open(zh, "w", encoding="utf-8") as fh:
+        fh.write("x")
+    second = build_output_path(d, "晨拍", is_zh=True, today="2026-08-26")
+    assert os.path.basename(second) == "SuperPicky报告_晨拍_2026-08-26_2.html"
+
+
+def test_build_output_path_sanitizes_separators(tmp_path):
+    """目录名含路径分隔符时不得穿出目标目录。"""
+    out = build_output_path(str(tmp_path), "a/b\\c", is_zh=True, today="2026-08-26")
+    assert os.path.dirname(out) == str(tmp_path)
+
+
+def test_estimate_size_scales_with_job_counts():
+    """预估随任务数线性增长，且含 base64 膨胀。"""
+    small = estimate_size({"cover": 1, "rep": 1, "small": 3, "hd": 4, "thumb": 10})
+    big = estimate_size({"cover": 1, "rep": 40, "small": 120, "hd": 160, "thumb": 600})
+    assert big > small * 5
+    assert small > 0
