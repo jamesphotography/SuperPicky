@@ -55,3 +55,38 @@ def test_export_report_guards_empty_directory():
     finally:
         custom_dialogs.StyledMessageBox.warning = original
         window.deleteLater()
+
+
+def test_report_export_locale_keys_match():
+    """
+    中英文 locale 的 report_export 段键集必须完全一致。
+
+    缺键会让界面显示原始 key（如 "report_export.title"），
+    这类问题在中文环境下测不出来。
+
+    The two locale files must expose an identical key set; a missing key
+    renders as the raw key string and would go unnoticed in one language.
+    """
+    import json
+    here = os.path.dirname(__file__)
+    with open(os.path.join(here, "locales/zh_CN.json"), encoding="utf-8") as fh:
+        zh = json.load(fh)
+    with open(os.path.join(here, "locales/en_US.json"), encoding="utf-8") as fh:
+        en = json.load(fh)
+    assert "report_export" in zh and "report_export" in en
+    assert set(zh["report_export"]) == set(en["report_export"])
+
+
+def test_report_export_keys_cover_all_usages():
+    """代码中用到的每个 report_export.* 键都必须在 locale 中存在。"""
+    import json
+    import re
+    here = os.path.dirname(__file__)
+    with open(os.path.join(here, "locales/zh_CN.json"), encoding="utf-8") as fh:
+        zh = json.load(fh)["report_export"]
+    used = set()
+    for name in ("ui/results_browser_window.py", "ui/report_export_dialog.py"):
+        with open(os.path.join(here, name), encoding="utf-8") as fh:
+            used |= set(re.findall(r'report_export\.(\w+)', fh.read()))
+    missing = used - set(zh)
+    assert not missing, f"locale 缺少这些键: {sorted(missing)}"

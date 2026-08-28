@@ -1466,5 +1466,21 @@
     "consent_body": "This is an optional feature: the photos you select will be sent to the developer solely to help improve bird identification. GPS location and EXIF shooting data are automatically stripped on export, so your privacy is protected. Continue?",
     "submit_button": "📤 Submit Corrections",
     "pack_error": "Packaging failed: {error}"
+  },
+  "report_export": {
+    "button": "Export Report",
+    "button_tip": "Export this session's results as a shareable HTML file",
+    "cancel": "Cancel",
+    "estimate": "About {size} MB, roughly {secs} seconds",
+    "include_gps": "Include exact GPS coordinates",
+    "include_gps_tip": "Leave unchecked when sharing — rare bird locations can spread",
+    "missing_previews": "{count} photos have no usable preview and will show as placeholders",
+    "no_photos": "No photos available to export",
+    "previews_gone": "No preview found for {count} photos (temporary files may have been cleaned up).\nYou can generate a text-only report, or re-process the directory first.",
+    "text_only": "Text-only report",
+    "title": "Export Report",
+    "too_big": "Large file — some chat apps and mail servers cap attachments near 100MB",
+    "working": "Generating report…",
+    "write_failed": "Failed to write report: {error}"
   }
 }
