@@ -15,6 +15,7 @@ import os
 import subprocess
 import sys
 from collections import Counter
+from dataclasses import replace
 from datetime import datetime
 
 from PySide6.QtWidgets import (
@@ -1068,6 +1069,17 @@ class ResultsBrowserWindow(QMainWindow):
         self._compare_btn.clicked.connect(self._enter_comparison)
         layout.addWidget(self._compare_btn)
 
+        # 导出报告：把当前载入的全量照片聚合成一个可分享的 HTML（spec D4）。
+        # 刻意**不受筛选面板影响**——报告的统计口径必须是「这次拍的全部」，
+        # 跟随筛选会让命中率变成 62/62=100% 这种无意义的数字。
+        # Export report over the full loaded set, never the filtered view.
+        self._export_btn = QPushButton(self.i18n.t("report_export.button"))
+        self._export_btn.setObjectName("secondary")
+        self._export_btn.setFixedHeight(32)
+        self._export_btn.setToolTip(self.i18n.t("report_export.button_tip"))
+        self._export_btn.clicked.connect(self._export_report)
+        layout.addWidget(self._export_btn)
+
         # Apple Photos 导入严格限于 macOS；模块只在用户触发时惰性加载，Windows
         # 启动和打包运行路径不导入任何 AppleScript 控制代码。
         # Apple Photos import is macOS-only. Its controller is loaded lazily on
@@ -1274,6 +1286,101 @@ class ResultsBrowserWindow(QMainWindow):
         """P2: 隐藏结果浏览器，通过 closed 信号通知主窗口恢复显示。"""
         self.hide()
         self.closed.emit()
+
+    @Slot()
+    def _export_report(self) -> None:
+        """
+        导出可分享的 HTML 报告。
+
+        口径为当前载入的**全量**照片（`self._all_photos`），不跟随筛选面板
+        （spec D4）。路径先经 _resolve_photo_paths 解析为绝对路径再交给生成器
+        ——report.db 存的是相对路径，生成器不自行拼接（spec 4.2）。
+
+        Export the shareable HTML report over the full loaded photo set.
+        """
+        import datetime
+
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+
+        from constants import APP_VERSION
+        from core.report_export import (aggregate, build_html, collect_image_jobs,
+                                        encode_preview, estimate_size,
+                                        build_output_path, preview_availability,
+                                        write_report_atomically,
+                                        DETAIL_THUMB_LIMIT)
+        from ui.report_export_dialog import ReportExportDialog
+        from ui.custom_dialogs import StyledMessageBox
+
+        if not self._all_photos or not self._directory:
+            StyledMessageBox.warning(self, self.i18n.t("messages.hint"),
+                                     self.i18n.t("report_export.no_photos"))
+            return
+
+        rows = [self._resolve_photo_paths(p) for p in self._all_photos]
+        available, total = preview_availability(rows)
+
+        # 预检 < 50%：拦住并说明原因（spec 7.1）。预览缓存被 keep_temp_files
+        # 关掉后清理，是本功能最可能发生的失败。
+        if total and available / total < 0.5:
+            reply = StyledMessageBox.question(
+                self, self.i18n.t("report_export.title"),
+                self.i18n.t("report_export.previews_gone", count=total - available),
+                yes_text=self.i18n.t("report_export.text_only"),
+                no_text=self.i18n.t("labels.no"))
+            if reply != StyledMessageBox.Yes:
+                return
+
+        with_thumbs = total <= DETAIL_THUMB_LIMIT
+        probe = aggregate(rows, include_gps=False)
+        jobs = collect_image_jobs(probe, with_detail_thumbs=with_thumbs)
+        counts = {}
+        for job in jobs:
+            kind = job.job_id.split(":", 1)[0]
+            counts[kind] = counts.get(kind, 0) + 1
+        est_bytes = estimate_size(counts)
+        est_secs = max(1, int(len(jobs) * 0.06))
+
+        dialog = ReportExportDialog(self.i18n, available, total, est_bytes,
+                                    est_secs, self)
+        if dialog.exec() != ReportExportDialog.Accepted:
+            return
+        options = dialog.get_options()
+
+        data = aggregate(rows, include_gps=options["include_gps"])
+        data = replace(data, dir_name=os.path.basename(self._directory) or self._directory)
+        jobs = collect_image_jobs(data,
+                                  with_detail_thumbs=options["with_detail_thumbs"])
+
+        progress = QProgressDialog(self.i18n.t("report_export.working"),
+                                   self.i18n.t("report_export.cancel"),
+                                   0, len(jobs), self)
+        progress.setWindowModality(Qt.WindowModal)
+        encoded = {}
+        for index, job in enumerate(jobs):
+            if progress.wasCanceled():
+                return
+            uri = encode_preview(job.path, job.max_edge, job.quality)
+            if uri:
+                encoded[job.job_id] = uri
+            progress.setValue(index + 1)
+        progress.close()
+
+        is_zh = self.i18n.current_lang.startswith("zh")
+        html = build_html(
+            data, encoded, is_zh=is_zh, app_version=APP_VERSION,
+            generated_at=datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+            with_detail_thumbs=options["with_detail_thumbs"])
+        out = build_output_path(self._directory, data.dir_name, is_zh,
+                                datetime.date.today().isoformat())
+        try:
+            write_report_atomically(out, html)
+        except OSError as exc:
+            StyledMessageBox.warning(self, self.i18n.t("errors.error_title"),
+                                     self.i18n.t("report_export.write_failed",
+                                                 error=str(exc)))
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(out))
 
     def _resolve_photo_paths(self, photo: dict) -> dict:
         _PATH_KEYS = ('original_path', 'current_path', 'temp_jpeg_path',

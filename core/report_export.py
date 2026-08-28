@@ -658,7 +658,12 @@ class _ImageRegistry:
         """
         返回一个 <img data-idx=..>；job_id 无对应图时返回占位块。
 
+        job_id 必须与 collect_image_jobs 产出的一致（`f"{kind}:{ref.path}"`），
+        对不上会静默退化成占位块——报告看着生成成功、实际一张图都没有。
+
         Return a lazy <img>, or a placeholder block when the image is missing.
+        The job_id must match collect_image_jobs exactly, or every image
+        silently degrades to a placeholder.
         """
         uri = self._encoded.get(job_id)
         if not uri:
@@ -681,7 +686,11 @@ class _ImageRegistry:
 def _cover_html(data: ReportData, reg: _ImageRegistry, is_zh: bool) -> str:
     """封面：满幅大图 + 标题 + 地点 + 三个大数字（spec 5.1 ①）。"""
     lab = ("总张数", "鸟种", "精选") if is_zh else ("Photos", "Species", "Picked")
-    img = reg.tag(f"cover:{data.cover.filename}", data.cover.filename) if data.cover else ""
+    # 键用 path 不用 filename：必须与 collect_image_jobs 的 job_id 同构，
+    # 且合并报告里不同子目录可能有同名文件，用文件名会互相顶替。
+    # Key by path (not filename) to match collect_image_jobs and to keep
+    # same-named files from different sub-dirs apart in merged reports.
+    img = reg.tag(f"cover:{data.cover.path}", data.cover.filename) if data.cover else ""
     when = ""
     if data.shot_start:
         when = _esc(data.shot_start)
@@ -711,8 +720,8 @@ def _photo_cell(ref: PhotoRef, kind: str, reg: "_ImageRegistry") -> str:
     Render one shown photo with its EXIF caption; clicking opens the hd
     variant in the lightbox.
     """
-    hd = reg.uri_index(f"hd:{ref.filename}")
-    img = reg.tag(f"{kind}:{ref.filename}", ref.filename)
+    hd = reg.uri_index(f"hd:{ref.path}")
+    img = reg.tag(f"{kind}:{ref.path}", ref.filename)
     bits = []
     if ref.shutter:
         bits.append(f"{ref.shutter}s")
@@ -850,7 +859,7 @@ def _detail_html(data: ReportData, reg: "_ImageRegistry", is_zh: bool,
         cells = []
         if with_thumbs:
             cells.append('<td class="thumbcol">'
-                         f'{reg.tag(f"thumb:{ref.filename}", ref.filename)}</td>')
+                         f'{reg.tag(f"thumb:{ref.path}", ref.filename)}</td>')
         species = (ref.species_cn if is_zh else ref.species_en) or "—"
         sharp = ref.sharpness or 0.0
         aesth = ref.aesthetic or 0.0
@@ -994,3 +1003,34 @@ def build_output_path(directory: str, dir_name: str, is_zh: bool,
         candidate = os.path.join(directory, f"{stem}_{index}.html")
         index += 1
     return candidate
+
+
+def write_report_atomically(path: str, html: str) -> None:
+    """
+    原子写入报告文件：先写 .tmp，成功后 os.replace 重命名。
+
+    导出耗时十几秒，中途取消或异常若直接写目标文件会留下半截 HTML，
+    用户双击打开就是残页（spec 7.2）。
+
+    参数:
+        path (str): 目标绝对路径。
+        html (str): 完整 HTML 文本。
+
+    异常:
+        OSError: 磁盘空间不足、目录只读等；此时不会留下任何残留文件。
+
+    Write the report atomically: temp file first, then os.replace. Prevents a
+    half-written HTML from ever appearing at the target path.
+    """
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(html)
+        os.replace(tmp, path)
+    except Exception:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+        raise

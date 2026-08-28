@@ -21,7 +21,8 @@ from dataclasses import replace
 
 from core.report_export import (
     aggregate, build_html, build_output_path, collect_image_jobs,
-    encode_preview, estimate_size, preview_availability, IMG_SPECS
+    encode_preview, estimate_size, preview_availability,
+    write_report_atomically, IMG_SPECS
 )
 from PIL import Image
 
@@ -295,10 +296,13 @@ def test_no_image_src_in_dom():
     """
     import re
     data = aggregate([_photo(filename=f"a{i}.NEF") for i in range(3)])
-    html = build_html(data, {"cover:a0.NEF": "data:image/jpeg;base64,AAA"})
+    # 键必须与 collect_image_jobs 产出的 job_id 同构，故从 data 直接取
+    html = build_html(data, {f"cover:{data.cover.path}": "data:image/jpeg;base64,AAA"})
     assert not re.search(r'<img[^>]*\ssrc\s*=', html), "有图片被直接写进了 src"
     assert "IntersectionObserver" in html
-    assert "data-idx" in html
+    # 必须断言 DOM 里真有 <img data-idx=：裸的 "data-idx" 会被 _JS_LAZY 里的
+    # 选择器字符串 img[data-idx] 蒙混过关（两端键分叉时就是这么漏掉的）。
+    assert "<img data-idx=" in html
 
 
 def test_html_escapes_hostile_dir_name():
@@ -396,7 +400,7 @@ def test_iucn_badge_threshold():
 def test_detail_table_rendered_with_thumbs_by_default():
     """明细表默认带缩略图列。"""
     data = aggregate([_photo(filename="a.NEF")])
-    html = build_html(data, {"thumb:a.NEF": "data:image/jpeg;base64,AAA"})
+    html = build_html(data, {f"thumb:{data.detail[0].path}": "data:image/jpeg;base64,AAA"})
     assert "<table" in html
     assert "a.NEF" in html
     assert 'class="thumbcol"' in html
@@ -621,3 +625,73 @@ def test_estimate_size_scales_with_job_counts():
     big = estimate_size({"cover": 1, "rep": 40, "small": 120, "hd": 160, "thumb": 600})
     assert big > small * 5
     assert small > 0
+
+
+# ── Task 7: 原子写 ───────────────────────────────────────────────────────────
+
+def test_write_report_atomically_leaves_no_tmp(tmp_path):
+    """用例 13：成功后无 .tmp 残留，内容为 UTF-8。"""
+    target = str(tmp_path / "r.html")
+    write_report_atomically(target, "<html>白腹海雕</html>")
+    assert os.path.exists(target)
+    assert not any(p.name.endswith(".tmp") for p in tmp_path.iterdir())
+    with open(target, encoding="utf-8") as fh:
+        assert "白腹海雕" in fh.read()
+
+
+def test_write_report_atomically_no_partial_file_on_failure(tmp_path, monkeypatch):
+    """用例 13 后半：写入中途失败时不得产出成品文件。"""
+    import core.report_export as mod
+    target = str(tmp_path / "r.html")
+
+    def boom(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(mod.os, "replace", boom)
+    with pytest.raises(OSError):
+        write_report_atomically(target, "<html></html>")
+    assert not os.path.exists(target)
+    assert not any(p.name.endswith(".tmp") for p in tmp_path.iterdir())
+
+
+# ── 端到端：编码结果必须真的进到 HTML 里 ─────────────────────────────────────
+
+def test_encoded_images_actually_reach_the_html(tmp_path):
+    """
+    端到端回归钉：collect_image_jobs 产出的 job_id 必须与渲染端查表所用的键
+    完全一致，否则每一张图都静默退化成占位块——报告表面生成成功、实际一张
+    图都没有，而各自为政的单元测试全是绿的。
+
+    两端确实分叉过：任务侧用 f"{kind}:{ref.path}"（绝对路径），渲染侧用
+    f"{kind}:{ref.filename}"（文件名），encoded.get() 永远取不到值。键统一
+    用 path 而非 filename——合并报告里不同子目录的同名文件会互相顶替，
+    渲染出张冠李戴的图。
+
+    End-to-end pin: the job_id produced by collect_image_jobs must match the
+    key the renderer looks up, or every image silently degrades to a
+    placeholder while every isolated unit test still passes.
+    """
+    rows = []
+    for i in range(3):
+        jpg = tmp_path / f"DSC_{i}.jpg"
+        Image.new("RGB", (900, 600), (40 + i * 40, 90, 140)).save(jpg, quality=85)
+        rows.append(_photo(filename=f"DSC_{i}.NEF",
+                           current_path=str(tmp_path / f"DSC_{i}.NEF"),
+                           temp_jpeg_path=str(jpg),
+                           bird_species_cn=f"鸟种{i}", bird_species_en=f"Bird{i}"))
+
+    data = aggregate(rows)
+    jobs = collect_image_jobs(data, with_detail_thumbs=True)
+    assert jobs, "应至少有封面与鸟种图任务"
+
+    encoded = {}
+    for job in jobs:
+        uri = encode_preview(job.path, job.max_edge, job.quality)
+        assert uri, f"{job.job_id} 编码失败"
+        encoded[job.job_id] = uri
+
+    html = build_html(data, encoded)
+    assert "<img data-idx=" in html, "编码好的图一张都没进 DOM"
+    assert 'class="ph' not in html, "仍有占位块，说明有 job_id 对不上"
+    # IMGS 数组里的条目数应与实际用到的图片数一致
+    assert html.count("<img data-idx=") >= len(data.species) + 1

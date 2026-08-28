@@ -858,7 +858,7 @@ def build_html(data: ReportData, encoded: Dict[str, str], *,
                generated_at: str = "") -> str: ...
 ```
 
-`encoded` 是 `job_id -> data URI` 映射（Task 2 的 `ImageJob.job_id` 为键）。缺失的 job_id 渲染为占位块。
+`encoded` 是 `job_id -> data URI` 映射（Task 2 的 `ImageJob.job_id` 为键，即 `f"{kind}:{ref.path}"`——**绝对路径而非文件名**：既要与 collect_image_jobs 完全一致，也因为合并报告里不同子目录可能有同名文件，用文件名会互相顶替）。缺失的 job_id 渲染为占位块。
 
 本 Task 只做骨架 + 图片机制 + 封面；鸟种画廊、数据区、明细表在 Task 4；打印样式在 Task 5。
 
@@ -877,10 +877,12 @@ def test_no_image_src_in_dom():
     """
     import re
     data = aggregate([_photo(filename=f"a{i}.NEF") for i in range(3)])
-    html = build_html(data, {"cover:a0.NEF": "data:image/jpeg;base64,AAA"})
+    html = build_html(data, {f"cover:{data.cover.path}": "data:image/jpeg;base64,AAA"})
     assert not re.search(r'<img[^>]*\ssrc\s*=', html), "有图片被直接写进了 src"
     assert "IntersectionObserver" in html
-    assert "data-idx" in html
+    # 必须断言 DOM 里真有 <img data-idx=：裸的 "data-idx" 会被 _JS_LAZY 的
+    # 选择器字符串 img[data-idx] 蒙混过关。
+    assert "<img data-idx=" in html
 
 
 def test_html_escapes_hostile_species_name():
@@ -1029,7 +1031,7 @@ class _ImageRegistry:
 def _cover_html(data: ReportData, reg: _ImageRegistry, is_zh: bool) -> str:
     """封面：满幅大图 + 标题 + 地点 + 三个大数字（spec 5.1 ①）。"""
     lab = ("总张数", "鸟种", "精选") if is_zh else ("Photos", "Species", "Picked")
-    img = reg.tag(f"cover:{data.cover.filename}", data.cover.filename) if data.cover else ""
+    img = reg.tag(f"cover:{data.cover.path}", data.cover.filename) if data.cover else ""
     when = ""
     if data.shot_start:
         when = _esc(data.shot_start)
@@ -1167,7 +1169,7 @@ def test_iucn_badge_threshold():
 def test_detail_table_rendered_with_thumbs_by_default():
     """明细表默认带缩略图列。"""
     data = aggregate([_photo(filename="a.NEF")])
-    html = build_html(data, {"thumb:a.NEF": "data:image/jpeg;base64,AAA"})
+    html = build_html(data, {f"thumb:{data.detail[0].path}": "data:image/jpeg;base64,AAA"})
     assert "<table" in html
     assert "a.NEF" in html
     assert 'class="thumbcol"' in html
@@ -1314,8 +1316,8 @@ def _photo_cell(ref: PhotoRef, kind: str, reg: "_ImageRegistry") -> str:
     Render one shown photo with its EXIF caption; clicking opens the hd
     variant in the lightbox.
     """
-    hd = reg.uri_index(f"hd:{ref.filename}")
-    img = reg.tag(f"{kind}:{ref.filename}", ref.filename)
+    hd = reg.uri_index(f"hd:{ref.path}")
+    img = reg.tag(f"{kind}:{ref.path}", ref.filename)
     bits = []
     if ref.shutter:
         bits.append(f"{ref.shutter}s")
@@ -1451,7 +1453,7 @@ def _detail_html(data: ReportData, reg: "_ImageRegistry", is_zh: bool,
         cells = []
         if with_thumbs:
             cells.append('<td class="thumbcol">'
-                         f'{reg.tag(f"thumb:{ref.filename}", ref.filename)}</td>')
+                         f'{reg.tag(f"thumb:{ref.path}", ref.filename)}</td>')
         species = (ref.species_cn if is_zh else ref.species_en) or "—"
         sharp = ref.sharpness or 0.0
         aesth = ref.aesthetic or 0.0
