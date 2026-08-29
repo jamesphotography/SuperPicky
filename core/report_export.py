@@ -79,6 +79,10 @@ class SpeciesBlock:
     tier: Optional[int]
     iucn: Optional[str]
     photos: List[PhotoRef]
+    # 鸟种颜值（iRateBird 指数 0-100），是**鸟种级**属性而非单张照片的，
+    # 故挂在这里而不是 PhotoRef 上。无数据为 None。
+    # Species-level beauty index (0-100); not a per-photo property.
+    beauty: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -110,7 +114,6 @@ class ReportData:
     gear: GearStats
     burst_groups: int
     burst_avg: float
-    detail: List[PhotoRef]
 
 
 def preview_candidates(row: dict) -> List[str]:
@@ -136,6 +139,102 @@ def preview_candidates(row: dict) -> List[str]:
             jpeg_sidecar = sibling_jpeg(val)
             _add(jpeg_sidecar)
     return out
+
+
+def _dedupe_bursts(rows: List[dict]) -> List[dict]:
+    """
+    同一连拍组只保留一张，用于挑选鸟种画廊要展示的照片。
+
+    参数:
+        rows (List[dict]): 已按展示优先级**降序排好**的照片记录。
+
+    返回:
+        List[dict]: 每个 burst_id 只剩一条（保留输入顺序里最靠前的那条）；
+        burst_id 为空的记录各自独立，全部保留。
+
+    不去重时，一个鸟种的前 4 张极可能来自同一次连拍——画面几乎一模一样，
+    版面上占了四格却只讲了一件事。入参必须是排好序的，这样每组留下的就是
+    该组质量最高的一张，而不是快门顺序上的第一张。
+
+    Keep one photo per burst so a species' gallery doesn't show four nearly
+    identical frames. Input must already be sorted by display priority, so the
+    survivor of each burst is its best frame rather than its first shutter.
+    """
+    seen: set = set()
+    out: List[dict] = []
+    for row in rows:
+        burst_id = row.get("burst_id")
+        if burst_id is not None:
+            if burst_id in seen:
+                continue
+            seen.add(burst_id)
+        out.append(row)
+    return out
+
+
+def format_shutter(value: object) -> str:
+    """
+    把快门速度显示成摄影惯例的写法。
+
+    参数:
+        value (object): report.db 的 shutter_speed，通常是秒数（0.0008），
+            也可能已经是 "1/1250" 这类字符串。
+
+    返回:
+        str: 高速快门写作 `1/1250s`，慢门写作 `1.3s`；无值返回空串。
+
+    数据库存的是秒数，直接印出来就是 `0.0008s`——对摄影师完全不可读，
+    没人用小数报快门。1 秒以下取倒数写成分数，1 秒以上保留小数。
+
+    The DB stores raw seconds; printing them verbatim yields "0.0008s", which
+    no photographer reads. Sub-second values become 1/N.
+    """
+    if value is None or value == "":
+        return ""
+    text = str(value).strip()
+    if "/" in text:                 # 已是 1/1250 形式，原样带上单位
+        return f"{text}s"
+    try:
+        seconds = float(text)
+    except ValueError:
+        return text                 # 无法解析就原样输出，不猜
+    if seconds <= 0:
+        return text
+    if seconds >= 1:
+        return f"{seconds:g}s"
+    return f"1/{round(1 / seconds):g}s"
+
+
+def format_minute(value: object) -> str:
+    """
+    把 EXIF 时间截到分钟，并把日期分隔符规范成连字符。
+
+    参数:
+        value (object): EXIF 的 `date_time_original`，形如
+            `2026:08:28 08:29:53`。
+
+    返回:
+        str: 形如 `2026-08-28 08:29`；无法识别时原样返回。
+
+    EXIF 用冒号分隔日期是它的内部格式，直接呈现给读者会读成时间；秒对
+    一次外拍的起止时间也没有意义。
+
+    Trim EXIF timestamps to the minute and normalize the date separators —
+    EXIF's colon-separated date is an internal format, and seconds carry no
+    meaning for a session's start/end.
+    """
+    if not value:
+        return ""
+    text = str(value).strip()
+    parts = text.split(" ")
+    if len(parts) != 2:
+        return text
+    date, clock = parts
+    date = date.replace(":", "-")
+    bits = clock.split(":")
+    if len(bits) >= 2:
+        clock = f"{bits[0]}:{bits[1]}"
+    return f"{date} {clock}"
 
 
 def _to_ref(row: dict) -> PhotoRef:
@@ -269,7 +368,8 @@ def aggregate(photos: List[dict], *, include_gps: bool = False,
             count=len(rows),
             tier=gbif_score_to_tier(head.get("gbif_rarity_100")),
             iucn=head.get("iucn_category"),
-            photos=[_to_ref(r) for r in ordered[:per_species]],
+            photos=[_to_ref(r) for r in _dedupe_bursts(ordered)[:per_species]],
+            beauty=head.get("aesthetic_index"),
         ))
     # 罕见度降序；tier 为 None 视为最低，同 tier 时张数多者在前。
     blocks.sort(key=lambda b: (b.tier if b.tier is not None else -1, b.count),
@@ -310,7 +410,6 @@ def aggregate(photos: List[dict], *, include_gps: bool = False,
         gear=_gear_stats(photos),
         burst_groups=burst_groups,
         burst_avg=burst_avg,
-        detail=[_to_ref(r) for r in photos],
     )
 
 
@@ -318,10 +417,7 @@ def aggregate(photos: List[dict], *, include_gps: bool = False,
 # Size tiers: (max edge, JPEG quality)
 IMG_SPECS = {
     "cover": (1800, 82),
-    "rep":   (900, 80),
-    "small": (400, 78),
-    "hd":    (1200, 80),
-    "thumb": (160, 72),
+    "shot":  (1000, 75),
 }
 
 
@@ -389,8 +485,65 @@ def encode_preview(path: str, max_edge: int, quality: int) -> Optional[str]:
         return None
 
 
-def collect_image_jobs(data: ReportData, *,
-                       with_detail_thumbs: bool = True) -> List[ImageJob]:
+DEFAULT_RATIO = 1.5          # 3:2，探测失败时的回退值 / fallback aspect ratio
+RATIO_PROBE_CHARS = 4000     # 只解这么多 base64 字符就够读到 SOF
+
+
+def probe_jpeg_ratio(data_uri: str) -> Optional[float]:
+    """
+    从已编码的 JPEG data URI 里读出宽高比，只解码头部若干字节。
+
+    参数:
+        data_uri (str): `data:image/jpeg;base64,...`。
+
+    返回:
+        Optional[float]: 宽 / 高；无法解析时返回 None（调用方回退
+        DEFAULT_RATIO）。
+
+    异常:
+        无（不抛异常）——任何畸形输入都返回 None。
+
+    画廊的等高布局需要每张图的宽高比（写进 flex-grow）。与其改
+    encode_preview 的签名、连带改动 UI 层的进度上报循环，不如在这里就地
+    从已经拿到的 data URI 反查：只 base64 解码前 RATIO_PROBE_CHARS 个字符
+    （约 3KB），扫 JPEG 的 SOF marker 读出尺寸。
+
+    这样够用的前提是 encode_preview 用 PIL 保存且**不写 EXIF**，头部只有
+    JFIF APP0 与量化表，SOF 稳定落在前 1KB 内。若哪天给保存加上 exif=，
+    大块 EXIF 会把 SOF 推到探测窗口之外——那时该调大 RATIO_PROBE_CHARS，
+    而不是接受静默回退成 3:2（版面会歪，但不报错，很难察觉）。
+
+    Read an encoded JPEG's aspect ratio by decoding only its first few KB.
+    Keeps encode_preview's signature (and the UI progress loop) untouched.
+    Valid because encode_preview writes no EXIF, so the SOF marker sits well
+    within the probe window — if EXIF is ever added, raise RATIO_PROBE_CHARS
+    rather than accept the silent 3:2 fallback.
+    """
+    try:
+        b64 = data_uri.split(",", 1)[1][:RATIO_PROBE_CHARS]
+        head = base64.b64decode(b64[:len(b64) // 4 * 4])
+    except Exception:
+        return None
+    i, n = 2, len(head)
+    while i + 9 < n:
+        if head[i] != 0xFF:
+            i += 1
+            continue
+        marker = head[i + 1]
+        # SOF0/1/2/3：payload 为 [精度 1][高 2][宽 2]
+        if marker in (0xC0, 0xC1, 0xC2, 0xC3):
+            height = int.from_bytes(head[i + 5:i + 7], "big")
+            width = int.from_bytes(head[i + 7:i + 9], "big")
+            return (width / height) if height else None
+        # 无长度字段的 marker：填充 FF、SOI/EOI、RSTn
+        if marker == 0xFF or marker in (0xD8, 0xD9) or 0xD0 <= marker <= 0xD7:
+            i += 2
+            continue
+        i += 2 + int.from_bytes(head[i + 2:i + 4], "big")
+    return None
+
+
+def collect_image_jobs(data: ReportData) -> List[ImageJob]:
     """
     列出生成该报告所需的全部图片编码任务。
 
@@ -399,9 +552,6 @@ def collect_image_jobs(data: ReportData, *,
 
     参数:
         data (ReportData): 聚合结果。
-        with_detail_thumbs (bool): 是否为明细表生成缩略图。照片总数 > 600 时
-            由调用方传 False，明细表退化为纯文字（spec 6.4）。
-
     返回:
         List[ImageJob]: 去重后的任务列表。
 
@@ -419,12 +569,8 @@ def collect_image_jobs(data: ReportData, *,
     if data.cover:
         _add("cover", data.cover)
     for block in data.species:
-        for index, ref in enumerate(block.photos):
-            _add("rep" if index == 0 else "small", ref)
-            _add("hd", ref)
-    if with_detail_thumbs:
-        for ref in data.detail:
-            _add("thumb", ref)
+        for ref in block.photos:
+            _add("shot", ref)
     return list(jobs.values())
 
 
@@ -432,60 +578,108 @@ def collect_image_jobs(data: ReportData, *,
 
 # 深色单一主题（spec 5.0）：独立 HTML 文件没有宿主主题可跟随，
 # 深色底让鸟类羽色与背景虚化显色更好。
+#
+# 「美术馆」配色原则：这是一份照片作品集，界面必须让位给照片——中性灰阶
+# 全部无彩色，**颜色只允许出现在有信息含义的两处**（罕见度徽章、IUCN
+# 徽章）。原先的 --accent(#00d4aa 亮青绿) 与 --gold(#ffcc00 纯黄) 是两个
+# 高饱和色同屏打架，且会跟画面里的鸟争夺视线，已删除。
+# 底色也从偏蓝紫的 #0d0d0f 校正为中性微暖，免得把暖调晨昏光的片子衬发青。
+#
+# 字体三栈的顺序是要点：**西文字体必须排在中文字体之前**，否则西文与数字
+# 会被 PingFang / 雅黑接管（雅黑的西文数字字重不匀）。学名走 --serif 的
+# 真 italic——PingFang 没有 italic 字形，浏览器只能做倾斜合成，学名会是
+# 「歪的」而不是「斜的」。全部为系统字体：本文件要能离线打开，不可引入
+# webfont（内嵌一套中文字体会让文件从 ~4MB 涨到 10MB+）。
+#
 # Single dark theme: a standalone file has no host theme to follow, and a
-# dark ground renders plumage and bokeh better.
+# dark ground renders plumage and bokeh better. Gallery principle: the UI is
+# achromatic so the photos are the only source of color on the page; hue is
+# reserved for the two badges that actually carry information. Latin font
+# families MUST precede the CJK ones or Latin text and digits get rendered by
+# the CJK face. System fonts only — the file must work offline.
 _CSS_BASE = """
-:root{--bg:#0d0d0f;--card:#16161a;--text:#e8e8ea;--muted:#8a8a8e;
---line:#26262b;--gold:#ffcc00;--accent:#00d4aa}
+:root{--bg:#0f0e0d;--card:#191715;--text:#f2efe9;--muted:#8f8a82;
+--line:#2a2724;--iucn-bg:#7f1d1d;--iucn-fg:#fecaca;
+--sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",
+"Microsoft YaHei",sans-serif;
+--serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,
+"Songti SC",serif;
+--mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--text);
-font-family:"PingFang SC","Microsoft YaHei",-apple-system,BlinkMacSystemFont,
-"Segoe UI",Roboto,sans-serif;line-height:1.6}
+font-family:var(--sans);font-size:15px;line-height:1.6}
 .wrap{max-width:1100px;margin:0 auto;padding:0 20px}
 .ph{background:var(--card);border:1px dashed var(--line);color:var(--muted);
 display:flex;align-items:center;justify-content:center;font-size:12px;
 min-height:80px;text-align:center;padding:8px;word-break:break-all}
 img{display:block;width:100%;height:auto;background:var(--card)}
 .cover{position:relative;margin-bottom:32px}
-.cover img,.cover .ph{max-height:70vh;object-fit:cover}
-.cover h1{font-size:28px;margin:16px 0 4px}
+.cover h1{font-size:34px;line-height:1.25;margin:16px 0 4px}
 .cover .sub{color:var(--muted);font-size:14px}
-.nums{display:flex;gap:28px;margin-top:16px;flex-wrap:wrap}
+.nums{display:flex;gap:32px;margin-top:16px;flex-wrap:wrap}
 .nums div{text-align:center}
-.nums b{display:block;font-size:30px;color:var(--accent)}
+.nums b{display:block;font-family:var(--serif);font-size:34px;
+font-weight:400;line-height:1.2;font-variant-numeric:tabular-nums}
 .nums span{font-size:12px;color:var(--muted)}
 footer{color:var(--muted);font-size:12px;text-align:center;
 padding:40px 0;border-top:1px solid var(--line);margin-top:48px}
 """
 
 # 区块样式（spec 5.1 ②③④）：画廊/数据条/明细表/lightbox。
-# Block styles for the gallery, stat bars, detail table and lightbox.
+#
+# 画廊布局的核心是 .row 这一行「等高零裁切」的 flex：
+#   .row>.shot{flex-grow:<该图宽高比>;flex-basis:0}
+# flex-basis 为 0 时 gap 已从可用空间里扣除，剩余宽度**严格按 grow 比例**
+# 分配，于是每张图的宽度正比于自身宽高比、高度 = 宽 ÷ 比 = 恒等。整排顶
+# 底严丝合缝，且不需要 object-fit 裁切、不需要任何 JS。这是 Flickr 式
+# justified gallery 的做法。宽高比由 _probe_jpeg_ratio() 从已编码的 JPEG
+# 头部读出，写进 inline style。
+#   min-width:0 不可省：flex item 默认 min-width:auto，图片的 min-content
+#   宽度会阻止收缩，窄视口下比例会失真、整排随即不再等高。
+#
+# 照片边框用 outline 而不是 inset box-shadow：inset 阴影绘制在背景之上、
+# 替换内容之下，会被 <img> 的图像本身完全盖住，什么也看不见。
+# outline + outline-offset:-1px 画在元素之上且不占布局空间。
+#
+# The .row flex is what makes a row of photos equal-height with zero cropping:
+# with flex-basis:0 the gap is already deducted, so widths land exactly
+# proportional to each image's aspect ratio and every height resolves equal.
+# min-width:0 is mandatory (default min-width:auto would block shrinking).
+# Borders use outline, not inset box-shadow — an inset shadow paints beneath
+# the replaced content and is entirely hidden by the image.
 _CSS_BASE += """
-.sec{margin:48px 0}
-.sec h2{font-size:20px;margin:0 0 20px;padding-bottom:10px;
-border-bottom:1px solid var(--line)}
-.sp{margin-bottom:40px}
+/* 左右必须写 auto：.sec 定义在 .wrap 之后，写 `margin:64px 0` 会把
+   .wrap 的 `margin:0 auto` 覆盖掉，<section class="sec wrap"> 整块就不再
+   居中——版心贴着左边、右边空一大条。
+   Must be auto: .sec comes after .wrap, so `margin:64px 0` would override
+   `margin:0 auto` and knock every section off-center. */
+.sec{margin:64px auto}
+.sec h2{font-size:21px;margin:0 0 24px;padding-bottom:10px;
+border-bottom:1px solid var(--line);font-weight:600}
+.sp{margin-bottom:48px}
 .sp .hd{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:12px}
-.sp .cn{font-size:18px;font-weight:600}
-.sp .en{font-size:13px;color:var(--muted);font-style:italic}
-.sp .cnt{font-size:12px;color:var(--muted)}
+.sp .cn{font-size:21px;font-weight:600;letter-spacing:.01em}
+.sp .en{font-family:var(--serif);font-size:14px;color:var(--muted);
+font-style:italic}
+.sp .cnt{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
 .tier{font-size:12px;padding:1px 8px;border-radius:10px;border:1px solid currentColor}
 .iucn{font-size:11px;padding:1px 7px;border-radius:10px;
-background:#7f1d1d;color:#fecaca;font-weight:600}
-.grid{display:grid;grid-template-columns:2fr 1fr;gap:8px}
-.grid .rest{display:grid;grid-template-rows:repeat(3,1fr);gap:8px}
-.cap{font-size:11px;color:var(--muted);margin-top:4px}
-.bars div{display:flex;align-items:center;gap:10px;margin:6px 0;font-size:13px}
-.bars .bar{height:10px;background:var(--gold);border-radius:5px}
+background:var(--iucn-bg);color:var(--iucn-fg);font-weight:600}
+.hero{margin:0 auto}
+.row{display:flex;gap:8px;margin-top:8px}
+.row>.shot{flex-basis:0;min-width:0}
+.shot img{outline:1px solid rgba(255,255,255,.07);outline-offset:-1px}
+.shot{cursor:zoom-in}
+.shot img{transition:filter .2s ease}
+.shot:hover img{filter:brightness(1.08)}
+.cap{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:5px;
+font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;
+text-overflow:ellipsis}
+.bars div{display:flex;align-items:center;gap:10px;margin:6px 0;font-size:13px;
+font-variant-numeric:tabular-nums}
+.bars .bar{height:10px;border-radius:5px}
 .kv{display:flex;flex-wrap:wrap;gap:12px 32px;font-size:13px;color:var(--muted)}
-.kv b{color:var(--text);font-weight:600}
-table{width:100%;border-collapse:collapse;font-size:12px}
-th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;
-white-space:nowrap}
-th{color:var(--muted);cursor:pointer;user-select:none}
-td.thumbcol{width:56px}
-td.thumbcol img,td.thumbcol .ph{width:48px;height:48px;object-fit:cover;min-height:0}
-.tablewrap{overflow-x:auto}
+.kv b{color:var(--text);font-weight:600;font-variant-numeric:tabular-nums}
 #lb{position:fixed;inset:0;background:rgba(0,0,0,.94);display:none;
 align-items:center;justify-content:center;z-index:99;cursor:zoom-out}
 #lb img{max-width:94vw;max-height:94vh;width:auto}
@@ -493,66 +687,96 @@ align-items:center;justify-content:center;z-index:99;cursor:zoom-out}
 
 _CSS_BASE += """
 #pdfbtn{position:fixed;top:16px;right:16px;z-index:50;cursor:pointer;
-background:var(--card);color:var(--text);border:1px solid var(--line);
-border-radius:6px;padding:8px 14px;font-size:13px;font-family:inherit}
-#pdfbtn:hover{border-color:var(--accent);color:var(--accent)}
+background:var(--card);color:var(--muted);border:1px solid var(--line);
+border-radius:6px;padding:8px 14px;font-size:13px;font-family:inherit;
+transition:color .2s ease,border-color .2s ease}
+#pdfbtn:hover{border-color:var(--muted);color:var(--text)}
 """
 
-# 打印适配（spec 5.2）。四项缺一则打印结果不可用：白底、分页控制、
-# 展开折叠区、隐藏交互控件。
+# 打印适配（spec 5.2）。三项缺一则打印结果不可用：白底、分页控制、
+# 隐藏交互控件。（原先还有第四项「展开折叠区」，随明细表一并去掉了。）
 #
-# 折叠区只去掉折叠箭头、保留 <summary> 本身——明细表的 <h2> 标题就长在
-# summary 里，整块 display:none 会让打印版多出一张没有名字的表。
+# Print support: white background, page-break control, and hidden interactive
+# chrome. Missing any one makes printouts unusable.
 #
-# 注意：展开折叠区这一项**不能靠 CSS**。open 是属性不是样式，display:block
-# 只让 details 元素本身是块级，折叠内容依旧不渲染。真正的展开在 _JS_PRINT
-# 里用 JS 补 open 完成，打印后恢复。
+# 另外一条是深色主题改版后新引入的，缺了打印件就是废纸：
+#   `.bars .bar` 的灰阶必须推翻 —— 屏幕上星级条按「越亮=越高星」编码，
+#      那套浅灰印在白纸上等于消失。打印时统一压成深灰：条的**长度**已经
+#      完整承载了数量信息，亮度编码在白底属于冗余，不必反向重排一遍。
+#      条色是内联 style 写死的，故这里必须 !important 才盖得住。
 #
-# Print support: white background, page-break control, expanded <details>,
-# and hidden interactive chrome. Missing any one makes printouts unusable.
-# The summary stays (it carries the table's heading); only its disclosure
-# marker is removed. Expanding <details> is NOT doable in CSS — see _JS_PRINT.
+# The rule below is specific to the achromatic redesign: the star bars'
+# on-screen lightness ramp is invisible on white paper — flattened to one dark grey, since bar
+# length already carries the count. Bar colors are inline, hence !important.
 _CSS_PRINT = """
 @media print{
-  :root{--bg:#fff;--card:#fff;--text:#111;--muted:#555;--line:#ccc}
+  :root{--bg:#fff;--card:#fff;--text:#111;--muted:#555;--line:#ccc;
+        --iucn-bg:#fee;--iucn-fg:#900}
   body{background:#fff;color:#111}
   .no-print,#lb{display:none !important}
-  th{cursor:default}
-  details>summary{list-style:none}
-  details>summary::-webkit-details-marker{display:none}
-  .sp,.cover,tr,.grid{page-break-inside:avoid;break-inside:avoid}
+  .sp,.cover,.row,.hero{page-break-inside:avoid;break-inside:avoid}
   img{max-height:none}
-  .cover img,.cover .ph{max-height:12cm}
+  .shot img{outline-color:#ddd}
+  .hero{max-width:none !important}
+  .cover .hero img,.cover .ph{max-height:12cm;width:auto;margin:0 auto}
+  .bars .bar{background:#444 !important}
 }
 """
 
-# 视口懒插入（spec 6.1）：图片一律不写 src，滚到视口才赋值、滚离即释放，
-# 使常驻位图恒定在几屏之内，与鸟种数、照片数完全无关。
-# Viewport-based lazy insertion keeps resident bitmaps constant regardless
-# of how many species or photos the report contains.
+# 视口懒插入（spec 6.1）：滚离视口即释放位图、滚回来再从 SRC 恢复，使常驻
+# 位图恒定在几屏之内，与鸟种数无关。
+#
+# 与最初版本的关键差别：图片**先带着 src 出现在 HTML 里**，这段脚本只是把
+# src 收走后接管。原先是反过来的——DOM 里不写 src、全靠脚本填——那样任何
+# 不执行 JS 的环境（macOS 快速查看、iOS 文件预览、邮件内置预览）看到的都是
+# 一份没有照片的报告。收走 src 前先存进 SRC，卸载与恢复的行为和以前一样。
+#
+# 也不再做淡入：淡入要靠初始 opacity:0，那等于把「看得见」重新绑回脚本，
+# 无 JS 时图片虽有 src 却是透明的——比没有 src 更难排查。
+#
+# Images ship with their src already set; this script takes them over rather
+# than supplying them, so the report still renders without JavaScript. The
+# fade-in was dropped: its initial opacity:0 would re-bind visibility to JS.
 _JS_LAZY = """
 (function(){
+  var els=document.querySelectorAll('img[data-lazy]');
+  var SRC=[];
+  els.forEach(function(el,i){ SRC[i]=el.src; el.dataset.i=i; });
+  window.__spSrc=SRC;
+  window.__spRestore=function(){
+    els.forEach(function(el){ if(!el.getAttribute('src')) el.src=SRC[el.dataset.i]; });
+  };
+  if(!('IntersectionObserver' in window)) return;   // 老浏览器：保持全部已加载
   var io=new IntersectionObserver(function(es){
     es.forEach(function(e){
-      var el=e.target,i=el.dataset.idx;
-      if(e.isIntersecting){ if(!el.src&&IMGS[i]) el.src=IMGS[i]; }
+      var el=e.target,i=el.dataset.i;
+      if(e.isIntersecting){ if(!el.getAttribute('src')&&SRC[i]) el.src=SRC[i]; }
       else { el.removeAttribute('src'); }
     });
   },{rootMargin:'200% 0px'});
-  document.querySelectorAll('img[data-idx]').forEach(function(el){io.observe(el);});
+  els.forEach(function(el){io.observe(el);});
 })();
 """
 
 
-# 点击放大：从 IMGS 取 hd 版本，关闭即释放位图（spec 6.1）。
-# Lightbox pulls the hd variant from IMGS and releases it on close.
+# 点击放大：直接放大页面上那一张，关闭即释放位图（spec 6.1）。
+#
+# 不再有「放大专用」的 hd 副本——图片按 1000px 编码，页面上缩着显示、点击时
+# 按原尺寸铺开，同一份数据两用。旧版为每张图额外存一份 1200px，占掉整个报告
+# 的 74%，而画面与页面上那张完全相同。
+#
+# Zooms the very image already on the page; no separate hd copy exists. The
+# old duplicates cost 74% of the file to show the identical frame.
 _JS_LIGHTBOX = """
 (function(){
   var lb=document.getElementById('lb'),im=lb.querySelector('img');
-  document.querySelectorAll('[data-hd]').forEach(function(el){
+  document.querySelectorAll('.shot').forEach(function(el){
     el.addEventListener('click',function(){
-      var i=el.dataset.hd; if(i<0||!IMGS[i])return;
-      im.src=IMGS[i]; lb.style.display='flex';
+      var img=el.querySelector('img'); if(!img)return;
+      // 能被点到的图必然在视口内、必然带着 src；SRC 只是滚动边界上的兜底
+      var src=img.getAttribute('src')||(window.__spSrc||[])[img.dataset.i];
+      if(!src)return;
+      im.src=src; lb.style.display='flex';
     });
   });
   lb.addEventListener('click',function(){
@@ -566,70 +790,30 @@ _JS_LIGHTBOX = """
 })();
 """
 
-# 明细表点击表头排序。纯前端行为，不改变任何统计口径。
-# Client-side table sorting; never affects the aggregated statistics.
-_JS_SORT = """
-(function(){
-  var t=document.getElementById('detail'); if(!t)return;
-  t.querySelectorAll('th').forEach(function(th,i){
-    th.addEventListener('click',function(){
-      var tb=t.tBodies[0],rows=[].slice.call(tb.rows);
-      var dir=th.dataset.dir==='asc'?-1:1; th.dataset.dir=dir===1?'asc':'desc';
-      rows.sort(function(a,b){
-        var x=a.cells[i].dataset.v||a.cells[i].textContent;
-        var y=b.cells[i].dataset.v||b.cells[i].textContent;
-        var nx=parseFloat(x),ny=parseFloat(y);
-        if(!isNaN(nx)&&!isNaN(ny))return (nx-ny)*dir;
-        return String(x).localeCompare(String(y))*dir;
-      });
-      rows.forEach(function(r){tb.appendChild(r);});
-    });
-  });
-})();
-"""
-
-
-# 打印前要做两件事，缺一张纸上就少东西：
-#   1. 把懒插入的图片全部落位——未进过视口的 <img> 没有 src，直接打印是大片空白
-#   2. 展开所有 <details>——CSS 改不了 open 属性，不补 open 明细区根本不印
-# 打印结束后把折叠状态恢复原样，别让用户看完打印回来发现页面变了。
+# 打印前必须把懒插入的图片全部落位：未进过视口的 <img> 没有 src，直接打印
+# 就是大片空白——而且版面高度是对的，比「图没加载」更难察觉。
 #
 # 三条触发路径都覆盖：按钮（直接调用，留 300ms 给浏览器解码）、beforeprint
 # 事件、以及 matchMedia('print')——Safari 长期不支持 beforeprint/afterprint。
 #
-# Before printing: materialize every lazy image (no src = blank page) and open
-# every <details> (CSS cannot do this), restoring the fold state afterwards.
+# Before printing, materialize every lazy image (no src = blank page).
 # Covered via the button, beforeprint, and matchMedia for Safari.
 _JS_PRINT = """
 (function(){
-  var reopened=[];
   function materialize(){
-    document.querySelectorAll('img[data-idx]').forEach(function(el){
-      if(!el.src&&IMGS[el.dataset.idx]) el.src=IMGS[el.dataset.idx];
-    });
+    // 把滚离视口时卸掉的 src 全部恢复；未卸载过的本来就带着 src
+    if(window.__spRestore) window.__spRestore();
   }
-  function expand(){
-    materialize();
-    reopened=[];
-    document.querySelectorAll('details:not([open])').forEach(function(d){
-      d.open=true; reopened.push(d);
-    });
-  }
-  function restore(){
-    reopened.forEach(function(d){d.open=false;});
-    reopened=[];
-  }
-  window.addEventListener('beforeprint',expand);
-  window.addEventListener('afterprint',restore);
+  window.addEventListener('beforeprint',materialize);
   if(window.matchMedia){
     var mq=window.matchMedia('print');
-    var onchange=function(e){ e.matches?expand():restore(); };
+    var onchange=function(e){ if(e.matches) materialize(); };
     if(mq.addEventListener) mq.addEventListener('change',onchange);
     else if(mq.addListener) mq.addListener(onchange);
   }
   var btn=document.getElementById('pdfbtn'); if(!btn)return;
   btn.addEventListener('click',function(){
-    expand();
+    materialize();
     setTimeout(function(){window.print();},300);
   });
 })();
@@ -643,45 +827,79 @@ def _esc(value: object) -> str:
 
 class _ImageRegistry:
     """
-    收集 data URI 并分配索引，供 IMGS 数组与 data-idx 配对使用。
+    把编码好的 data URI 发放给 DOM，并单独收集 lightbox 用的 hd 图。
 
-    Collects data URIs and hands out indices so the DOM can reference them
-    by data-idx instead of embedding them in src attributes.
+    图片**直接写进 <img src>**，不经过任何数组。这一条是刻意的：图片一旦只
+    存在于 JS 数组里，任何不执行脚本的查看环境就是一片空白——macOS 的快速
+    查看（Finder 里按空格）、iOS「文件」App 的预览、邮件客户端与部分 IM 的
+    内置预览都不跑 JS。一份用来分享的报告，对方按空格看到空白只会以为文件
+    传坏了。
+
+    也不再有第二份「放大专用」的图：每张照片只编码一次，页面上缩着显示、
+    点击时按原尺寸放大，同一份数据两用。曾经那份 1200px 的 hd 副本占掉整个
+    报告的 74%，而它与页面上那张是同一个画面。
+
+    Images carry their data URI directly in `src`, so the report renders
+    without JavaScript. There is no separate "zoom" copy either — each photo
+    is encoded once and serves both roles; the old hd duplicates accounted for
+    74% of the file while showing the very same frame.
     """
 
     def __init__(self, encoded: Dict[str, str]) -> None:
         self._encoded = encoded
-        self._uris: List[str] = []
-        self._index: Dict[str, int] = {}
+        self._ratios: Dict[str, float] = {}
+
+    def ratio(self, job_id: str) -> float:
+        """
+        返回该 job 图片的宽高比，供画廊的等高 flex 布局使用。
+
+        参数:
+            job_id (str): 与 collect_image_jobs 同构的 `f"{kind}:{path}"`。
+
+        返回:
+            float: 宽 / 高；图片缺失或头部无法解析时返回 DEFAULT_RATIO。
+
+        结果按 job_id 缓存：同一张图会被 _photo_cell 与 _species_html 各查
+        一次，重复解 base64 没有意义。
+        """
+        if job_id not in self._ratios:
+            uri = self._encoded.get(job_id)
+            self._ratios[job_id] = (probe_jpeg_ratio(uri) if uri else None) or DEFAULT_RATIO
+        return self._ratios[job_id]
 
     def tag(self, job_id: str, alt: str, css_class: str = "") -> str:
         """
-        返回一个 <img data-idx=..>；job_id 无对应图时返回占位块。
+        返回一个 data URI 直挂在 src 上的 <img>；job_id 无对应图时返回占位块。
 
-        job_id 必须与 collect_image_jobs 产出的一致（`f"{kind}:{ref.path}"`），
-        对不上会静默退化成占位块——报告看着生成成功、实际一张图都没有。
+        参数:
+            job_id (str): 与 collect_image_jobs 同构的 `f"{kind}:{path}"`。
+            alt (str): 替代文本（用文件名）。
+            css_class (str): 追加的样式类。
 
-        Return a lazy <img>, or a placeholder block when the image is missing.
-        The job_id must match collect_image_jobs exactly, or every image
-        silently degrades to a placeholder.
+        返回:
+            str: `<img data-lazy src="data:...">`，或缺图时的占位块。
+
+        job_id 必须与 collect_image_jobs 产出的一致，对不上会静默退化成占位
+        块——报告看着生成成功、实际一张图都没有。
+
+        `data-lazy` 只是给 JS 认领的标记：脚本跑得起来时，_JS_LAZY 会把这些
+        src 收走交给 IntersectionObserver 管理（滚出视口即卸载）；跑不起来
+        时它就是个无副作用的属性，图片照常显示。
+
+        The data URI rides directly on `src`. `data-lazy` merely marks the node
+        for the observer to adopt when scripts run; without them it is inert
+        and the image still shows.
         """
         uri = self._encoded.get(job_id)
         if not uri:
             return f'<div class="ph {css_class}">{_esc(alt)}</div>'
-        if job_id not in self._index:
-            self._index[job_id] = len(self._uris)
-            self._uris.append(uri)
         cls = f' class="{css_class}"' if css_class else ""
-        return f'<img data-idx="{self._index[job_id]}" alt="{_esc(alt)}"{cls}>'
-
-    def uri_index(self, job_id: str) -> int:
-        """返回该 job 在 IMGS 中的下标；未注册返回 -1（供 lightbox 用）。"""
-        return self._index.get(job_id, -1)
-
-    def script(self) -> str:
-        """产出 IMGS 数组的 <script> 内容。"""
-        return "const IMGS=" + json.dumps(self._uris) + ";"
-
+        # decoding="async" 让屏幕外的图不阻塞首屏；无 JS 环境下这是唯一还能
+        # 起作用的减负手段（IntersectionObserver 那套此时并不运行）。
+        # decoding="async" keeps offscreen images off the critical path — the
+        # only mitigation still active when scripts don't run.
+        return (f'<img data-lazy decoding="async" src="{uri}" '
+                f'alt="{_esc(alt)}"{cls}>')
 
 def _cover_html(data: ReportData, reg: _ImageRegistry, is_zh: bool) -> str:
     """封面：满幅大图 + 标题 + 地点 + 三个大数字（spec 5.1 ①）。"""
@@ -690,12 +908,40 @@ def _cover_html(data: ReportData, reg: _ImageRegistry, is_zh: bool) -> str:
     # 且合并报告里不同子目录可能有同名文件，用文件名会互相顶替。
     # Key by path (not filename) to match collect_image_jobs and to keep
     # same-named files from different sub-dirs apart in merged reports.
-    img = reg.tag(f"cover:{data.cover.path}", data.cover.filename) if data.cover else ""
+    # 封面是全库 adj_topiq 最高的一张，旧版用 object-fit:cover + max-height:70vh
+    # 把它拦腰裁了——最该完整呈现的一张反倒是全页唯一被裁的。现在不裁，但
+    # **按方向分流**，不能照搬鸟种代表作那套限高：
+    #
+    #   横构图 / 方构图 → 满宽出血。封面的职责是第一眼的冲击力，套上
+    #     `max-width = 比 × vh` 后，900px 高的窗口里 3:2 封面只有 1026px 宽，
+    #     两侧留出黑边，看着像图没加载完，封面就白当了。满宽时高度 = 宽 ÷ 比，
+    #     3:2 在常见宽度下约 0.55–0.67 屏，本来就不会过高。
+    #   竖构图 → 限高居中。竖图满宽会撑到近两屏高（1280 宽的 2:3 是 1920px），
+    #     滚半天出不了封面，这时收窄居中才是对的。
+    #
+    # The cover used to be the only cropped image on the page. It now keeps its
+    # aspect ratio, but splits by orientation: landscape bleeds full-width (a
+    # vh-capped cover would sit in a letterbox and read as a loading failure),
+    # while portrait is capped and centered (full-width would run ~2 screens).
+    img = ""
+    if data.cover:
+        job = f"cover:{data.cover.path}"
+        cell = reg.tag(job, data.cover.filename)
+        ratio = reg.ratio(job)
+        style = ("" if ratio >= 1.0
+                 else f' style="max-width:calc({ratio:.4f} * {COVER_PORTRAIT_MAX_VH}vh)"')
+        img = f'<div class="hero"{style}>{cell}</div>'
+    # 起止时间截到分钟。同一天时只写一次日期（外拍绝大多数是当天往返，
+    # 「2026-08-28 08:29 – 2026-08-28 11:51」把同一个日期报两遍纯属噪音）。
+    # Trim to the minute; when both ends fall on the same day, print the date
+    # once — repeating it is pure noise for a single-day outing.
     when = ""
     if data.shot_start:
-        when = _esc(data.shot_start)
-        if data.shot_end and data.shot_end != data.shot_start:
-            when += " – " + _esc(data.shot_end)
+        start, end = format_minute(data.shot_start), format_minute(data.shot_end)
+        when = _esc(start)
+        if end and end != start:
+            same_day = start[:10] == end[:10]
+            when += " – " + _esc(end[11:] if same_day else end)
     place = _esc(data.location)
     if data.gps:
         lat, lon, alt = data.gps
@@ -713,36 +959,215 @@ def _cover_html(data: ReportData, reg: _ImageRegistry, is_zh: bool) -> str:
 </div></div></section>"""
 
 
-def _photo_cell(ref: PhotoRef, kind: str, reg: "_ImageRegistry") -> str:
+def _pick_bits(ref: PhotoRef, beauty: Optional[float], is_zh: bool) -> List[str]:
+    """
+    代表作的选鸟参数：锐度、美学、颜值。
+
+    参数:
+        ref (PhotoRef): 代表作。
+        beauty (Optional[float]): 该鸟种的颜值指数（0-100），无数据传 None。
+        is_zh (bool): 中文界面为 True。
+
+    返回:
+        List[str]: 已格式化的短语，缺数据的项不出现。
+
+    锐度与美学是**这张照片**的评分（adj_sharpness / adj_topiq），颜值是
+    **这个鸟种**的 iRateBird 指数。只挂在代表作上：副图各带一串数字会盖过画面。
+
+    小数位数按各自的实际量程定，不能统一：
+      锐度 0–800 上下 → 取整，小数位没有意义；
+      美学 3–6.5 之间 → **必须留一位小数**，取整会把整批压成清一色的 5 和 6，
+        等于没显示。这个尺度也正是用户在技能等级里看到的阈值口径
+        （core/skill_presets.py 的 4.5 / 4.8 / 5.5），两处对得上才不会打架；
+      颜值 0–100 → 取整。
+
+    Decimals follow each metric's actual range: sharpness spans ~0-800 and
+    rounds to an integer, aesthetics only spans ~3-6.5 and MUST keep one
+    decimal (rounding flattens a whole batch to 5s and 6s) — matching the
+    threshold scale users already see in the skill-level presets.
+    """
+    labels = ("锐度", "美学", "颜值") if is_zh else ("Sharp", "Aesth", "Beauty")
+    out: List[str] = []
+    if ref.sharpness:
+        out.append(f"{labels[0]} {ref.sharpness:.0f}")
+    if ref.aesthetic:
+        out.append(f"{labels[1]} {ref.aesthetic:.1f}")
+    if beauty:
+        out.append(f"{labels[2]} {beauty:.0f}")
+    return out
+
+
+def _photo_cell(ref: PhotoRef, reg: "_ImageRegistry",
+                grow: bool = False, extra: Optional[List[str]] = None) -> str:
     """
     一张展示图 + 参数小字；整块可点击，点击后 lightbox 取 hd 版本。
 
+    参数:
+        ref (PhotoRef): 照片。
+        reg (_ImageRegistry): 图片注册表。
+        grow (bool): 是否作为 .row 的 flex 成员输出。为 True 时写入
+            `flex-grow:<宽高比>`——一排里每张图的宽度按此比例分配，高度
+            于是自动相等（见 _CSS_BASE 中 .row 的说明）。
+        extra (Optional[List[str]]): 追加在曝光组合之后的短语（代表作用来
+            挂锐度/美学/颜值），为空则只有曝光组合。
+
+    返回:
+        str: 一个 `<div class="shot">` 片段（整块可点击放大）。
+
     Render one shown photo with its EXIF caption; clicking opens the hd
-    variant in the lightbox.
+    variant in the lightbox. With grow=True the cell carries the flex-grow
+    that makes a row equal-height without cropping.
     """
-    hd = reg.uri_index(f"hd:{ref.path}")
-    img = reg.tag(f"{kind}:{ref.path}", ref.filename)
+    job = f"shot:{ref.path}"
+    img = reg.tag(job, ref.filename)
+    style = f' style="flex-grow:{reg.ratio(job):.4f}"' if grow else ""
     bits = []
-    if ref.shutter:
-        bits.append(f"{ref.shutter}s")
+    shutter = format_shutter(ref.shutter)
+    if shutter:
+        bits.append(shutter)
     if ref.aperture:
         bits.append(f"f/{ref.aperture}")
     if ref.iso:
         bits.append(f"ISO {ref.iso}")
     if ref.focal_35mm:
         bits.append(f"{ref.focal_35mm}mm")
+    bits += extra or []
     cap = f'<div class="cap">{_esc(" · ".join(bits))}</div>' if bits else ""
-    return f'<div data-hd="{hd}">{img}{cap}</div>'
+    return f'<div class="shot"{style}>{img}{cap}</div>'
+
+
+# 满幅代表作的最大高度（视窗高百分比）。
+#
+# 这个数是权衡出来的，不能随手调小：代表作限宽后是居中的，而它下面那排副图
+# 始终满版心宽——一旦限高让**横构图**代表作窄于版心，就成了「上面一张缩进
+# 的图 + 下面一排满宽的图」，读起来像排版失误而不是设计。
+# 版心 1060、3:2 横图要满宽需要 1.5 × H × vh ≥ 1060，取 85 时窗口内容高
+# ≥832px 即满宽，覆盖绝大多数窗口；而竖构图仍被有效限制（2:3 若不限高，
+# 满宽 1060 会撑到 1590px，一屏放不下一张）。
+#
+# Tuned, not arbitrary: the hero is centered while the row below it always
+# spans the full column, so a capped *landscape* hero reads as a mistake.
+# 85 keeps 3:2 heroes full-width for any viewport ≥832px tall, while still
+# reining in portrait shots (unbounded, a 2:3 hero would run 1590px tall).
+HERO_MAX_VH = 85
+
+# 竖构图封面的高度上限（视窗高百分比）。横构图封面不限高，见 _cover_html。
+# Height cap for portrait covers only; landscape covers bleed. See _cover_html.
+COVER_PORTRAIT_MAX_VH = 80
+
+# 罕见度徽章在深色底上的替换色 / Rarity badge colors remapped for dark ground.
+#
+# core.rarity_tier 的配色是给 GUI（浅色底）定的，其中「少见及以上」的
+# #D81E05 压在本报告的 #0f0e0d 底上对比度只有约 4.3:1，低于 WCAG AA 的
+# 4.5。界面改成无彩色之后这两个徽章是整页仅存的颜色，读不清就失去意义，
+# 故在报告端提亮到约 6:1。
+#
+# 不改 core/rarity_tier.py：那份配色由 GUI 共用，为了一个深色底的导出产物
+# 去动它会连带改变主窗口的观感。
+#
+# The shared GUI palette is tuned for a light ground; #D81E05 only reaches
+# ~4.3:1 on this report's dark background. These badges are the page's only
+# color, so they are brightened here to ~6:1 — without touching the shared
+# module, which the light-themed GUI also renders from.
+_TIER_COLOR_ON_DARK = {
+    "#FC7F3F": "#FC7F3F",   # 能见（橙）：约 6.5:1，本就达标，原样保留
+    "#D81E05": "#FF4A32",   # 少见及以上（红）：4.3:1 → 约 6.1:1
+}
+
+
+def _tier_color_on_dark(color: Optional[str]) -> str:
+    """
+    把 GUI 的罕见度色映射成深色底可读的版本。
+
+    参数:
+        color (Optional[str]): tier_name_color() 的返回值，None 表示常见/无数据。
+
+    返回:
+        str: 深色底上使用的颜色；常见/无数据回落到 --muted 的取值。
+    """
+    if not color:
+        return "#8f8a82"
+    return _TIER_COLOR_ON_DARK.get(color.upper(), color)
+
+
+def _hero_html(ref: PhotoRef, reg: "_ImageRegistry",
+               extra: Optional[List[str]] = None) -> str:
+    """
+    满幅代表作：横向占满版心，但高度不超过 HERO_MAX_VH，且**不裁切**。
+
+    参数:
+        ref (PhotoRef): 代表作。
+        reg (_ImageRegistry): 图片注册表。
+
+    返回:
+        str: 居中的 `<div class="hero">` 片段。
+
+    限高只能加在容器的 max-width 上，不能直接给 <img> 设 max-height：
+    图片是 width:100%;height:auto，给它 max-height 会让宽高脱钩而变形，
+    要么就得 object-fit:cover 裁掉——两者都违背「零裁切」这条原则。
+    改成 `max-width: 宽高比 × 62vh` 后，高度天然被限制在 62vh，图片始终
+    保持原比例，横构图与竖构图都成立（竖构图会自动变窄并居中）。
+
+    Cap the hero's height via the container's max-width, never via the image's
+    max-height (which would distort it) nor object-fit (which would crop it).
+    max-width = ratio × 62vh bounds the height while preserving the aspect
+    ratio, and works for portrait shots too — they simply become narrower.
+    """
+    ratio = reg.ratio(f"shot:{ref.path}")
+    cell = _photo_cell(ref, reg, extra=extra)
+    return f'<div class="hero" style="max-width:calc({ratio:.4f} * {HERO_MAX_VH}vh)">{cell}</div>'
+
+
+def _gallery_html(refs: List[PhotoRef], reg: "_ImageRegistry",
+                  extra: Optional[List[str]] = None) -> str:
+    """
+    按张数自适应的版式：1 张满幅 / 2 张对开 / 3 张=满幅+2 / 4 张=满幅+3。
+
+    参数:
+        refs (List[PhotoRef]): 该鸟种要展示的照片，首张为代表作。
+        reg (_ImageRegistry): 图片注册表。
+        extra (Optional[List[str]]): 只挂到代表作上的选鸟参数（锐度/美学/
+            颜值）。2 张对开时虽无满幅位，首张仍是代表作，参数照挂。
+
+    返回:
+        str: 该鸟种的图片区 HTML。
+
+    为什么不是所有张数都「一大 + 其余一排」：只有 2 张时若排成满幅 + 下方
+    一张同宽的图，两张一样大地上下堆着，读起来是重复而不是主次，所以 2 张
+    走左右对开、不设代表作。3 张和 4 张则代表作分量足够，用满幅 + 一排。
+
+    每一排都是等高零裁切的 flex（见 _CSS_BASE 里 .row 的说明），所以「不足
+    一排」的情况不会留下空洞——两张就把整排均分掉，没有第三个空格子。这正
+    是旧版 `grid-template-rows:repeat(3,1fr)` 做不到的：行数写死为 3，只有
+    2 张时右列必然空出一格。
+
+    Layout adapts to the photo count. Two photos are shown side by side rather
+    than hero-plus-one, which would read as repetition instead of hierarchy.
+    Every row is an equal-height zero-crop flex, so a short row simply fills
+    the width — unlike the old fixed three-row grid, which left empty cells.
+    """
+    if not refs:
+        return ""
+    if len(refs) == 2:
+        cells = "".join(_photo_cell(r, reg, grow=True,
+                                    extra=extra if i == 0 else None)
+                        for i, r in enumerate(refs))
+        return f'<div class="row">{cells}</div>'
+    out = _hero_html(refs[0], reg, extra=extra)
+    if len(refs) > 1:
+        rest = "".join(_photo_cell(r, reg, grow=True) for r in refs[1:])
+        out += f'<div class="row">{rest}</div>'
+    return out
 
 
 def _species_html(data: ReportData, reg: "_ImageRegistry", is_zh: bool) -> str:
     """
-    鸟种画廊：每种一块，区块按罕见度降序，块内 1 大 + 至多 3 小（spec 5.1 ②）。
+    鸟种画廊：每种一块，区块按罕见度降序，块内版式随张数自适应（spec 5.1 ②）。
 
     鸟种数不封顶——常驻位图已由懒插入与内容量脱钩（spec D8 / 6.4）。
 
-    Species gallery: one block per species, ordered by rarity descending,
-    one hero plus up to three secondary photos. Species count is never capped.
+    Species gallery: one block per species, ordered by rarity descending, with
+    the in-block layout adapting to the photo count. Species count never capped.
     """
     from core.rarity_tier import tier_name, tier_name_color
 
@@ -756,22 +1181,39 @@ def _species_html(data: ReportData, reg: "_ImageRegistry", is_zh: bool) -> str:
         secondary = block.name_en if is_zh else block.name_cn
         badges = ""
         if block.tier is not None:
-            color = tier_name_color(block.tier, default="#8a8a8e")
+            color = _tier_color_on_dark(tier_name_color(block.tier))
             badges += (f'<span class="tier" style="color:{_esc(color)}">'
                        f'{_esc(tier_name(block.tier, is_zh))}</span>')
         if block.iucn in IUCN_BADGE_SHOWN:
             badges += f'<span class="iucn">{_esc(block.iucn)}</span>'
-        hero = _photo_cell(block.photos[0], "rep", reg) if block.photos else ""
-        rest = "".join(_photo_cell(r, "small", reg) for r in block.photos[1:])
+        # 选鸟参数只算一次，且只喂给代表作（_gallery_html 内部决定挂哪一张）
+        pick_bits = (_pick_bits(block.photos[0], block.beauty, is_zh)
+                     if block.photos else None)
         out.append(
             '<div class="sp"><div class="hd">'
             f'<span class="cn">{_esc(primary)}</span>'
             f'<span class="en">{_esc(secondary)}</span>{badges}'
             f'<span class="cnt">{block.count}{unit}</span></div>'
-            f'<div class="grid">{hero}<div class="rest">{rest}</div></div></div>'
+            f'{_gallery_html(block.photos, reg, pick_bits)}</div>'
         )
     out.append("</section>")
     return "".join(out)
+
+
+# 星级条的灰阶：越高星越亮。界面已无彩色，条形图不能再靠色相区分档位，
+# 改用亮度承载「高低」这层语义——亮度递减本身就读作从优到劣，比原先一律
+# 涂成同一个纯黄 (#ffcc00) 多传达了一维信息。
+#
+# 打印时这套浅灰在白纸上会消失，_CSS_PRINT 里统一压成深灰覆盖，见那里的说明。
+#
+# Star-bar greyscale: brighter = higher rating. With an achromatic UI the bars
+# can no longer use hue, so lightness carries the ranking — which reads as
+# better-to-worse on its own, unlike the old single flat yellow. Print CSS
+# overrides these (light grey is invisible on white paper).
+_BAR_SHADE = {
+    5: "#f2efe9", 4: "#d8d4cd", 3: "#b8b3ab", 2: "#8f8a82",
+    1: "#6b6660", 0: "#4a4640", -1: "#332f2b",
+}
 
 
 def _stats_html(data: ReportData, is_zh: bool) -> str:
@@ -798,7 +1240,8 @@ def _stats_html(data: ReportData, is_zh: bool) -> str:
         pct = (count / data.total * 100) if data.total else 0.0
         width = count / top * 320
         bars.append(f'<div><span style="width:52px">{labels[rating]}</span>'
-                    f'<span class="bar" style="width:{width:.0f}px"></span>'
+                    f'<span class="bar" style="width:{width:.0f}px;'
+                    f'background:{_BAR_SHADE[rating]}"></span>'
                     f'<span>{count} ({pct:.1f}%)</span></div>')
     # 命中率口径为「3 星及以上」：4/5 星是比 3 星更好的片子，若只数 3 星，
     # 用户每手动升一张，命中率反而下降——那是反直觉的错数。
@@ -837,56 +1280,9 @@ def _stats_html(data: ReportData, is_zh: bool) -> str:
             f'<div class="kv" style="margin-top:20px">{"".join(kv)}</div></section>')
 
 
-def _detail_html(data: ReportData, reg: "_ImageRegistry", is_zh: bool,
-                 with_thumbs: bool) -> str:
-    """
-    折叠明细表（spec 5.1 ④）。with_thumbs=False 时去掉缩略图列。
-
-    数值列写 data-v 属性供表头排序按数值而非字符串比较。
-
-    Collapsible detail table. Numeric cells carry data-v so header sorting
-    compares numbers rather than strings.
-    """
-    title = f"全部照片明细 ({data.total})" if is_zh else f"All photos ({data.total})"
-    heads = (["", "文件名", "鸟种", "★", "精选", "锐度", "美学", "ISO",
-              "快门", "光圈", "焦距", "时间"] if is_zh else
-             ["", "File", "Species", "★", "Picked", "Sharp", "Aesth", "ISO",
-              "Shutter", "Aperture", "Focal", "Time"])
-    if not with_thumbs:
-        heads = heads[1:]
-    rows = []
-    for ref in data.detail:
-        cells = []
-        if with_thumbs:
-            cells.append('<td class="thumbcol">'
-                         f'{reg.tag(f"thumb:{ref.path}", ref.filename)}</td>')
-        species = (ref.species_cn if is_zh else ref.species_en) or "—"
-        sharp = ref.sharpness or 0.0
-        aesth = ref.aesthetic or 0.0
-        cells += [
-            f'<td>{_esc(ref.filename)}</td>',
-            f'<td>{_esc(species)}</td>',
-            f'<td data-v="{ref.rating}">{ref.rating if ref.rating >= 0 else "—"}</td>',
-            f'<td data-v="{1 if ref.picked else 0}">{"✓" if ref.picked else ""}</td>',
-            f'<td data-v="{sharp:.0f}">{sharp:.0f}</td>',
-            f'<td data-v="{aesth:.0f}">{aesth:.0f}</td>',
-            f'<td data-v="{ref.iso or 0}">{_esc(ref.iso if ref.iso else "—")}</td>',
-            f'<td>{_esc(ref.shutter or "—")}</td>',
-            f'<td>{_esc(ref.aperture or "—")}</td>',
-            f'<td data-v="{ref.focal_35mm or 0}">{_esc(ref.focal_35mm if ref.focal_35mm else "—")}</td>',
-            f'<td>{_esc(ref.captured_at or "—")}</td>',
-        ]
-        rows.append("<tr>" + "".join(cells) + "</tr>")
-    th = "".join(f"<th>{_esc(h)}</th>" for h in heads)
-    return (f'<section class="sec wrap"><details><summary>'
-            f'<h2 style="display:inline">{_esc(title)}</h2></summary>'
-            f'<div class="tablewrap"><table id="detail"><thead><tr>{th}</tr></thead>'
-            f'<tbody>{"".join(rows)}</tbody></table></div></details></section>')
-
-
 def build_html(data: ReportData, encoded: Dict[str, str], *,
                is_zh: bool = True, app_version: str = "",
-               generated_at: str = "", with_detail_thumbs: bool = True) -> str:
+               generated_at: str = "") -> str:
     """
     渲染完整的自包含 HTML 报告。
 
@@ -897,8 +1293,6 @@ def build_html(data: ReportData, encoded: Dict[str, str], *,
         is_zh (bool): 中文界面为 True，跟随导出时的界面语言（spec D7）。
         app_version (str): 写进页脚的版本号。
         generated_at (str): 写进页脚的生成时间。
-        with_detail_thumbs (bool): 明细表是否带缩略图列。照片总数 > 600 时
-            由调用方传 False（spec 6.4）。
 
     返回:
         str: 完整 HTML 文档字符串，可直接以 UTF-8 写入 .html 文件。
@@ -906,12 +1300,9 @@ def build_html(data: ReportData, encoded: Dict[str, str], *,
     Render the complete self-contained HTML report.
     """
     reg = _ImageRegistry(encoded)
-    # 顺序要紧：各区块在渲染时才向 reg 注册图片，故 reg.script() 必须最后调用。
-    # Order matters: blocks register images as they render, so script() comes last.
     body = (_cover_html(data, reg, is_zh)
             + _species_html(data, reg, is_zh)
-            + _stats_html(data, is_zh)
-            + _detail_html(data, reg, is_zh, with_detail_thumbs))
+            + _stats_html(data, is_zh))
     title = _esc(data.dir_name) or "SuperPicky"
     by = (f"由 SuperPicky {_esc(app_version)} 生成" if is_zh
           else f"Generated by SuperPicky {_esc(app_version)}")
@@ -929,10 +1320,8 @@ def build_html(data: ReportData, encoded: Dict[str, str], *,
 {body}
 <div id="lb"><img alt=""></div>
 <footer>{by} · {_esc(generated_at)}<br>https://superpicky.app</footer>
-<script>{reg.script()}</script>
 <script>{_JS_LAZY}</script>
 <script>{_JS_LIGHTBOX}</script>
-<script>{_JS_SORT}</script>
 <script>{_JS_PRINT}</script>
 </body>
 </html>"""
@@ -942,15 +1331,10 @@ def build_html(data: ReportData, encoded: Dict[str, str], *,
 
 # 各档单张编码后的经验均值（字节），用于导出前预估（spec 6.2 / 6.4）。
 # Empirical per-image byte averages used for the pre-export size estimate.
-_EST_BYTES = {"cover": 400_000, "rep": 110_000, "small": 32_000,
-              "hd": 150_000, "thumb": 12_000}
+_EST_BYTES = {"cover": 400_000, "shot": 95_000}
 
 # base64 编码膨胀系数 / base64 inflation factor.
 _BASE64_FACTOR = 1.33
-
-# 明细表带缩略图的照片数上限（spec 6.4，针对文件体积而非内存）。
-# Above this photo count the detail table drops its thumbnail column.
-DETAIL_THUMB_LIMIT = 600
 
 # 提示用户体积偏大的阈值（字节）：常见 IM 与邮件附件上限在 100MB 附近。
 # Warn above this size; common IM and email attachment limits sit near 100MB.

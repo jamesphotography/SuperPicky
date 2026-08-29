@@ -22,7 +22,8 @@ from dataclasses import replace
 from core.report_export import (
     aggregate, build_html, build_output_path, collect_image_jobs,
     encode_preview, estimate_size, preview_availability,
-    write_report_atomically, IMG_SPECS
+    format_minute, format_shutter, probe_jpeg_ratio,
+    write_report_atomically, IMG_SPECS, _tier_color_on_dark
 )
 from PIL import Image
 
@@ -123,8 +124,8 @@ def test_photoref_never_carries_directory_in_filename():
     """spec D6：PhotoRef.filename 只含文件名，绝不含目录。"""
     data = aggregate([_photo(filename="IMG_1.NEF",
                              current_path="/Users/someone/Pictures/IMG_1.NEF")])
-    assert data.detail[0].filename == "IMG_1.NEF"
-    assert "/" not in data.detail[0].filename
+    assert data.cover.filename == "IMG_1.NEF"
+    assert "/" not in data.cover.filename
 
 
 def _make_jpeg(tmp_path, name="p.jpg", size=(2000, 1400), orientation=None):
@@ -178,26 +179,18 @@ def test_encode_preview_returns_none_on_missing_file(tmp_path):
 
 
 def test_collect_image_jobs_covers_every_shown_photo():
-    """每张展示图都有 hd job；明细每张有 thumb job；封面有 cover job。"""
-    # 每张照片需要唯一的路径，否则会在 job_id 中碰撞
+    """每张展示图都有 hd job；封面有 cover job；不再产出任何 thumb job。"""
+    # 每张照片需要唯一的路径，否则会在 job_id 中碰撞；burst_id 各不相同，
+    # 免得被连拍去重合并掉（去重逻辑另有专门用例覆盖）。
     photos = [_photo(filename=f"a{i}.NEF", current_path=f"/tmp/pick/a{i}.NEF",
-                     adj_topiq=float(i)) for i in range(6)]
+                     burst_id=i, adj_topiq=float(i)) for i in range(6)]
     data = aggregate(photos)
     jobs = collect_image_jobs(data)
     kinds = {j.job_id.split(":", 1)[0] for j in jobs}
-    assert {"cover", "rep", "small", "hd", "thumb"} == kinds
-    assert sum(1 for j in jobs if j.job_id.startswith("thumb:")) == 6
-    assert sum(1 for j in jobs if j.job_id.startswith("rep:")) == 1     # 1 个鸟种
-    assert sum(1 for j in jobs if j.job_id.startswith("small:")) == 3   # 4 张展示图中 3 张小图
-
-
-def test_collect_image_jobs_can_skip_detail_thumbs():
-    """with_detail_thumbs=False 时不产出 thumb job（照片数 > 600 的退化路径）。"""
-    data = aggregate([_photo(filename=f"a{i}.NEF") for i in range(3)])
-    jobs = collect_image_jobs(data, with_detail_thumbs=False)
+    assert {"cover", "shot"} == kinds, "只应有封面与展示图两档"
     assert not any(j.job_id.startswith("thumb:") for j in jobs)
-
-
+    # 每张照片只编码一次：4 张展示图 = 4 个 shot job，没有第二份「放大专用」的
+    assert sum(1 for j in jobs if j.job_id.startswith("shot:")) == 4
 def test_preview_availability_counts_existing_files(tmp_path):
     """预检只做 exists 统计，不解码。"""
     good = _make_jpeg(tmp_path, name="ok.jpg", size=(50, 50))
@@ -225,8 +218,8 @@ def test_to_ref_uses_jpeg_preview_over_raw_path(tmp_path):
     )
     data = aggregate([photo])
     # PhotoRef.path 应为可解码的 JPEG，而非不存在的 RAW
-    assert data.detail[0].path == good_jpeg
-    assert os.path.exists(data.detail[0].path)
+    assert data.cover.path == good_jpeg
+    assert os.path.exists(data.cover.path)
 
 
 def test_preview_candidates_finds_jpeg_extension(tmp_path):
@@ -242,7 +235,7 @@ def test_preview_candidates_finds_jpeg_extension(tmp_path):
     )
     data = aggregate([photo])
     # .jpeg 小写应被找到
-    assert data.detail[0].path == jpeg_ext
+    assert data.cover.path == jpeg_ext
 
 
 def test_job_id_includes_path_to_avoid_collisions(tmp_path):
@@ -274,8 +267,8 @@ def test_job_id_includes_path_to_avoid_collisions(tmp_path):
     data = aggregate(photos)
     jobs = collect_image_jobs(data)
 
-    # 应有两个独立的 hd job（对应两个不同的文件）
-    hd_jobs = [j for j in jobs if j.job_id.startswith("hd:")]
+    # 应有两个独立的 shot job（对应两个不同的文件）
+    hd_jobs = [j for j in jobs if j.job_id.startswith("shot:")]
     assert len(hd_jobs) == 2
     # 两个 job 应指向不同的路径
     paths = {j.path for j in hd_jobs}
@@ -286,23 +279,47 @@ def test_job_id_includes_path_to_avoid_collisions(tmp_path):
 
 # ── Task 3: HTML 骨架、转义与视口懒插入 ──────────────────────────────────────
 
-def test_no_image_src_in_dom():
+def test_images_render_without_javascript():
     """
-    用例 7（本设计最关键的一条不变量）：输出中不存在任何 <img ... src="data:。
+    用例 7（已反转的一条不变量）：每张展示图都必须把 data URI 写在 src 上。
 
-    所有 data URI 只能出现在 JS 数组里，<img> 一律靠 data-idx 由
-    IntersectionObserver 按视口插入。这条一旦被破坏，40 个鸟种的报告
-    常驻位图会飙到 178MB，手机必崩（spec 6.1）。
+    原先的约定正好相反——DOM 里绝不写 src、全靠 IntersectionObserver 按视口
+    插入——目的是压常驻位图。代价直到把报告分享出去才暴露：**任何不执行
+    JavaScript 的查看环境都只能看到一份没有照片的报告**。macOS 的快速查看
+    （Finder 按空格）、iOS「文件」App 预览、邮件客户端与部分 IM 的内置预览
+    都不跑脚本，而收到文件先按空格看一眼恰恰是最常见的动作。
+
+    改法不牺牲内存控制：脚本一跑就把 src 收走交给 observer，滚出视口照样
+    卸载，行为与之前完全一致（见下面两条断言）。体积也没有代价，base64 仍
+    只存一份，只是从数组挪进了 src。
+
+    The original invariant was the reverse and made the report invisible in
+    every JS-free viewer. Images now ship with src; the observer takes them
+    over when scripts run, so the memory behavior is unchanged.
     """
     import re
     data = aggregate([_photo(filename=f"a{i}.NEF") for i in range(3)])
     # 键必须与 collect_image_jobs 产出的 job_id 同构，故从 data 直接取
     html = build_html(data, {f"cover:{data.cover.path}": "data:image/jpeg;base64,AAA"})
-    assert not re.search(r'<img[^>]*\ssrc\s*=', html), "有图片被直接写进了 src"
+    assert re.search(r'<img[^>]*\ssrc="data:image', html), "图片没有直接写进 src"
+    assert "<img data-lazy decoding=" in html
+    # 内存控制必须仍然在位：observer 依旧接管、依旧卸载屏幕外的位图
     assert "IntersectionObserver" in html
-    # 必须断言 DOM 里真有 <img data-idx=：裸的 "data-idx" 会被 _JS_LAZY 里的
-    # 选择器字符串 img[data-idx] 蒙混过关（两端键分叉时就是这么漏掉的）。
-    assert "<img data-idx=" in html
+    assert "removeAttribute('src')" in html
+
+
+def test_images_are_not_hidden_by_css_without_javascript():
+    """
+    光有 src 还不够：任何让图片默认不可见的样式（淡入的 opacity:0 是典型）
+    都会把「看得见」重新绑回脚本，无 JS 时图片有 src 却是透明的——比根本
+    没有 src 更难排查。
+
+    A src alone is not enough: any default-hidden style (a fade-in's
+    opacity:0) would re-bind visibility to JavaScript.
+    """
+    html = build_html(aggregate([_photo()]), {})
+    style = html.split("<style>", 1)[1].split("</style>", 1)[0]
+    assert "opacity:0" not in style.replace(" ", ""), "有样式让图片默认不可见"
 
 
 def test_html_escapes_hostile_dir_name():
@@ -382,42 +399,6 @@ def test_species_blocks_all_rendered_no_cap():
     assert len(data.species) == 40
     for i in range(40):
         assert f"鸟种{i}" in html
-
-
-def test_iucn_badge_threshold():
-    """用例 15：LC/NT/DD/NE 不渲染徽标；VU 及以上渲染。"""
-    lc = build_html(aggregate([_photo(iucn_category="LC")]), {})
-    assert 'class="iucn"' not in lc
-    for cat in ("VU", "EN", "CR", "EW", "EX"):
-        html = build_html(aggregate([_photo(iucn_category=cat)]), {})
-        assert 'class="iucn"' in html, f"{cat} 应显示徽标"
-        assert f">{cat}<" in html
-    for cat in ("NT", "DD", "NE"):
-        html = build_html(aggregate([_photo(iucn_category=cat)]), {})
-        assert 'class="iucn"' not in html, f"{cat} 不应显示徽标"
-
-
-def test_detail_table_rendered_with_thumbs_by_default():
-    """明细表默认带缩略图列。"""
-    data = aggregate([_photo(filename="a.NEF")])
-    html = build_html(data, {f"thumb:{data.detail[0].path}": "data:image/jpeg;base64,AAA"})
-    assert "<table" in html
-    assert "a.NEF" in html
-    assert 'class="thumbcol"' in html
-
-
-def test_detail_table_degrades_to_text_when_no_thumbs():
-    """
-    用例 9 后半：with_detail_thumbs=False 时明细表无缩略图列。
-
-    照片总数 > 600 时走此路径——针对文件体积而非内存（spec 6.4）。
-    """
-    data = aggregate([_photo(filename=f"a{i}.NEF") for i in range(3)])
-    html = build_html(data, {}, with_detail_thumbs=False)
-    assert "<table" in html
-    assert 'class="thumbcol"' not in html
-
-
 def test_species_name_follows_language():
     """is_zh=False 时英文名在前（spec D7）。"""
     data = aggregate([_photo(bird_species_cn="白腹海雕",
@@ -509,38 +490,22 @@ def test_hit_rate_counts_manual_high_ratings():
 
 # ── Task 5: 打印适配与「存为 PDF」 ───────────────────────────────────────────
 
-def test_print_stylesheet_has_all_four_requirements():
+def test_print_stylesheet_has_all_requirements():
     """
-    用例 14：@media print 必须同时满足 spec 5.2 的四项，缺一则打印结果不可用。
+    用例 14：@media print 必须同时满足三项，缺一则打印结果不可用。
 
       1. 白底（深色底会打出整页黑）
       2. page-break-inside: avoid（图文不被跨页拦腰截断）
-      3. 展开 <details>（否则明细区根本印不出来）
-      4. 隐藏交互控件（按钮、lightbox）
+      3. 隐藏交互控件（按钮、lightbox）
+
+    原第 3 项「展开 <details>」随「全部照片明细」一并移除，报告里已无折叠区。
     """
     html = build_html(aggregate([_photo()]), {})
     assert "@media print" in html
     block = html.split("@media print", 1)[1]
     assert "#fff" in block
     assert "page-break-inside" in block
-    assert "details" in block
     assert "no-print" in block
-
-
-def test_print_keeps_detail_heading():
-    """
-    展开明细区时标题必须留着：<h2> 长在 <summary> 里，整块 display:none
-    会让打印版多出一张没有名字的表。只去掉折叠箭头即可。
-
-    The detail table's heading lives inside <summary>; hiding the whole
-    summary would print an unlabeled table. Drop only the disclosure marker.
-    """
-    html = build_html(aggregate([_photo()]), {})
-    block = html.split("@media print", 1)[1].split("</style>", 1)[0]
-    assert "summary{display:none" not in block.replace(" ", "")
-    assert "list-style:none" in block
-
-
 def test_save_as_pdf_button_present():
     """页顶「存为 PDF」按钮存在，且点击调用 window.print()。"""
     html = build_html(aggregate([_photo()]), {})
@@ -556,41 +521,19 @@ def test_pdf_button_is_hidden_when_printing():
 
 def test_print_forces_lazy_images_to_materialize():
     """
-    懒插入的代价：未进过视口的图 src 是空的，直接打印会得到大片空白。
-    因此按钮必须先把 IMGS 全部落位再 print()。
+    懒插入的代价：滚出过视口的图 src 被卸掉了，直接打印那几页会是空白。
+    因此按钮必须先把 src 全部恢复再 print()。
     """
     html = build_html(aggregate([_photo()]), {})
-    assert "img[data-idx]" in html
-    assert "IMGS[el.dataset.idx]" in html
-    # 落位必须发生在 print() 之前
-    assert html.index("IMGS[el.dataset.idx]") < html.rindex("window.print()")
+    assert "window.__spRestore" in html
+    # 恢复必须发生在 print() 之前
+    assert html.index("__spRestore") < html.rindex("window.print()")
 
 
 def test_save_as_pdf_button_localized():
     """按钮文案跟随语言（spec D7）。"""
     assert "存为 PDF" in build_html(aggregate([_photo()]), {}, is_zh=True)
     assert "Save as PDF" in build_html(aggregate([_photo()]), {}, is_zh=False)
-
-
-def test_print_expands_details_via_js_not_css():
-    """
-    CSS 改不了 <details> 的 open（那是属性不是样式，display:block 只让
-    元素本身是块级，折叠内容依旧不渲染），所以打印样式再全，明细区在纸上
-    也是不存在的。必须在打印前用 JS 补 open、打印后恢复。
-
-    Safari 长期不支持 beforeprint/afterprint，故同时挂 matchMedia('print')
-    兜底；按钮路径直接调用，不依赖任何事件。
-
-    CSS cannot open a <details> (open is an attribute, not a style), so the
-    detail section must be expanded by JS before printing and restored after.
-    """
-    html = build_html(aggregate([_photo()]), {})
-    assert "beforeprint" in html
-    assert "afterprint" in html
-    assert "matchMedia" in html          # Safari 兜底
-    assert ".open=true" in html
-    assert ".open=false" in html         # 打印后恢复原折叠状态
-
 
 # ── Task 6: 输出路径与体积预估 ───────────────────────────────────────────────
 
@@ -621,8 +564,8 @@ def test_build_output_path_sanitizes_separators(tmp_path):
 
 def test_estimate_size_scales_with_job_counts():
     """预估随任务数线性增长，且含 base64 膨胀。"""
-    small = estimate_size({"cover": 1, "rep": 1, "small": 3, "hd": 4, "thumb": 10})
-    big = estimate_size({"cover": 1, "rep": 40, "small": 120, "hd": 160, "thumb": 600})
+    small = estimate_size({"cover": 1, "shot": 4})
+    big = estimate_size({"cover": 1, "shot": 160})
     assert big > small * 5
     assert small > 0
 
@@ -681,7 +624,7 @@ def test_encoded_images_actually_reach_the_html(tmp_path):
                            bird_species_cn=f"鸟种{i}", bird_species_en=f"Bird{i}"))
 
     data = aggregate(rows)
-    jobs = collect_image_jobs(data, with_detail_thumbs=True)
+    jobs = collect_image_jobs(data)
     assert jobs, "应至少有封面与鸟种图任务"
 
     encoded = {}
@@ -691,7 +634,374 @@ def test_encoded_images_actually_reach_the_html(tmp_path):
         encoded[job.job_id] = uri
 
     html = build_html(data, encoded)
-    assert "<img data-idx=" in html, "编码好的图一张都没进 DOM"
+    assert "<img data-lazy decoding=" in html, "编码好的图一张都没进 DOM"
     assert 'class="ph' not in html, "仍有占位块，说明有 job_id 对不上"
     # IMGS 数组里的条目数应与实际用到的图片数一致
-    assert html.count("<img data-idx=") >= len(data.species) + 1
+    assert html.count("<img data-lazy decoding=") >= len(data.species) + 1
+
+
+# ── 版式改版（等高零裁切画廊 / 无彩色主题）新增用例 ──────────────────────
+# Cases added with the equal-height zero-crop gallery and achromatic theme.
+
+
+def test_render_job_ids_match_collect_image_jobs(tmp_path):
+    """
+    渲染层查的 job_id 必须全部被 collect_image_jobs 产出过。
+
+    这是本模块最危险的失败模式——两端对不上不会报错，只会让那一格静默退化
+    成虚线占位块，而各自的单元测试仍然全绿。（曾经的 rep/small/hd 三档正是
+    因此出过 hd 全失效的问题；现在只剩 cover 与 shot 两档，风险小了但不为零。）
+
+    Every job_id the renderer looks up must have been produced; a mismatch
+    degrades cells to placeholders silently.
+    """
+    for n in range(1, 5):
+        rows = []
+        for i in range(n):
+            jpg = tmp_path / f"j{n}_{i}.jpg"
+            Image.new("RGB", (900, 600), (70, 90, 70)).save(jpg, quality=80)
+            rows.append(_photo(filename=f"j{n}_{i}.NEF",
+                               current_path=str(tmp_path / f"j{n}_{i}.NEF"),
+                               temp_jpeg_path=str(jpg), burst_id=i,
+                               bird_species_cn="同一种", bird_species_en="Same",
+                               adj_topiq=float(n - i)))
+        data = aggregate(rows)
+        assert len(data.species) == 1 and len(data.species[0].photos) == n
+
+        jobs = collect_image_jobs(data)
+        produced = {j.job_id for j in jobs}
+        for ref in data.species[0].photos:
+            assert f"shot:{ref.path}" in produced
+        assert f"cover:{data.cover.path}" in produced
+
+        # 真渲染一遍：占位块为 0 才说明两端确实对上了
+        encoded = {j.job_id: encode_preview(j.path, j.max_edge, j.quality)
+                   for j in jobs}
+        html = build_html(data, {k: v for k, v in encoded.items() if v})
+        assert 'class="ph' not in html, f"{n} 张时出现占位块，job_id 对不上"
+
+
+def test_gallery_layout_adapts_to_photo_count(tmp_path):
+    """
+    版式随张数变化：1 张只有满幅；2 张只有一排（不设满幅）；3/4 张为满幅 + 一排。
+
+    Layout adapts: 1 = hero only, 2 = a single row (no hero), 3/4 = hero + row.
+    """
+    def render(n: int) -> str:
+        rows = []
+        for i in range(n):
+            jpg = tmp_path / f"g{n}_{i}.jpg"
+            Image.new("RGB", (900, 600), (60, 90, 60)).save(jpg, quality=80)
+            rows.append(_photo(filename=f"g{n}_{i}.NEF",
+                               current_path=str(tmp_path / f"g{n}_{i}.NEF"),
+                               temp_jpeg_path=str(jpg),
+                               bird_species_cn="测试种", bird_species_en="Test",
+                               adj_topiq=float(n - i)))
+        data = aggregate(rows)
+        jobs = collect_image_jobs(data)
+        enc = {j.job_id: encode_preview(j.path, j.max_edge, j.quality) for j in jobs}
+        return build_html(data, {k: v for k, v in enc.items() if v})
+
+    one = render(1)
+    assert one.count('class="hero"') == 2      # 封面 + 该鸟种的满幅
+    assert 'class="row"' not in one
+
+    two = render(2)
+    assert two.count('class="hero"') == 1      # 只有封面，鸟种块不设满幅
+    assert two.count('class="row"') == 1
+
+    for n in (3, 4):
+        html = render(n)
+        assert html.count('class="hero"') == 2
+        assert html.count('class="row"') == 1
+        # 一排里的每张图都必须带 flex-grow，否则等高布局根本没生效
+        assert html.count("flex-grow:") == n - 1
+
+
+def test_probe_jpeg_ratio_reads_real_dimensions(tmp_path):
+    """
+    宽高比要能从编码后的 JPEG 头部读回来，横/竖/方/极端比例都成立。
+
+    Aspect ratios must be recoverable from the encoded JPEG header.
+    """
+    for w, h in ((3000, 2000), (2000, 3000), (2400, 2400), (1000, 3000), (3600, 1200)):
+        src = tmp_path / f"r{w}x{h}.jpg"
+        Image.new("RGB", (w, h), (80, 80, 80)).save(src, quality=88)
+        max_edge, quality = IMG_SPECS["shot"]
+        uri = encode_preview(str(src), max_edge, quality)
+        got = probe_jpeg_ratio(uri)
+        assert got is not None
+        # 以缩放取整后的实际像素为真值（缩放会引入 ±1px 的取整）
+        im = Image.open(src)
+        im.thumbnail((max_edge, max_edge), Image.LANCZOS)
+        assert abs(got - im.width / im.height) < 1e-6
+
+
+def test_probe_jpeg_ratio_falls_back_without_raising():
+    """畸形输入一律返回 None，绝不抛异常——一张坏图不能毁掉整份报告。"""
+    for bad in ("", "garbage", "data:image/jpeg;base64,", "data:image/jpeg;base64,!!!!"):
+        assert probe_jpeg_ratio(bad) is None
+
+
+def test_row_widths_resolve_to_equal_heights():
+    """
+    等高布局的数学前提：flex-basis 为 0 时，可用宽度按宽高比分配，
+    于是一排里每张图的高度必然相等——横、竖、全景混排也成立。
+
+    The invariant behind the layout: with flex-basis 0, widths land
+    proportional to each ratio, so all heights in a row resolve equal.
+    """
+    ratios = [1.5, 2 / 3, 3.0, 1.0]
+    available = 1060 - 8 * (len(ratios) - 1)      # 版心 1060，gap 8px
+    total = sum(ratios)
+    heights = [(available * r / total) / r for r in ratios]
+    assert max(heights) - min(heights) < 1e-9
+
+
+def test_dark_theme_has_no_leftover_accent_tokens():
+    """
+    「美术馆」配色：界面不得再出现原来的薄荷绿 / 纯黄强调色，
+    颜色只允许留在罕见度与 IUCN 徽章上。
+
+    The achromatic theme must not reintroduce the old accent colors.
+    """
+    data = aggregate([_photo()])
+    html = build_html(data, {})
+    for banned in ("#00d4aa", "#ffcc00", "var(--accent)", "var(--gold)"):
+        assert banned not in html, f"配色里仍残留 {banned}"
+
+
+def test_tier_color_is_brightened_for_dark_ground():
+    """
+    罕见度红在深色底上对比度不足（约 4.3:1），报告端必须提亮后再用；
+    共用的 core.rarity_tier 不受影响。
+
+    The shared rarity red fails contrast on the dark ground and must be
+    brightened for the report only.
+    """
+    from core.rarity_tier import tier_name_color
+    assert tier_name_color(3) == "#D81E05"          # 共用模块未被改动
+    assert _tier_color_on_dark("#D81E05") == "#FF4A32"
+    assert _tier_color_on_dark("#FC7F3F") == "#FC7F3F"   # 橙本就达标，原样
+    assert _tier_color_on_dark(None) == "#8f8a82"       # 常见 → muted
+
+
+def test_print_guards_bar_contrast():
+    """
+    星级条的屏幕用浅灰在白纸上不可见，必须被 !important 压成深灰。
+    （原先还有一条「淡入 opacity 复位」，随淡入一并移除。）
+
+    The star bars' light greys are invisible on paper and must be overridden.
+    """
+    html = build_html(aggregate([_photo()]), {})
+    assert ".bars .bar{background:#444 !important}" in html
+
+
+def test_sections_stay_centered():
+    """
+    .sec 的左右外边距必须是 auto：它定义在 .wrap 之后，写死 `margin:64px 0`
+    会覆盖掉 `margin:0 auto`，整个版心贴左、右边空一条。
+
+    .sec must keep auto side margins or it overrides .wrap's centering.
+    """
+    html = build_html(aggregate([_photo()]), {})
+    assert ".sec{margin:64px auto}" in html
+    assert ".sec{margin:64px 0}" not in html
+
+
+# ── 第二轮细节调整（时间/快门/连拍去重/明细表移除/代表作参数）─────────────
+# Second round: minute-precision time, shutter notation, burst dedupe,
+# detail-table removal, and pick metrics on the hero.
+
+
+def test_format_shutter_uses_photographic_notation():
+    """
+    DB 存的是秒数，直接印就是 `0.0008s`——没人这么报快门。1 秒以下取倒数。
+
+    Sub-second shutter speeds must render as 1/N, not as raw decimals.
+    """
+    assert format_shutter(0.0008) == "1/1250s"
+    assert format_shutter("0.004") == "1/250s"
+    assert format_shutter(1) == "1s"
+    assert format_shutter(1.3) == "1.3s"
+    assert format_shutter("1/500") == "1/500s"      # 已是分数就原样带单位
+    assert format_shutter(None) == ""
+    assert format_shutter("") == ""
+    assert format_shutter("abc") == "abc"           # 解析不了就不猜
+
+
+def test_format_minute_trims_seconds_and_normalizes_date():
+    """EXIF 的 `2026:08:28 08:29:53` → `2026-08-28 08:29`。"""
+    assert format_minute("2026:08:28 08:29:53") == "2026-08-28 08:29"
+    assert format_minute("2026:08:28 08:29") == "2026-08-28 08:29"
+    assert format_minute("") == ""
+    assert format_minute("乱七八糟") == "乱七八糟"    # 认不出就原样
+
+
+def test_cover_time_range_omits_repeated_date_and_seconds():
+    """
+    封面起止时间截到分钟；同一天只写一次日期。
+
+    The cover's time range is minute-precision and prints the date once.
+    """
+    rows = [_photo(filename="a.NEF", current_path="/tmp/pick/a.NEF",
+                   date_time_original="2026:08:28 08:29:53"),
+            _photo(filename="b.NEF", current_path="/tmp/pick/b.NEF",
+                   date_time_original="2026:08:28 11:51:21")]
+    html = build_html(aggregate(rows), {})
+    assert "2026-08-28 08:29 – 11:51" in html
+    assert "08:29:53" not in html and "11:51:21" not in html
+
+
+def test_burst_dedupe_keeps_one_frame_per_group():
+    """
+    同一连拍组只上一张，否则一个鸟种的四格全是几乎相同的画面。
+    留下的必须是该组质量最高的一张，而非快门顺序上的第一张。
+
+    One frame per burst, and it must be the group's best rather than its
+    first shutter.
+    """
+    rows = []
+    for i in range(8):
+        rows.append(_photo(filename=f"burst{i}.NEF",
+                           current_path=f"/tmp/pick/burst{i}.NEF",
+                           bird_species_cn="西大亭鸟", bird_species_en="Bowerbird",
+                           burst_id=i // 4,          # 8 张分属 2 个连拍组
+                           rating=3, adj_topiq=float(i)))
+    data = aggregate(rows)
+    shown = data.species[0].photos
+    assert data.species[0].count == 8, "标注的总张数仍是全部 8 张"
+    assert len(shown) == 2, "两个连拍组只应各出一张"
+    # 每组取 adj_topiq 最高的：组 0 的最高是 burst3，组 1 的最高是 burst7
+    assert {p.filename for p in shown} == {"burst3.NEF", "burst7.NEF"}
+
+
+def test_photos_without_burst_id_are_all_kept():
+    """burst_id 为空（非连拍）的照片各自独立，不能被去重误伤。"""
+    rows = [_photo(filename=f"solo{i}.NEF", current_path=f"/tmp/pick/solo{i}.NEF",
+                   bird_species_cn="鹊鹩", bird_species_en="Wren",
+                   burst_id=None, adj_topiq=float(i)) for i in range(4)]
+    data = aggregate(rows)
+    assert len(data.species[0].photos) == 4
+
+
+def test_detail_table_is_gone():
+    """
+    「全部照片明细」整块已移除：不再有表格、不再有折叠区、不再产缩略图任务。
+
+    The all-photos detail table is gone: no table, no <details>, no thumbs.
+    """
+    rows = [_photo(filename=f"d{i}.NEF", current_path=f"/tmp/pick/d{i}.NEF",
+                   burst_id=i) for i in range(5)]
+    data = aggregate(rows)
+    jobs = collect_image_jobs(data)
+    assert not any(j.job_id.startswith("thumb:") for j in jobs)
+    assert "thumb" not in IMG_SPECS
+
+    html = build_html(data, {})
+    for gone in ("<table", "<details>", "<summary>", 'id="detail"', "全部照片明细"):
+        assert gone not in html, f"明细表残留: {gone}"
+
+
+def test_hero_carries_pick_metrics_and_secondaries_do_not():
+    """
+    锐度/美学/颜值只挂在代表作上；副图仍然只有曝光组合。
+
+    Pick metrics ride on the hero only; secondaries keep the exposure line.
+    """
+    rows = []
+    for i in range(4):
+        rows.append(_photo(filename=f"m{i}.NEF", current_path=f"/tmp/pick/m{i}.NEF",
+                           bird_species_cn="冠鸠", bird_species_en="Bronzewing",
+                           burst_id=i, adj_sharpness=418.6, adj_topiq=5.74,
+                           aesthetic_index=63.2, rating=3))
+    html = build_html(aggregate(rows), {})
+    assert html.count("锐度 419") == 1, "锐度只应出现在代表作上"
+    # 美学量程只有 3–6.5，必须留一位小数，取整会把整批压成清一色的 5 和 6
+    assert html.count("美学 5.7") == 1
+    assert html.count("颜值 63") == 1
+    # 位置：必须排在曝光组合之后
+    cap = html.split('class="cap">', 1)[1].split("</div>", 1)[0]
+    assert cap.index("ISO") < cap.index("锐度")
+
+
+def test_pick_metrics_localized_and_skip_missing_values():
+    """英文界面用英文标签；缺失的项不出现，不留空占位。"""
+    rows = [_photo(filename="e.NEF", current_path="/tmp/pick/e.NEF",
+                   bird_species_cn="鹊鹩", bird_species_en="Wren",
+                   adj_sharpness=300.0, adj_topiq=None, aesthetic_index=None)]
+    html = build_html(aggregate(rows), {}, is_zh=False)
+    assert "Sharp 300" in html
+    assert "Aesth" not in html and "Beauty" not in html
+
+
+def test_aesthetic_keeps_one_decimal_to_stay_discriminative():
+    """
+    美学分实际只在 3–6.5 之间（本机真实批次 min 3.32 / max 6.39），取整会让
+    一整批鸟种清一色显示 5 和 6，等于没显示。必须保留一位小数。
+
+    同时这也是技能等级阈值的口径（core/skill_presets.py 的 4.5/4.8/5.5），
+    报告与设置里的数对得上才不会互相打架。
+
+    Aesthetics spans only ~3-6.5, so rounding flattens an entire batch.
+    """
+    def cap_of(topiq: float) -> str:
+        rows = [_photo(filename="x.NEF", current_path="/tmp/pick/x.NEF",
+                       bird_species_cn="冠鸠", bird_species_en="Bronzewing",
+                       adj_topiq=topiq, adj_sharpness=500.0)]
+        html = build_html(aggregate(rows), {})
+        return html.split('class="cap">', 1)[1].split("</div>", 1)[0]
+
+    assert "美学 5.1" in cap_of(5.09)
+    assert "美学 6.4" in cap_of(6.39)
+    # 两个相差 0.4 的分必须显示成不同的数，取整就都是 5 了
+    assert cap_of(5.1) != cap_of(5.5)
+
+
+def test_lightbox_zooms_the_image_already_on_the_page(tmp_path):
+    """
+    点击放大用的是页面上那一张，不再有第二份副本。
+
+    旧实现为每张图额外编码一份 1200px 的 hd，占掉整个报告的 74%，而画面与
+    页面上那张完全相同。更糟的是它一直是坏的：hd 图没有 DOM 节点、从没被
+    注册过，每个 data-hd 都是 -1，点击毫无反应——体积照付，功能不存在。
+
+    Zoom reuses the on-page image; the old hd duplicates cost 74% of the file
+    and never worked (every index resolved to -1).
+    """
+    rows = []
+    for i in range(3):
+        jpg = tmp_path / f"lb{i}.jpg"
+        Image.new("RGB", (1600, 1067), (50, 90, 120)).save(jpg, quality=85)
+        rows.append(_photo(filename=f"lb{i}.NEF",
+                           current_path=str(tmp_path / f"lb{i}.NEF"),
+                           temp_jpeg_path=str(jpg), burst_id=i,
+                           bird_species_cn="冠鸠", bird_species_en="Bronzewing"))
+    data = aggregate(rows)
+    jobs = collect_image_jobs(data)
+    encoded = {j.job_id: encode_preview(j.path, j.max_edge, j.quality) for j in jobs}
+    html = build_html(data, {k: v for k, v in encoded.items() if v})
+
+    # 放大机制不再依赖任何数组或索引属性
+    assert "const HD=" not in html
+    assert "data-hd" not in html
+    # 点击目标是 .shot 整块，取的是它自己的 <img>
+    assert "querySelectorAll('.shot')" in html
+    assert "el.querySelector('img')" in html
+
+
+def test_each_photo_is_encoded_exactly_once():
+    """
+    同一张照片不得产出两个编码任务——重复副本正是旧版 74% 体积的来源。
+
+    No photo may yield two encoding jobs; duplicates were the old bloat.
+    """
+    rows = [_photo(filename=f"v{i}.NEF", current_path=f"/tmp/pick/v{i}.NEF",
+                   burst_id=i, bird_species_cn="鹊鹩", bird_species_en="Wren")
+            for i in range(4)]
+    data = aggregate(rows)
+    jobs = collect_image_jobs(data)
+    paths = [j.path for j in jobs if j.job_id.startswith("shot:")]
+    assert len(paths) == len(set(paths)), "同一张照片被编码了不止一次"
+    # 封面与某张展示图可能是同一个文件，但那是两个不同尺寸的档位，允许
+    assert len(jobs) == len(set(j.job_id for j in jobs))

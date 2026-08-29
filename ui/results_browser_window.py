@@ -1307,8 +1307,7 @@ class ResultsBrowserWindow(QMainWindow):
         from core.report_export import (aggregate, build_html, collect_image_jobs,
                                         encode_preview, estimate_size,
                                         build_output_path, preview_availability,
-                                        write_report_atomically,
-                                        DETAIL_THUMB_LIMIT)
+                                        write_report_atomically)
         from ui.report_export_dialog import ReportExportDialog
         from ui.custom_dialogs import StyledMessageBox
 
@@ -1331,9 +1330,8 @@ class ResultsBrowserWindow(QMainWindow):
             if reply != StyledMessageBox.Yes:
                 return
 
-        with_thumbs = total <= DETAIL_THUMB_LIMIT
         probe = aggregate(rows, include_gps=False)
-        jobs = collect_image_jobs(probe, with_detail_thumbs=with_thumbs)
+        jobs = collect_image_jobs(probe)
         counts = {}
         for job in jobs:
             kind = job.job_id.split(":", 1)[0]
@@ -1349,8 +1347,7 @@ class ResultsBrowserWindow(QMainWindow):
 
         data = aggregate(rows, include_gps=options["include_gps"])
         data = replace(data, dir_name=os.path.basename(self._directory) or self._directory)
-        jobs = collect_image_jobs(data,
-                                  with_detail_thumbs=options["with_detail_thumbs"])
+        jobs = collect_image_jobs(data)
 
         progress = QProgressDialog(self.i18n.t("report_export.working"),
                                    self.i18n.t("report_export.cancel"),
@@ -1369,8 +1366,7 @@ class ResultsBrowserWindow(QMainWindow):
         is_zh = self.i18n.current_lang.startswith("zh")
         html = build_html(
             data, encoded, is_zh=is_zh, app_version=APP_VERSION,
-            generated_at=datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
-            with_detail_thumbs=options["with_detail_thumbs"])
+            generated_at=datetime.datetime.now().strftime("%Y-%m-%d %H:%M"))
         out = build_output_path(self._directory, data.dir_name, is_zh,
                                 datetime.date.today().isoformat())
         try:

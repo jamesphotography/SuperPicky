@@ -15,7 +15,7 @@ from typing import Dict
 from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QLabel,
                                QVBoxLayout)
 
-from core.report_export import DETAIL_THUMB_LIMIT, SIZE_WARN_BYTES
+from core.report_export import SIZE_WARN_BYTES
 from ui.icon_utils import checkbox_indicator_qss
 
 # 预览可用率低于此值时提示会有占位块（spec 7.1）。低于 50% 的批次由调用方
@@ -90,17 +90,15 @@ class ReportExportDialog(QDialog):
         """
         返回用户选择的导出选项。
 
-        with_detail_thumbs 不是用户选项而是按总张数自动判定：超过
-        DETAIL_THUMB_LIMIT 时明细表去掉缩略图列，针对的是文件体积
-        而非内存（spec 6.4）。
-
         Returns:
-            Dict[str, bool]: include_gps 与 with_detail_thumbs。
+            Dict[str, bool]: 目前只有 include_gps。
 
-        Return the chosen export options. with_detail_thumbs is derived from
-        the photo count rather than asked, since it targets file size.
+        报告不再生成「全部照片明细」表，原先按张数自动判定的
+        with_detail_thumbs 随之取消。
+
+        Return the chosen export options. The all-photos detail table (and its
+        thumbnail-count switch) was removed from the report.
         """
         return {
             "include_gps": self._gps.isChecked(),
-            "with_detail_thumbs": self._total <= DETAIL_THUMB_LIMIT,
         }
