@@ -63,10 +63,18 @@ def hide_path(path):
             # 如果 ctypes 失败，尝试使用 attrib 命令
             try:
                 import subprocess
+                # 不加 shell=True：attrib.exe 是独立可执行文件，无需 cmd.exe。
+                # 经 shell 转发时路径会被 list2cmdline 拼成字符串，若路径含 & | 等
+                # 元字符且不含空格(如 Birds&Wildlife)就不会被加引号，cmd 会把后半段
+                # 当成另一条命令执行；含 % 的路径(如 100%Birds)还会被变量展开而损坏。
+                # Do not pass shell=True: attrib.exe needs no cmd.exe. Going through
+                # the shell means the path is flattened by list2cmdline, and a path
+                # containing & or | without spaces (e.g. Birds&Wildlife) is left
+                # unquoted — cmd then runs the tail as a separate command. Paths
+                # containing % would also be corrupted by variable expansion.
                 result = subprocess.run(
                     ['attrib', '+H', path],
                     capture_output=True,
-                    shell=True,
                     timeout=5
                 )
                 return result.returncode == 0
@@ -192,10 +200,12 @@ def unhide_path(path):
         except Exception:
             try:
                 import subprocess
+                # 同 set_hidden_attribute：不经 cmd.exe，避免路径中的 & | % 被 shell 解释。
+                # Same as the hide path: bypass cmd.exe so & | % in the path are not
+                # interpreted by the shell.
                 result = subprocess.run(
                     ['attrib', '-H', path],
                     capture_output=True,
-                    shell=True,
                     timeout=5
                 )
                 return result.returncode == 0

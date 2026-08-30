@@ -1,4 +1,5 @@
 {
+  "_comment": "手工维护。发布正式版后必须更新 latest.tag / files / drive / baidu，否则官网下载页与应用内「关于」页的检查更新（tools/site_version.py 读取本文件）都会停留在旧版本。步骤见 docs/release-checklist.md 第 4 节。",
   "latest": {
     "tag": "v4.5.0",
     "updated_at": "2026-08-01T00:00:00.0000000+00:00",

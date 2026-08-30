@@ -96,6 +96,12 @@ class AdvancedConfig:
         "rescue_scan_enabled": True,   # 判无鸟/低置信度时触发 1024px 重扫 + 识鸟守门
         "rescue_birdid_gate": 10,      # 弱候选的识鸟确认门槛 (0-100, top1 置信度百分比)
 
+        # V4.6: 匿名使用统计 (spec: docs/specs/2026-08-21-usage-analytics-design.md)
+        # 默认开启、设置中心可关；上报内容为版本/系统/架构/语言与按日轮换的
+        # 匿名 ID，不含任何照片、路径或个人信息。
+        # V4.6: Anonymous usage stats — opt-out, no photo/path/personal data.
+        "telemetry_enabled": True,
+
         # 外部编辑应用（右键菜单 "用 X 打开"）
         # 每项格式：{"name": "显示名称", "path": "/Applications/...app"}
         "external_apps": [],
@@ -191,8 +197,16 @@ class AdvancedConfig:
         "correction_consent_shown": False,
     }
 
-    def __init__(self, config_file=None):
-        """初始化配置"""
+    def __init__(self, config_file: Optional[str] = None) -> None:
+        """
+        初始化配置并从磁盘载入。
+
+        参数 / Parameters:
+            config_file: 配置文件路径；None 时使用用户配置目录下的
+                advanced_config.json。测试应显式传入临时路径，避免读写用户的
+                真实设置。/ Config file path; tests should inject a temp path
+                so the user's real settings are never touched.
+        """
         # 如果没有指定配置文件路径，使用用户目录
         if config_file is None:
             config_dir = get_app_config_dir()
@@ -204,8 +218,14 @@ class AdvancedConfig:
         self.config = self.DEFAULT_CONFIG.copy()
         self.load()
 
-    def load(self):
-        """从文件加载配置"""
+    def load(self) -> None:
+        """
+        从文件加载配置，缺失的键以 DEFAULT_CONFIG 补齐。
+
+        文件不存在或解析失败时回退到默认配置，不抛异常——配置损坏不应导致
+        应用无法启动。/ Falls back to defaults when the file is missing or
+        unparsable; a corrupt config must never block startup.
+        """
         if os.path.exists(self.config_file):
             try:
                 with open(self.config_file, 'r', encoding='utf-8') as f:
@@ -233,8 +253,12 @@ class AdvancedConfig:
             except Exception as e:
                 print(_t("logs.config_load_failed", e=e))
 
-    def save(self):
-        """保存配置到文件"""
+    def save(self) -> None:
+        """
+        将当前配置写回文件（UTF-8，ensure_ascii=False 以保留中文原文）。
+
+        写入失败仅记录日志，不抛异常。/ Write failures are logged, not raised.
+        """
         try:
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump(self.config, f, indent=2, ensure_ascii=False)
@@ -244,21 +268,28 @@ class AdvancedConfig:
             print(_t("logs.config_save_failed", e=e))
             return False
 
-    def reset_to_default(self):
-        """重置为默认配置"""
+    def reset_to_default(self) -> None:
+        """
+        重置为默认配置（仅改内存，需调用 save() 才落盘）。
+
+        Reset to defaults in memory only; call save() to persist.
+        """
         self.config = self.DEFAULT_CONFIG.copy()
 
     # Getter方法
     @property
-    def min_confidence(self):
+    def min_confidence(self) -> float:
+        """返回AI置信度最低阈值 - 低于此值判定为0星。"""
         return self.config["min_confidence"]
 
     @property
-    def min_sharpness(self):
+    def min_sharpness(self) -> int:
+        """返回锐度最低阈值 - 低于此值判定为0星（头部区域锐度）。"""
         return self.config["min_sharpness"]
 
     @property
-    def min_nima(self):
+    def min_nima(self) -> float:
+        """返回NIMA美学最低阈值 - 低于此值判定为0星。"""
         return self.config["min_nima"]
 
     # V3.2: 移除 max_brisque 属性
@@ -269,7 +300,8 @@ class AdvancedConfig:
         value = self.config.get("rating_algorithm", "v2")
         return value if value in ("v1", "v2") else "v2"
 
-    def set_rating_algorithm(self, value: str):
+    def set_rating_algorithm(self, value: str) -> None:
+        """设置评星算法：v2=批内相对+配额（默认），v1=绝对阈值（回滚用）；其他值忽略。"""
         self.config["rating_algorithm"] = value if value in ("v1", "v2") else "v2"
         self.save()
 
@@ -278,7 +310,8 @@ class AdvancedConfig:
         """自选模式下的 3★ 配额百分比 (clamp 5-50,与 UI 滑块范围一致)"""
         return float(self.config.get("custom_quota3", 20))
 
-    def set_custom_quota3(self, value: float):
+    def set_custom_quota3(self, value: float) -> None:
+        """设置自选模式下的 3★ 配额百分比，取值范围 5–50（超出即截断）。"""
         self.config["custom_quota3"] = max(5, min(50, int(value)))
         self.save()
 
@@ -295,47 +328,55 @@ class AdvancedConfig:
         """
         return float(self.config.get("custom_quota2", 30))
 
-    def set_custom_quota2(self, value: float):
+    def set_custom_quota2(self, value: float) -> None:
+        """设置自选模式下的 2★ 配额百分比，取值范围 5–60（超出即截断；3★+2★ 应 ≤95）。"""
         self.config["custom_quota2"] = max(5, min(60, int(value)))
         self.save()
 
     @property
-    def picked_top_percentage(self):
+    def picked_top_percentage(self) -> int:
+        """返回精选旗标Top百分比 - 3星照片中美学+锐度双排名在此百分比内的设为精选。"""
         return self.config["picked_top_percentage"]
     
     @property
-    def exposure_threshold(self):
+    def exposure_threshold(self) -> float:
+        """返回曝光阈值 - 过曝/欠曝像素占比超过此值将降级一星。"""
         return self.config.get("exposure_threshold", 0.10)
     
     @property
-    def burst_fps(self):
+    def burst_fps(self) -> int:
         """连拍速度 (4-20张/秒)"""
         return self.config.get("burst_fps", 10)
     
     @property
-    def burst_time_threshold(self):
-        """连拍时间阈值 (ms) - 从 FPS 计算"""
+    def burst_time_threshold(self) -> int:
+        """返回连拍时间阈值（毫秒），由 burst_fps 换算：1000 / FPS。"""
         fps = self.burst_fps
         return int(1000 / fps)  # 10 FPS = 100ms
     
     @property
-    def burst_min_count(self):
+    def burst_min_count(self) -> int:
+        """返回连拍最少张数 - 至少此数量连续照片才算连拍组。"""
         return self.config.get("burst_min_count", 4)
     
     @property
-    def birdid_confidence(self):
+    def birdid_confidence(self) -> int:
+        """返回识别置信度阈值 - 低于此值不写入EXIF。"""
         return self.config.get("birdid_confidence", 50)
 
     @property
-    def save_csv(self):
+    def save_csv(self) -> bool:
+        """返回是否保存CSV报告。"""
         return self.config["save_csv"]
 
     @property
-    def log_level(self):
+    def log_level(self) -> str:
+        """返回日志详细程度: "simple" | "detailed"。"""
         return self.config["log_level"]
 
     @property
-    def language(self):
+    def language(self) -> Optional[str]:
+        """返回zh_CN | en_US | None (Auto)。"""
         return self.config["language"]
 
     @property
@@ -344,51 +385,51 @@ class AdvancedConfig:
         return bool(self.config.get("correction_consent_shown", False))
 
     @property
-    def rescue_scan_enabled(self):
+    def rescue_scan_enabled(self) -> bool:
         """无鸟补救扫描开关 / No-bird rescue scan toggle."""
         return self.config.get("rescue_scan_enabled", True)
 
     @property
-    def rescue_birdid_gate(self):
+    def rescue_birdid_gate(self) -> int:
         """补救识鸟确认门槛 (0-100) / Rescue BirdID gate percent (0-100)."""
         return self.config.get("rescue_birdid_gate", 10)
 
     # Setter方法
-    def set_min_confidence(self, value):
+    def set_min_confidence(self, value: float) -> None:
         """设置AI置信度阈值 (0.3-0.7)"""
         self.config["min_confidence"] = max(0.3, min(0.7, float(value)))
 
-    def set_min_sharpness(self, value):
+    def set_min_sharpness(self, value: int) -> None:
         """设置锐度最低阈值 (100-600) - 头部区域锐度"""
         self.config["min_sharpness"] = max(100, min(600, int(value)))
 
-    def set_min_nima(self, value):
+    def set_min_nima(self, value: float) -> None:
         """设置美学最低阈值 (0.0-7.0)"""
         self.config["min_nima"] = max(0.0, min(7.0, float(value)))
 
     # V3.2: 移除 set_max_brisque 方法
 
-    def set_picked_top_percentage(self, value):
+    def set_picked_top_percentage(self, value: int) -> None:
         """设置精选旗标Top百分比 (10-50)"""
         self.config["picked_top_percentage"] = max(10, min(50, int(value)))
     
-    def set_exposure_threshold(self, value):
+    def set_exposure_threshold(self, value: float) -> None:
         """设置曝光阈值 (0.05-0.20)"""
         self.config["exposure_threshold"] = max(0.05, min(0.20, float(value)))
     
-    def set_burst_fps(self, value):
+    def set_burst_fps(self, value: int) -> None:
         """设置连拍速度 (4-20张/秒)"""
         self.config["burst_fps"] = max(4, min(20, int(value)))
     
-    def set_burst_min_count(self, value):
+    def set_burst_min_count(self, value: int) -> None:
         """设置连拍最少张数 (3-10)"""
         self.config["burst_min_count"] = max(3, min(10, int(value)))
     
-    def set_birdid_confidence(self, value):
+    def set_birdid_confidence(self, value: int) -> None:
         """设置鸟种识别置信度阈值 (30-95)"""
         self.config["birdid_confidence"] = max(30, min(95, int(value)))
 
-    def set_save_csv(self, value):
+    def set_save_csv(self, value: bool) -> None:
         """设置是否保存CSV"""
         self.config["save_csv"] = bool(value)
 
@@ -397,20 +438,20 @@ class AdvancedConfig:
         self.config["correction_consent_shown"] = bool(value)
         self.save()
 
-    def set_rescue_scan_enabled(self, value):
+    def set_rescue_scan_enabled(self, value: bool) -> None:
         """设置无鸟补救扫描开关 / Toggle the no-bird rescue scan."""
         self.config["rescue_scan_enabled"] = bool(value)
 
-    def set_rescue_birdid_gate(self, value):
+    def set_rescue_birdid_gate(self, value: int) -> None:
         """设置补救识鸟确认门槛 (0-100) / Rescue BirdID gate percent (0-100)."""
         self.config["rescue_birdid_gate"] = max(0, min(100, int(value)))
 
-    def set_log_level(self, value):
+    def set_log_level(self, value: str) -> None:
         """设置日志详细程度"""
         if value in ["simple", "detailed"]:
             self.config["log_level"] = value
 
-    def set_language(self, value):
+    def set_language(self, value: str) -> None:
         """设置语言"""
         # 兼容性处理：如果传入 'en'，自动转换为 'en_US'
         if value == 'en':
@@ -421,26 +462,30 @@ class AdvancedConfig:
 
     # V4.3: 摄影水平预设 (Skill Level Presets)
     @property
-    def skill_level(self):
+    def skill_level(self) -> str:
+        """返回摄影水平: "beginner" | "intermediate" | "master" | "custom"。"""
         return self.config.get("skill_level", "intermediate")
     
     @property
-    def is_first_run(self):
+    def is_first_run(self) -> bool:
+        """返回是否首次运行。"""
         return self.config.get("is_first_run", True)
     
     @property
-    def custom_sharpness(self):
+    def custom_sharpness(self) -> int:
+        """返回自选模式下的锐度阈值。"""
         return self.config.get("custom_sharpness", 380)
     
     @property
-    def custom_aesthetics(self):
+    def custom_aesthetics(self) -> float:
+        """返回自选模式下的美学阈值。"""
         return self.config.get("custom_aesthetics", 4.8)
 
     @property
-    def arw_write_mode(self):
+    def arw_write_mode(self) -> str:
         return self.config.get("arw_write_mode", "sidecar")
 
-    def get_arw_write_mode_for_file(self, file_path=None):
+    def get_arw_write_mode_for_file(self, file_path: Optional[str] = None) -> str:
         """
         获取针对当前文件的 RAW 写入策略。
         若 file_path 为专有 RAW 格式（SIDECAR_RAW_EXTENSIONS，DNG 除外），
@@ -457,7 +502,7 @@ class AdvancedConfig:
             return "sidecar"
         return self.config.get("arw_write_mode", "sidecar")
 
-    def set_arw_write_mode(self, value):
+    def set_arw_write_mode(self, value: str) -> None:
         """设置 ARW 写入策略: sidecar | embedded | inplace | auto"""
         if value in ("sidecar", "embedded", "inplace", "auto"):
             self.config["arw_write_mode"] = value
@@ -466,51 +511,92 @@ class AdvancedConfig:
         """获取全局元数据写入模式: embedded | sidecar | none"""
         return self.config.get("metadata_write_mode", "embedded")
 
-    def set_metadata_write_mode(self, value):
+    def set_metadata_write_mode(self, value: str) -> None:
         """设置全局元数据写入模式: embedded | sidecar | none"""
         if value in ("embedded", "sidecar", "none"):
             self.config["metadata_write_mode"] = value
     
-    def set_skill_level(self, value):
+    def set_skill_level(self, value: str) -> None:
         """设置摄影水平: beginner | intermediate | master | custom"""
         if value in ["beginner", "intermediate", "master", "custom"]:
             self.config["skill_level"] = value
     
-    def set_is_first_run(self, value):
+    def set_is_first_run(self, value: bool) -> None:
         """设置是否首次运行"""
         self.config["is_first_run"] = bool(value)
     
-    def set_custom_sharpness(self, value):
+    def set_custom_sharpness(self, value: int) -> None:
         """设置自选模式下的锐度阈值 (100-600) - 与 set_min_sharpness clamp 对齐"""
         # V4.8: 下限 200→100,与 set_min_sharpness 及 UI 滑块(100-600)一致。
         # 此前 200 会在拖到 100-199 时静默截断,导致 custom 档恢复时默认值漂移。
         self.config["custom_sharpness"] = max(100, min(600, int(value)))
     
-    def set_custom_aesthetics(self, value):
-        """设置自选模式下的美学阈值 (4.0-7.0)"""
-        self.config["custom_aesthetics"] = max(4.0, min(7.0, float(value)))
+    def set_custom_aesthetics(self, value: float) -> None:
+        """设置自选模式下的美学阈值 (0.0-7.0) - 与 set_min_nima clamp 对齐"""
+        # V4.6: 下限 4.0→0.0,与 set_min_nima 及 UI 滑块(0-70,即 0.0-7.0)一致。
+        # 此前 4.0 会在拖到 0.0-3.9 时静默截断(滑块下半段 56% 行程失效),
+        # 导致 custom 档恢复时把用户阈值改写回 4.0,GUI 与 CLI 评星结果同时受影响。
+        # V4.6: lower bound 4.0→0.0, matching set_min_nima and the UI slider
+        # (0-70 => 0.0-7.0). The old 4.0 floor silently truncated the lower 56%
+        # of the slider, so restoring the custom preset overwrote the user's
+        # threshold back to 4.0 — affecting both GUI and CLI ratings.
+        self.config["custom_aesthetics"] = max(0.0, min(7.0, float(value)))
 
     # V4.1: 临时文件管理 getter/setter
     @property
-    def keep_temp_files(self):
+    def keep_temp_files(self) -> bool:
+        """返回保留临时预览图片（统一控制 tmp JPG + debug crops）。"""
         return self.config.get("keep_temp_files", True)
 
-    def set_keep_temp_files(self, value):
+    def set_keep_temp_files(self, value: bool) -> None:
+        """设置保留临时预览图片（统一控制 tmp JPG + debug crops）。"""
         self.config["keep_temp_files"] = bool(value)
 
     @property
     def completion_sound_enabled(self) -> bool:
+        """返回处理完成提示音 / Completion sound after processing。"""
         return self.config.get("completion_sound_enabled", True)
 
-    def set_completion_sound_enabled(self, value: bool):
+    def set_completion_sound_enabled(self, value: bool) -> None:
+        """设置处理完成提示音 / Completion sound after processing。"""
         self.config["completion_sound_enabled"] = bool(value)
+
+    @property
+    def telemetry_enabled(self) -> bool:
+        """
+        返回是否上报匿名使用统计。
+
+        返回:
+        bool: True 表示上报（默认），False 表示完全不发起网络请求。
+
+        Return whether anonymous usage stats are reported.
+
+        Return:
+        bool: True to report (default); False disables all network calls.
+        """
+        return self.config.get("telemetry_enabled", True)
+
+    def set_telemetry_enabled(self, value: bool) -> None:
+        """
+        设置是否上报匿名使用统计。
+
+        参数:
+        value (bool): True 开启，False 关闭。强制转 bool，
+                      以免 Qt 的 int 状态值（0/2）直接落库。
+
+        Set whether anonymous usage stats are reported.
+
+        Parameters:
+        value (bool): Coerced to bool so Qt's int check states never persist.
+        """
+        self.config["telemetry_enabled"] = bool(value)
 
     # V4.x: 鸟种英文名显示格式
     @property
-    def name_format(self):
+    def name_format(self) -> str:
         return self.config.get("name_format", "default")
 
-    def set_name_format(self, value):
+    def set_name_format(self, value: str) -> None:
         """设置鸟种英文名显示格式: default | avilist | clements | birdlife | scientific"""
         if value in ("default", "avilist", "clements", "birdlife", "scientific"):
             self.config["name_format"] = value
@@ -560,7 +646,7 @@ class AdvancedConfig:
         """返回外部编辑应用列表，每项 {"name": str, "path": str}。"""
         return list(self.config.get("external_apps", []))
 
-    def set_external_apps(self, apps: list):
+    def set_external_apps(self, apps: list) -> None:
         """保存外部编辑应用列表。"""
         self.config["external_apps"] = list(apps)
 
@@ -568,7 +654,7 @@ class AdvancedConfig:
         """返回浏览器排序偏好: rarity_desc | filename | sharpness_desc | aesthetic_desc"""
         return self.config.get("browser_sort", "rarity_desc")
 
-    def set_browser_sort(self, value: str):
+    def set_browser_sort(self, value: str) -> None:
         """保存浏览器排序偏好。"""
         if value in ("rarity_desc", "filename", "sharpness_desc", "aesthetic_desc"):
             self.config["browser_sort"] = value
@@ -594,7 +680,7 @@ class AdvancedConfig:
             )
         )
 
-    def set_detail_metadata_for_rejected(self, enabled: bool):
+    def set_detail_metadata_for_rejected(self, enabled: bool) -> None:
         """
         保存 0 星/无鸟照片详情元数据补充开关。
 
@@ -614,55 +700,59 @@ class AdvancedConfig:
         return self.config.get("delete_confirm", True)
 
     @property
-    def ignored_update_version(self):
+    def ignored_update_version(self) -> Optional[str]:
+        """返回跳过提醒的版本号，如 "4.3.0"。"""
         return self.config.get("ignored_update_version", None)
 
     @property
     def include_prerelease(self) -> bool:
+        """返回是否接收 Beta/RC 更新提醒。"""
         return self.config.get("include_prerelease", False)
 
-    def set_delete_confirm(self, value: bool):
+    def set_delete_confirm(self, value: bool) -> None:
         self.config["delete_confirm"] = bool(value)
 
-    def set_ignored_update_version(self, value):
+    def set_ignored_update_version(self, value: Optional[str]) -> None:
         """设置要跳过提醒的版本号，传 None 清除。"""
         self.config["ignored_update_version"] = value if isinstance(value, str) else None
 
-    def set_include_prerelease(self, value: bool):
+    def set_include_prerelease(self, value: bool) -> None:
         """设置是否接收预发布版本提醒。"""
         self.config["include_prerelease"] = bool(value)
 
     @property
     def auto_check_updates(self) -> bool:
+        """返回启动时自动检查更新（含补丁）。"""
         return self.config.get("auto_check_updates", False)
 
-    def set_auto_check_updates(self, value: bool):
+    def set_auto_check_updates(self, value: bool) -> None:
         """设置启动时是否自动检查更新。"""
         self.config["auto_check_updates"] = bool(value)
 
     # V4.3+: 首启初始化状态 getter/setter
-    def _set_init_config(self, key: str, value):
+    def _set_init_config(self, key: str, value: object) -> None:
+        """写入一个首启初始化状态字段。/ Set one first-run initialization field."""
         self.config[key] = value
 
     @property
     def initialization_completed(self) -> bool:
         return self.config.get("initialization_completed", False)
 
-    def set_initialization_completed(self, value: bool):
+    def set_initialization_completed(self, value: bool) -> None:
         self._set_init_config("initialization_completed", bool(value))
 
     @property
     def initialization_manifest_version(self) -> str:
         return str(self.config.get("initialization_manifest_version", "v1"))
 
-    def set_initialization_manifest_version(self, value: str):
+    def set_initialization_manifest_version(self, value: str) -> None:
         self._set_init_config("initialization_manifest_version", str(value or "v1"))
 
     @property
     def initialization_in_progress(self) -> bool:
         return self.config.get("initialization_in_progress", False)
 
-    def set_initialization_in_progress(self, value: bool):
+    def set_initialization_in_progress(self, value: bool) -> None:
         self._set_init_config("initialization_in_progress", bool(value))
 
     @property
@@ -670,7 +760,7 @@ class AdvancedConfig:
         value = str(self.config.get("last_init_exit_reason", "none") or "none")
         return value if value in ("none", "interrupted", "failed") else "none"
 
-    def set_last_init_exit_reason(self, value: str):
+    def set_last_init_exit_reason(self, value: str) -> None:
         normalized = value if value in ("none", "interrupted", "failed") else "none"
         self._set_init_config("last_init_exit_reason", normalized)
 
@@ -679,15 +769,17 @@ class AdvancedConfig:
         value = str(self.config.get("last_init_mode", "none") or "none")
         return value if value in ("none", "init", "repair") else "none"
 
-    def set_last_init_mode(self, value: str):
+    def set_last_init_mode(self, value: str) -> None:
         normalized = value if value in ("none", "init", "repair") else "none"
         self._set_init_config("last_init_mode", normalized)
 
     @property
     def selected_runtime_variant(self) -> str:
+        """返回auto | cpu | cuda | mac。"""
         return str(self.config.get("selected_runtime_variant", "auto"))
 
-    def set_selected_runtime_variant(self, value: str):
+    def set_selected_runtime_variant(self, value: str) -> None:
+        """设置运行时变体：auto | cpu | cuda | mac；其他值忽略。"""
         if value in ("auto", "cpu", "cuda", "mac"):
             self._set_init_config("selected_runtime_variant", value)
 
@@ -695,74 +787,82 @@ class AdvancedConfig:
     def detected_cuda_capable(self) -> bool:
         return self.config.get("detected_cuda_capable", False)
 
-    def set_detected_cuda_capable(self, value: bool):
+    def set_detected_cuda_capable(self, value: bool) -> None:
         self._set_init_config("detected_cuda_capable", bool(value))
 
     @property
-    def runtime_install_location_preference(self):
+    def runtime_install_location_preference(self) -> Optional[str]:
+        """返回None | default | install。"""
         value = self.config.get("runtime_install_location_preference", None)
         return value if value in ("default", "install", None) else None
 
-    def set_runtime_install_location_preference(self, value):
+    def set_runtime_install_location_preference(self, value: str) -> None:
+        """设置运行时安装位置偏好：default | install，None 表示未选择。"""
         normalized = value if value in ("default", "install") else None
         self._set_init_config("runtime_install_location_preference", normalized)
 
     @property
-    def resolved_runtime_dir(self):
+    def resolved_runtime_dir(self) -> Optional[str]:
         value = self.config.get("resolved_runtime_dir", None)
         return None if value in (None, "") else str(value)
 
-    def set_resolved_runtime_dir(self, value):
+    def set_resolved_runtime_dir(self, value: str) -> None:
         self._set_init_config("resolved_runtime_dir", None if not value else str(value))
 
     @property
     def enabled_feature_set(self) -> list:
         return list(self.config.get("enabled_feature_set", []))
 
-    def set_enabled_feature_set(self, features: list):
+    def set_enabled_feature_set(self, features: list) -> None:
         self._set_init_config("enabled_feature_set", list(features))
 
     @property
     def downloaded_resources(self) -> dict:
         return dict(self.config.get("downloaded_resources", {}))
 
-    def set_downloaded_resources(self, resources: dict):
+    def set_downloaded_resources(self, resources: dict) -> None:
         self._set_init_config("downloaded_resources", dict(resources))
 
     @property
     def resolved_source_map(self) -> dict:
         return dict(self.config.get("resolved_source_map", {}))
 
-    def set_resolved_source_map(self, source_map: dict):
+    def set_resolved_source_map(self, source_map: dict) -> None:
         self._set_init_config("resolved_source_map", dict(source_map))
 
     @property
-    def last_init_error(self):
+    def last_init_error(self) -> Optional[str]:
         return self.config.get("last_init_error", None)
 
-    def set_last_init_error(self, value):
+    def set_last_init_error(self, value: str) -> None:
         self._set_init_config("last_init_error", value if value is None else str(value))
 
     # 主界面复选框状态 getter/setter
     @property
-    def flight_check(self):
+    def flight_check(self) -> bool:
+        """返回飞鸟检测开关（默认关闭，开启后处理较慢）。"""
         return self.config.get("flight_check", False)
 
     @property
-    def burst_check(self):
+    def burst_check(self) -> bool:
+        """返回连拍检测开关（默认关闭，开启后处理较慢）。"""
         return self.config.get("burst_check", False)
 
     @property
-    def exposure_check(self):
+    def exposure_check(self) -> bool:
+        """返回曝光检测默认关闭。"""
         return self.config.get("exposure_check", False)
 
-    def set_flight_check(self, value):
+    def set_flight_check(self, value: bool) -> None:
+        """设置飞鸟检测默认关闭（开启后速度较慢，用户可手动开启）。"""
         self.config["flight_check"] = bool(value)
 
-    def set_burst_check(self, value):
+    def set_burst_check(self, value: bool) -> None:
+        """设置连拍检测默认关闭（开启后速度较慢，用户可手动开启）。"""
         self.config["burst_check"] = bool(value)
 
-    def set_exposure_check(self, value):
+    def set_exposure_check(self, value: bool) -> None:
+        """设置曝光检测默认关闭。"""
         self.config["exposure_check"] = bool(value)
 
     # ──────────────────────────────────────────────
@@ -844,8 +944,8 @@ class AdvancedConfig:
         self.config["recent_directories"] = dirs[:10]
         self.save()
 
-    def get_dict(self):
-        """获取配置字典（用于传递给其他模块）"""
+    def get_dict(self) -> Dict[str, object]:
+        """返回配置字典的浅拷贝（供其他模块只读使用，改动不会影响本对象）。"""
         return self.config.copy()
 
     # V4.4: 识鸟设置 (Bird Identification Settings)
@@ -880,7 +980,7 @@ class AdvancedConfig:
         """
         return bool(self.config.get("birdid_write_keywords", True))
 
-    def set_birdid_write_keywords(self, value: bool):
+    def set_birdid_write_keywords(self, value: bool) -> None:
         """
         设置「识别后写入关键字」开关并保存。
 
@@ -916,7 +1016,7 @@ class AdvancedConfig:
         return bool(self.config.get("birdid_use_geo_filter", True))
 
     @property
-    def birdid_country_code(self):
+    def birdid_country_code(self) -> Optional[str]:
         """
         获取识鸟国家代码。
 
@@ -946,7 +1046,7 @@ class AdvancedConfig:
         return self.config.get("birdid_selected_country", "自动检测 (GPS)")
 
     @property
-    def birdid_region_code(self):
+    def birdid_region_code(self) -> Optional[str]:
         """
         获取识鸟地区代码。
 
@@ -975,7 +1075,7 @@ class AdvancedConfig:
         """
         return self.config.get("birdid_selected_region", "整个国家")
 
-    def set_birdid_auto_identify(self, value: bool):
+    def set_birdid_auto_identify(self, value: bool) -> None:
         """
         设置自动识鸟开关并保存。
 
@@ -1006,7 +1106,7 @@ class AdvancedConfig:
         """
         return bool(self.config.get("video_auto_process_in_main", False))
 
-    def set_video_auto_process_in_main(self, value: bool):
+    def set_video_auto_process_in_main(self, value: bool) -> None:
         """
         设置选鸟时是否自动分析视频并保存。
 
@@ -1024,11 +1124,11 @@ class AdvancedConfig:
     def set_birdid_region(
         self,
         use_geo_filter: bool,
-        country_code,
+        country_code: Optional[str],
         selected_country: str,
-        region_code,
+        region_code: Optional[str],
         selected_region: str,
-    ):
+    ) -> None:
         """
         一次性设置全部识鸟地区相关字段并保存。
 

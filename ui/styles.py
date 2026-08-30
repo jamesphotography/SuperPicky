@@ -29,6 +29,14 @@ COLORS = {
     'accent_dim': 'rgba(0, 212, 170, 0.15)',
     'accent_glow': 'rgba(0, 212, 170, 0.3)',
 
+    # 飞版语义色（与写入照片的 XMP:Label 保持一致）
+    # 4.5.0 起色标映射改为 蓝=飞版 > 绿=精焦 > 红=脱焦（见 core/photo_processor.py
+    # compute_xmp_label）。此前 UI 图标沿用旧映射，把 focus_best 的绿当飞版色用，
+    # 导致软件里飞版是绿图标、导入 Lightroom 后却是蓝标签，两边对不上。
+    # Flight colour, kept in sync with the XMP:Label written to photos:
+    # since 4.5.0 the mapping is blue=flight > green=critical focus > red=soft.
+    'flight_blue':  '#3b82f6',   # 飞版 — 蓝
+
     # 焦点状态语义色（全系统统一）
     'focus_best':   '#00cc44',   # 精焦 — 绿（相机 AF 确认色）
     'focus_good':   '#a8e066',   # 合焦 — 黄绿（淡于精焦深绿，区分明显）
@@ -149,6 +157,40 @@ QLineEdit:focus {{
 
 QLineEdit::placeholder {{
     color: {COLORS['text_muted']};
+}}
+
+/* ==================== 数字输入框 ==================== */
+/* QSpinBox 此前没有任何规则，它的深色只是「页面容器裸 background:transparent」
+   意外传播的副作用；该规则收窄到容器自身后，样式必须由这里显式提供，否则在
+   macOS 上回落到原生浅色渲染，变成白底浅字看不清（精选页「连拍 fps」实测）。
+   上下步进箭头不在这里覆盖：实测(macOS/Qt6)带样式表时它渲染为灰色占位方块，
+   写 ::up-arrow/::down-arrow 的 border 三角或只改 ::up-button 都无任何差别，
+   与全局 QComboBox::down-arrow 表现一致，属既有现象。
+   QSpinBox had no rule at all; its dark look was an accidental side effect of
+   the page container's bare `background: transparent`. Once that rule is
+   scoped, the style must come from here or macOS falls back to native light
+   rendering (pale digits on white). The stepper arrows are deliberately not
+   restyled: on macOS/Qt6 with a stylesheet attached they render as a grey
+   placeholder square, and neither ::up-arrow/::down-arrow border triangles nor
+   ::up-button tweaks change that — same as the global QComboBox::down-arrow. */
+QSpinBox, QDoubleSpinBox {{
+    background-color: {COLORS['bg_input']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 6px;
+    padding: 3px 6px;
+    color: {COLORS['text_primary']};
+    font-size: 13px;
+    selection-background-color: {COLORS['accent']};
+    selection-color: {COLORS['bg_void']};
+}}
+
+QSpinBox:focus, QDoubleSpinBox:focus {{
+    border-color: {COLORS['accent']};
+}}
+
+QSpinBox:disabled, QDoubleSpinBox:disabled {{
+    color: {COLORS['text_muted']};
+    border-color: {COLORS['border_subtle']};
 }}
 
 /* ==================== 按钮系统 ==================== */
@@ -514,9 +556,24 @@ QComboBox::down-arrow {{
     margin-right: 8px;
 }}
 
+/* 弹出列表 itemView。边框与圆角由弹出**容器**负责（见 ui/combo_popup.py），
+   这里只铺同色底，避免容器描边与列表描边叠成双层。
+
+   容器为什么必须走 Python 而不能写在这里：Qt 把 popup 装在
+   QComboBoxPrivateContainer（QFrame）里，它是一个独立的顶层 popup 窗口，
+   祖先样式表中的选择器**够不到它**（实测：在 GLOBAL_STYLE 里写
+   `QComboBoxPrivateContainer {...}` 完全无效，容器仍由 macOS 用原生浅色
+   菜单面板绘制，深色列表上下各露出 6px 白边）。只有对容器实例本身调用
+   setStyleSheet 才生效，因此改由 ui.combo_popup.style_combo_popup() 接线。
+
+   Border/radius belong to the popup container (see ui/combo_popup.py); the view
+   only fills the same colour so no double outline appears. The container is a
+   separate top-level popup window that ancestor stylesheets cannot reach — a
+   `QComboBoxPrivateContainer` rule here is verifiably a no-op — so it must be
+   styled per instance instead. */
 QComboBox QAbstractItemView {{
     background-color: {COLORS['bg_elevated']};
-    border: 1px solid {COLORS['border']};
+    border: none;
     border-radius: 8px;
     padding: 4px;
     selection-background-color: {COLORS['accent']};

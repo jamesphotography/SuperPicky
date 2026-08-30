@@ -41,12 +41,6 @@ jobs:
             requirements.txt
             requirements_cuda.txt
 
-      - name: Prepare telemetry build override
-        env:
-          COUNTLY_APP_KEY: ${{ secrets.COUNTLY_APP_KEY }}
-          COUNTLY_SERVER_URL: ${{ secrets.COUNTLY_SERVER_URL }}
-        run: python scripts/prepare_telemetry_build.py --output _telemetry_build.py
-
       - name: Resolve release metadata
         id: release_meta
         env:
@@ -103,10 +97,6 @@ jobs:
 
       - name: Build code patch zip
         run: python scripts/ci_release.py build-patch --output-dir release_assets --patch-version ${{ steps.release_meta.outputs.tag }}
-
-      - name: Clean telemetry build override
-        if: always()
-        run: python scripts/ci_release.py cleanup-paths --path _telemetry_build.py
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
@@ -192,12 +182,6 @@ jobs:
           cache: 'pip'
           cache-dependency-path: requirements_mac.txt
 
-      - name: Prepare telemetry build override
-        env:
-          COUNTLY_APP_KEY: ${{ secrets.COUNTLY_APP_KEY }}
-          COUNTLY_SERVER_URL: ${{ secrets.COUNTLY_SERVER_URL }}
-        run: python scripts/prepare_telemetry_build.py --output _telemetry_build.py
-
       - name: Resolve release metadata
         id: release_meta
         env:
@@ -252,7 +236,7 @@ jobs:
 
       - name: Clean up
         if: always()
-        run: python scripts/ci_release.py cleanup-paths --path _telemetry_build.py --path $RUNNER_TEMP/certificate.p12 --path $RUNNER_TEMP/installer_certificate.p12
+        run: python scripts/ci_release.py cleanup-paths --path $RUNNER_TEMP/certificate.p12 --path $RUNNER_TEMP/installer_certificate.p12
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v3

@@ -29,6 +29,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
@@ -41,7 +42,16 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 EXIFTOOLS_MAC_DIR = ROOT_DIR / "exiftools_mac"
 EXIFTOOLS_WIN_DIR = ROOT_DIR / "exiftools_win"
 VERSION_RECORD = ROOT_DIR / "exiftools" / "VERSION.json"
-HISTORY_URL = "https://exiftool.org/history.html"
+# ExifTool 历史页候选地址（按顺序尝试，首个可解析者生效）。
+# 官网已把 history 页迁到 sourceforge 镜像，exiftool.org/history.html 现返回 404；
+# 保留旧地址作为兜底，以防镜像再次变更。
+# Candidate ExifTool history page URLs, tried in order until one parses.
+# The official site moved this page to the sourceforge mirror; exiftool.org/history.html
+# now returns 404. The legacy URL is kept as a fallback in case the mirror moves again.
+HISTORY_URLS: tuple[str, ...] = (
+    "https://exiftool.sourceforge.net/history.html",
+    "https://exiftool.org/history.html",
+)
 SOURCEFORGE_DOWNLOAD_BASE_URL = "https://sourceforge.net/projects/exiftool/files"
 HTTP_TIMEOUT_SECONDS = 60
 
@@ -175,31 +185,34 @@ def fetch_text(url: str) -> str:
     str: Decoded text.
     """
 
+    # 注意：不要把 User-Agent 伪装成浏览器（Mozilla/...），SourceForge 会对伪装 UA 返回 403；
+    # 本自定义 UA 与 urllib 默认 UA 均可正常获取。
+    # Note: do NOT spoof a browser User-Agent (Mozilla/...) — SourceForge returns 403 for
+    # spoofed UAs. This custom UA and urllib's default UA both work.
     request = urllib.request.Request(url, headers={"User-Agent": "SuperPicky-ExifTool-Sync/1.0"})
     with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
         return response.read().decode("utf-8", errors="replace")
 
 
-def get_latest_production_version() -> str:
+def parse_production_version(history_html: str) -> str | None:
     """
-    从 ExifTool 官网历史页解析最新 production release。
+    从历史页 HTML 中解析最新 production release 版本号。
+
+    参数:
+    history_html: 历史页原始 HTML 文本。
 
     返回:
-    str: 最新 production release 版本号。
+    str | None: 解析到的版本号；页面结构不匹配时返回 None。
 
-    Raises:
-    RuntimeError: 当页面结构无法解析时抛出。
+    Parse the latest production release version from history page HTML.
 
-    Parse the latest production release from the official ExifTool history page.
+    Parameters:
+    history_html: Raw HTML text of the history page.
 
     Return:
-    str: Latest production release version.
-
-    Raises:
-    RuntimeError: Raised when the page structure cannot be parsed.
+    str | None: Parsed version, or None when the page structure does not match.
     """
 
-    history_html = fetch_text(HISTORY_URL)
     decoded_html = html.unescape(history_html)
     note_match = re.search(
         r"most recent production release is\s+.*?Version\s+(\d+(?:\.\d+)+)",
@@ -217,7 +230,47 @@ def get_latest_production_version() -> str:
     if release_match:
         return normalize_version(release_match.group(1))
 
-    raise RuntimeError("Unable to detect latest ExifTool production release.")
+    return None
+
+
+def get_latest_production_version() -> str:
+    """
+    从 ExifTool 官网历史页解析最新 production release。
+
+    依次尝试 HISTORY_URLS 中的候选地址，返回首个成功解析的版本号。
+
+    返回:
+    str: 最新 production release 版本号。
+
+    Raises:
+    RuntimeError: 当所有候选地址均无法访问或无法解析时抛出。
+
+    Parse the latest production release from the official ExifTool history page.
+
+    Tries each candidate in HISTORY_URLS in order and returns the first version parsed.
+
+    Return:
+    str: Latest production release version.
+
+    Raises:
+    RuntimeError: Raised when every candidate URL is unreachable or unparsable.
+    """
+
+    failures: list[str] = []
+    for url in HISTORY_URLS:
+        try:
+            history_html = fetch_text(url)
+        except (urllib.error.URLError, OSError) as exc:
+            failures.append(f"{url}: {exc}")
+            continue
+
+        version = parse_production_version(history_html)
+        if version:
+            return version
+        failures.append(f"{url}: production release not found in page")
+
+    detail = "; ".join(failures)
+    raise RuntimeError(f"Unable to detect latest ExifTool production release. Tried: {detail}")
 
 
 def run_command(command: list[str], *, cwd: Path | None = None) -> str:

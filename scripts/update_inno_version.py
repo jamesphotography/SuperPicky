@@ -24,6 +24,7 @@ def get_commit_hash():
             ['git', 'rev-parse', '--short=7', 'HEAD'],
             capture_output=True,
             text=True,
+            timeout=5,
             cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         )
         if result.returncode == 0:

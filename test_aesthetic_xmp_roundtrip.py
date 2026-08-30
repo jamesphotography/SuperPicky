@@ -76,6 +76,15 @@ class TestAestheticXmpRoundtrip(unittest.TestCase):
         # 构造真实 ExifToolManager：启动常驻读/写子进程。
         # Real ExifToolManager: starts the resident read/write subprocesses.
         cls.mgr = ExifToolManager()
+        # 固定为 embedded，隔离用户的全局 metadata_write_mode 设置。
+        # 本类断言的是「写进 JPEG 本体再读回」，而用户若把该设置改成 sidecar，
+        # 元数据会被写进 .xmp 边车，测试读本体自然读不到——那是用户的合法配置，
+        # 不是缺陷。测试必须自带确定的写入模式，不能随本机设置漂移。
+        # Pin embedded so the user's global metadata_write_mode cannot change the
+        # outcome: these tests assert a write-then-read round-trip on the JPEG
+        # itself, but with sidecar mode the metadata lands in a .xmp file instead.
+        # That is a legitimate user setting, so the test must fix its own mode.
+        cls.mgr._get_metadata_write_mode = lambda: "embedded"
 
     @classmethod
     def tearDownClass(cls):

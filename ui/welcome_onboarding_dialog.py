@@ -832,6 +832,23 @@ class WelcomeOnboardingDialog(QDialog):
         root.addLayout(nav_layout)
 
     def _build_welcome_page(self) -> QWidget:
+        """
+        构建首启欢迎页，页脚附匿名统计的首启告知。
+
+        返回:
+        QWidget: 欢迎页控件。
+
+        告知放在这里而不是单独开一页：匿名统计默认开启（opt-out），而
+        opt-out 不等于不告知——新用户若只能在设置里翻到它，这个默认值在
+        合规与社区观感上都站不住（设计文档 §5.2）。放在首启第一屏页脚、
+        用与其余提示同一档的三级文字，既保证一定被看到，又不喧宾夺主。
+        两行分别回答「发了什么、没发什么」与「不想发去哪关」。
+
+        Build the welcome page, with the first-run telemetry disclosure in
+        the footer. Anonymous statistics default to on; opt-out does not mean
+        no disclosure (design doc §5.2). Tertiary text in the footer of the
+        very first screen: unavoidable to see, but not shouting.
+        """
         page, layout = self._create_page_widget()
         layout.addStretch()
         layout.addWidget(self._create_text_label(self.i18n.t("onboarding.lite_welcome_title"), PAGE_TITLE_STYLE))
@@ -840,6 +857,8 @@ class WelcomeOnboardingDialog(QDialog):
         )
         layout.addWidget(self._create_text_label(self.i18n.t("onboarding.lite_welcome_hint"), HINT_STYLE))
         layout.addStretch()
+        layout.addWidget(self._create_text_label(self.i18n.t("onboarding.telemetry_notice"), HINT_STYLE))
+        layout.addWidget(self._create_text_label(self.i18n.t("onboarding.telemetry_optout"), HINT_STYLE))
         return page
 
     def _build_update_page(self) -> QWidget:

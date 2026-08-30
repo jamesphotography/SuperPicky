@@ -277,15 +277,15 @@ class WorkerThread(threading.Thread):
             return  # 目前仅在 macOS 上支持 caffeinate
             
         try:
-            # V3.8.1: 先清理残留的 caffeinate 进程，避免累积
-            try:
-                subprocess.run(['killall', 'caffeinate'], 
-                              stdout=subprocess.DEVNULL, 
-                              stderr=subprocess.DEVNULL,
-                              timeout=2)
-            except Exception:
-                pass  # 如果没有残留进程，忽略错误
-            
+            # V4.6: 移除原 V3.8.1 的 `killall caffeinate`。它会杀掉本机所有
+            # caffeinate 进程(包括用户在终端里为别的长任务开的)，属于越界操作；
+            # 且它只是在给「退出时未清理」这个根因打补丁——根因已在
+            # _cleanup_on_quit 中无条件调用 _stop_caffeinate() 解决。
+            # V4.6: dropped the V3.8.1 `killall caffeinate`. It killed every
+            # caffeinate on the machine, including ones the user started for
+            # unrelated long-running tasks. It only papered over the real leak,
+            # which is now fixed by an unconditional _stop_caffeinate() in
+            # _cleanup_on_quit.
             self.caffeinate_process = subprocess.Popen(
                 ['caffeinate', '-d', '-i'],
                 stdout=subprocess.DEVNULL,
@@ -826,8 +826,6 @@ class SuperPickyMainWindow(QMainWindow):
         self._resume_prompt_handled = False
         self._initialization_dialog_open = False
         self._initialization_prompt_dismissed = False
-        
-        # osk flex,countly.com 63fda2e
         self._startup_prompts_ran = False
         self._preload_done = False  # 模型预加载是否完成
         
@@ -1365,6 +1363,24 @@ class SuperPickyMainWindow(QMainWindow):
                 self.worker.join(timeout=5)
             except Exception:
                 pass
+
+        # V4.6: 无条件停止 caffeinate，不能依赖 worker.run() 的 finally。
+        # worker 是 daemon 线程：上面的 join 一旦超时(处理大批 RAW 时很常见)，
+        # 主进程继续退出会直接终止该线程，finally 不会执行，caffeinate 就会残留，
+        # 用户的 Mac 从此不再自动休眠。进程句柄在主线程手上，terminate 不依赖
+        # worker 线程是否存活；_stop_caffeinate() 自带 None 判断，可安全重复调用。
+        # V4.6: stop caffeinate unconditionally — worker.run()'s finally is not a
+        # reliable release point. worker is a daemon thread, so once the join above
+        # times out (common with large RAW batches) the interpreter terminates it
+        # without running finally, leaking caffeinate and leaving the user's Mac
+        # unable to sleep. The handle lives on the main thread, so terminate does
+        # not need the worker alive; _stop_caffeinate() is idempotent.
+        if self.worker is not None:
+            try:
+                self.worker._stop_caffeinate()
+            except Exception as e:
+                print(f"⚠️  caffeinate cleanup failed: {e}")
+
         if hasattr(self, '_init_manager') and self._init_manager is not None:
             try:
                 self._init_manager.cancel()
@@ -1475,6 +1491,7 @@ class SuperPickyMainWindow(QMainWindow):
                 commit_hash = subprocess.check_output(
                     ['git', 'rev-parse', '--short', 'HEAD'],
                     stderr=subprocess.DEVNULL,
+                    timeout=5,   # 仅用于显示版本，卡住不值得拖住启动
                     **subprocess_kwargs,
                 ).strip().decode('utf-8')
             except Exception:
@@ -2113,7 +2130,8 @@ class SuperPickyMainWindow(QMainWindow):
         # 确认弹窗 - 动态构建消息(HTML:emoji 换 SVG 图标,QLabel 自动按富文本渲染)
         import html as _html
         from ui.styles import COLORS as _C
-        _green = _C.get("focus_best", "#00cc44")
+        # 飞版图标用蓝，与 XMP:Label 映射一致 / flight icon in blue
+        _flight = _C.get("flight_blue", "#3b82f6")
         _accent = _C.get("accent", "#00d4aa")
         _sec = _C.get("text_secondary", "#a1a1a1")
 
@@ -2129,7 +2147,7 @@ class SuperPickyMainWindow(QMainWindow):
         _adv_confirm = get_advanced_config()
         extra_notes = []
         if _adv_confirm.flight_check:
-            extra_notes.append(_ico("bird.svg", _green) + _esc(self.i18n.t("dialogs.note_flight")))
+            extra_notes.append(_ico("bird.svg", _flight) + _esc(self.i18n.t("dialogs.note_flight")))
         if _adv_confirm.birdid_auto_identify:
             extra_notes.append(_ico("eye.svg", _accent) + _esc(self.i18n.t("dialogs.note_birdid")))
             # 显示当前国家/区域设置（从 advanced_config 读取，Task 8 后不再依赖 dock 内控件）
@@ -2158,7 +2176,13 @@ class SuperPickyMainWindow(QMainWindow):
                     self._open_settings_center("birdid")
                     return  # 等用户配置后再开始 / Wait for user to configure
         if _adv_confirm.burst_check:
-            extra_notes.append(_ico("square-stack.svg", _sec) + _esc(self.i18n.t("dialogs.note_burst")))
+            # 张数取实际配置(burst_min_count 可配 3-10),不写死 4——否则改了设置说明就在说谎。
+            # Use the configured minimum instead of a hard-coded 4.
+            extra_notes.append(
+                _ico("square-stack.svg", _sec)
+                + _esc(self.i18n.t("dialogs.note_burst",
+                                   count=_adv_confirm.burst_min_count))
+            )
 
         notes_block = ""
         if extra_notes:
@@ -2656,7 +2680,8 @@ class SuperPickyMainWindow(QMainWindow):
                         # 尝试系统命令强制删除
                         try:
                             import subprocess
-                            subprocess.run(['rm', '-rf', superpicky_dir], check=True)
+                            subprocess.run(['rm', '-rf', superpicky_dir], check=True,
+                                           timeout=120)
                             emit_log("  ✅ .superpicky/ (force)")
                             deleted_dirs += 1
                         except Exception as e2:
@@ -2743,44 +2768,6 @@ class SuperPickyMainWindow(QMainWindow):
             "error"
         )
         self._check_report_csv()
-
-    @Slot()
-    def _open_post_adjustment(self):
-        """打开重新评星对话框"""
-        if not self.directory_path:
-            self._show_message(
-                self.i18n.t("messages.hint"),
-                self.i18n.t("messages.select_dir_first"),
-                "warning"
-            )
-            return
-
-        report_path = os.path.join(self.directory_path, ".superpicky", "report.db")
-        if not os.path.exists(report_path):
-            StyledMessageBox.warning(
-                self,
-                self.i18n.t("messages.hint"),
-                self.i18n.t("messages.no_report_csv")
-            )
-            return
-
-        # Task 7: 从 advanced_config 读取阈值，不再读取已删除的滑块控件
-        # Task 7: read thresholds from advanced_config; old slider widgets removed
-        _adv_pad = get_advanced_config()
-        from .post_adjustment_dialog import PostAdjustmentDialog
-        dialog = PostAdjustmentDialog(
-            self,
-            self.directory_path,
-            current_sharpness=int(_adv_pad.min_sharpness),
-            current_nima=_adv_pad.min_nima,
-            on_complete_callback=self._on_post_adjustment_complete,
-            log_callback=self._log
-        )
-        dialog.exec()
-
-    def _on_post_adjustment_complete(self):
-        """重新评星完成回调"""
-        self._log(self.i18n.t("messages.post_adjust_complete"))
 
     @Slot()
     def _maybe_prompt_video_first_run(self):
@@ -3301,8 +3288,10 @@ class SuperPickyMainWindow(QMainWindow):
         t = self.i18n.t
 
         gold = COLORS.get("star_gold", "#ffcc00")
-        green = COLORS.get("focus_best", "#00cc44")   # 飞版绿
-        red = "#ff5555"                                # 精焦红
+        # 与写入照片的 XMP:Label 对齐：飞版=蓝、精焦=绿（4.5.0 起的映射）
+        # Aligned with the XMP:Label written to photos: flight=blue, focus=green
+        flight = COLORS.get("flight_blue", "#3b82f6")
+        focus = COLORS.get("focus_best", "#00cc44")
         muted = COLORS.get("text_muted", "#8a8a8a")
         sec = COLORS.get("text_secondary", "#a1a1a1")
         pri = COLORS.get("text_primary", "#e0e0e0")
@@ -3328,20 +3317,48 @@ class SuperPickyMainWindow(QMainWindow):
 
         # 左对齐:使用步骤 + 评分规则(同一 div 内 <br> 分行,行距正常)
         rows = [f'<span style="color:{pri};font-weight:bold">{esc(t("help.usage_steps_title"))}</span>']
-        for i, key in enumerate(("step1", "step2", "step3", "step4"), 1):
+        # 第 2 步随评星算法换说法：V2 的参数区是星级配额条，锐度/美学滑块被隐藏
+        # （main_window._apply_algo_visibility），照 V1 文案去找滑块会找不到。
+        # Step 2 follows the rating algorithm: under V2 the parameters area shows
+        # the quota bar and the sharpness/aesthetics sliders are hidden.
+        _step2 = "step2_v2" if self.config.rating_algorithm == "v2" else "step2"
+        for i, key in enumerate(("step1", _step2, "step3", "step4"), 1):
             rows.append(f'<span style="color:{sec}">&nbsp;&nbsp;{i}. {esc(t("help." + key))}</span>')
         rows.append('')
         rows.append(f'<span style="color:{pri};font-weight:bold">{esc(t("help.rating_rules_title"))}</span>')
-        rules = [
-            (ico("star.svg", gold) * 3, esc(t("help.rule_3_star"))),
-            ('&nbsp;&nbsp;&nbsp;&nbsp;' + ico("crown.svg", gold),
-             esc(t("help.rule_picked", percentage=pct))),
-            (ico("star.svg", gold) * 2, esc(t("help.rule_2_star"))),
-            (ico("star.svg", gold), esc(t("help.rule_1_star"))),
+
+        # 星级三行按当前评星算法取文案：V2 是批内配额，V1 才是固定阈值双达标。
+        # 此前这里恒用 V1 文案，用户一开软件，控制台第一屏就与实际行为不符。
+        # The three star lines follow the active rating algorithm — V2 is a
+        # batch quota, only V1 is the fixed-threshold "both pass" rule. This
+        # used to always print the V1 wording, contradicting actual behaviour.
+        if self.config.rating_algorithm == "v2":
+            from core.rating_quota import (
+                get_quota3_for_skill, get_quota2_for_skill)
+            _q3 = int(get_quota3_for_skill(self.config.skill_level, self.config))
+            _q2 = int(get_quota2_for_skill(self.config.skill_level, self.config))
+            star_rules = [
+                (ico("star.svg", gold) * 3, esc(t("help.rule_v2_3_star", quota3=_q3))),
+                ('&nbsp;&nbsp;&nbsp;&nbsp;' + ico("crown.svg", gold),
+                 esc(t("help.rule_picked", percentage=pct))),
+                (ico("star.svg", gold) * 2, esc(t("help.rule_v2_2_star", quota2=_q2))),
+                (ico("star.svg", gold), esc(t("help.rule_v2_1_star"))),
+            ]
+        else:
+            star_rules = [
+                (ico("star.svg", gold) * 3, esc(t("help.rule_3_star"))),
+                ('&nbsp;&nbsp;&nbsp;&nbsp;' + ico("crown.svg", gold),
+                 esc(t("help.rule_picked", percentage=pct))),
+                (ico("star.svg", gold) * 2, esc(t("help.rule_2_star"))),
+                (ico("star.svg", gold), esc(t("help.rule_1_star"))),
+            ]
+
+        rules = star_rules + [
             (ico("circle-off.svg", muted), esc(t("help.rule_0_star"))),
-            (ico("bird.svg", green), esc(t("help.rule_flying"))),
-            (ico("scan-eye.svg", red), esc(t("help.rule_focus"))),
-            (ico("square-stack.svg", sec), esc(t("help.burst_info"))),
+            (ico("bird.svg", flight), esc(t("help.rule_flying"))),
+            (ico("scan-eye.svg", focus), esc(t("help.rule_focus"))),
+            (ico("square-stack.svg", sec),
+             esc(t("help.burst_info", count=self.config.burst_min_count))),
         ]
         for ic, txt in rules:
             rows.append(f'<span style="color:{sec}">&nbsp;&nbsp;{ic}{txt}</span>')
@@ -3364,8 +3381,13 @@ class SuperPickyMainWindow(QMainWindow):
         t = self.i18n.t
 
         gold = COLORS.get("star_gold", "#ffcc00")
-        green = COLORS.get("focus_best", "#00cc44")   # 飞版绿
-        red = "#ff5555"                                # 精焦红 / 鸟种红
+        # 飞版=蓝、精焦=绿，与写入照片的 XMP:Label 一致（4.5.0 映射）；
+        # red 仅保留给鸟种名，不再兼作精焦色。
+        # flight=blue, focus=green per the 4.5.0 XMP:Label mapping; `red` now
+        # only tints species names.
+        flight = COLORS.get("flight_blue", "#3b82f6")
+        focus = COLORS.get("focus_best", "#00cc44")
+        red = "#ff5555"                                # 鸟种红
         muted = COLORS.get("text_muted", "#8a8a8a")
         sec = COLORS.get("text_secondary", "#a1a1a1")
         accent = COLORS.get("accent", "#00d4aa")
@@ -3424,9 +3446,9 @@ class SuperPickyMainWindow(QMainWindow):
             rows.append('')
             rows.append(f'<span style="color:{sec}">{esc(t("report.bird_total", count=bird_total, percent=bird_total/total*100))}</span>')
             if flying > 0:
-                rows.append(f'<span style="color:{sec}">{ico("bird.svg", green)}{esc(t("help.rule_flying"))}: {flying}</span>')
+                rows.append(f'<span style="color:{sec}">{ico("bird.svg", flight)}{esc(t("help.rule_flying"))}: {flying}</span>')
             if focus_precise > 0:
-                rows.append(f'<span style="color:{sec}">{ico("scan-eye.svg", red)}{esc(t("help.rule_focus"))}: {focus_precise}</span>')
+                rows.append(f'<span style="color:{sec}">{ico("scan-eye.svg", focus)}{esc(t("help.rule_focus"))}: {focus_precise}</span>')
 
             # 识别鸟种(红色文字, language-aware)
             bird_species = stats.get('bird_species', [])
@@ -3727,7 +3749,9 @@ class SuperPickyMainWindow(QMainWindow):
             from config import config as _cfg
             download_page = _cfg.endpoints.UPDATE_DOWNLOAD_PAGE
         except Exception:
-            download_page = "https://superpicky.jamesphotography.com.au/#download"
+            # 官网域名是 superpicky.app；旧的 superpicky.jamesphotography.com.au
+            # 已无 DNS 记录，勿再写回。/ The legacy host no longer resolves.
+            download_page = "https://superpicky.app/#download"
 
         dialog = QDialog(self)
         dialog.setWindowTitle(self.i18n.t("update.update_center_title"))

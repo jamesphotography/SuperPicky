@@ -15,13 +15,14 @@ import os
 import subprocess
 import sys
 from collections import Counter
+from dataclasses import replace
 from datetime import datetime
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QLabel, QPushButton, QStatusBar,
     QSlider, QComboBox, QMessageBox, QSizePolicy, QApplication,
-    QStackedWidget, QMenu
+    QStackedWidget, QMenu, QInputDialog, QLineEdit, QProgressDialog
 )
 from PySide6.QtCore import Qt, Signal, Slot, QProcess, QSize, QTimer
 from PySide6.QtGui import QAction, QKeyEvent, QIcon
@@ -29,6 +30,7 @@ from PySide6.QtGui import QAction, QKeyEvent, QIcon
 from ui.icon_utils import load_tinted_icon, ICON_IDLE
 
 from ui.styles import COLORS, GLOBAL_STYLE, FONTS
+from ui.combo_popup import style_combo_popup
 from ui.filter_panel import FilterPanel
 from ui.thumbnail_grid import ThumbnailGrid
 from ui.detail_panel import DetailPanel
@@ -67,27 +69,41 @@ def _coerce_photo(photo_or_filename, photo_pool: list, fallback_photo: Optional[
     return fallback_photo if isinstance(fallback_photo, dict) else (matches[0] if matches else None)
 
 
-# 键盘打星键集(数字 0-3 + 上下箭头) / keys handled by keyboard rating
-_RATING_KEYS = (Qt.Key_0, Qt.Key_1, Qt.Key_2, Qt.Key_3, Qt.Key_Up, Qt.Key_Down)
+# 键盘打星键集(数字 0-5 + 上下箭头) / keys handled by keyboard rating
+# 4/5 星是手动升星档(自动评分只产 -1..3),上限与详情面板 ▲ 和对比视图的
+# 1-5 星按钮对齐——这里漏键会让事件分发直接跳过打星分支。
+# 4/5 are manual-only tiers (the auto pipeline emits -1..3); the cap mirrors
+# the detail panel and comparison view, and a missing key here would skip
+# the rating branch entirely during dispatch.
+_RATING_KEYS = (
+    Qt.Key_0, Qt.Key_1, Qt.Key_2, Qt.Key_3, Qt.Key_4, Qt.Key_5,
+    Qt.Key_Up, Qt.Key_Down,
+)
 
 
 def _rating_key_action(key: int, current_rating) -> Optional[int]:
     """
-    键盘打星决策(Paul 反馈 P0-3):数字键 0-3 直接设星;Up/Down 星级 ±1,
-    钳制 0-3——-1★(无鸟)可经 Up(→0)或数字键救回,Down 减到 0 为止。
+    键盘打星决策(Paul 反馈 P0-3):数字键 0-5 直接设星;Up/Down 星级 ±1,
+    钳制 0-5——-1★(无鸟)可经 Up(→0)或数字键救回,Down 减到 0 为止。
 
-    Decide the new star rating for a key press: digits 0-3 set directly;
-    Up/Down step by one within 0-3 (-1 recovers via Up→0 or digits; Down
-    never goes below 0).
+    4/5 星为手动升星档:自动评分只产 -1..3,4/5 由用户自己打出来,并各自
+    对应「4星_精华」「5星_杰作」目录(见 constants.RATING_FOLDER_NAMES)。
+
+    Decide the new star rating for a key press: digits 0-5 set directly;
+    Up/Down step by one within 0-5 (-1 recovers via Up→0 or digits; Down
+    never goes below 0). 4/5 are manual-only tiers with their own folders.
 
     参数 / Parameters:
         key (int): Qt 键码 / Qt key code.
-        current_rating: 当前星级(可能为 None/-1..3) / current rating.
+        current_rating: 当前星级(可能为 None/-1..5) / current rating.
 
     返回 / Returns:
         Optional[int]: 新星级;None 表示与打星无关或星级无变化。
     """
-    digit_map = {Qt.Key_0: 0, Qt.Key_1: 1, Qt.Key_2: 2, Qt.Key_3: 3}
+    digit_map = {
+        Qt.Key_0: 0, Qt.Key_1: 1, Qt.Key_2: 2,
+        Qt.Key_3: 3, Qt.Key_4: 4, Qt.Key_5: 5,
+    }
     try:
         cur = int(current_rating) if current_rating is not None else 0
     except (TypeError, ValueError):
@@ -95,7 +111,7 @@ def _rating_key_action(key: int, current_rating) -> Optional[int]:
     if key in digit_map:
         new = digit_map[key]
     elif key == Qt.Key_Up:
-        new = 0 if cur < 0 else min(3, cur + 1)
+        new = 0 if cur < 0 else min(5, cur + 1)
     elif key == Qt.Key_Down:
         if cur <= 0:
             return None
@@ -239,6 +255,105 @@ def _trigger_rating_move(
 
     import threading
     threading.Thread(target=_do, daemon=True).start()
+
+
+def _photos_of_same_species(photos: list, target: dict) -> list:
+    """
+    从照片池里挑出与 target 同一鸟种的全部照片（用于整种合并）。
+
+    匹配以中文鸟名优先；target 没有中文名时（英文环境处理的批次）退回英文名。
+    没有鸟名的记录永远不匹配——空名不是一个「鸟种」。
+
+    参数 / Args:
+        photos: 照片字典列表（通常是浏览器的 _all_photos）
+        target: 用户右键点中的那张照片
+
+    返回 / Returns:
+        同鸟种的照片列表，保持原顺序
+
+    Pick every photo sharing the target's species. Chinese name takes
+    priority; falls back to English when the target has no Chinese name.
+    Records without a species never match.
+    """
+    target_cn = (target.get("bird_species_cn") or "").strip()
+    target_en = (target.get("bird_species_en") or "").strip()
+
+    if target_cn:
+        key, expected = "bird_species_cn", target_cn
+    elif target_en:
+        key, expected = "bird_species_en", target_en
+    else:
+        return []
+
+    return [p for p in photos if (p.get(key) or "").strip() == expected]
+
+
+def _merge_reason_text(reason: str) -> str:
+    """
+    把 core 回传的稳定原因代码翻成本地化文案。
+
+    core 只产出代码（target_exists / move_error:XxxError），中文/英文措辞留在
+    UI 层，避免把界面文案写进算法模块。
+
+    参数 / Args:
+        reason: 原因代码
+
+    返回 / Returns:
+        本地化的失败说明
+
+    Localize the stable reason codes produced by core.rating_mover.
+    """
+    i18n = get_i18n()
+    if reason.startswith("move_error:"):
+        return i18n.t('browser.merge_reason_move_error').format(
+            detail=reason.split(":", 1)[1]
+        )
+    if reason == "target_exists":
+        return i18n.t('browser.merge_reason_target_exists')
+    return reason
+
+
+def _merge_target_folders(photos: list, new_bird_name: str, layout: str) -> list:
+    """
+    计算整种合并后会用到的目标目录（相对根目录），用于确认弹窗提前展示。
+
+    目录名跟随当前界面语言，所以这里把真实路径摆给用户看，可以在动手之前
+    发现「英文界面整理的批次、现在用中文界面合并会生成中文目录」这类分叉。
+    还在根目录（未整理）的照片不会被移动，不计入预览。
+
+    参数 / Args:
+        photos:        待合并的照片列表（current_path 需为绝对路径，且含 _base_dir）
+        new_bird_name: 用于目录命名的新鸟名
+        layout:        "species-first" | "rating-first"
+
+    返回 / Returns:
+        去重并排序后的相对目录列表
+
+    Compute the target folders a merge would use, for the confirmation dialog.
+    Root-level (unorganized) photos are excluded — they never move.
+    """
+    from core.folder_layout import compute_target_folder, normalize_layout
+    from core.rating_mover import _is_in_root
+
+    layout = normalize_layout(layout)
+    folders: set = set()
+
+    for photo in photos:
+        current_abs = photo.get("current_path") or photo.get("original_path") or ""
+        base_dir = photo.get("_base_dir") or ""
+        if not current_abs or not base_dir:
+            continue
+        try:
+            current_rel = os.path.relpath(current_abs, base_dir)
+        except ValueError:
+            continue                      # Windows 跨盘符
+        if _is_in_root(current_rel):
+            continue                      # 未整理的照片不移动
+        folders.add(
+            compute_target_folder(photo.get("rating") or 0, new_bird_name or None, layout)
+        )
+
+    return sorted(folders)
 
 
 def _trigger_species_change(
@@ -583,6 +698,29 @@ def _build_context_menu(parent_widget, photo: dict, directory: str):
     species_action.triggered.connect(_edit_species)
     menu.addAction(species_action)
 
+    # 整种合并:把这张照片所属鸟种的全部照片一次性改为另一个鸟种。
+    # 用于「整批都被认成同一个错误鸟种」的场景,避免逐张点「修改鸟种」。
+    # 没有鸟名的照片无种可合并,不显示该项。
+    # Whole-species merge: retag every photo of this species at once.
+    # Hidden for photos without a species (nothing to merge).
+    merge_species_name = (
+        photo.get("bird_species_en") if _i18n.current_lang.startswith("en")
+        else photo.get("bird_species_cn")
+    ) or ""
+    if merge_species_name:
+        merge_action = QAction(
+            _i18n.t('browser.ctx_merge_species').format(species=merge_species_name),
+            parent_widget,
+        )
+
+        def _merge_species(_checked=False, _p=photo):
+            handler = getattr(parent_widget, "_on_merge_species_requested", None)
+            if callable(handler):
+                handler(_p)
+
+        merge_action.triggered.connect(_merge_species)
+        menu.addAction(merge_action)
+
     # 用户配置的外部应用列表（设置 → 外部应用）
     external_apps = get_advanced_config().get_external_apps()
     if external_apps:
@@ -641,11 +779,31 @@ def _move_to_trash(filepath: str) -> bool:
         return False
     try:
         if sys.platform == "darwin":
-            # macOS: osascript 调用 Finder 移入回收站
-            escaped = filepath.replace('"', '\\"')
-            script = f'tell application "Finder" to delete POSIX file "{escaped}"'
+            # macOS: osascript 调用 Finder 移入回收站。
+            # 路径经 argv 传入，脚本本身是静态常量——绝不可把路径插值进脚本源。
+            # 旧写法只转义双引号(filepath.replace('"', '\\"'))，反斜杠未转义，
+            # 文件名中的 \" 组合会提前闭合 AppleScript 字符串，使其余部分作为
+            # 代码执行(已实测可执行任意表达式)。macOS 文件名允许 \ 和 "，
+            # 因此一个特制文件名即可在删除操作中触发任意代码执行。
+            # Pass the path through argv against a static script — never
+            # interpolate it into AppleScript source. The previous code escaped
+            # only double quotes, leaving backslashes untouched, so a \" pair in
+            # a filename closed the string early and executed the remainder as
+            # code. macOS permits both \ and " in filenames, so a crafted name
+            # meant arbitrary code execution during a delete.
+            # POSIX file 的转换必须放在 tell 块之外：在 tell application "Finder"
+            # 内部，POSIX file 会被 Finder 的术语解释，作用于变量时报 -1728。
+            # The POSIX file coercion must happen outside the tell block: inside
+            # tell application "Finder" it is resolved against Finder's own
+            # terminology and fails with -1728 when applied to a variable.
+            script = (
+                "on run argv\n"
+                "    set targetFile to POSIX file (item 1 of argv) as alias\n"
+                '    tell application "Finder" to delete targetFile\n'
+                "end run"
+            )
             result = subprocess.run(
-                ["osascript", "-e", script],
+                ["osascript", "-e", script, "--", filepath],
                 capture_output=True, text=True, timeout=10
             )
             return result.returncode == 0
@@ -704,6 +862,8 @@ class ResultsBrowserWindow(QMainWindow):
         self._is_merged: bool = False
         self._sub_dirs: list = []
         self._fullscreen_nav_photos: list = []
+        self._apple_photos_importer = None
+        self._apple_photos_progress = None
 
         self._setup_window()
         self._setup_menu()
@@ -867,6 +1027,9 @@ class ResultsBrowserWindow(QMainWindow):
             }}
             QComboBox::drop-down {{ border: none; width: 20px; }}
         """)
+        # 弹出列表容器需逐个接线，祖先样式表够不到顶层 popup（见 ui/combo_popup.py）。
+        # Per-instance styling: ancestor sheets cannot reach a top-level popup.
+        style_combo_popup(self._dir_combo)
         self._dir_combo.currentIndexChanged.connect(self._on_subdir_changed)
         self._dir_combo.hide()
         layout.addWidget(self._dir_combo)
@@ -905,6 +1068,33 @@ class ResultsBrowserWindow(QMainWindow):
         self._compare_btn.hide()
         self._compare_btn.clicked.connect(self._enter_comparison)
         layout.addWidget(self._compare_btn)
+
+        # 导出报告：把当前载入的全量照片聚合成一个可分享的 HTML（spec D4）。
+        # 刻意**不受筛选面板影响**——报告的统计口径必须是「这次拍的全部」，
+        # 跟随筛选会让命中率变成 62/62=100% 这种无意义的数字。
+        # Export report over the full loaded set, never the filtered view.
+        self._export_btn = QPushButton(self.i18n.t("report_export.button"))
+        self._export_btn.setObjectName("secondary")
+        self._export_btn.setFixedHeight(32)
+        self._export_btn.setToolTip(self.i18n.t("report_export.button_tip"))
+        self._export_btn.clicked.connect(self._export_report)
+        layout.addWidget(self._export_btn)
+
+        # Apple Photos 导入严格限于 macOS；模块只在用户触发时惰性加载，Windows
+        # 启动和打包运行路径不导入任何 AppleScript 控制代码。
+        # Apple Photos import is macOS-only. Its controller is loaded lazily on
+        # user action so Windows startup never imports AppleScript control code.
+        self._apple_photos_btn = None
+        if sys.platform == "darwin":
+            self._apple_photos_btn = QPushButton(self.i18n.t("browser.photos_import_btn"))
+            self._apple_photos_btn.setIcon(load_tinted_icon("image-plus.svg", ICON_IDLE, 16))
+            self._apple_photos_btn.setIconSize(QSize(16, 16))
+            self._apple_photos_btn.setObjectName("secondary")
+            self._apple_photos_btn.setFixedHeight(32)
+            self._apple_photos_btn.setToolTip(self.i18n.t("browser.photos_import_tooltip"))
+            self._apple_photos_btn.setEnabled(False)
+            self._apple_photos_btn.clicked.connect(self._start_apple_photos_import)
+            layout.addWidget(self._apple_photos_btn)
 
         # 缩略图尺寸:标签 + 滑块绑成一组,紧贴显示
         size_box = QHBoxLayout()
@@ -1097,6 +1287,97 @@ class ResultsBrowserWindow(QMainWindow):
         self.hide()
         self.closed.emit()
 
+    @Slot()
+    def _export_report(self) -> None:
+        """
+        导出可分享的 HTML 报告。
+
+        口径为当前载入的**全量**照片（`self._all_photos`），不跟随筛选面板
+        （spec D4）。路径先经 _resolve_photo_paths 解析为绝对路径再交给生成器
+        ——report.db 存的是相对路径，生成器不自行拼接（spec 4.2）。
+
+        Export the shareable HTML report over the full loaded photo set.
+        """
+        import datetime
+
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+
+        from constants import APP_VERSION
+        from core.report_export import (aggregate, build_html, collect_image_jobs,
+                                        encode_preview, estimate_size,
+                                        build_output_path, preview_availability,
+                                        write_report_atomically)
+        from ui.report_export_dialog import ReportExportDialog
+        from ui.custom_dialogs import StyledMessageBox
+
+        if not self._all_photos or not self._directory:
+            StyledMessageBox.warning(self, self.i18n.t("messages.hint"),
+                                     self.i18n.t("report_export.no_photos"))
+            return
+
+        rows = [self._resolve_photo_paths(p) for p in self._all_photos]
+        available, total = preview_availability(rows)
+
+        # 预检 < 50%：拦住并说明原因（spec 7.1）。预览缓存被 keep_temp_files
+        # 关掉后清理，是本功能最可能发生的失败。
+        if total and available / total < 0.5:
+            reply = StyledMessageBox.question(
+                self, self.i18n.t("report_export.title"),
+                self.i18n.t("report_export.previews_gone", count=total - available),
+                yes_text=self.i18n.t("report_export.text_only"),
+                no_text=self.i18n.t("labels.no"))
+            if reply != StyledMessageBox.Yes:
+                return
+
+        probe = aggregate(rows, include_gps=False)
+        jobs = collect_image_jobs(probe)
+        counts = {}
+        for job in jobs:
+            kind = job.job_id.split(":", 1)[0]
+            counts[kind] = counts.get(kind, 0) + 1
+        est_bytes = estimate_size(counts)
+        est_secs = max(1, int(len(jobs) * 0.06))
+
+        dialog = ReportExportDialog(self.i18n, available, total, est_bytes,
+                                    est_secs, self)
+        if dialog.exec() != ReportExportDialog.Accepted:
+            return
+        options = dialog.get_options()
+
+        data = aggregate(rows, include_gps=options["include_gps"])
+        data = replace(data, dir_name=os.path.basename(self._directory) or self._directory)
+        jobs = collect_image_jobs(data)
+
+        progress = QProgressDialog(self.i18n.t("report_export.working"),
+                                   self.i18n.t("report_export.cancel"),
+                                   0, len(jobs), self)
+        progress.setWindowModality(Qt.WindowModal)
+        encoded = {}
+        for index, job in enumerate(jobs):
+            if progress.wasCanceled():
+                return
+            uri = encode_preview(job.path, job.max_edge, job.quality)
+            if uri:
+                encoded[job.job_id] = uri
+            progress.setValue(index + 1)
+        progress.close()
+
+        is_zh = self.i18n.current_lang.startswith("zh")
+        html = build_html(
+            data, encoded, is_zh=is_zh, app_version=APP_VERSION,
+            generated_at=datetime.datetime.now().strftime("%Y-%m-%d %H:%M"))
+        out = build_output_path(self._directory, data.dir_name, is_zh,
+                                datetime.date.today().isoformat())
+        try:
+            write_report_atomically(out, html)
+        except OSError as exc:
+            StyledMessageBox.warning(self, self.i18n.t("errors.error_title"),
+                                     self.i18n.t("report_export.write_failed",
+                                                 error=str(exc)))
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(out))
+
     def _resolve_photo_paths(self, photo: dict) -> dict:
         _PATH_KEYS = ('original_path', 'current_path', 'temp_jpeg_path',
                       'debug_crop_path', 'yolo_debug_path')
@@ -1219,7 +1500,8 @@ class ResultsBrowserWindow(QMainWindow):
             self._detail_panel.show_photo(selected_photo)
         else:
             self._detail_panel.clear()
-            
+        self._update_apple_photos_button()
+
     @Slot(int)
     def _toggle_burst(self, burst_id: int):
         if len([p for p in self._raw_filtered_photos if p.get("burst_id") == burst_id]) <= 1:
@@ -1543,6 +1825,141 @@ class ResultsBrowserWindow(QMainWindow):
         # Background: move files and update burst group members' DB records.
         _trigger_species_change(base_dir, photo, new_cn, new_en, self._db, db_key)
 
+    def _on_merge_species_requested(self, photo: dict):
+        """
+        整种合并：把这张照片所属鸟种的**全部**照片一次性改为另一个鸟种。
+
+        用于「一整批都被认成同一个错误鸟种」的场景。范围是数据库里该鸟种的
+        全部照片，与当前左侧筛选无关——否则会只改掉一部分、剩下的散落在别处。
+
+        流程：收集同种照片 → 选目标鸟种 → 确认（含目标目录预览）→ 带进度执行
+        → 结果报告（成功/仅改名/失败清单）。按用户决定，本操作不写 corrections。
+
+        参数 / Args:
+            photo: 用户右键点中的照片（提供源鸟种）
+
+        Merge a whole species: retag every photo of this species at once.
+        Scope is DB-wide for that species, independent of the current filters.
+        """
+        from ui.bird_species_edit_dialog import BirdSpeciesEditDialog
+        from ui.custom_dialogs import StyledMessageBox
+        from PySide6.QtWidgets import QDialog
+        from advanced_config import get_advanced_config
+        from core.rating_mover import merge_bird_species
+
+        i18n = self.i18n
+        use_en = i18n.current_lang.startswith("en")
+        old_name = (
+            photo.get("bird_species_en") if use_en else photo.get("bird_species_cn")
+        ) or ""
+        if not old_name or not self._db:
+            return
+
+        # 1. 收集全部同鸟种照片（_all_photos 存的是相对路径，必须先解析成绝对路径）
+        resolved_pool = [self._resolve_photo_paths(p) for p in self._all_photos]
+        targets = _photos_of_same_species(resolved_pool, photo)
+        if not targets:
+            return
+
+        # 2. 选目标鸟种（复用单张编辑用的搜索弹窗）
+        dialog = BirdSpeciesEditDialog(parent=self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        new_cn = dialog.selected_cn
+        new_en = dialog.selected_en
+        if not new_cn and not new_en:
+            return
+        new_name = (new_en if use_en else new_cn) or ""
+
+        # 3. 确认：把张数、连拍组数和真实目标目录摆出来再动手
+        layout = get_advanced_config().folder_layout
+        folders = _merge_target_folders(targets, new_name, layout)
+        burst_count = len({p.get("burst_id") for p in targets if p.get("burst_id")})
+        burst_note = (
+            i18n.t('browser.merge_burst_note').format(bursts=burst_count)
+            if burst_count else ""
+        )
+        body = i18n.t('browser.merge_confirm_body').format(
+            old=old_name, count=len(targets), burst_note=burst_note,
+            new=new_name, folders="\n".join(folders) if folders else "—",
+        )
+        confirmed = StyledMessageBox.question(
+            self, i18n.t('browser.merge_confirm_title'), body
+        )
+        if confirmed != StyledMessageBox.Yes:
+            return
+
+        # 4. 执行：合并库的照片分属不同批次目录，按 _base_dir 分组各调一次
+        by_base: dict = {}
+        for p in targets:
+            by_base.setdefault(p.get("_base_dir") or self._directory, []).append(p)
+
+        progress = QProgressDialog(
+            i18n.t('browser.merge_progress_title'), i18n.t('buttons.cancel'),
+            0, len(targets), self,
+        )
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+
+        state = {"offset": 0}
+
+        def _on_progress(done: int, total: int, name: str) -> bool:
+            """进度回调；返回 False 表示用户点了取消。Return False to cancel."""
+            progress.setValue(state["offset"] + done)
+            progress.setLabelText(
+                i18n.t('browser.merge_progress_label').format(name=name)
+            )
+            QApplication.processEvents()
+            return not progress.wasCanceled()
+
+        total_moved = 0
+        total_db_only = 0
+        all_failed: list = []
+        cancelled = False
+
+        for base_dir, group in by_base.items():
+            result = merge_bird_species(
+                base_dir, group, new_cn, new_en, layout,
+                self._db, _photo_db_key, _on_progress,
+            )
+            total_moved += result["moved"]
+            total_db_only += result["db_only"]
+            all_failed.extend(result["failed"])
+            state["offset"] += len(group)
+            if result["cancelled"]:
+                cancelled = True
+                break
+
+        progress.close()
+
+        # 5. 刷新：重新读库并重放当前筛选（_apply_filters 会顺带刷新鸟种下拉）
+        self._all_photos = self._db.get_all_photos()
+        self._apply_filters(self._filter_panel.get_filters())
+
+        # 6. 结果报告：不静默，成功和失败都说清楚
+        lines: list = []
+        if total_moved:
+            lines.append(i18n.t('browser.merge_result_moved').format(count=total_moved))
+        if total_db_only:
+            lines.append(
+                i18n.t('browser.merge_result_db_only').format(count=total_db_only)
+            )
+        if all_failed:
+            lines.append(
+                i18n.t('browser.merge_result_failed').format(count=len(all_failed))
+            )
+            for name, reason in all_failed[:20]:
+                lines.append(f"  • {name} — {_merge_reason_text(reason)}")
+            if len(all_failed) > 20:
+                lines.append("  …")
+        if cancelled:
+            lines.append(i18n.t('browser.merge_result_cancelled'))
+
+        StyledMessageBox.information(
+            self, i18n.t('browser.merge_result_title'), "\n".join(lines)
+        )
+
     def _record_correction(self, photo: dict, new_cn: str, new_en: str,
                             new_latin: str) -> None:
         """
@@ -1637,6 +2054,270 @@ class ResultsBrowserWindow(QMainWindow):
         # C5：仅当选中 2 张时显示对比按钮
         self._compare_btn.setVisible(n == 2)
 
+    def _apple_photos_target_photos(self) -> list[dict]:
+        """
+        返回 Apple Photos 导入目标：明确勾选优先，否则使用当前可见过滤结果。
+
+        折叠连拍组在 ``_filtered_photos`` 中只有封面，因此未展开时只导入用户
+        实际看到的代表图；展开后则按每张可见成员导入。只要存在一个或多个
+        蓝色勾选项目，就严格按勾选集合导入，不包含双图对比自动补入的锚点。
+
+        Return Apple Photos targets: one or more explicitly checked photos take
+        precedence; otherwise use the currently visible filtered list.
+        Collapsed bursts contribute only their visible representative. The
+        unchecked anchor automatically added for two-photo comparison is never
+        included in an import.
+        """
+
+        selected = self._thumb_grid.get_explicitly_selected_photos()
+        if selected:
+            return list(selected)
+        return list(self._filtered_photos)
+
+    def _update_apple_photos_button(self) -> None:
+        """按结果和任务状态更新 macOS 导入按钮。/ Update import action availability."""
+
+        button = getattr(self, "_apple_photos_btn", None)
+        if button is None:
+            return
+        importer = self._apple_photos_importer
+        is_running = bool(importer is not None and importer.is_running)
+        button.setEnabled(bool(self._filtered_photos) and not is_running)
+
+    @Slot()
+    def _start_apple_photos_import(self) -> None:
+        """
+        预检目标、确认相册名并异步启动 Apple Photos 导入。
+
+        Preflight targets, confirm the album name, and start a non-blocking
+        Apple Photos import.
+        """
+
+        if sys.platform != "darwin":
+            return
+
+        from ui.apple_photos_importer import (
+            ApplePhotosImporter,
+            ApplePhotosImportRequest,
+            default_album_name,
+            preflight_photos,
+            sanitize_album_name,
+        )
+
+        target_photos = self._apple_photos_target_photos()
+        preflight = preflight_photos(
+            target_photos,
+            prefer_english=self.i18n.current_lang.startswith("en"),
+        )
+        if not preflight.candidates:
+            QMessageBox.warning(
+                self,
+                self.i18n.t("browser.photos_import_unavailable_title"),
+                self.i18n.t("browser.photos_import_no_files").format(
+                    count=preflight.requested,
+                ),
+            )
+            return
+
+        suggested_name = default_album_name(self._directory)
+        album_name, accepted = QInputDialog.getText(
+            self,
+            self.i18n.t("browser.photos_import_confirm_title"),
+            self.i18n.t("browser.photos_import_confirm_message").format(
+                count=len(preflight.candidates),
+                skipped=preflight.skipped,
+            ),
+            QLineEdit.Normal,
+            suggested_name,
+        )
+        if not accepted:
+            return
+        album_name = sanitize_album_name(album_name)
+        if not album_name:
+            QMessageBox.warning(
+                self,
+                self.i18n.t("browser.photos_import_unavailable_title"),
+                self.i18n.t("browser.photos_import_empty_album"),
+            )
+            return
+
+        importer = self._apple_photos_importer
+        if importer is None:
+            importer = ApplePhotosImporter(self)
+            importer.progress.connect(self._on_apple_photos_progress)
+            importer.completed.connect(self._on_apple_photos_completed)
+            self._apple_photos_importer = importer
+
+        request = ApplePhotosImportRequest(
+            album_name=album_name,
+            candidates=preflight.candidates,
+            requested=preflight.requested,
+            preflight_skipped=preflight.skipped,
+        )
+        progress = QProgressDialog(
+            self.i18n.t("browser.photos_import_progress").format(
+                completed=0,
+                total=len(preflight.candidates),
+            ),
+            self.i18n.t("browser.photos_import_cancel"),
+            0,
+            len(preflight.candidates),
+            self,
+        )
+        progress.setWindowTitle(self.i18n.t("browser.photos_import_confirm_title"))
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.canceled.connect(importer.cancel)
+        self._apple_photos_progress = progress
+        progress.show()
+
+        try:
+            importer.start(request)
+            self._update_apple_photos_button()
+        except (RuntimeError, ValueError) as error:
+            progress.close()
+            progress.deleteLater()
+            self._apple_photos_progress = None
+            self._update_apple_photos_button()
+            QMessageBox.critical(
+                self,
+                self.i18n.t("browser.photos_import_failed_title"),
+                str(error),
+            )
+
+    @Slot(int, int)
+    def _on_apple_photos_progress(self, completed: int, total: int) -> None:
+        """同步批次进度到进度框。/ Synchronize batch progress to the dialog."""
+
+        progress = self._apple_photos_progress
+        if progress is None:
+            return
+        progress.setMaximum(total)
+        progress.setValue(completed)
+        progress.setLabelText(
+            self.i18n.t("browser.photos_import_progress").format(
+                completed=completed,
+                total=total,
+            )
+        )
+
+    @Slot(object)
+    def _on_apple_photos_completed(self, result) -> None:
+        """关闭进度框并展示成功、取消或错误摘要。/ Present the final import summary."""
+
+        progress = self._apple_photos_progress
+        if progress is not None:
+            progress.close()
+            progress.deleteLater()
+            self._apple_photos_progress = None
+        self._update_apple_photos_button()
+
+        if result.error:
+            from ui.apple_photos_importer import is_automation_permission_error
+
+            message = self.i18n.t("browser.photos_import_failed_message").format(
+                imported=result.newly_imported,
+                not_imported=result.photos_not_imported,
+                indeterminate=result.indeterminate,
+                remaining=result.remaining,
+                metadata_applied=result.metadata_applied,
+                metadata_partial=result.metadata_partially_applied,
+                metadata_not_applied=result.metadata_not_applied,
+                error=result.error,
+            )
+            if is_automation_permission_error(result.error):
+                message += "\n\n" + self.i18n.t("browser.photos_import_permission_help")
+            title = self.i18n.t("browser.photos_import_failed_title")
+            icon = QMessageBox.Critical
+        elif result.cancelled:
+            title = self.i18n.t("browser.photos_import_cancelled_title")
+            message = self.i18n.t("browser.photos_import_cancelled_message").format(
+                imported=result.newly_imported,
+                not_imported=result.photos_not_imported,
+                indeterminate=result.indeterminate,
+                metadata_applied=result.metadata_applied,
+                metadata_partial=result.metadata_partially_applied,
+                metadata_not_applied=result.metadata_not_applied,
+                remaining=result.remaining,
+            )
+            icon = QMessageBox.Information
+        else:
+            title = self.i18n.t("browser.photos_import_done_title")
+            message = self.i18n.t("browser.photos_import_done_message").format(
+                imported=result.newly_imported,
+                not_imported=result.photos_not_imported,
+                indeterminate=result.indeterminate,
+                remaining=result.remaining,
+                metadata_applied=result.metadata_applied,
+                metadata_partial=result.metadata_partially_applied,
+                metadata_not_applied=result.metadata_not_applied,
+                skipped=result.preflight_skipped,
+            )
+            icon = QMessageBox.Information
+
+        if result.retryable_metadata:
+            message += "\n\n" + self.i18n.t(
+                "browser.photos_import_retry_metadata_message"
+            ).format(count=result.retryable_metadata)
+            dialog = QMessageBox(icon, title, message, parent=self)
+            retry_button = dialog.addButton(
+                self.i18n.t("browser.photos_import_retry_metadata"),
+                QMessageBox.AcceptRole,
+            )
+            dialog.addButton(QMessageBox.Close)
+            dialog.exec()
+            if dialog.clickedButton() is retry_button:
+                self._retry_apple_photos_metadata(result.retryable_metadata)
+            return
+
+        QMessageBox(icon, title, message, QMessageBox.Ok, self).exec()
+
+    def _retry_apple_photos_metadata(self, count: int) -> None:
+        """
+        启动仅元数据重试，不再次导入 RAW。
+
+        Start a metadata-only retry without importing RAW files again.
+        """
+
+        importer = self._apple_photos_importer
+        if importer is None:
+            return
+        progress = QProgressDialog(
+            self.i18n.t("browser.photos_import_progress").format(
+                completed=0,
+                total=count,
+            ),
+            self.i18n.t("browser.photos_import_cancel"),
+            0,
+            count,
+            self,
+        )
+        progress.setWindowTitle(self.i18n.t("browser.photos_import_confirm_title"))
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.canceled.connect(importer.cancel)
+        self._apple_photos_progress = progress
+        progress.show()
+        try:
+            importer.retry_metadata()
+            self._update_apple_photos_button()
+        except RuntimeError as error:
+            progress.close()
+            progress.deleteLater()
+            self._apple_photos_progress = None
+            # 与 _start_apple_photos_import 的失败分支保持一致：任务未能启动时
+            # 必须把按钮恢复可用，否则导入入口会一直保持禁用。
+            # Mirror the failure path in _start_apple_photos_import: re-enable the
+            # action when the task fails to start, or it stays disabled forever.
+            self._update_apple_photos_button()
+            QMessageBox.critical(
+                self,
+                self.i18n.t("browser.photos_import_failed_title"),
+                str(error),
+            )
+
     def _show_context_menu(self, photo: dict, pos):
         base_dir = photo.get('_base_dir', self._directory)
         _show_context_menu_impl(self, photo, pos, base_dir)
@@ -1701,6 +2382,11 @@ class ResultsBrowserWindow(QMainWindow):
         # 5. 缩略图同步
         self._thumb_grid.remove_photo(photo)
         self._fullscreen.set_photo_list(self._filtered_photos)
+        # 导入按钮的可用性取决于 _filtered_photos 是否为空，删空后必须同步禁用，
+        # 否则点击只会弹「没有可导入文件」。
+        # The import action keys off _filtered_photos; refresh it after deletion
+        # so an emptied list disables the button instead of failing on click.
+        self._update_apple_photos_button()
 
         # 6. 跳转逻辑：跳到被删除位置的下一张，已是末尾则跳上一张
         if self._filtered_photos:
@@ -1821,7 +2507,12 @@ class ResultsBrowserWindow(QMainWindow):
         # Sync the grid UI
         for photo in deleted_photos:
             self._thumb_grid.remove_photo(photo)
-            
+
+        # 同上：批量删除后同步导入按钮可用性。
+        # As above: refresh the import action after a batch deletion.
+        self._update_apple_photos_button()
+
+
         # Reset selection if it was deleted
         if self._thumb_grid._selected_key in deleted_identities:
             self._thumb_grid._selected_key = None
@@ -1890,7 +2581,7 @@ class ResultsBrowserWindow(QMainWindow):
             else:
                 self._next_photo()
         elif key in _RATING_KEYS:
-            # 键盘打星(Paul P0-3):Up/Down 由翻图改为星级±1,数字键 0-3 直设。
+            # 键盘打星(Paul P0-3):Up/Down 由翻图改为星级±1,数字键 0-5 直设。
             # Keyboard rating: Up/Down now step the rating; digits set it.
             photo = (getattr(self._fullscreen, "_current_photo", None) if in_fullscreen
                      else getattr(self._detail_panel, "_current_photo", None))
@@ -1966,6 +2657,13 @@ class ResultsBrowserWindow(QMainWindow):
 
     def cleanup(self):
         """释放线程和 DB 连接。"""
+        importer = self._apple_photos_importer
+        if importer is not None:
+            try:
+                importer.shutdown()
+            except Exception:
+                pass
+            self._apple_photos_importer = None
         try:
             self._thumb_grid.cleanup()
         except Exception:
@@ -1993,4 +2691,3 @@ class ResultsBrowserWindow(QMainWindow):
 # ============================================================
 #  ResultsBrowserWidget — 嵌入式浏览器（供主窗口 QStackedWidget 使用）
 # ============================================================
-

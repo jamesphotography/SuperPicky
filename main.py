@@ -211,7 +211,9 @@ def main():
             import subprocess
 
             hash_short = (
-                subprocess.check_output(["git", "rev-parse", "--short", "HEAD"])
+                subprocess.check_output(
+                    ["git", "rev-parse", "--short", "HEAD"], timeout=5
+                )
                 .strip()
                 .decode("utf-8")
             )
@@ -245,6 +247,13 @@ def main():
     # QToolTip 属于顶层窗口，需要在 QApplication 级别统一覆盖样式。
     # QToolTip is a top-level window, so its style must be applied at QApplication level.
     app.setStyleSheet(APP_TOOLTIP_STYLE)
+
+    # 文本框右键菜单由 Qt 临时生成，其平台主题图标是为浅色界面画的深灰描线，
+    # 在深色菜单上几乎看不见；样式表管得了菜单文字管不了图标，只能在显示前重染。
+    # Qt builds text widgets' context menus on the fly with light-theme icons that
+    # vanish on this dark menu; stylesheets cannot recolour action icons.
+    from ui.context_menu import install_standard_menu_tinting
+    install_standard_menu_tinting(app)
 
     if _main_window is None:
         _main_window = SuperPickyMainWindow()

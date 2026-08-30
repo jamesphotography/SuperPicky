@@ -235,7 +235,87 @@ class ReportDB:
 
         # Schema 升级在独立事务中执行，避免嵌套 commit 冲突
         self._upgrade_schema_if_needed()
-    
+        # 逐版本迁移之后再按 PHOTO_COLUMNS 兜底补列（见该方法说明）
+        self._reconcile_photo_columns()
+
+    def _reconcile_photo_columns(self):
+        """
+        以 PHOTO_COLUMNS 为准补齐 photos 表缺失的列。
+
+        为什么需要这一步：建表走的是 ``CREATE TABLE IF NOT EXISTS``，对已存在
+        的旧表不做任何改动；而逐版本迁移只补各自版本显式列出的列。一旦有人往
+        PHOTO_COLUMNS 加了列却忘记同步写 ALTER(picked 列正是如此)，旧目录的
+        report.db 就永远拿不到该列，读取时抛
+        ``sqlite3.OperationalError: no such column``。本方法作为最终兜底，
+        使「PHOTO_COLUMNS 是唯一事实源」这一约定对新旧库都成立。
+
+        Reconcile the photos table against PHOTO_COLUMNS. Table creation uses
+        CREATE TABLE IF NOT EXISTS (a no-op on existing tables) and the
+        versioned migrations only add the columns each version enumerates, so a
+        column added to PHOTO_COLUMNS without a matching ALTER (exactly what
+        happened to `picked`) never reaches legacy databases and later raises
+        "no such column". This final pass makes PHOTO_COLUMNS the single source
+        of truth for both new and legacy databases.
+
+        返回 / Returns:
+            list[str]: 本次补齐的列名，便于日志与测试断言。
+        """
+
+        added = []
+        with self._lock:
+            existing = {
+                row[1] for row in self._conn.execute("PRAGMA table_info(photos)")
+            }
+            missing = [c for c in PHOTO_COLUMNS if c[0] not in existing]
+            if not missing:
+                return added
+
+            with self._conn:
+                for name, type_def, default in missing:
+                    upper = type_def.upper()
+                    # SQLite 的 ALTER TABLE ADD COLUMN 不支持 UNIQUE/PRIMARY KEY，
+                    # 也不允许在无默认值时添加 NOT NULL 列。这类列只可能出现在
+                    # 建表定义里(如 filename)，正常不会缺失；真缺失时只能重建表，
+                    # 这里明确告警而不是抛异常，避免整个目录打不开。
+                    # SQLite cannot ADD COLUMN with UNIQUE/PRIMARY KEY, nor a
+                    # NOT NULL column without a default. Such columns exist only
+                    # in the initial definition and should never be missing;
+                    # warn instead of raising so the directory still opens.
+                    if "UNIQUE" in upper or "PRIMARY KEY" in upper or (
+                        "NOT NULL" in upper and default is None
+                    ):
+                        print(
+                            f"⚠️ report.db 缺少列 {name}，但其约束({type_def})"
+                            f"无法通过 ALTER 添加，需重建数据库"
+                        )
+                        continue
+
+                    statement = f"ALTER TABLE photos ADD COLUMN {name} {type_def}"
+                    if default is not None:
+                        statement += f" DEFAULT {self._sql_literal(default)}"
+                    self._conn.execute(statement)
+                    added.append(name)
+
+        if added:
+            print(f"✅ report.db 补齐缺失列: {', '.join(added)}")
+        return added
+
+    @staticmethod
+    def _sql_literal(value):
+        """
+        把默认值渲染成 DDL 字面量。/ Render a default value as a DDL literal.
+
+        DDL 不支持参数占位，只能拼接，因此字符串需转义单引号。
+        DDL cannot use placeholders, so strings are quoted and escaped here.
+        """
+
+        if isinstance(value, bool):
+            return "1" if value else "0"
+        if isinstance(value, (int, float)):
+            return str(value)
+        escaped = str(value).replace("'", "''")
+        return f"'{escaped}'"
+
     def _upgrade_schema_if_needed(self):
         """检查并升级数据库 Schema（支持连续升级 v1 -> v2 -> v3 -> v4）"""
         with self._lock:
@@ -715,17 +795,29 @@ class ReportDB:
 
         # Determine sort order
         sort_by = filters.get("sort_by") or "filename"
+        # 精选恒置顶：picked 是「3★ 中锐度 top% ∩ 美学 top%」的交集，比任何单项
+        # 指标都强，但按单项排序时它必然被"该项很高、另一项不够"的照片挤散
+        # （实测 12 张精选在锐度排序下落在第 2/4/8/…/44 名，罕见度排序下更散到
+        # 第 120 名），等于把精选这个结论稀释掉了。故把它提为首要排序键，组内
+        # 再按用户选择的维度排。
+        # 文件名排序不置顶：它的唯一用途是还原拍摄顺序，插队会毁掉这个语义。
+        # Picked photos sort first: `picked` is the intersection of the top-%
+        # sharpness and aesthetics ranks among 3★ shots — a stronger signal than
+        # either axis alone, yet sorting by one axis scatters them (measured:
+        # ranks 2/4/8/…/44 by sharpness, up to 120 by rarity). Filename order is
+        # left untouched since its whole purpose is chronological browsing.
+        picked_first = "COALESCE(picked, 0) DESC, "
         if sort_by == "sharpness_desc":
-            order_sql = "ORDER BY COALESCE(adj_sharpness, head_sharp, -1e99) DESC, filename ASC"
+            order_sql = f"ORDER BY {picked_first}COALESCE(adj_sharpness, head_sharp, -1e99) DESC, filename ASC"
         elif sort_by == "aesthetic_desc":
-            order_sql = "ORDER BY COALESCE(adj_topiq, nima_score, -1e99) DESC, filename ASC"
+            order_sql = f"ORDER BY {picked_first}COALESCE(adj_topiq, nima_score, -1e99) DESC, filename ASC"
         elif sort_by == "rarity_desc":
             # V4.2.7: 按 GBIF 罕见度降序（最罕见在前）— 无 GBIF 数据的排最后
-            order_sql = "ORDER BY COALESCE(gbif_rarity_100, -1e99) DESC, filename ASC"
+            order_sql = f"ORDER BY {picked_first}COALESCE(gbif_rarity_100, -1e99) DESC, filename ASC"
         elif sort_by == "species_beauty_desc":
             # V9: 按鸟种颜值(iRateBird)降序 — 无数据排最后
             # V9: sort by species beauty (iRateBird) desc — missing data last
-            order_sql = "ORDER BY COALESCE(aesthetic_index, -1e99) DESC, filename ASC"
+            order_sql = f"ORDER BY {picked_first}COALESCE(aesthetic_index, -1e99) DESC, filename ASC"
         else:
             order_sql = "ORDER BY filename ASC"
 
@@ -948,51 +1040,6 @@ class ReportDB:
             cursor = self._conn.execute(sql, [filename])
             self._safe_commit()
             return cursor.rowcount > 0
-
-    def update_ratings_batch(self, updates: List[dict]) -> int:
-        """
-        批量更新评分及相关数据。
-
-        用于重新评星场景（PostAdjustmentEngine）。
-
-        Args:
-            updates: 更新数据列表，每个字典必须包含 "filename" 键，
-                     以及要更新的字段（如 rating, adj_sharpness, adj_topiq）
-
-        Returns:
-            成功更新的记录数
-        """
-        if not updates:
-            return 0
-
-        now = _now_iso()
-        count = 0
-
-        with self._lock:
-            with self._conn:
-                for upd in updates:
-                    filename = upd.get("filename")
-                    if not filename:
-                        continue
-
-                    cleaned = self._clean_data(upd)
-                    cleaned["updated_at"] = now
-
-                    columns = [k for k in cleaned if k in COLUMN_NAMES and k not in ("filename", "id")]
-                    if not columns:
-                        continue
-
-                    values = [cleaned[k] for k in columns]
-                    set_clause = ", ".join(f"{c} = ?" for c in columns)
-
-                    sql = f"UPDATE photos SET {set_clause} WHERE filename = ?"
-                    values.append(filename)
-
-                    cursor = self._conn.execute(sql, values)
-                    if cursor.rowcount > 0:
-                        count += 1
-
-        return count
 
     def clear_cache_paths(self) -> int:
         """清空缓存相关路径字段（临时 JPG、调试裁切、YOLO 调试图）。"""
