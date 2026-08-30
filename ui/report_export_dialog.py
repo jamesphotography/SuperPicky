@@ -84,8 +84,6 @@ class ReportExportDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
-        self._total = total
-
     def get_options(self) -> Dict[str, bool]:
         """
         返回用户选择的导出选项。

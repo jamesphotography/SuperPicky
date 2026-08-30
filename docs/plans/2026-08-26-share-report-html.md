@@ -1,5 +1,22 @@
 # 可分享总结报告 HTML 实施计划 / Shareable Summary Report Implementation Plan
 
+> ## ⚠️ 本计划已执行完毕，且部分设计已被推翻——**不要据此判断现状**
+>
+> **状态**：已实施（2026-08-26～28），随后在 2026-08-29 的验收中做了较大修订
+> （提交 `37878f9c`）。本文档保留为实施过程的历史记录，**其中的代码片段与
+> 若干机制已不再是现状**，最显著的几处：
+>
+> - 「图片一律不写 `src`、全靠 `IMGS` 数组 + 视口懒插入」——**已推翻**。图片现在
+>   直接写进 `src`，脚本再接管卸载。原方案会让任何不执行 JS 的环境（macOS 快速
+>   查看、iOS 文件预览、邮件与 IM 内置预览）看到一份没有照片的报告
+> - 五档图片规格（`cover`/`rep`/`small`/`hd`/`thumb`）——**已减为两档**
+>   （`cover` + `shot`）。`hd` 副本与页面上那张是同一画面，却占体积 74%
+> - 「折叠明细表」与 `with_detail_thumbs` / `DETAIL_THUMB_LIMIT`——**已移除**
+> - 鸟种画廊的「1 大 + 3 小」固定版式——**已改为按张数自适应 + 连拍组去重**
+>
+> **判断现状请以这两处为准**：`docs/specs/2026-08-26-share-report-html-design.md`
+> （已同步更新，第 0 节有完整修订记录）与 `core/report_export.py` 的实际代码。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在选鸟浏览器加一个「导出报告」入口，把 `report.db` 聚合成一个自包含、可直接分享的 HTML 文件，写入选鸟目录。
