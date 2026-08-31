@@ -1852,6 +1852,7 @@ class InitializationManager(QObject):
                     stderr=subprocess.PIPE,
                     check=True,
                     text=True,
+                    timeout=15,   # 仅打印解释器路径，不该慢
                     **_subprocess_no_window_kwargs(),
                 )
                 return candidate
@@ -1902,6 +1903,11 @@ class InitializationManager(QObject):
                     encoding="utf-8",
                     errors="replace",
                     check=True,
+                    # 首次 import torch 需加载大量扩展模块，冷启动可达数十秒，
+                    # 故留足余量；超时由外层 except Exception 接住并按探测失败处理。
+                    # A cold `import torch` loads many extension modules and can
+                    # take tens of seconds, hence the generous budget.
+                    timeout=180,
                     **_subprocess_no_window_kwargs(),
                 )
                 runtime_lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]

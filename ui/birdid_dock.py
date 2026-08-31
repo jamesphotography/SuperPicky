@@ -26,6 +26,7 @@ from PySide6.QtCore import Qt, Signal, QThread, QTimer, QSize
 from PySide6.QtGui import QPixmap, QDragEnterEvent, QDropEvent
 
 from ui.styles import COLORS, FONTS
+from ui.combo_popup import style_combo_popup
 from ui.icon_utils import stars_pixmap, tinted_png_path, load_tinted_icon, ICON_IDLE
 from tools.i18n import get_i18n
 
@@ -941,8 +942,9 @@ class BirdIDDockWidget(QDockWidget):
             QComboBox::drop-down {{ border: none; }}
             QComboBox QAbstractItemView {{
                 background-color: {COLORS['bg_elevated']};
-                border: 1px solid {COLORS['border']};
-                border-radius: 6px;
+                border: none;
+                border-radius: 8px;
+                padding: 4px;
                 color: {COLORS['text_primary']};
                 selection-background-color: {COLORS['accent_dim']};
                 selection-color: {COLORS['accent']};
@@ -959,8 +961,9 @@ class BirdIDDockWidget(QDockWidget):
         """
 
         filter_frame = QFrame()
+        filter_frame.setObjectName("birdidFilterFrame")
         filter_frame.setStyleSheet(f"""
-            QFrame {{
+            QFrame#birdidFilterFrame {{
                 background-color: {COLORS['bg_elevated']};
                 border-radius: 8px;
                 padding: 8px;
@@ -981,13 +984,21 @@ class BirdIDDockWidget(QDockWidget):
         self.country_combo = QComboBox()
         self._populate_country_combo()
         self.country_combo.setStyleSheet(_combo_style)
+        # 弹出列表容器需逐个接线，祖先样式表够不到顶层 popup（见 ui/combo_popup.py）。
+        # Per-instance styling: ancestor sheets cannot reach a top-level popup.
+        style_combo_popup(self.country_combo)
         self.country_combo.currentTextChanged.connect(self._on_country_changed)
         country_row.addWidget(self.country_combo, 1)
         filter_layout.addLayout(country_row)
 
         # ── 区域选择行（州级国家才显示）/ Region row (only for AU/US/CN) ──────
         self._region_row = QWidget()
-        self._region_row.setStyleSheet("background: transparent;")
+        # 带选择器，避免裸声明传播到 region_combo 的弹出列表容器（会露白边）。
+        # Scoped so it cannot leak into region_combo's popup container.
+        self._region_row.setObjectName("birdidRegionRow")
+        self._region_row.setStyleSheet(
+            "QWidget#birdidRegionRow { background: transparent; }"
+        )
         region_row_layout = QHBoxLayout(self._region_row)
         region_row_layout.setContentsMargins(0, 0, 0, 0)
         region_row_layout.setSpacing(6)
@@ -1001,6 +1012,7 @@ class BirdIDDockWidget(QDockWidget):
         self.region_combo = QComboBox()
         self.region_combo.addItem(self.i18n.t("birdid.region_entire_country"), None)
         self.region_combo.setStyleSheet(_combo_style)
+        style_combo_popup(self.region_combo)
         self.region_combo.currentTextChanged.connect(self._on_region_changed)
         region_row_layout.addWidget(self.region_combo, 1)
 
@@ -1656,10 +1668,13 @@ class BirdIDDockWidget(QDockWidget):
         def pct(n):
             return f"{n/total*100:.1f}%" if total > 0 else "—"
 
-        # 完成信息改 HTML+SVG:星级金星 / 无鸟 circle-off / 飞版绿 bird / 精焦红 scan-eye / 鸟种红
+        # 完成信息改 HTML+SVG:星级金星 / 无鸟 circle-off / 飞版蓝 bird / 精焦绿 scan-eye / 鸟种红
+        # 飞版与精焦的用色与写入照片的 XMP:Label 一致（4.5.0 起 蓝=飞版、绿=精焦）
+        # Flight/focus icons follow the 4.5.0 XMP:Label mapping (blue / green)
         import html as _h
         gold = COLORS.get('star_gold', '#d4a800')
-        green = COLORS.get('focus_best', '#00cc44')
+        flight = COLORS.get('flight_blue', '#3b82f6')
+        focus = COLORS.get('focus_best', '#00cc44')
         red = '#ff5555'
         muted = COLORS['text_muted']
         sec = COLORS['text_secondary']
@@ -1686,10 +1701,10 @@ class BirdIDDockWidget(QDockWidget):
         if flying > 0 or focus_precise > 0:
             rows.append('<div>&nbsp;</div>')
             if flying > 0:
-                rows.append(f'<div style="color:{sec}">{_ico("bird.svg", green)}'
+                rows.append(f'<div style="color:{sec}">{_ico("bird.svg", flight)}'
                             f'{_esc(self.i18n.t("birdid.stats_flying").format(count=flying))}</div>')
             if focus_precise > 0:
-                rows.append(f'<div style="color:{sec}">{_ico("scan-eye.svg", red)}'
+                rows.append(f'<div style="color:{sec}">{_ico("scan-eye.svg", focus)}'
                             f'{_esc(self.i18n.t("birdid.stats_focus_precise").format(count=focus_precise))}</div>')
 
         if bird_species:
@@ -2038,29 +2053,25 @@ class BirdIDDockWidget(QDockWidget):
         if not _test_ok:
             print("[Screenshot] ⚠️ 屏幕录制权限未授予，显示提示")
             from PySide6.QtWidgets import QMessageBox
-            is_en = self.i18n.current_lang.startswith('en')
 
             msg = QMessageBox(self)
             msg.setIcon(QMessageBox.Icon.Warning)
             msg.setWindowTitle(self.i18n.t("birdid.title"))
 
-            if is_en:
-                msg.setText("Screen Recording Access Needed")
-                msg.setInformativeText(
-                    "SuperPicky needs screen recording permission to capture screenshots.\n\n"
-                    "Tap \"Open Settings\" — find this app and flip the switch on.\n"
-                    "Then come back and try again!"
-                )
-                open_btn = msg.addButton("  Open Settings  ", QMessageBox.ButtonRole.AcceptRole)
-                msg.addButton("Later", QMessageBox.ButtonRole.RejectRole)
-            else:
-                msg.setText("需要屏幕录制权限")
-                msg.setInformativeText(
-                    "截图识鸟功能需要「屏幕录制」权限才能工作。\n\n"
-                    "点击下方按钮一键跳转设置页，为本应用开启权限后即可使用。"
-                )
-                open_btn = msg.addButton("  打开系统设置  ", QMessageBox.ButtonRole.AcceptRole)
-                msg.addButton("稍后再说", QMessageBox.ButtonRole.RejectRole)
+            # 文案统一走语言包：此前是手写的 is_en 分支，两套文案散在代码里，
+            # 改一处容易漏另一处，也无法随语言包一起维护。
+            # Copy now comes from the language pack; this used to be a hand-rolled
+            # is_en branch holding two copies of the text inline.
+            msg.setText(self.i18n.t("birdid.screenshot_permission_title"))
+            msg.setInformativeText(self.i18n.t("birdid.screenshot_permission_body"))
+            open_btn = msg.addButton(
+                self.i18n.t("birdid.screenshot_permission_open"),
+                QMessageBox.ButtonRole.AcceptRole,
+            )
+            msg.addButton(
+                self.i18n.t("birdid.screenshot_permission_later"),
+                QMessageBox.ButtonRole.RejectRole,
+            )
 
             msg.setStyleSheet(f"""
                 QMessageBox {{
@@ -2240,7 +2251,9 @@ class BirdIDDockWidget(QDockWidget):
             keybd(VK_LWIN,  0, KEYEVENTF_KEYUP, 0)
         except Exception as e:
             self._restore_win_window()
-            self.status_label.setText(f"截图快捷键发送失败: {e}")
+            self.status_label.setText(
+                self.i18n.t("birdid.screenshot_hotkey_failed", error=e)
+            )
             self.status_label.setStyleSheet(f"font-size: 11px; color: {COLORS['error']};")
             return
 

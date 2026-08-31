@@ -51,6 +51,7 @@ from PySide6.QtWidgets import (
 from constants import VIDEO_EXTENSIONS_ALL
 from tools.i18n import get_i18n
 from ui.styles import COLORS, FONTS, GLOBAL_STYLE
+from ui.combo_popup import style_combo_popup
 
 
 # ============================================================================
@@ -484,6 +485,9 @@ class VideoAnalyzerWindow(QMainWindow):
         self.species_mode_combo.setCurrentIndex(0)
         self.species_mode_combo.setFixedWidth(220)
         self.species_mode_combo.setToolTip(self.i18n.t("video.mode_tooltip"))
+        # 弹出列表容器需逐个接线，祖先样式表够不到顶层 popup（见 ui/combo_popup.py）。
+        # Per-instance styling: ancestor sheets cannot reach a top-level popup.
+        style_combo_popup(self.species_mode_combo)
         layout.addWidget(self.species_mode_combo)
 
         layout.addSpacing(16)

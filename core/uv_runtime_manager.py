@@ -386,14 +386,24 @@ def create_venv(
         cmd.extend(["--python", sys.executable])
 
     logging.info("uv venv: %s", " ".join(cmd))
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        **_subprocess_no_window_kwargs(),
-    )
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            # uv 可能需要现下载一个 Python 发行版，故给足 10 分钟。
+            # 超时统一转成 RuntimeError：调用方(initialization_manager)只处理
+            # 这一种失败类型，不能因为新增超时而多出一种未预期的异常。
+            # uv may download a Python distribution first, hence 10 minutes.
+            # A timeout is converted to RuntimeError so the caller keeps seeing
+            # exactly one failure type.
+            timeout=600,
+            **_subprocess_no_window_kwargs(),
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("uv venv 创建超时 (600s)，请检查网络或磁盘状态") from exc
     if result.returncode != 0:
         stderr = result.stderr.strip()[-500:] if result.stderr else "(no stderr)"
         raise RuntimeError(f"uv venv 创建失败 (exit={result.returncode}): {stderr}")

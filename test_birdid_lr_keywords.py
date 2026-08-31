@@ -45,7 +45,7 @@ def _exiftool_read_subject(path: str):
     subprocess.run(["which", "exiftool"], capture_output=True).returncode != 0,
     reason="exiftool not on PATH",
 )
-def test_keywords_end_to_end_merge_and_idempotent():
+def test_keywords_end_to_end_merge_and_idempotent(monkeypatch):
     """
     端到端:临时 JPG 预置用户关键字 → manager 写鸟名关键字 → 读回含两者;
     重复写第二次不产生重复(幂等)。
@@ -66,6 +66,14 @@ def test_keywords_end_to_end_merge_and_idempotent():
         )
 
         mgr = get_exiftool_manager()
+        # 固定为 embedded，隔离用户的全局 metadata_write_mode 设置。
+        # 本测试断言关键字写进 JPEG 本体后能读回；若用户把该设置改成 sidecar，
+        # 关键字会写进 .xmp 边车，读本体自然为空——那是合法配置而非缺陷。
+        # 用 monkeypatch 而非直接赋值：这里拿到的是全局单例，必须在用例结束后还原。
+        # Pin embedded so the user's global metadata_write_mode cannot flip the
+        # result (sidecar mode writes to a .xmp instead of the JPEG). monkeypatch
+        # is used because this is the shared singleton and must be restored.
+        monkeypatch.setattr(mgr, "_get_metadata_write_mode", lambda: "embedded")
         for _ in range(2):  # 第二次验证幂等 / second pass proves idempotency
             stats = mgr.batch_set_metadata([{"file": jpg, "keywords": ["白胸鸲鹟"]}])
             assert stats["failed"] == 0

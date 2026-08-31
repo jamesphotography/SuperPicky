@@ -52,6 +52,27 @@ from ui.icon_utils import (  # noqa: F401
     radio_indicator_qss,
 )
 from ui.styles import COLORS  # noqa: F401
+from ui.combo_popup import style_combo_popup
+
+
+# 各分页滚动内容容器的透明背景规则。
+# 必须带 `#id` 选择器：无选择器的裸声明会传播到该子树内**所有**子控件，且 Qt 中
+# 「离目标更近的祖先」的样式表优先级高于更远的祖先，于是它会压过主窗口
+# GLOBAL_STYLE 里的 `QComboBox QAbstractItemView` 规则，把下拉的弹出列表背景也
+# 打成透明；透明的 popup 在 macOS 上由系统绘制原生浅色窗口底，表现为「白底 +
+# 浅灰文字」几乎不可读（国家 / 鸟名显示格式两个下拉的实测现象）。
+# 带上选择器后规则只作用于容器自身，子控件正常回落到 GLOBAL_STYLE。
+#
+# Transparent-background rule for each page's scroll content widget.
+# The `#id` selector is mandatory: a selector-less declaration propagates to
+# EVERY descendant, and in Qt a nearer ancestor's stylesheet outranks a more
+# distant one, so it overrode the `QComboBox QAbstractItemView` rule inherited
+# from the main window's GLOBAL_STYLE and left combo popups transparent. On
+# macOS a transparent popup falls back to the native light window background,
+# rendering as white with pale grey text. Scoping it keeps the rule on the
+# container itself and lets children fall back to GLOBAL_STYLE.
+_PAGE_BODY_OBJECT_NAME = "settingsPageBody"
+_PAGE_BODY_QSS = f"QWidget#{_PAGE_BODY_OBJECT_NAME} {{ background: transparent; }}"
 
 
 def _radio_style() -> str:
@@ -140,6 +161,13 @@ class SettingsCenter(QDialog):
         start_page: 初始显示的页 key / Initial page key to show.
     """
 
+    # 官网版本查询结果信号：(has_update, latest_version, error)。
+    # 查询在后台线程执行，必须经信号回到主线程再更新控件，禁止跨线程操作 UI。
+    # Site version lookup result: (has_update, latest_version, error). The lookup
+    # runs on a worker thread and must return through this signal before touching
+    # any widget — never update UI from the worker thread.
+    site_version_checked = Signal(bool, str, str)
+
     def __init__(self, i18n, parent: QWidget | None = None, start_page: str = "culling") -> None:
         super().__init__(parent)
         self.i18n = i18n
@@ -150,6 +178,12 @@ class SettingsCenter(QDialog):
         # Fix D: Early-init coordination guards to eliminate late-init dependencies
         self._suppress: bool = False
         self._current_skill_key: str = "custom"
+
+        # 关于页版本查询控件（仅在关于页构建后存在），先置空避免 late-init 依赖。
+        # About-page version widgets (created with that page); pre-set to None.
+        self._about_check_btn: QPushButton | None = None
+        self._about_version_result: QLabel | None = None
+        self.site_version_checked.connect(self._on_site_version_checked)
 
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -303,7 +337,8 @@ class SettingsCenter(QDialog):
         scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
 
         inner = QWidget()
-        inner.setStyleSheet("background: transparent;")
+        inner.setObjectName(_PAGE_BODY_OBJECT_NAME)
+        inner.setStyleSheet(_PAGE_BODY_QSS)
         lay = QVBoxLayout(inner)
         lay.setContentsMargins(24, 20, 24, 20)
         lay.setSpacing(16)
@@ -621,7 +656,8 @@ class SettingsCenter(QDialog):
         scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
 
         inner = QWidget()
-        inner.setStyleSheet("background: transparent;")
+        inner.setObjectName(_PAGE_BODY_OBJECT_NAME)
+        inner.setStyleSheet(_PAGE_BODY_QSS)
         lay = QVBoxLayout(inner)
         lay.setContentsMargins(24, 20, 24, 20)
         lay.setSpacing(16)
@@ -787,6 +823,9 @@ class SettingsCenter(QDialog):
                     item.setSelectable(False)
 
         country_row.addWidget(country_label)
+        # 弹出列表容器需逐个接线，祖先样式表够不到顶层 popup（见 ui/combo_popup.py）。
+        # Per-instance styling: ancestor sheets cannot reach a top-level popup.
+        style_combo_popup(self._bid_country)
         country_row.addWidget(self._bid_country, 1)
         lay.addLayout(country_row)
 
@@ -817,6 +856,7 @@ class SettingsCenter(QDialog):
 
         self._bid_region = QComboBox()
         self._bid_region.addItem(self.i18n.t("birdid.region_entire_country"), None)
+        style_combo_popup(self._bid_region)
         self._bid_region.currentIndexChanged.connect(self._on_birdid_field_changed)
 
         region_row.addWidget(region_label)
@@ -868,6 +908,7 @@ class SettingsCenter(QDialog):
             self._bid_name_format.addItem(self.i18n.t(key), value)
         fmt_idx = self._bid_name_format.findData(cfg.name_format)
         self._bid_name_format.setCurrentIndex(fmt_idx if fmt_idx >= 0 else 0)
+        style_combo_popup(self._bid_name_format)
         self._bid_name_format.currentIndexChanged.connect(self._on_name_format_changed)
         fmt_row.addWidget(fmt_label)
         fmt_row.addWidget(self._bid_name_format, 1)
@@ -1537,7 +1578,8 @@ class SettingsCenter(QDialog):
         scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
 
         inner = QWidget()
-        inner.setStyleSheet("background: transparent;")
+        inner.setObjectName(_PAGE_BODY_OBJECT_NAME)
+        inner.setStyleSheet(_PAGE_BODY_QSS)
         lay = QVBoxLayout(inner)
         lay.setContentsMargins(24, 20, 24, 20)
         lay.setSpacing(16)
@@ -1570,6 +1612,7 @@ class SettingsCenter(QDialog):
         # 恢复已保存的布局选项 / Restore saved folder layout
         fl_idx = self._folder_layout_combo.findData(cfg.folder_layout)
         self._folder_layout_combo.setCurrentIndex(fl_idx if fl_idx >= 0 else 0)
+        style_combo_popup(self._folder_layout_combo)
         self._folder_layout_combo.currentIndexChanged.connect(self._on_folder_layout_changed)
 
         fl_row.addWidget(fl_label)
@@ -1987,7 +2030,8 @@ class SettingsCenter(QDialog):
         scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
 
         inner = QWidget()
-        inner.setStyleSheet("background: transparent;")
+        inner.setObjectName(_PAGE_BODY_OBJECT_NAME)
+        inner.setStyleSheet(_PAGE_BODY_QSS)
         lay = QVBoxLayout(inner)
         lay.setContentsMargins(24, 20, 24, 20)
         lay.setSpacing(16)
@@ -2025,6 +2069,7 @@ class SettingsCenter(QDialog):
         self._video_mode_combo.setCurrentIndex(vm_idx if vm_idx >= 0 else 0)
 
         mode_row.addWidget(mode_label)
+        style_combo_popup(self._video_mode_combo)
         mode_row.addWidget(self._video_mode_combo)
         mode_row.addStretch(1)
         lay.addLayout(mode_row)
@@ -2424,6 +2469,7 @@ class SettingsCenter(QDialog):
                 _commit = subprocess.check_output(
                     ["git", "rev-parse", "--short", "HEAD"],
                     stderr=subprocess.DEVNULL,
+                    timeout=5,   # 仅用于显示版本，卡住不值得拖住「关于」页
                 ).strip().decode("utf-8")
             except Exception:
                 _commit = "dev"
@@ -2444,7 +2490,8 @@ class SettingsCenter(QDialog):
         scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
 
         inner = QWidget()
-        inner.setStyleSheet("background: transparent;")
+        inner.setObjectName(_PAGE_BODY_OBJECT_NAME)
+        inner.setStyleSheet(_PAGE_BODY_QSS)
         lay = QVBoxLayout(inner)
         lay.setContentsMargins(32, 28, 32, 24)
         lay.setSpacing(0)
@@ -2512,7 +2559,42 @@ class SettingsCenter(QDialog):
         header_layout.addStretch()
         lay.addWidget(header)
 
-        lay.addSpacing(24)
+        lay.addSpacing(16)
+
+        # ── 版本查询与官网入口 / Version lookup & download page ────────────────
+        # 4.3.0 起应用内不再自动检测更新（见 tools/update_checker），但用户仍需
+        # 一条获知新版并前往下载的通路。此处只做两件事：点击时只读查询官网发布
+        # 清单，以及打开官网下载页；不下载、不安装、不改动任何本地文件。
+        # Automatic update checks are disabled since 4.3.0, but users still need a
+        # way to learn about new versions. This row does only two things: a
+        # click-triggered read-only lookup of the site manifest, and opening the
+        # download page. It never downloads, installs, or modifies anything.
+        update_row = QHBoxLayout()
+        update_row.setContentsMargins(0, 0, 0, 0)
+        update_row.setSpacing(8)
+
+        self._about_check_btn = QPushButton(self.i18n.t("update.update_center_btn_check"))
+        self._about_check_btn.setObjectName("secondary")
+        self._about_check_btn.clicked.connect(self._on_about_check_version)
+        update_row.addWidget(self._about_check_btn)
+
+        visit_btn = QPushButton(self.i18n.t("update.update_center_btn_visit_site"))
+        visit_btn.setObjectName("secondary")
+        visit_btn.clicked.connect(self._on_about_visit_site)
+        update_row.addWidget(visit_btn)
+
+        self._about_version_result = QLabel(
+            self.i18n.t("update.update_center_result_pending")
+        )
+        self._about_version_result.setStyleSheet(
+            f"color:{COLORS['text_tertiary']};font-size:12px;"
+        )
+        self._about_version_result.setWordWrap(True)
+        update_row.addWidget(self._about_version_result, 1)
+
+        lay.addLayout(update_row)
+
+        lay.addSpacing(20)
 
         # ── 分隔线 / Divider ──────────────────────────────────────────────────
         divider = QFrame()
@@ -2567,6 +2649,36 @@ class SettingsCenter(QDialog):
             geo_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
             lay.addWidget(geo_label)
 
+        lay.addSpacing(20)
+
+        # ── 分隔线 / Divider ──────────────────────────────────────────────────
+        telemetry_divider = QFrame()
+        telemetry_divider.setFixedHeight(1)
+        telemetry_divider.setStyleSheet(f"background-color:{COLORS['border_subtle']};")
+        lay.addWidget(telemetry_divider)
+
+        lay.addSpacing(20)
+
+        # 匿名使用统计开关（默认开启，可关）。
+        # 放在「关于」页而非「精选」页：它不影响任何处理结果，
+        # 与版本/许可证一样属于「关于这个程序本身」的信息。
+        # Anonymous usage stats toggle — belongs with version/license info
+        # since it does not affect any processing result.
+        from advanced_config import get_advanced_config
+
+        cfg = get_advanced_config()
+
+        self._telemetry_checkbox = QCheckBox(self.i18n.t("settings.telemetry_label"))
+        self._telemetry_checkbox.setChecked(cfg.telemetry_enabled)
+        self._telemetry_checkbox.setStyleSheet(self._checkbox_qss())
+        self._telemetry_checkbox.stateChanged.connect(self._on_telemetry_changed)
+        lay.addWidget(self._telemetry_checkbox)
+
+        telemetry_hint = QLabel(self.i18n.t("settings.telemetry_desc"))
+        telemetry_hint.setWordWrap(True)
+        telemetry_hint.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 12px;")
+        lay.addWidget(telemetry_hint)
+
         lay.addStretch(1)
 
         scroll.setWidget(inner)
@@ -2574,6 +2686,140 @@ class SettingsCenter(QDialog):
         page_lay.setContentsMargins(0, 0, 0, 0)
         page_lay.addWidget(scroll)
         return page
+
+    def _on_telemetry_changed(self, _state: int) -> None:
+        """
+        切换匿名使用统计开关并落盘。
+
+        参数:
+        _state (int): Qt 的勾选状态（0 未选 / 2 已选），实际读取用
+        self._telemetry_checkbox.isChecked()，与本文件其余复选框槽函数
+        （如 _on_flight_check_changed）保持一致，避免 Qt6 tristate 枚举
+        与 int 直接转换时的边界问题。
+
+        返回:
+        None
+
+        Toggle anonymous usage stats and persist immediately.
+
+        Parameters:
+        _state (int): Qt check state (0 unchecked / 2 checked); the actual
+        value is read via self._telemetry_checkbox.isChecked() to match the
+        convention used by the other checkbox slots in this file (e.g.
+        _on_flight_check_changed), avoiding edge cases when casting Qt6's
+        tristate enum straight to bool.
+
+        Return:
+        None
+        """
+        from advanced_config import get_advanced_config
+
+        cfg = get_advanced_config()
+        cfg.set_telemetry_enabled(self._telemetry_checkbox.isChecked())
+        cfg.save()
+
+    # ── 关于页：版本查询 / About page: version lookup ──────────────────────────
+
+    def _on_about_visit_site(self) -> None:
+        """
+        打开官网下载页。
+
+        地址取自 config.endpoints.UPDATE_DOWNLOAD_PAGE，便于通过环境变量覆盖；
+        读取失败时回退到官网默认地址，保证按钮任何情况下都不会失效。
+
+        Open the official download page. The URL comes from
+        config.endpoints.UPDATE_DOWNLOAD_PAGE so it stays overridable, with a
+        hard-coded fallback so the button never becomes a dead end.
+        """
+
+        import webbrowser
+
+        try:
+            from config import config as _cfg
+
+            url = str(_cfg.endpoints.UPDATE_DOWNLOAD_PAGE)
+        except Exception:
+            url = "https://superpicky.app/#download"
+
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
+
+    def _on_about_check_version(self) -> None:
+        """
+        在后台线程查询官网发布清单，避免阻塞界面。
+
+        点击后立即禁用按钮并显示“检查中”，查询结果经 site_version_checked
+        信号回到主线程处理。整个过程只读，不下载也不安装任何东西。
+
+        Look up the site release manifest on a worker thread so the UI stays
+        responsive. The button is disabled and a checking hint is shown
+        immediately; the result returns via the site_version_checked signal.
+        The whole flow is read-only — nothing is downloaded or installed.
+        """
+
+        import threading
+
+        if getattr(self, "_about_check_btn", None) is None:
+            return
+
+        self._about_check_btn.setEnabled(False)
+        self._about_version_result.setText(self.i18n.t("update.update_center_checking"))
+
+        def _worker() -> None:
+            try:
+                from tools.site_version import check_site_version
+
+                result = check_site_version()
+                self.site_version_checked.emit(
+                    result.has_update,
+                    result.latest_version or "",
+                    result.error or "",
+                )
+            except Exception as exc:  # 兜底：worker 绝不能让异常逃逸
+                self.site_version_checked.emit(False, "", str(exc))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_site_version_checked(
+        self, has_update: bool, latest_version: str, error: str
+    ) -> None:
+        """
+        在主线程展示官网版本查询结果。
+
+        参数 / Parameters:
+            has_update (bool): 官网是否有更新版本 / Whether the site is newer.
+            latest_version (str): 官网版本号，失败时为空串 / Site version, empty on failure.
+            error (str): 失败原因，成功时为空串 / Failure reason, empty on success.
+        """
+
+        if getattr(self, "_about_check_btn", None) is not None:
+            self._about_check_btn.setEnabled(True)
+
+        if error:
+            self._about_version_result.setText(
+                self.i18n.t("update.update_center_result_failed")
+            )
+            self._about_version_result.setStyleSheet(
+                f"color:{COLORS['text_tertiary']};font-size:12px;"
+            )
+            return
+
+        if has_update:
+            self._about_version_result.setText(
+                self.i18n.t("update.new_version_available", version=latest_version)
+            )
+            self._about_version_result.setStyleSheet(
+                f"color:{COLORS['accent']};font-size:12px;"
+            )
+        else:
+            self._about_version_result.setText(
+                self.i18n.t("update.update_center_result_latest")
+            )
+            self._about_version_result.setStyleSheet(
+                f"color:{COLORS['text_tertiary']};font-size:12px;"
+            )
 
     def _placeholder(self, title: str) -> QWidget:
         """

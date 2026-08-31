@@ -114,9 +114,18 @@ def test_dock_country_combo_selects_australia():
         QApplication.processEvents()
         time.sleep(0.05)
 
+    # 断言选中项，但不能写死中文显示名：下拉文本跟随界面语言（英文环境下是
+    # "Australia"），而本测试要验证的是「按 country_code 恢复选中状态」这一行为，
+    # 与显示语言无关。取 i18n 的同一个键作为期望值，中英文环境均可通过。
+    # Assert the selection without hard-coding the Chinese label: the combo text
+    # follows the UI language ("Australia" under an English locale), while this
+    # test is about restoring the selection by country_code. Deriving the expected
+    # value from the same i18n key keeps it green in both locales.
+    t = dock.i18n.t
+    au_display = t("birdid.country_au")
     current_text = dock.country_combo.currentText()
-    assert "澳大利亚" in current_text or current_text == "澳大利亚", (
-        f"Expected 澳大利亚 in country_combo, got: {current_text!r}"
+    assert current_text == au_display, (
+        f"Expected country_combo to select {au_display!r}, got: {current_text!r}"
     )
     dock.close()
 

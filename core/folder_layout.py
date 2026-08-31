@@ -47,7 +47,7 @@ def compute_target_folder(
     计算分类后的相对目录路径（不含 burst_xxx 部分）。
 
     Args:
-        rating: 星级（-1/0/1/2/3）
+        rating: 星级（-1/0/1/2/3 自动评分；4/5 为浏览器内手动升星）
         bird_name: 鸟种名（None 或空字符串表示未识别/低置信度）
         layout: LAYOUT_RATING_FIRST / LAYOUT_SPECIES_FIRST / LAYOUT_FLAT
         other_birds_label: 「其他鸟类」目录的本地化名称
@@ -65,8 +65,9 @@ def compute_target_folder(
     - 1星 / 0星 / -1星 永远走「其他鸟类」分支（即使识别到鸟种）
       原因：低星照片本身已被标记为低质量/废片，按鸟种分散反而碎片化；
       统一走「其他鸟类」保持目录视觉一致性，方便整体快速处理。
-    - 2星 / 3星 + 鸟种识别 → 按 layout 决定 rating 和 species 谁外层
-    - 2星 / 3星 + 未识别 → 走「其他鸟类」分支，仍按 layout 切换内外
+    - 2星及以上（含手动升的 4/5 星）+ 鸟种识别 → 按 layout 决定 rating 和
+      species 谁外层
+    - 2星及以上 + 未识别 → 走「其他鸟类」分支，仍按 layout 切换内外
     """
     # 平铺:不分目录,留在根(防御性——organize gate 下正常不会走到这里)
     # Flat: no subfolders, stay in root (defensive; the organize gate

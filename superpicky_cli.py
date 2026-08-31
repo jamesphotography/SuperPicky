@@ -2,12 +2,11 @@
 # -*- coding: utf-8 -*-
 """
 SuperPicky CLI - 命令行入口
-完整功能版本 - 支持处理、重置、重新评星、鸟类识别
+完整功能版本 - 支持处理、重置、连拍检测、鸟类识别
 
 Usage:
     python superpicky_cli.py process /path/to/photos [options]
     python superpicky_cli.py reset /path/to/photos
-    python superpicky_cli.py restar /path/to/photos [options]
     python superpicky_cli.py info /path/to/photos
     python superpicky_cli.py identify /path/to/bird.jpg [options]
 
@@ -23,9 +22,6 @@ Examples:
 
     # 重置目录
     python superpicky_cli.py reset ~/Photos/Birds
-
-    # 重新评星
-    python superpicky_cli.py restar ~/Photos/Birds --sharpness 700 --nima 5.5
 
     # 鸟类识别
     python superpicky_cli.py identify ~/Photos/bird.jpg
@@ -335,7 +331,7 @@ def cmd_reset(args):
         except Exception:
             try:
                 import subprocess
-                subprocess.run(['rm', '-rf', superpicky_dir], check=True)
+                subprocess.run(['rm', '-rf', superpicky_dir], check=True, timeout=120)
                 print("  🗑️ 已删除: .superpicky/ (force)")
                 deleted_dirs += 1
             except Exception as e2:
@@ -368,272 +364,6 @@ def cmd_reset(args):
     else:
         print("\n❌ 重置失败")
         return 1
-
-
-def cmd_restar(args):
-    """重新评星"""
-    from post_adjustment_engine import PostAdjustmentEngine
-    from tools.exiftool_manager import get_exiftool_manager
-    from advanced_config import get_advanced_config
-    import shutil
-    
-    print_banner()
-    print(f"\n🔄 重新评星: {args.directory}")
-    print(f"⚙️  新锐度阈值: {args.sharpness}")
-    print(f"⚙️  新美学阈值: {args.nima_threshold}")
-    print(f"⚙️  连拍检测: {'是' if args.burst else '否'}")
-    print(t("cli.xmp", value=t("cli.enabled") if args.xmp else t("cli.disabled")))
-
-    # 更新 ARW 写入策略
-    adv_config = get_advanced_config()
-    adv_config.config["arw_write_mode"] = "sidecar" if args.xmp else "embedded"
-    adv_config.save()
-    
-    # V4.0: 先清理 burst 子目录（将文件移回评分目录）
-    print("\n📂 步骤0: 清理连拍子目录...")
-    rating_dirs = ['3star_excellent', '2star_good', '1star_average', '0star_reject',
-                   '3星_优选', '2星_良好', '1星_普通', '0星_放弃']  # Support both languages
-    burst_stats = {'dirs_removed': 0, 'files_restored': 0}
-    
-    for rating_dir in rating_dirs:
-        rating_path = os.path.join(args.directory, rating_dir)
-        if not os.path.exists(rating_path):
-            continue
-        
-        for entry in os.scandir(rating_path):
-            if not entry.name.startswith('burst_'):
-                continue
-
-            burst_path = entry.path
-            if entry.is_symlink():
-                print(f"    ⚠️ 跳过符号链接连拍目录: {entry.name}")
-                continue
-            if not entry.is_dir(follow_symlinks=False):
-                continue
-
-            for filename in os.listdir(burst_path):
-                src = os.path.join(burst_path, filename)
-                dst = os.path.join(rating_path, filename)
-                if os.path.islink(src):
-                    print(f"    ⚠️ 跳过符号链接文件: {filename}")
-                    continue
-                if os.path.isfile(src):
-                    try:
-                        if os.path.exists(dst):
-                            os.remove(dst)
-                        shutil.move(src, dst)
-                        burst_stats['files_restored'] += 1
-                    except Exception as e:
-                        print(f"    ⚠️ 移动失败: {filename}: {e}")
-
-            try:
-                if not os.listdir(burst_path):
-                    os.rmdir(burst_path)
-                else:
-                    shutil.rmtree(burst_path)
-                burst_stats['dirs_removed'] += 1
-            except Exception as e:
-                print(f"    ⚠️ 删除目录失败: {entry.name}: {e}")
-    
-    if burst_stats['dirs_removed'] > 0:
-        print(f"  ✅ 已清理 {burst_stats['dirs_removed']} 个连拍目录，恢复 {burst_stats['files_restored']} 个文件")
-    else:
-        print("  ℹ️  无连拍子目录需要清理")
-    
-    # 检查 report.db 是否存在
-    db_path = os.path.join(args.directory, '.superpicky', 'report.db')
-    if not os.path.exists(db_path):
-        print("\n❌ 未找到 report.db，请先运行 process 命令")
-        return 1
-    
-    # 初始化引擎
-    engine = PostAdjustmentEngine(args.directory)
-    
-    # 加载报告
-    success, msg = engine.load_report()
-    if not success:
-        print(f"\n❌ 加载数据失败: {msg}")
-        return 1
-    
-    print(f"\n📊 {msg}")
-    
-    # 获取高级配置的 0 星阈值
-    adv_config = get_advanced_config()
-    # --confidence 显式给出时覆盖 min_confidence（与 GUI 同源旋钮），否则用配置值
-    if getattr(args, 'confidence', None) is not None:
-        min_confidence = args.confidence / 100.0
-    else:
-        min_confidence = getattr(adv_config, 'min_confidence', 0.5)
-    min_sharpness = getattr(adv_config, 'min_sharpness', 250)
-    min_nima = getattr(adv_config, 'min_nima', 4.0)
-
-    # 锐度/美学阈值：未显式指定则跟随 skill 预设/配置（与 GUI 默认一致）
-    from core.skill_presets import get_skill_level_thresholds
-    preset_sharp, preset_aesth = get_skill_level_thresholds(
-        adv_config.skill_level, adv_config)
-    sharpness_threshold = args.sharpness if args.sharpness is not None else preset_sharp
-    nima_threshold = args.nima_threshold if args.nima_threshold is not None else preset_aesth
-
-    # 重新计算评分
-    new_photos = engine.recalculate_ratings(
-        photos=engine.photos_data,
-        min_confidence=min_confidence,
-        min_sharpness=min_sharpness,
-        min_nima=min_nima,
-        sharpness_threshold=sharpness_threshold,
-        nima_threshold=nima_threshold
-    )
-    
-    # 统计变化
-    changed_photos = []
-    old_stats = {'star_3': 0, 'star_2': 0, 'star_1': 0, 'star_0': 0}
-    for photo in new_photos:
-        old_rating = int(photo.get('rating', 0))
-        new_rating = photo.get('新星级', 0)
-        
-        # 统计原始评分
-        if old_rating == 3:
-            old_stats['star_3'] += 1
-        elif old_rating == 2:
-            old_stats['star_2'] += 1
-        elif old_rating == 1:
-            old_stats['star_1'] += 1
-        else:
-            old_stats['star_0'] += 1
-        
-        if old_rating != new_rating:
-            photo['filename'] = photo.get('filename', '')
-            changed_photos.append(photo)
-    
-    # 统计新评分
-    new_stats = engine.get_statistics(new_photos)
-    
-    # 使用共享格式化模块输出对比
-    from core.stats_formatter import format_restar_comparison, print_summary
-    lines = format_restar_comparison(old_stats, new_stats, len(changed_photos))
-    print_summary(lines)
-    
-    if len(changed_photos) == 0:
-        print("\n✅ 无需更新任何照片")
-        # 即使评分无变化，如果开启了连拍检测，仍然运行
-        if args.burst and args.organize:
-            _run_burst_detection_restar(args.directory)
-        return 0
-    
-    if not args.yes:
-        confirm = input("\n确定应用新评分? [y/N]: ")
-        if confirm.lower() not in ['y', 'yes']:
-            print("❌ 已取消")
-            return 1
-    
-    # 准备 EXIF 批量更新数据
-    exiftool_mgr = get_exiftool_manager()
-    batch_data = []
-    
-    for photo in changed_photos:
-        filename = photo.get('filename', '')
-        file_path = engine.find_image_file(filename)
-        if file_path:
-            rating = photo.get('新星级', 0)
-            batch_data.append({
-                'file': file_path,
-                'rating': rating,
-                'pick': 0
-            })
-    
-    # 写入 EXIF
-    print("\n📝 写入 EXIF 元数据...")
-    exif_stats = exiftool_mgr.batch_set_metadata(batch_data)
-    print(f"  ✅ 成功: {exif_stats.get('success', 0)}, 失败: {exif_stats.get('failed', 0)}")
-    
-    # 更新数据库
-    print("\n📊 更新 report.db...")
-    picked_files = set()  # CLI 模式暂不支持精选计算
-    engine.update_report_csv(new_photos, picked_files)
-    
-    # 文件重分配
-    if args.organize:
-        from constants import get_rating_folder_name
-        
-        moved_count = 0
-        for photo in changed_photos:
-            filename = photo.get('filename', '')
-            file_path = engine.find_image_file(filename)
-            if not file_path:
-                continue
-            
-            new_rating = photo.get('新星级', 0)
-            target_folder = get_rating_folder_name(new_rating)
-            target_dir = os.path.join(args.directory, target_folder)
-            target_path = os.path.join(target_dir, os.path.basename(file_path))
-            
-            if os.path.dirname(file_path) == target_dir:
-                continue
-            
-            try:
-                if not os.path.exists(target_dir):
-                    os.makedirs(target_dir)
-                if not os.path.exists(target_path):
-                    shutil.move(file_path, target_path)
-                    moved_count += 1
-            except Exception:
-                pass
-        
-        if moved_count > 0:
-            print(f"  ✅ 已移动 {moved_count} 个文件")
-        
-        # V4.0: 重新运行连拍检测
-        if args.burst:
-            _run_burst_detection_restar(args.directory)
-    
-    print("\n✅ 重新评星完成!")
-    return 0
-
-
-def _run_burst_detection_restar(directory: str):
-    """Restar 后运行连拍检测"""
-    from core.burst_detector import BurstDetector
-    from tools.exiftool_manager import get_exiftool_manager
-    
-    print("\n📷 正在执行连拍检测...")
-    detector = BurstDetector(use_phash=True)
-    
-    rating_dirs = ['3star_excellent', '2star_good', '3星_优选', '2星_良好']  # Support both languages
-    total_groups = 0
-    total_moved = 0
-    
-    exiftool_mgr = get_exiftool_manager()
-    
-    for rating_dir in rating_dirs:
-        subdir = os.path.join(directory, rating_dir)
-        if not os.path.exists(subdir):
-            continue
-        
-        from constants import RAW_EXTENSIONS, HEIF_EXTENSIONS
-        extensions = set(RAW_EXTENSIONS + HEIF_EXTENSIONS)
-        filepaths = []
-        for entry in os.scandir(subdir):
-            if entry.is_file():
-                ext = os.path.splitext(entry.name)[1].lower()
-                if ext in extensions:
-                    filepaths.append(entry.path)
-        
-        if not filepaths:
-            continue
-        
-        photos = detector.read_timestamps(filepaths)
-        photos = detector.enrich_from_db(photos, directory)
-        groups = detector.detect_groups(photos)
-        groups = detector.select_best_in_groups(groups)
-        
-        burst_stats = detector.process_burst_groups(groups, subdir, exiftool_mgr)
-        total_groups += burst_stats['groups_processed']
-        total_moved += burst_stats['photos_moved']
-    
-    if total_groups > 0:
-        print(f"  ✅ 连拍检测完成: {total_groups} 组, 移动 {total_moved} 张照片")
-    else:
-        print("  ℹ️  未检测到连拍组")
 
 
 def cmd_info(args):
@@ -941,7 +671,6 @@ Examples:
   %(prog)s process ~/Photos/Birds              # 处理照片
   %(prog)s process ~/Photos/Birds -s 600       # 自定义锐度阈值
   %(prog)s reset ~/Photos/Birds -y             # 重置目录(无确认)
-  %(prog)s restar ~/Photos/Birds -s 700 -n 5.5 # 重新评星
   %(prog)s info ~/Photos/Birds                 # 查看目录信息
   %(prog)s identify ~/Photos/bird.jpg          # 识别鸟类
   %(prog)s identify bird.NEF --write-exif      # 识别并写入EXIF
@@ -969,30 +698,6 @@ Examples:
     p_reset.add_argument('directory', help='照片目录路径')
     p_reset.add_argument('-y', '--yes', action='store_true',
                         help='跳过确认提示')
-    
-    # ===== restar 命令 =====
-    p_restar = subparsers.add_parser('restar', help=t("cli.cmd_restar"))
-    p_restar.add_argument('directory', help='照片目录路径')
-    p_restar.add_argument('-s', '--sharpness', type=int, default=None,
-                         help='新锐度阈值 (默认: 跟随 skill 预设/配置)')
-    p_restar.add_argument('-n', '--nima-threshold', type=float, default=None,
-                         help='TOPIQ 美学评分阈值 (默认: 跟随 skill 预设/配置)')
-    p_restar.add_argument('-c', '--confidence', type=int, default=None,
-                         help='AI置信度阈值 0-100 (默认: 配置 min_confidence×100)')
-    p_restar.add_argument('--burst', action='store_true', default=True,
-                         help='连拍检测 (默认: 开启)')
-    p_restar.add_argument('--no-burst', action='store_false', dest='burst',
-                         help='禁用连拍检测')
-    # XMP 侧车写入
-    p_restar.add_argument('--xmp', action='store_true', dest='xmp',
-                         help='写入XMP侧车(不改RAW)')
-    p_restar.add_argument('--no-xmp', action='store_false', dest='xmp',
-                         help='直接写入RAW(默认)')
-    p_restar.add_argument('--no-organize', action='store_false', dest='organize',
-                         help='不重新分配文件目录')
-    p_restar.add_argument('-y', '--yes', action='store_true',
-                         help='跳过确认提示')
-    p_restar.set_defaults(organize=True, burst=True, xmp=False)
     
     # ===== info 命令 =====
     p_info = subparsers.add_parser('info', help=t("cli.cmd_info"))
@@ -1066,8 +771,6 @@ Examples:
         return cmd_process(args)
     elif args.command == 'reset':
         return cmd_reset(args)
-    elif args.command == 'restar':
-        return cmd_restar(args)
     elif args.command == 'info':
         return cmd_info(args)
     elif args.command == 'burst':

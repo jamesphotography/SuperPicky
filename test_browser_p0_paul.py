@@ -98,11 +98,15 @@ def test_detail_panel_species_row_above_gbif():
 
 def test_rating_key_action_digits_and_arrows():
     """
-    键盘打星决策:数字键 0-3 直设,Up/Down ±1 钳制 0-3;-1 可经 Up/数字键
+    键盘打星决策:数字键 0-5 直设,Up/Down ±1 钳制 0-5;-1 可经 Up/数字键
     救回(Up 从 -1 → 0);星级无变化返回 None;无关键返回 None。
 
+    上限与详情面板 ▲(min 5)、对比视图 1-5 星按钮一致——三个打星入口
+    汇到同一个 _on_rating_changed,上限不一致会让键盘打不出 4/5 星。
+
     Keyboard rating decisions: digits set directly, Up/Down step within
-    0-3, -1 recovers via Up (to 0) or digits, no-op returns None.
+    0-5, -1 recovers via Up (to 0) or digits, no-op returns None. The cap
+    matches the detail panel's ▲ and the comparison view's 1-5 buttons.
     """
     from PySide6.QtCore import Qt
     from ui.results_browser_window import _rating_key_action
@@ -110,15 +114,36 @@ def test_rating_key_action_digits_and_arrows():
     assert _rating_key_action(Qt.Key_2, 0) == 2
     assert _rating_key_action(Qt.Key_0, 3) == 0
     assert _rating_key_action(Qt.Key_3, 3) is None          # 无变化 / no-op
+    assert _rating_key_action(Qt.Key_4, 3) == 4             # 手动升 4★
+    assert _rating_key_action(Qt.Key_5, 0) == 5             # 手动升 5★
+    assert _rating_key_action(Qt.Key_5, 5) is None          # 无变化 / no-op
     assert _rating_key_action(Qt.Key_Up, 1) == 2
-    assert _rating_key_action(Qt.Key_Up, 3) is None          # 顶格 / ceiling
+    assert _rating_key_action(Qt.Key_Up, 3) == 4            # 不再卡在 3★
+    assert _rating_key_action(Qt.Key_Up, 4) == 5
+    assert _rating_key_action(Qt.Key_Up, 5) is None          # 顶格 / ceiling
     assert _rating_key_action(Qt.Key_Up, -1) == 0            # 救回 / recover
+    assert _rating_key_action(Qt.Key_Down, 5) == 4
     assert _rating_key_action(Qt.Key_Down, 2) == 1
     assert _rating_key_action(Qt.Key_Down, 0) is None        # 到 0 为止 / floor
     assert _rating_key_action(Qt.Key_Down, -1) is None       # -1 不再降 / stays
     assert _rating_key_action(Qt.Key_1, -1) == 1             # 数字键救回
     assert _rating_key_action(Qt.Key_F, 2) is None           # 无关键 / unrelated
     assert _rating_key_action(Qt.Key_2, None) == 2           # rating 缺失按 0 处理
+
+
+def test_rating_keys_include_four_and_five():
+    """
+    回归钉:_RATING_KEYS 是键盘事件分发的白名单,漏了 4/5 键的话
+    _rating_key_action 根本不会被调用——两处必须同步放开到 5 星。
+
+    Regression pin: _RATING_KEYS gates dispatch, so 4/5 must be listed
+    there too or the decision function never runs.
+    """
+    from PySide6.QtCore import Qt
+    from ui.results_browser_window import _RATING_KEYS
+
+    assert Qt.Key_4 in _RATING_KEYS
+    assert Qt.Key_5 in _RATING_KEYS
 
 
 def test_grid_ignores_up_down_for_keyboard_rating():

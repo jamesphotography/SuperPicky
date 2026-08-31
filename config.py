@@ -500,7 +500,17 @@ class EndpointConfig:
     """
 
     MIRROR_BASE_URL: str = "http://1.119.150.179:59080/superpicky"
-    UPDATE_DOWNLOAD_PAGE: str = "https://superpicky.jamesphotography.com.au/#download"
+    # 官网域名为 superpicky.app（GitHub Pages，见 docs/CNAME）。
+    # 旧地址 superpicky.jamesphotography.com.au 已无 DNS 记录，属死链，勿再使用。
+    # The official site is superpicky.app (GitHub Pages, see docs/CNAME). The old
+    # superpicky.jamesphotography.com.au host has no DNS record and must not be used.
+    UPDATE_DOWNLOAD_PAGE: str = "https://superpicky.app/#download"
+    # 官网发布清单：由维护者随发布手工更新，供应用内“检查最新版本”只读查询。
+    # 不走 GitHub Release API，以避开 CUDA 包 >2GB 无法进 Release 的限制。
+    # Site release manifest, hand-maintained per release and read-only for the
+    # in-app version check. Avoids the GitHub Release API because the CUDA
+    # installer exceeds the 2 GiB asset limit and never lands there.
+    DOWNLOAD_MANIFEST_URL: str = "https://superpicky.app/downloads_github.json"
     EBIRD_API_BASE: str = "https://api.ebird.org/v2"
     NOMINATIM_REVERSE_URL: str = "https://nominatim.openstreetmap.org/reverse"
 
@@ -521,6 +531,11 @@ class EndpointConfig:
             UPDATE_DOWNLOAD_PAGE=str(
                 _env_or_override(
                     "SUPERPICKY_DOWNLOAD_PAGE", None, cls.UPDATE_DOWNLOAD_PAGE
+                )
+            ),
+            DOWNLOAD_MANIFEST_URL=str(
+                _env_or_override(
+                    "SUPERPICKY_DOWNLOAD_MANIFEST_URL", None, cls.DOWNLOAD_MANIFEST_URL
                 )
             ),
             EBIRD_API_BASE=str(

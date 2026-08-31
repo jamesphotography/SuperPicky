@@ -39,7 +39,9 @@ def _extract_binary_via_exiftool_cli(raw_file_path, tag):
         text=False,
         cwd=exiftool_cwd,
         creationflags=creationflags,
-        check=False
+        check=False,
+        # 单文件提取内嵌预览；超时由调用方的 per-tag try 接住并换下一个标签
+        timeout=30
     )
     if result.returncode != 0:
         stderr_text = result.stderr.decode('utf-8', errors='replace').strip()
@@ -223,9 +225,10 @@ def reset(directory, log_callback=None, i18n=None):
             try:
                 import subprocess
                 if os.name == 'nt':
-                     subprocess.run(['cmd', '/c', 'rd', '/s', '/q', tmp_dir], check=True)
+                     subprocess.run(['cmd', '/c', 'rd', '/s', '/q', tmp_dir],
+                                    check=True, timeout=120)
                 else:
-                    subprocess.run(['rm', '-rf', tmp_dir], check=True)
+                    subprocess.run(['rm', '-rf', tmp_dir], check=True, timeout=120)
                 if i18n:
                     log(i18n.t("logs.tmp_force_delete"))
                 else:

@@ -185,7 +185,9 @@ class ComparisonViewer(QWidget):
             btn = QPushButton("★" * i)
             btn.setFixedHeight(36)
             btn.setFixedWidth(36 + i * 14)  # 50 / 64 / 78 / 92 / 106 px
-            btn.setToolTip(f"给左图评 {i} 星  [键盘: {i}]")
+            btn.setToolTip(
+                self.i18n.t("browser.compare_rate_left", stars=i, shortcut=i)
+            )
             btn.setStyleSheet(self._star_btn_style(active=False))
             _i = i
             btn.clicked.connect(lambda _=None, stars=_i: self._rate_left(stars))
@@ -201,7 +203,11 @@ class ComparisonViewer(QWidget):
             btn = QPushButton("★" * i)
             btn.setFixedHeight(36)
             btn.setFixedWidth(36 + i * 14)  # 50 / 64 / 78 / 92 / 106 px
-            btn.setToolTip(f"给右图评 {i} 星  [键盘: {_keys_b[i-1]}]")
+            btn.setToolTip(
+                self.i18n.t(
+                    "browser.compare_rate_right", stars=i, shortcut=_keys_b[i - 1]
+                )
+            )
             btn.setStyleSheet(self._star_btn_style(active=False))
             _i = i
             btn.clicked.connect(lambda _=None, stars=_i: self._rate_right(stars))
