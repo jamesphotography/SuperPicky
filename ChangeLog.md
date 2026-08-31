@@ -1,89 +1,176 @@
-# SuperPicky 4.6.0 RC2
+# SuperPicky 4.6.0
 
-**What's new since RC1:**
+This release is about getting your results out of the app: export a shareable
+report of the day's shoot, send your keepers to Apple Photos, and fix a whole
+misidentified species in one go.
 
-- **Fix a whole misidentified species in one go.** When a batch gets the same
-  bird wrong from end to end, right-click any of those photos and pick
-  `Change all <species> to…`. It retags every photo of that species in the database —
-  not just the ones currently filtered on screen — and moves them into the new
-  species' folders, keeping burst groups together. Before anything moves you get
-  a confirmation showing how many photos are involved, how many burst groups,
-  and the exact target folders, so a batch organised in English won't quietly
-  grow a second set of folders in Chinese. When it finishes you are told what
-  moved, what was only retagged because it had never been organised, and
-  anything that failed and why. Related fix: changing a species used to fail
-  silently when a file with the same name already sat in the target folder — the
-  database was updated while the file stayed put. Now the file and the database
-  never disagree, and you are told about the collision.
+## What's new
 
-- **"Picked only" is now its own switch, and your picks always sort first.**
-  The crown used to sit in the row of star filters, where it looked like it
-  added photos to the list — it actually cut the list down to just your picks.
-  It is now a separate checkbox under that row. And because a pick is the
-  overlap of the sharpest and the best-looking of your 3-star shots, sorting by
-  sharpness or rarity alone used to scatter them: in one test the twelve picks
-  landed at positions 2, 4, 8 … 44, and as far down as 120 when sorted by
-  rarity. Picks now always come first, with your chosen sort applied inside
-  them. Sorting by filename is left alone, since its whole point is shooting
-  order.
+1. **Export a shareable report of your shoot.** The results browser has a new
+   Export Report button. It produces a single HTML file in your picking folder
+   that opens by double-clicking, with the photos embedded inside it — send it
+   to a friend, post it in a group, or keep it as your own record. It works
+   offline and the images never go missing. The report opens on your best frame
+   of the day, then gives each species its own section ordered by rarity, with
+   its Chinese and scientific names, a rarity badge, an IUCN badge for
+   threatened species, and up to four photos. Burst frames are collapsed to one
+   per burst, so you get four different moments rather than four near-identical
+   ones. Every photo carries its exposure settings, and the lead shot of each
+   species also shows its sharpness, aesthetics and species beauty scores.
+   Below that is a breakdown of your stars, keeper rate, in-flight and sharp
+   counts, burst groups and gear. Click any photo to enlarge it. A Save as PDF
+   button prints it on white paper. A typical shoot — 284 photos, 12 species —
+   comes to about 4 MB.
 
-- **Anonymous usage statistics — and a switch to turn them off.** Settings →
-  About now has a switch for anonymous usage statistics, and the first launch
-  tells you what is collected before anything is sent. What is sent: the app
-  version, your operating system, the interface language, and a random ID that
-  changes every day. What is never sent: photos, file paths, or personal
-  information. (The previous statistics endpoint had quietly stopped working
-  months ago, which is why this was rebuilt.)
+2. **Send your keepers straight to Apple Photos (macOS only).** The results
+   browser has an Add to Photos button. It imports the RAW file whenever one
+   exists, and writes the bird's name, your star rating and the quality figures
+   into the Photos title, description and keywords, so you can search for a
+   species inside Photos itself. Photos you have already sent across are
+   skipped, so running it a second time will not duplicate anything. If you have
+   ticked any thumbnails, only those are imported; if you have ticked none, the
+   whole filtered list goes. Each run creates or reuses an album named after the
+   folder and the date, filed under a SuperPicky Imports folder. Your RAW files
+   are never modified, and XMP sidecars are never sent to Photos. Contributed by
+   @orientaldollarbird.
 
-- **Check for a newer version from the About page.** The About page has its
-  website link back, plus a button that looks up the current release when you
-  ask it to. Nothing is checked in the background and nothing is downloaded or
-  installed — it only reads the version number when you click.
+3. **Fix a whole misidentified species in one go.** When a batch gets the same
+   bird wrong from end to end, right-click any of those photos and pick
+   Change all <species> to…. It retags every photo of that species in the
+   database — not just the ones currently filtered on screen — and moves them
+   into the new species' folders, keeping burst groups together. Before anything
+   moves you get a confirmation showing how many photos are involved, how many
+   burst groups, and the exact target folders, so a batch organised in English
+   won't quietly grow a second set of folders in Chinese. Related fix: changing
+   a species used to fail silently when a file with the same name already sat in
+   the target folder — the database was updated while the file stayed put. Now
+   the file and the database never disagree.
 
-- **Dark menus no longer show white edges.** Drop-down lists throughout the app
-  — filters, sorting, the bird ID country and region pickers, Settings — were
-  drawn on top of the macOS light panel, leaving white strips above and below
-  the list. Right-click menus in text fields carried icons drawn for a light
-  theme, which were all but invisible on a dark menu.
+4. **4 and 5 stars get their own folders.** Photos you promote by hand are no
+   longer filed with the 3-star ones, and the keyboard now goes all the way to
+   5. Your manual promotions also count in the statistics: the keeper rate is
+   now 3 stars and above, so promoting a photo no longer makes the number go
+   down.
 
-- **The app no longer hangs forever when an external tool stops responding.**
-  Thirteen places that call out to external programs had no time limit, so one
-  stuck call could freeze the app for good.
+5. **Picked only is its own switch, and your picks always sort first.** The
+   crown used to sit in the row of star filters, where it looked like it added
+   photos to the list — it actually cut the list down to just your picks. It is
+   now a separate checkbox under that row. And because a pick is the overlap of
+   the sharpest and the best-looking of your 3-star shots, sorting by sharpness
+   or rarity alone used to scatter them: in one test the twelve picks landed at
+   positions 2, 4, 8 … 44, and as far down as 120 when sorted by rarity. Picks
+   now always come first, with your chosen sort applied inside them. Sorting by
+   filename is left alone, since its whole point is shooting order.
 
-- **Folders processed by older versions open again.** A results database
-  written by an earlier version could be missing columns the browser expects;
-  missing columns are now filled in on open.
+6. **Anonymous usage statistics — and a switch to turn them off.** Settings →
+   About now has a switch for anonymous usage statistics, and the first launch
+   tells you what is collected before anything is sent. What is sent: the app
+   version, your operating system, the interface language, and a random ID that
+   changes every day. What is never sent: photos, file paths, or personal
+   information.
 
-- **What the app tells you now matches what it does.** The star rules on the
-  console and in step 2 of the usage guide describe the batch-quota system
-  actually in use, the burst note quotes the minimum you configured instead of
-  a hard-coded 4, and a few Chinese strings that leaked into the English
-  interface are gone.
+7. **Check for a newer version from the About page.** The About page has its
+   website link back, plus a button that looks up the current release when you
+   ask it to. Nothing is checked in the background and nothing is downloaded or
+   installed — it only reads the version number when you click.
 
-- **Smaller fixes.** On macOS the app no longer leaves behind the helper that
-  keeps your Mac awake after you quit; deleting files copes with unusual
-  characters in filenames; the aesthetics threshold can go as low as the slider
-  allows instead of snapping back; and cancelling an Apple Photos import now
-  actually stops.
+8. **Dark menus no longer show white edges.** Drop-down lists throughout the app
+   — filters, sorting, the bird ID country and region pickers, Settings — were
+   drawn on top of the macOS light panel, leaving white strips above and below
+   the list. Right-click menus in text fields carried icons drawn for a light
+   theme, which were all but invisible on a dark menu.
+
+9. **The app no longer hangs forever when an external tool stops responding.**
+   Thirteen places that call out to external programs had no time limit, so one
+   stuck call could freeze the app for good.
+
+10. **Folders processed by older versions open again.** A results database
+    written by an earlier version could be missing columns the browser expects;
+    missing columns are now filled in on open.
+
+11. **What the app tells you now matches what it does.** The star rules on the
+    console and in step 2 of the usage guide describe the batch-quota system
+    actually in use, the burst note quotes the minimum you configured instead of
+    a hard-coded 4, and a few Chinese strings that leaked into the English
+    interface are gone.
+
+12. **Smaller fixes.** On macOS the app no longer leaves behind the helper that
+    keeps your Mac awake after you quit; deleting files copes with unusual
+    characters in filenames; the aesthetics threshold can go as low as the
+    slider allows instead of snapping back; and cancelling an Apple Photos
+    import now actually stops.
 
 ---
 
-# SuperPicky 4.6.0 RC1
+# SuperPicky 4.6.0（中文）
 
-**What's new since 4.5.0:**
+这一版的重点是把成果带出软件：导出一份可以直接发给别人的报告、把选出的照片送进
+Apple 照片、以及一次改掉整个认错的鸟种。
 
-- **Send your keepers straight to Apple Photos (macOS only).** The results
-  browser has a new "Add to Photos" button. It imports the RAW file whenever one
-  exists — on a 985-image test shoot every single imported item was the NEF, not
-  the paired JPEG — and writes the bird's name, your star rating and the quality
-  figures into the Photos title, description and keywords, so you can search for
-  a species inside Photos itself. Photos you have already sent across are
-  skipped, so running it a second time will not duplicate anything. If you have
-  ticked any thumbnails, only those are imported; if you have ticked none, the
-  whole filtered list goes. Each run creates or reuses an album named after the
-  folder and the date, filed under a "SuperPicky Imports" folder. Your RAW files
-  are never modified, and XMP sidecars are never sent to Photos. Contributed by
-  @orientaldollarbird.
+## 这一版有什么新东西
+
+1. **导出一份可以分享的拍摄报告。** 选鸟浏览器新增「导出报告」按钮，会在选鸟目录
+   里生成一个 HTML 文件，双击就能打开，照片直接嵌在文件里——发给鸟友、发到群里，
+   或者留着自己回顾都行。断网也能看，图片永远不会丢。报告开头是这次最好的一张，
+   接着每个鸟种一块、按罕见度排序，带中文名、学名、罕见度标签，受威胁鸟种还有
+   IUCN 标签，每种最多四张。同一组连拍只取一张，所以看到的是四个不同瞬间，而不是
+   四张几乎一样的照片。每张都标着曝光参数，每种的代表作还会显示锐度、美学和鸟种
+   颜值。下面是星级分布、命中率、飞版数、精焦数、连拍组数和器材统计。点任意一张
+   可以放大。还有「存为 PDF」按钮，会转成白底适合打印。一次外拍的量——284 张照片、
+   12 个鸟种——大约 4 MB。
+
+2. **把选出的照片直接送进 Apple 照片（仅 macOS）。** 选鸟浏览器新增「添加到照片」
+   按钮。有 RAW 就导入 RAW，并把鸟种名、你打的星级和质量数据写进照片的标题、描述
+   和关键词，这样在「照片」里就能直接搜鸟种。已经送过去的会自动跳过，再点一次不会
+   重复。勾选了缩略图就只导入勾选的，一张没勾就导入当前筛选出的全部。每次运行会
+   按文件夹名和日期建一个相簿，收在「SuperPicky Imports」文件夹下。你的 RAW 文件
+   不会被改动，XMP 边车也不会送进「照片」。由 @orientaldollarbird 贡献。
+
+3. **一次改掉整个认错的鸟种。** 一批照片从头到尾认成同一种错鸟时，右键任意一张选
+   「把整个「某某鸟」改为…」。它会把数据库里这个鸟种的**全部**照片改掉——不只是
+   当前筛选出来的那些——并搬进新鸟种的文件夹，连拍组整组一起走。动手之前会先给你
+   一份确认：涉及多少张、多少个连拍组、目标文件夹的确切名字，所以用英文整理过的
+   目录不会悄悄多出一套中文文件夹。顺带修了一个老问题：改鸟种时如果目标文件夹里
+   已有同名文件，以前会静默失败——数据库改了、文件却没动。现在文件和数据库不会再
+   各说各话。
+
+4. **4 星和 5 星有了自己的文件夹。** 手动升上去的照片不再和 3 星混在一起，键盘打星
+   也放开到了 5 星。手动升的星现在也计入统计：命中率改成「3 星及以上」，升一张星
+   不会再让命中率反而下降。
+
+5. **「只看精选」变成独立开关，精选永远排在最前面。** 皇冠原来挤在星级筛选那一排
+   里，看着像是往列表里加照片，实际上是把列表缩到只剩精选。现在它是那一排下面单独
+   的一个勾选框。另外，精选是「3 星里又锐又好看」的交集，所以单按锐度或罕见度排序
+   会把它们打散：实测十二张精选分别落在第 2、4、8……44 位，按罕见度排时最远的排到
+   第 120 位。现在精选永远排在最前面，你选的排序在精选内部生效。按文件名排序不受
+   影响，因为它的意义就是拍摄顺序。
+
+6. **匿名使用统计，以及一个可以关掉它的开关。** 设置 →「关于」新增匿名使用统计
+   开关，首次启动会在发送任何数据之前告诉你收集了什么。发送的是：软件版本、操作
+   系统、界面语言，以及一个每天都会变的随机 ID。绝不发送：照片、文件路径、个人
+   信息。
+
+7. **可以在「关于」页查最新版本。** 「关于」页恢复了官网入口，并新增一个按钮，点了
+   才去查当前发布版本。后台不做任何检查，也不下载、不安装——只有你点的时候才读一次
+   版本号。
+
+8. **深色界面的菜单不再露白边。** 全软件的下拉列表——筛选、排序、识鸟的国家和地区
+   选择、设置——原本画在 macOS 的浅色面板上，列表上下会露出白条。文本框的右键菜单
+   用的是浅色主题的图标，在深色菜单上几乎看不见。
+
+9. **外部工具卡住时软件不会再永久无响应。** 十三处调用外部程序的地方没有超时限制，
+   一次卡住就会让软件永远转圈。
+
+10. **旧版本处理过的目录又能打开了。** 早期版本写的结果数据库可能缺少浏览器需要的
+    列，现在打开时会自动补上。
+
+11. **软件说的和它做的对上了。** 控制台和使用步骤第 2 步里的星级规则，现在描述的是
+    实际在用的批内配额；连拍提示引用的是你自己设的最小张数，不再是写死的 4；漏进
+    英文界面的几处中文也清掉了。
+
+12. **一些小修复。** macOS 上退出软件后不会再留下那个让 Mac 保持唤醒的辅助进程；
+    删除文件能正确处理文件名里的特殊字符；美学阈值可以调到滑块允许的最低值而不会
+    弹回；取消 Apple 照片导入现在是真的会停下来。
 
 ---
 
