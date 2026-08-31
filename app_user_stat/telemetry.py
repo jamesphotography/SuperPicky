@@ -205,7 +205,19 @@ class _TelemetryClient:
             request_obj = request.Request(
                 _TELEMETRY_ENDPOINT,
                 data=body,
-                headers={"Content-Type": "application/json"},
+                headers={
+                    "Content-Type": "application/json",
+                    # 必须显式带 User-Agent：urllib 默认发 "Python-urllib/3.x"，
+                    # 而 Cloudflare 对这个 UA 直接返回 403，投递永远到不了
+                    # Worker。异常在下面被全部吞掉，于是表现为「统计一直是 0，
+                    # 却没有任何报错」——4.x 的 Countly 端点失效后静默数月无人
+                    # 察觉，正是同一种失败形态。实测：Python-urllib/3.13 → 403，
+                    # curl/8.7.1 与 SuperPicky/<版本> → 204。
+                    # urllib's default UA is blocked by Cloudflare with a 403,
+                    # and every exception here is swallowed — the exact silent
+                    # failure mode that hid the dead Countly endpoint for months.
+                    "User-Agent": f"SuperPicky/{APP_VERSION}",
+                },
                 method="POST",
             )
             with request.urlopen(request_obj, timeout=_REQUEST_TIMEOUT_SECONDS) as response:

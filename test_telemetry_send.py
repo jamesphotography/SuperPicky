@@ -216,3 +216,43 @@ def test_unreachable_endpoint_never_raises(monkeypatch) -> None:
     state = {"device_id": "install-abc", "install_reported_at": None, "last_heartbeat_at": None}
     # 不应抛出任何异常
     client._send_due_events(state, ["app_start"])
+
+
+def test_request_sends_an_explicit_user_agent(monkeypatch) -> None:
+    """
+    上报必须带自己的 User-Agent。
+
+    urllib 不设 UA 时默认发 "Python-urllib/3.x"，而 Cloudflare 对这个 UA 直接
+    返回 403 —— 请求根本到不了 Worker。偏偏 _send_due_events 把所有异常都吞掉，
+    于是症状是「统计恒为 0，却没有任何报错」：4.x 的 Countly 端点失效后静默
+    数月无人察觉，正是同一种失败形态，光看日志和测试都发现不了。
+
+    实测（v4.6.0 发布当天）：Python-urllib/3.13 → 403，SuperPicky/4.6.0 → 204。
+
+    Without an explicit UA, urllib sends "Python-urllib/3.x", which Cloudflare
+    rejects with 403 before the Worker ever sees it — and every exception here
+    is swallowed, so it fails silently exactly like the dead Countly endpoint.
+    """
+    import app_user_stat.telemetry as tm
+    from constants import APP_VERSION
+
+    captured = {}
+
+    class _Resp:
+        status = 204
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def _capture(req, timeout=None):
+        captured["headers"] = {k.lower(): v for k, v in req.header_items()}
+        return _Resp()
+
+    monkeypatch.setattr(tm.request, "urlopen", _capture)
+    client = tm._TelemetryClient()
+    state = {"device_id": "install-abc", "install_reported_at": None, "last_heartbeat_at": None}
+    client._send_due_events(state, ["app_start"])
+
+    ua = captured["headers"].get("user-agent", "")
+    assert ua, "上报没有带 User-Agent，会被 Cloudflare 403 静默拦掉"
+    assert not ua.lower().startswith("python-urllib"), f"UA 仍是 urllib 默认值：{ua}"
+    assert APP_VERSION in ua, f"UA 里应带版本号，实际：{ua}"
