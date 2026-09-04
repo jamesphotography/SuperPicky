@@ -837,6 +837,14 @@ class PhotoProcessor:
                     prefix = f['prefix']
                     if prefix in self.file_bird_species:
                         bird_info = self.file_bird_species[prefix]
+                        # 低置信度鸟名不得用于目录命名，与 _move_files_to_rating_folders
+                        # 的过滤保持一致：它从不写入 DB 的 bird_species_cn/en，用它建目录
+                        # 会造出结果浏览器(只读 DB)看不到的「幽灵鸟种目录」。
+                        # Skip low-confidence names here just as the main organiser does:
+                        # they never reach the DB, so naming a folder after one creates a
+                        # species directory the DB-driven results browser cannot show.
+                        if bird_info.get('low_confidence'):
+                            continue
                         if self.i18n.current_lang.startswith('en'):
                             bird_species_name = bird_info.get('en_name', '').replace(' ', '_')
                         else:
@@ -849,6 +857,14 @@ class PhotoProcessor:
                     prefix = f['prefix']
                     if prefix in self.file_bird_species:
                         bird_info = self.file_bird_species[prefix]
+                        # 低置信度鸟名不得用于目录命名，与 _move_files_to_rating_folders
+                        # 的过滤保持一致：它从不写入 DB 的 bird_species_cn/en，用它建目录
+                        # 会造出结果浏览器(只读 DB)看不到的「幽灵鸟种目录」。
+                        # Skip low-confidence names here just as the main organiser does:
+                        # they never reach the DB, so naming a folder after one creates a
+                        # species directory the DB-driven results browser cannot show.
+                        if bird_info.get('low_confidence'):
+                            continue
                         if self.i18n.current_lang.startswith('en'):
                             bird_species_name = bird_info.get('en_name', '').replace(' ', '_')
                         else:
