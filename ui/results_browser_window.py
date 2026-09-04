@@ -39,7 +39,7 @@ from ui.comparison_viewer import ComparisonViewer
 from typing import Optional
 
 from tools.i18n import get_i18n
-from tools.report_db import ReportDB
+from tools.report_db import ReportDB, SPECIES_FILTER_OTHER
 from constants import APP_VERSION
 
 
@@ -255,6 +255,35 @@ def _trigger_rating_move(
 
     import threading
     threading.Thread(target=_do, daemon=True).start()
+
+
+def compute_dropdown_species(db, use_en: bool, ratings=None):
+    """
+    算出鸟种下拉该显示什么：有目录的鸟种 + 是否需要「其他鸟类」兜底项。
+
+    磁盘上只有 2★以上的照片才会建鸟种目录（低星一律归「其他鸟类」，见
+    core/folder_layout.py）。所以只有低星照片的鸟种在磁盘上没有目录，列进
+    下拉纯属干扰；但它们的照片必须仍能从鸟种维度找到，故用兜底项接住。
+    兜底项跟随当前星级筛选：这一档下没有无目录照片就不显示，免得点进去是空的。
+
+    参数 / Args:
+        db:      ReportDB 或 MergedReportDB
+        use_en:  界面是否英文（决定用哪个鸟种列）
+        ratings: 当前星级筛选；None 表示不限
+
+    返回 / Returns:
+        (有目录的鸟种列表, 是否需要兜底项)
+
+    Decide dropdown contents: foldered species plus whether the "other birds"
+    catch-all is needed under the active rating filter.
+    """
+    species = db.get_distinct_species(use_en=use_en, ratings=ratings, foldered_only=True)
+    key = "bird_species_en" if use_en else "bird_species_cn"
+    probe = {key: SPECIES_FILTER_OTHER}
+    if ratings is not None:
+        probe["ratings"] = ratings
+    has_other = bool(db.get_photos_by_filters(probe))
+    return species, has_other
 
 
 def _photos_of_same_species(photos: list, target: dict) -> list:
@@ -1223,8 +1252,10 @@ class ResultsBrowserWindow(QMainWindow):
         self._all_photos = self._db.get_all_photos()
         self._compute_burst_ids()
         self._filter_panel.reset_all()
-        species = self._db.get_distinct_species(use_en=self.i18n.current_lang.startswith('en'))
-        self._filter_panel.update_species_list(species)
+        species, has_other = compute_dropdown_species(
+            self._db, use_en=self.i18n.current_lang.startswith('en')
+        )
+        self._filter_panel.update_species_list(species, has_other)
         if len(self._all_photos) > 0 and len(self._filtered_photos) == 0:
             self._filter_panel.select_all_ratings()
         self.setWindowTitle(f"{self.i18n.t('browser.title')} \u2014 {short_name}")
@@ -1241,8 +1272,10 @@ class ResultsBrowserWindow(QMainWindow):
         self._all_photos = self._db.get_all_photos()
         self._compute_burst_ids()
         self._filter_panel.reset_all()
-        species = self._db.get_distinct_species(use_en=self.i18n.current_lang.startswith('en'))
-        self._filter_panel.update_species_list(species)
+        species, has_other = compute_dropdown_species(
+            self._db, use_en=self.i18n.current_lang.startswith('en')
+        )
+        self._filter_panel.update_species_list(species, has_other)
         if len(self._all_photos) > 0 and len(self._filtered_photos) == 0:
             self._filter_panel.select_all_ratings()
         short = os.path.basename(root_dir) or root_dir
@@ -1405,8 +1438,10 @@ class ResultsBrowserWindow(QMainWindow):
 
         # 动态刷新鸟种下拉：只显示当前星级筛选下有照片的鸟种
         use_en = self.i18n.current_lang.startswith('en')
-        species = self._db.get_distinct_species(use_en=use_en, ratings=filters.get('ratings'))
-        self._filter_panel.update_species_list(species)
+        species, has_other = compute_dropdown_species(
+            self._db, use_en=use_en, ratings=filters.get('ratings')
+        )
+        self._filter_panel.update_species_list(species, has_other)
 
         raw_photos = self._db.get_photos_by_filters(filters)
         resolved_photos = [self._resolve_photo_paths(p) for p in raw_photos]
@@ -1816,10 +1851,10 @@ class ResultsBrowserWindow(QMainWindow):
         # 4. 刷新左侧鸟种下拉
         use_en = self.i18n.current_lang.startswith("en")
         current_filters = self._filter_panel.get_filters()
-        new_species = self._db.get_distinct_species(
-            use_en=use_en, ratings=current_filters.get("ratings")
+        new_species, new_has_other = compute_dropdown_species(
+            self._db, use_en=use_en, ratings=current_filters.get("ratings")
         )
-        self._filter_panel.update_species_list(new_species)
+        self._filter_panel.update_species_list(new_species, new_has_other)
 
         # 5. 后台执行文件移动（同时更新连拍组其他成员的 DB 鸟种字段及 current_path）
         # Background: move files and update burst group members' DB records.

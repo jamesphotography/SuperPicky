@@ -65,6 +65,23 @@ class MergedReportDB:
             except Exception:
                 pass
     
+    def _foldered_species_sql(self, col: str) -> str:
+        """
+        返回「有自己目录的鸟种」跨目录并集的 SQL 子查询（无参数，阈值内联）。
+
+        判据与 core/folder_layout.py 一致：有 2★以上照片才会建鸟种目录。
+        阈值是模块常量而非用户输入，直接内联安全。
+
+        SQL sub-query listing species that own a folder in any attached DB.
+        """
+        from tools.report_db import _FOLDERED_MIN_RATING
+        return " UNION ".join(
+            f"SELECT {col} FROM {alias}.photos "
+            f"WHERE {col} IS NOT NULL AND TRIM({col}) != '' "
+            f"AND rating >= {int(_FOLDERED_MIN_RATING)}"
+            for alias in self._db_aliases
+        )
+
     def _build_union_sql(self, where: str = "", order: str = "ORDER BY source_dir, filename",
                          extra_params: list = None) -> tuple:
         """构建 UNION ALL 查询"""
@@ -345,8 +362,18 @@ class MergedReportDB:
             species_val = filters.get("bird_species_cn")
         
         if isinstance(species_val, str) and species_val.strip():
-            where_clauses.append(f"{species_col} = ?")
-            params.append(species_val.strip())
+            from tools.report_db import SPECIES_FILTER_OTHER
+            if species_val.strip() == SPECIES_FILTER_OTHER:
+                # 「其他鸟类」：没有自己鸟种目录的照片。判据与 get_distinct_species
+                # (foldered_only) 完全一致，两者构成不重不漏的划分。
+                # Catch-all for photos whose species owns no folder anywhere.
+                where_clauses.append(
+                    f"({species_col} IS NULL OR TRIM({species_col}) = '' "
+                    f"OR {species_col} NOT IN ({self._foldered_species_sql(species_col)}))"
+                )
+            else:
+                where_clauses.append(f"{species_col} = ?")
+                params.append(species_val.strip())
         
         # 精选:直接用持久 picked 列(与单库一致;旧目录需重跑选鸟)
         if filters.get("picked_only", False):
@@ -383,8 +410,19 @@ class MergedReportDB:
 
         return results
     
-    def get_distinct_species(self, use_en: bool = False, ratings: list = None) -> List[str]:
-        """获取所有目录的去重鸟种列表，ratings 非空时只返回在这些星级下有照片的鸟种"""
+    def get_distinct_species(self, use_en: bool = False, ratings: list = None,
+                             foldered_only: bool = False) -> List[str]:
+        """
+        获取所有目录的去重鸟种列表，ratings 非空时只返回在这些星级下有照片的鸟种。
+
+        foldered_only=True 时只返回「磁盘上有自己目录」的鸟种（在**任一**子目录
+        里有 2★以上照片）。跨目录取并集：某鸟种只要在一个批次里够格建目录，
+        它在别的批次的低星照片也归到该鸟种条目下，不落进「其他鸟类」兜底项
+        ——与 get_photos_by_filters 的哨兵判据必须完全一致，否则划分会重叠或漏掉照片。
+
+        With foldered_only, list only species owning a folder in ANY sub-directory.
+        This must match the sentinel rule in get_photos_by_filters exactly.
+        """
         col = "bird_species_en" if use_en else "bird_species_cn"
 
         if not self._db_aliases:
@@ -398,11 +436,18 @@ class MergedReportDB:
                 rating_in = ", ".join(str(r) for r in valid)
                 rating_clause = f" AND rating IN ({rating_in})"
 
+        # 「有目录」的跨目录并集子查询（与 get_photos_by_filters 共用同一判据）
+        # Cross-directory union of foldered species (same rule as the sentinel filter).
+        foldered_clause = ""
+        if foldered_only:
+            foldered_clause = f" AND {col} IN ({self._foldered_species_sql(col)})"
+
         parts = []
         for alias in self._db_aliases:
             parts.append(
                 f"SELECT DISTINCT {col} FROM {alias}.photos "
-                f"WHERE {col} IS NOT NULL AND {col} != '' AND rating != -1{rating_clause}"
+                f"WHERE {col} IS NOT NULL AND {col} != '' AND rating != -1"
+                f"{rating_clause}{foldered_clause}"
             )
 
         sql = f"SELECT DISTINCT {col} FROM ({' UNION '.join(parts)}) ORDER BY {col}"
