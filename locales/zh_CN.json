@@ -230,6 +230,7 @@
     "caffeinate_failed": "⚠️  防休眠启动失败: {error}（不影响正常处理）",
     "scan_time": "⏱️  文件扫描耗时: {time:.1f}ms",
     "raw_conversion_start": "🔄 开始并行转换 {count} 个RAW文件（{threads}线程）...",
+    "raw_conversion_progress": "   ⏳ 已提取 {done}/{total} 张（{rate:.1f} 张/秒，约剩 {eta}）",
     "raw_converted": "  ✅ 已转换 {current}/{total} 张",
     "raw_conversion_time": "⏱️  RAW转换耗时: {time_str} (平均 {avg:.1f}秒/张)\n",
     "model_loading": "🤖 加载AI模型...",

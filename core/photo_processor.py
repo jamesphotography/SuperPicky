@@ -963,25 +963,61 @@ class PhotoProcessor:
             except Exception as e:
                 return (key, False, str(e))
         
+        # 进度节流：每 total/20 张、或距上次输出满 3 秒时报一次。
+        # 两个条件取「或」——rawpy 快路径靠张数节流(全程约 20 条不刷屏)，
+        # A7M5 压缩 ARW / HEIF 等慢路径靠 3 秒兜底，保证界面隔几秒必有反馈。
+        # Throttled progress: emit every total/20 files OR every 3 seconds.
+        # The count rule keeps the fast rawpy path from flooding the log; the
+        # time rule guarantees feedback on slow paths (compressed ARW, HEIF).
+        total = len(raw_files_to_convert)
+        log_step = max(1, total // 20)
+        last_log_time = raw_start
+
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_raw = {
-                executor.submit(convert_single, args): args 
+                executor.submit(convert_single, args): args
                 for args in raw_files_to_convert
             }
             converted_count = 0
-            
-            for future in as_completed(future_to_raw):
-                key, success, result = future.result()
-                if success:
-                    # V4.1.0: result 是生成的 JPEG 绝对路径
-                    # 计算相对路径添加到 files_tbr
-                    jpeg_filename = os.path.relpath(result, self.dir_path)
-                    files_tbr.append(jpeg_filename)
-                    self.temp_converted_jpegs.add(jpeg_filename)  # 标记为临时文件
-                    converted_count += 1
-                else:
-                    self._log(f"  ❌ {self.i18n.t('logs.batch_failed', start=key, end=key, error=result)}", "error")
-        
+            done = 0
+
+            try:
+                for future in as_completed(future_to_raw):
+                    key, success, result = future.result()
+                    done += 1
+                    if success:
+                        # V4.1.0: result 是生成的 JPEG 绝对路径
+                        # 计算相对路径添加到 files_tbr
+                        jpeg_filename = os.path.relpath(result, self.dir_path)
+                        files_tbr.append(jpeg_filename)
+                        self.temp_converted_jpegs.add(jpeg_filename)  # 标记为临时文件
+                        converted_count += 1
+                    else:
+                        self._log(f"  ❌ {self.i18n.t('logs.batch_failed', start=key, end=key, error=result)}", "error")
+
+                    now = time.time()
+                    if done == total or done % log_step == 0 or (now - last_log_time) >= 3.0:
+                        last_log_time = now
+                        elapsed = now - raw_start
+                        rate = done / elapsed if elapsed > 0 else 0.0
+                        remaining = (total - done) / rate if rate > 0 else 0.0
+                        eta = f"{remaining:.0f}s" if remaining < 60 else f"{remaining / 60:.1f}min"
+                        self._log(self.i18n.t(
+                            "logs.raw_conversion_progress",
+                            done=done, total=total, rate=rate, eta=eta,
+                        ))
+
+                    # 阶段内响应「停止」：否则 1000 张要全部提取完才会检查取消，
+                    # 用户点停止像没反应。cancel_futures 掐掉排队任务，运行中的
+                    # 最多 4 张跑完(线程无法中断)。
+                    # Honour Stop inside the stage: without this the cancel check
+                    # only runs after all files are extracted. cancel_futures drops
+                    # queued work; at most 4 in-flight files finish.
+                    self._check_cancelled()
+            except ProcessingCancelled:
+                executor.shutdown(wait=False, cancel_futures=True)
+                raise
+
         raw_time = time.time() - raw_start
         avg_time = raw_time / len(raw_files_to_convert) if len(raw_files_to_convert) > 0 else 0
         # Format time string

@@ -230,6 +230,7 @@
     "caffeinate_failed": "⚠️  Sleep prevention activation failed: {error} (processing will continue normally)",
     "scan_time": "⏱️  File scan time: {time:.1f}ms",
     "raw_conversion_start": "🔄 Starting parallel conversion of {count} RAW files ({threads} threads)...",
+    "raw_conversion_progress": "   ⏳ Extracted {done}/{total} ({rate:.1f}/s, ~{eta} left)",
     "raw_converted": "  ✅ Converted {current}/{total}",
     "raw_conversion_time": "⏱️  RAW conversion time: {time_str} (average {avg:.1f}s per file)\n",
     "model_loading": "🤖 Loading AI model...",
