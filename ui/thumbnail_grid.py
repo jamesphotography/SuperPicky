@@ -413,12 +413,17 @@ class ThumbnailCard(QFrame):
     信号 double_clicked(photo_dict) 在用户双击时发出。
     信号 context_menu_requested(photo_dict, QPoint) 在右键时发出（C4）。
     """
-    clicked = Signal(dict)
-    double_clicked = Signal(dict)
-    context_menu_requested = Signal(dict, object)  # C4 右键菜单
+    # 一律用 Signal(object) 传 photo：Signal(dict) 会被 PySide6 做
+    # QVariantMap 往返转换，接收方拿到的是副本，对 photo 的任何写回
+    # (改鸟种后的新 current_path 等) 都到不了网格持有的原对象。
+    # Always pass photo via Signal(object); Signal(dict) round-trips through
+    # QVariantMap and hands the receiver a copy, so write-backs never land.
+    clicked = Signal(object)
+    double_clicked = Signal(object)
+    context_menu_requested = Signal(object, object)  # C4 右键菜单
 
     # V5: Add badge clicked signal
-    badge_clicked = Signal(dict)
+    badge_clicked = Signal(object)
 
     def __init__(self, photo: dict, thumb_size: int = _DEFAULT_THUMB_SIZE, parent=None):
         super().__init__(parent)
@@ -709,8 +714,11 @@ class ThumbnailGrid(QScrollArea):
     信号 multi_selection_changed(list) 多选状态变化时发出（C3）。
     信号 burst_badge_clicked(burst_id) 当连拍角标被点击时发出。
     """
-    photo_selected = Signal(dict)
-    photo_double_clicked = Signal(dict)
+    # 同 ResultCard：photo 必须按引用传递，否则详情面板持有的是副本，
+    # 改鸟种/改星级写回的新路径永远同步不回 _filtered_photos。
+    # photo must travel by reference, or the detail panel holds a copy.
+    photo_selected = Signal(object)
+    photo_double_clicked = Signal(object)
     multi_selection_changed = Signal(list)   # C3 多选信号
     burst_badge_clicked = Signal(int)        # V5: Burst badge click signal
 

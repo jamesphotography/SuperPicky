@@ -49,6 +49,61 @@ from constants import RATING_FOLDER_NAMES, RAW_EXTENSIONS, JPG_EXTENSIONS, HEIF_
 from tools.i18n import get_i18n
 
 
+def compute_organize_db_updates(files_to_move: List[Dict]) -> Dict[str, Dict[str, str]]:
+    """
+    整理阶段移动完文件后，算出每个 prefix 该写回 DB 的路径字段。
+
+    一个 prefix 可能对应三个文件：RAW、同名 JPEG、XMP 侧车。三者共用
+    ``filename`` 的前缀（也是 DB 主键），所以必须明确谁能决定 ``current_path``：
+
+    - ``current_path`` 只认原图本体，且 **RAW 优先于 JPEG**。原先对 RAW 和
+      JPEG 都写 current_path，后处理的 JPEG 会覆盖 RAW 的路径，导致 RAW 从库
+      里消失、后续所有移动都只搬那个 JPEG（2026-09-05 在现网数据中确认）。
+      XMP 早就有跳过保护，JPEG 一直没有。
+    - ``temp_jpeg_path`` 只认 JPEG。
+    - XMP 两个字段都不写。
+
+    Decide the DB path fields per prefix after the organize stage. RAW, its
+    companion JPEG and the XMP sidecar share one prefix (the DB key), so
+    ``current_path`` must come from the image body with RAW taking precedence —
+    otherwise a same-named JPEG overwrites the RAW's path and the RAW
+    disappears from the library.
+
+    参数 / Args:
+        files_to_move: [{'filename': 带扩展名的文件名, 'folder': 目标相对目录}, …]
+
+    返回 / Returns:
+        Dict[str, Dict[str, str]]: {prefix: {字段: 相对路径}}，可直接喂
+        report_db.update_photo。
+    """
+    updates: Dict[str, Dict[str, str]] = {}
+    for file_info in files_to_move:
+        filename = file_info.get('filename') or ''
+        if not filename:
+            continue
+        lower = filename.lower()
+        # XMP 侧车不参与任何路径字段 / sidecars own neither field
+        if lower.endswith('.xmp'):
+            continue
+
+        prefix = os.path.splitext(filename)[0]
+        rel_path = os.path.join(file_info.get('folder') or '', filename)
+        entry = updates.setdefault(prefix, {})
+        is_jpeg = lower.endswith(('.jpg', '.jpeg'))
+
+        if is_jpeg:
+            entry['temp_jpeg_path'] = rel_path
+            # 只有在还没有 RAW 认领 current_path 时，JPEG 才顶上（纯 JPEG 照片）
+            # A JPEG claims current_path only when no RAW did (JPEG-only shots).
+            entry.setdefault('current_path', rel_path)
+        else:
+            # RAW / 其它原图本体：无条件占据 current_path，覆盖 JPEG 的占位
+            # The image body always wins current_path.
+            entry['current_path'] = rel_path
+
+    return updates
+
+
 @dataclass
 class ProcessingSettings:
     """处理参数配置"""
@@ -3623,22 +3678,14 @@ class PhotoProcessor:
         # 这确保 current_path 指向最新的原始文件位置 (如 3star_excellent/Bird/DSC_1234.NEF)
         if hasattr(self, 'report_db') and self.report_db:
             try:
-                for file_info in files_to_move:
-                    # 原文件名（带后缀）
-                    orig_filename = file_info['filename']
-                    # XMP 侧车文件与 RAW 共用同一个 prefix，跳过 XMP 的 current_path 更新
-                    # 否则 XMP 会覆盖 RAW 已写入的正确路径，导致连拍合并时定位不到原图
-                    if orig_filename.lower().endswith('.xmp'):
-                        continue
-                    # 文件前缀（不带后缀，也是数据库的主键/索引）
-                    file_prefix = os.path.splitext(orig_filename)[0]
-                    # 新的相对路径
-                    new_rel_path = os.path.join(file_info['folder'], orig_filename)
-                    
-                    update_data = {'current_path': new_rel_path}
-                    # 若移动的是 JPG 文件，同步更新 temp_jpeg_path 使路径始终有效
-                    if orig_filename.lower().endswith(('.jpg', '.jpeg')):
-                        update_data['temp_jpeg_path'] = new_rel_path
+                # RAW / 同名 JPEG / XMP 共用一个 prefix（DB 主键），谁能决定
+                # current_path 由 compute_organize_db_updates 统一裁定：原图本体
+                # 优先于 JPEG，XMP 谁都不写。此前 JPEG 会覆盖 RAW 的路径，导致
+                # RAW 从库里消失（2026-09-05 现网确认）。
+                # A single helper decides which file owns which path field.
+                for file_prefix, update_data in compute_organize_db_updates(
+                    files_to_move
+                ).items():
                     self.report_db.update_photo(file_prefix, update_data)
             except Exception as e:
                 self._log(f"  ⚠️  Failed to update current_path in DB: {e}", "warning")

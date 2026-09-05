@@ -456,6 +456,78 @@ class MergedReportDB:
             cursor = self._conn.execute(sql)
             return [row[0] for row in cursor.fetchall()]
     
+    def insert_correction(self, data: dict) -> None:
+        """
+        写入一条纠错记录（改鸟种事件），落到该照片所属的那个子目录库。
+
+        与 ReportDB.insert_correction 同签名，供浏览器在合并模式下无差别调用。
+        此前本类缺这个方法，调用抛 AttributeError 被上层 except 吞掉——合并
+        模式下所有纠错样本静默丢失（2026-09-05 在现网数据中确认：多个批次的
+        corrections 表长期为 0 条）。
+
+        定位不到唯一子库时静默跳过（与 update_photo 的 _resolve_photo_targets
+        约定一致）：纠错样本是附加价值，绝不能反过来影响改鸟种主流程。
+
+        Insert one correction row into the sub-database that owns the photo.
+        Mirrors ReportDB.insert_correction so the browser can call either
+        implementation; previously missing, which silently lost every
+        correction sample in merged mode.
+
+        参数 / Args:
+            data: 键含 filename, wrong_cn, wrong_en, corrected_model_class_id,
+                  corrected_cn, corrected_en, birdid_confidence；
+                  也接受 (source_dir, filename) 形式的 photo_key 放在
+                  data['photo_key'] 中以精确定位子库。
+                  created_at 由本方法填充。
+        """
+        from .report_db import _now_iso
+
+        photo_key = data.get("photo_key") or data.get("filename")
+        targets = self._resolve_photo_targets(photo_key)
+        if not targets:
+            return
+
+        cols = ("filename", "wrong_cn", "wrong_en", "corrected_model_class_id",
+                "corrected_cn", "corrected_en", "birdid_confidence", "created_at")
+        row = {k: data.get(k) for k in cols}
+        row["created_at"] = _now_iso()
+        placeholders = ", ".join(["?"] * len(cols))
+        col_str = ", ".join(cols)
+        values = [row[c] for c in cols]
+
+        with self._lock:
+            for alias in targets:
+                self._conn.execute(
+                    f"INSERT INTO {alias}.corrections ({col_str}) "
+                    f"VALUES ({placeholders})",
+                    values,
+                )
+            self._safe_commit()
+
+    def get_corrections(self) -> List[dict]:
+        """
+        返回合并库内所有子目录的纠错记录，按时间升序。
+
+        供「提交本次纠错」在合并模式下打包样本；缺这个方法时该功能同样是坏的。
+
+        Return corrections from every attached sub-database, oldest first.
+        """
+        if not self._db_aliases:
+            return []
+        union = " UNION ALL ".join(
+            f"SELECT * FROM {alias}.corrections" for alias in self._db_aliases
+        )
+        with self._lock:
+            try:
+                cursor = self._conn.execute(
+                    f"SELECT * FROM ({union}) AS merged ORDER BY created_at, id"
+                )
+                return [dict(r) for r in cursor.fetchall()]
+            except Exception:
+                # 个别老子库可能还没有 corrections 表；读不到不该让整个功能崩
+                # A legacy sub-DB may lack the table; never crash the feature.
+                return []
+
     def get_statistics(self) -> dict:
         """汇总统计"""
         photos = self.get_all_photos()

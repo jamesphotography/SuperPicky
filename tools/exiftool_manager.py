@@ -47,6 +47,58 @@ def merge_keyword_lists(existing: List[str], additions: List[str]) -> Optional[L
     return merged if len(merged) != len(existing) else None
 
 
+def replace_keyword_in_list(
+    existing: List[str], old_kw: Optional[str], new_kw: str
+) -> Optional[List[str]]:
+    """
+    在关键字列表中把旧鸟名换成新鸟名(就地保序);无旧名则追加新名。
+
+    与 merge_keyword_lists 的 merge-add 语义不同:改鸟种是**纠正**,旧鸟名
+    必须消失,否则同一张照片会同时挂着「白喉抚蜜鸟」和「家燕」两个关键字,
+    按关键字检索时两边都能搜到,反而比不写更糟。
+
+    Swap the old species keyword for the new one (order preserved), or append
+    when the old one is absent. Unlike merge_keyword_lists' merge-add
+    semantics, a species correction must REMOVE the wrong name — otherwise the
+    photo ends up tagged with both the wrong and the right species.
+
+    参数 / Parameters:
+        existing (List[str]): 文件中已有关键字 / keywords already on file.
+        old_kw (Optional[str]): 要移除的旧鸟名;None/空表示没有旧名可删。
+                                The species name to drop; None when unknown.
+        new_kw (str): 要写入的新鸟名 / the corrected species name.
+
+    返回 / Returns:
+        Optional[List[str]]: 变更后的完整列表;与原列表一致时返回 None
+                             (调用方据此跳过写入)。
+                             None when nothing would change.
+    """
+    new_kw = (new_kw or "").strip()
+    old_kw = (old_kw or "").strip()
+    if not new_kw:
+        return None
+
+    result: List[str] = []
+    seen = set()
+    replaced = False
+    for kw in existing:
+        if old_kw and kw == old_kw:
+            # 旧鸟名的位置让给新鸟名，保持关键字原有顺序
+            # The new name takes the old one's slot, preserving order.
+            if new_kw not in seen:
+                result.append(new_kw)
+                seen.add(new_kw)
+            replaced = True
+            continue
+        if kw not in seen:
+            result.append(kw)
+            seen.add(kw)
+    if not replaced and new_kw not in seen:
+        result.append(new_kw)
+
+    return result if result != list(existing) else None
+
+
 class _ExifToolProcess:
     """
     单个 exiftool -stay_open 常驻进程的封装（进程句柄 + stdout 读取线程 + 锁）。
@@ -1025,6 +1077,96 @@ class ExifToolManager:
             print(f"❌ Error setting rating/pick: {e}")
             return False
 
+    def _read_title(self, file_path: str) -> str:
+        """
+        读取文件现有的 XMP:Title(经常驻读进程);读不到返回空串。
+
+        Read the current XMP:Title via the resident read process, "" if absent.
+        """
+        if not file_path or not os.path.exists(file_path):
+            return ""
+        try:
+            data = self.read_metadata(file_path, extra_args=['-XMP:Title']) or {}
+        except Exception:
+            return ""
+        return str(data.get('Title') or "").strip()
+
+    def _sidecar_read_target(self, file_path: str) -> str:
+        """
+        读关键字时该看哪个文件：走侧车的格式看 .xmp，否则看本体。
+
+        Pick the file to read existing keywords from: the sidecar when this
+        file is written via sidecar, otherwise the file itself.
+        """
+        use_sidecar = self._is_sidecar_raw(file_path) or \
+            self._get_metadata_write_mode() == "sidecar"
+        if not use_sidecar:
+            return file_path
+        sidecar = os.path.splitext(file_path)[0] + '.xmp'
+        return sidecar if os.path.exists(sidecar) else file_path
+
+    def update_species_metadata(
+        self,
+        file_path: str,
+        new_title: str,
+        old_title: Optional[str] = None,
+        write_keywords: bool = False,
+    ) -> bool:
+        """
+        因用户纠正鸟种而更新单个文件的鸟名元数据。
+
+        写入内容与主处理流程保持一致（见 photo_processor 的 title_targets 段）:
+        - ``XMP:Title`` 覆盖为新鸟名;
+        - ``write_keywords`` 为真时,把 ``XMP-dc:Subject`` 里的旧鸟名**替换**成
+          新鸟名(不是 merge-add——纠错必须让错误鸟名消失,否则一张照片同时挂着
+          两个鸟种关键字,检索时两边都能搜到,比不写还糟)。
+
+        写入策略沿用 set_metadata：遵守全局 metadata_write_mode(none 跳过、
+        sidecar/专有 RAW 走侧车),值一律经 UTF-8 临时文件重定向。
+
+        Update one file's species metadata after a user correction: overwrite
+        XMP:Title, and (optionally) REPLACE the stale species keyword in
+        XMP-dc:Subject rather than merge-adding it.
+
+        参数 / Parameters:
+            file_path (str): 目标文件(已移动到新目录后的路径)。
+            new_title (str): 新鸟名 / corrected species name.
+            old_title (Optional[str]): 原鸟名,用于从关键字里删除;None 表示不删。
+            write_keywords (bool): 是否同步 XMP-dc:Subject 关键字。
+
+        返回 / Returns:
+            bool: 全部写入成功(或按配置跳过)为 True。
+        """
+        if not file_path or not os.path.exists(file_path):
+            return False
+        new_title = (new_title or "").strip()
+        if not new_title:
+            return False
+
+        read_target = self._sidecar_read_target(file_path)
+        # 调用方给不出旧鸟名时(批量改鸟种里每张的旧名各不相同)，就用文件现有的
+        # Title —— 那正是主流程写进去的旧鸟名，比任何猜测都准。必须在覆盖
+        # Title **之前**读，否则读到的已经是新名，旧关键字就删不掉了。
+        # Fall back to the file's current Title as the old species name; read it
+        # BEFORE overwriting, or the stale keyword can no longer be identified.
+        if write_keywords and not (old_title or "").strip():
+            old_title = self._read_title(read_target)
+
+        ok = self.set_metadata(file_path, {'Title': new_title})
+
+        if write_keywords:
+            existing = self._read_subject_list(read_target)
+            updated = replace_keyword_in_list(existing, old_title, new_title)
+            if updated is not None:
+                # 整表回写：exiftool 不支持 '+=<file' 追加（2026-07-12 实验
+                # 验证），故读-替换-整表赋值；多值由 set_metadata 加 -sep 处理。
+                # Whole-list rewrite (exiftool has no '+=<file'); set_metadata
+                # adds -sep for the multi-value tag.
+                ok = self.set_metadata(
+                    file_path, {'XMP-dc:Subject': updated}
+                ) and ok
+        return ok
+
     def set_metadata(self, file_path: str, tags: Dict[str, str]) -> bool:
         """
         通用单文件元数据写入（V4.5，走 write 常驻进程）。
@@ -1088,6 +1230,7 @@ class ExifToolManager:
         args: List[str] = []
         temp_files: List[str] = []
         writes_iptc = False
+        writes_list = False
         try:
             for tag, value in tags.items():
                 if value is None:
@@ -1099,14 +1242,28 @@ class ExifToolManager:
                         tag_name = f'XMP:{tag_name}'
                 elif self._is_iptc_tag(tag_name):
                     writes_iptc = True
+                # 列表值 = 多值标签（XMP-dc:Subject 等）：用 ';;' 连接并声明
+                # -sep，否则 exiftool 会把整串当成**一个**关键字。
+                # A list means a multi-value tag: join with ';;' and declare
+                # -sep, or exiftool stores the whole string as ONE keyword.
+                if isinstance(value, (list, tuple)):
+                    if not value:
+                        continue
+                    writes_list = True
+                    text = ';;'.join(str(v) for v in value)
+                else:
+                    text = str(value)
                 fd, tmp_path = tempfile.mkstemp(suffix='.txt', prefix='sp_tag_')
                 with os.fdopen(fd, 'w', encoding='utf-8') as f:
-                    f.write(str(value))
+                    f.write(text)
                 temp_files.append(tmp_path)
                 args.append(f'-{tag_name}<={tmp_path}')
 
             if not args:
                 return False
+
+            if writes_list:
+                args = ['-sep', ';;'] + args
 
             # IPTC IIM 默认字符集是 Latin-1：写 IPTC 标签必须声明 UTF-8 并写入
             # CodedCharacterSet 标记，否则中文按 Latin-1 存储变 '?'，或存成
