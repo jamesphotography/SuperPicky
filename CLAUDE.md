@@ -25,8 +25,10 @@ All user settings are managed by the unified Settings Center. Read these convent
 
 - **单一事实源 / SSOT**：`advanced_config`（`advanced_config.json`）是所有设置的唯一存储。新增设置项 = 在 `DEFAULT_CONFIG` 加字段 + 加 `@property`/`set_*`；**setter 的 clamp 范围必须与 UI 控件范围一致**。**禁止**再引入独立 json 或控件本地状态。
   `advanced_config` is the only store. Add a setting via DEFAULT_CONFIG + property/setter; the setter's clamp range MUST match the UI widget range. Never add separate json files or widget-local state.
-- **设置中心 / Settings Center**：`ui/settings_center.py` 的 `SettingsCenter`（左侧分类导航 + 右侧 5 页：精选/识鸟/输出/外部应用/关于）。页面与导航项都由 `PAGE_ORDER` 这一个列表驱动，增删页面改它即可——4.5.0 的 ExtremeSimple 就是把 `"video"` 从中摘掉来下架视频功能的（`_build_video_page()` 与图标/标题映射都保留，加回 key 即恢复）。主窗口经 `_open_settings_center(start_page)` 打开；关闭后调用 `_refresh_skill_chip()` + `_refresh_param_panel()` 刷新首页。
-  Both the nav items and the stacked pages come from the single `PAGE_ORDER` list; 4.5.0 dropped video by removing that one key.
+- **设置中心 / Settings Center**：`ui/settings_center.py` 的 `SettingsCenter`（左侧分类导航 + 右侧 6 页：精选/识鸟/输出/视频/外部应用/关于）。页面与导航项都由 `PAGE_ORDER` 这一个列表驱动，增删页面改它即可。主窗口经 `_open_settings_center(start_page)` 打开；关闭后调用 `_refresh_skill_chip()` + `_refresh_param_panel()` 刷新首页。
+  Both the nav items and the stacked pages come from the single `PAGE_ORDER` list.
+- **下架 UI 入口时必须同时处理已有配置 / Removing a UI entry point must account for existing config**：4.5.0 的 ExtremeSimple 把 `"video"` 从 `PAGE_ORDER` 摘掉以下架视频功能，但主流程的 `video_auto_process_in_main` 守卫和全部视频代码都保留着，而该字段存在 `advanced_config.json` 里、升级不会重置——结果升级前开过的老用户照常在用，没开过的人却永远打不开，同一版本上行为不一致；「参数设置可开启」的日志还指向一个已不存在的入口。4.6 已把该页加回。**摘 UI 入口前先想清楚：残留的配置值会让功能对一部分用户继续生效。**
+  Stripping a UI entry point while leaving the feature's config guard intact splits users by their pre-upgrade config value; 4.6 restored the video page.
 - **首页快速面板 / Home quick panel**：`main_window._create_parameters_section`（2 滑块：锐度/美学 + 3 开关：飞行/连拍/识鸟）是 `advanced_config` 的快捷编辑器，与设置中心**双向同步**。两处编辑同一字段，**滑块范围必须一致且对齐 setter clamp**——否则会静默截断或默认值漂移（已踩坑：锐度 100-600、美学 0-70）。
 - **技能等级 / Skill level**：用 `core.skill_presets`（无 Qt 依赖）做 档↔阈值 换算。手动改阈值 → `skill_level="custom"` 并同步 `custom_sharpness`/`custom_aesthetics`（精选页与首页都遵循此协同，避免 GUI/CLI 路径发散）。
 - **开关样式 / Checkbox style**：统一用 `ui.icon_utils.checkbox_indicator_qss`（圆圈=未选 / 带勾圆圈=选中），勿用全局默认方块。

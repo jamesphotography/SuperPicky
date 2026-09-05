@@ -24,9 +24,13 @@ def test_nav_has_six_pages_and_switch():
     """
     from ui.settings_center import SettingsCenter, PAGE_ORDER
     w = SettingsCenter(get_i18n())
-    # ExtremeSimple: "video" 页已从设置中心剥离(见 ui/settings_center.py PAGE_ORDER 注释)
-    assert PAGE_ORDER == ["culling", "birdid", "output", "apps", "about"]
-    assert w._nav.count() == 5
+    # 4.6: "video" 页恢复——ExtremeSimple 当初摘掉了全部三个视频入口，导致
+    # 主流程视频处理只剩配置能开(老用户升级后仍在跑，新用户永远开不了)，
+    # 且「参数设置可开启」的日志指向一个不存在的入口。首页开关维持剥离状态。
+    # 4.6: the "video" page is back — stripping every entry point left the
+    # main-flow video processing reachable only by a pre-existing config value.
+    assert PAGE_ORDER == ["culling", "birdid", "output", "video", "apps", "about"]
+    assert w._nav.count() == 6
     w.show_page("about")
     assert w._stack.currentIndex() == PAGE_ORDER.index("about")
     w.close()
@@ -463,18 +467,21 @@ def test_scroll_areas_have_transparent_background():
 
 def test_output_video_apps_pages_build():
     """
-    验证输出、外部应用设置页能正确构建，且关键属性存在。
-    "video" 页已从 PAGE_ORDER 剥离(ExtremeSimple)，不再纳入本测试。
+    验证输出、视频、外部应用设置页能正确构建，且关键属性存在。
 
-    Verify that the output and apps settings pages build correctly and that
-    the key widget attributes are present. The "video" page is stripped from
-    PAGE_ORDER (ExtremeSimple), so it's no longer covered here.
+    视频页在 4.5.0-4.6 之间一直没有入口，其构建代码因此长期未被执行；恢复
+    入口的同时把它纳回本测试，确保页面真能建起来、总开关控件存在，而不是
+    加回 PAGE_ORDER 后一点开就崩。
+
+    The video page had no entry point for several releases, so its build code
+    went unexercised; cover it here now that the page is reachable again.
     """
     from ui.settings_center import SettingsCenter
     w = SettingsCenter(get_i18n())
-    for key in ("output", "apps"):
+    for key in ("output", "video", "apps"):
         w.show_page(key)
     assert hasattr(w, "_apps_list")   # 外部应用列表存在 / External apps list exists
+    assert hasattr(w, "_video_auto_check"), "视频页的主流程总开关控件缺失"
     w.close()
 
 
@@ -807,3 +814,54 @@ def test_clear_cache_removes_cache_keeps_originals_and_clears_db(monkeypatch, tm
     assert _read_temp_jpeg_path() is None
 
     w.close()
+
+
+def test_video_toggle_reachable_and_persists(monkeypatch):
+    """
+    视频页的主流程总开关必须可达且能存下去。
+
+    4.5.0 的 ExtremeSimple 一次摘掉了三个视频入口，但主流程代码与
+    video_auto_process_in_main 守卫都留着：升级前开过的老用户照常在用，
+    没开过的人却再也打不开——功能活着，却没有任何开关碰得到它。
+    本测试锁定入口恢复后这条链路真的通：打开视频页 → 勾选 → 保存 →
+    配置写入 True，而不是给了个点了没反应的假开关。
+
+    The main-flow video toggle must be reachable and actually persist.
+    Stripping every entry point left the feature alive but unreachable;
+    this pins that enabling it from the settings page really writes through.
+    """
+    import tempfile
+    from advanced_config import AdvancedConfig
+    from ui.settings_center import SettingsCenter
+    from tools.i18n import get_i18n
+
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+        tmp_path = f.name
+    try:
+        cfg = AdvancedConfig(config_file=tmp_path)
+        # 默认必须是关的——恢复入口不等于默认开启，不拍视频的用户不受影响
+        # Restoring the entry point must not turn the feature on by default.
+        assert cfg.config.get("video_auto_process_in_main") is False
+
+        import advanced_config as _ac_mod
+        monkeypatch.setattr(_ac_mod, "get_advanced_config", lambda: cfg)
+
+        w = SettingsCenter(get_i18n())
+        w.show_page("video")
+        assert w._stack.currentIndex() == PAGE_ORDER_FOR_TEST().index("video")
+
+        w._video_auto_check.setChecked(True)
+        w._save_video()
+
+        assert cfg.config["video_auto_process_in_main"] is True, (
+            "视频页勾选后未写回配置——开关点了没反应"
+        )
+        w.close()
+    finally:
+        os.path.exists(tmp_path) and os.unlink(tmp_path)
+
+
+def PAGE_ORDER_FOR_TEST():
+    """取当前 PAGE_ORDER（局部导入，避免与文件顶部的导入风格冲突）。"""
+    from ui.settings_center import PAGE_ORDER
+    return PAGE_ORDER

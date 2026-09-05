@@ -111,15 +111,19 @@ def _radio_style() -> str:
 
 # ── 常量 / Constants ──────────────────────────────────────────────────────────
 
-# ExtremeSimple: "video" 已从 PAGE_ORDER 剥离（导航项+页面均由这一个列表驱动，
-# 摘掉这一个 key 就同时去掉了导航条目和 stack 页；_PAGE_ICON/_PAGE_TITLE_KEY 的
-# "video" 项与 _build_video_page() 方法本身都保留不动，未来要恢复只需把
-# "video" 加回列表）。
-# ExtremeSimple: "video" is stripped from PAGE_ORDER (both the nav item and the
-# stacked page are driven by this single list, so removing this one key cuts
-# both). The "video" entries in _PAGE_ICON/_PAGE_TITLE_KEY and the
-# _build_video_page() method itself are untouched; re-add "video" to bring it back.
-PAGE_ORDER: list[str] = ["culling", "birdid", "output", "apps", "about"]
+# 导航项与 stack 页都由这一个列表驱动，增删页面改它即可。
+#
+# 4.6: "video" 页恢复。ExtremeSimple 当初一次摘掉了三个视频入口（首页开关、
+# 菜单栏「视频分析」、本页），但主流程的处理代码与 video_auto_process_in_main
+# 守卫都留着——结果是升级前开过的老用户照常在用，没开过的人却永远打不开，
+# 而「参数设置可开启」的日志指向一个已不存在的入口。这里把设置入口还回去，
+# 让开关重新可达；首页快速面板的「视频」开关维持剥离，保持首页极简。
+#
+# Both the nav items and the stacked pages come from this single list.
+# 4.6 restores "video": stripping every entry point left the main-flow video
+# processing reachable only through a pre-existing config value, so upgraders
+# who had it on kept using it while everyone else had no way to enable it.
+PAGE_ORDER: list[str] = ["culling", "birdid", "output", "video", "apps", "about"]
 
 _PAGE_ICON: dict[str, str] = {
     "culling": "gem.svg",
