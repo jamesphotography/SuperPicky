@@ -18,6 +18,7 @@ from PySide6.QtGui import QIcon
 from ui.styles import COLORS, FONTS
 from ui.icon_utils import load_tinted_icon, stars_pixmap, checkbox_indicator_qss
 from ui.combo_popup import style_combo_popup
+from tools.report_db import SPECIES_FILTER_OTHER
 
 # 排序项图标:降序项(rarity/sharpness/aesthetic)用向下箭头,当前选中项用对勾
 _SORT_DESC_ICON = "arrow-down.svg"
@@ -542,8 +543,24 @@ class FilterPanel(QWidget):
             )
             self._count_label.setText(self.i18n.t("browser.matched_count", count=count))
 
-    def update_species_list(self, species: list):
-        """更新鸟种下拉列表。"""
+    def update_species_list(self, species: list, has_other: bool = False):
+        """
+        更新鸟种下拉列表。
+
+        列表只列「磁盘上有自己目录」的鸟种（有 2★以上照片的），末尾按需追加
+        一个「其他鸟类」兜底项——低星照片即使识别出鸟种也统一归「其他鸟类」
+        （见 core/folder_layout.py），所以只有低星照片的鸟种在磁盘上没有目录，
+        列在下拉里纯属干扰；但它们的照片必须仍能从鸟种维度找到，故用兜底项
+        接住，两者构成不重不漏的划分。
+
+        参数 / Args:
+            species:   有目录的鸟种名列表
+            has_other: 当前筛选下是否存在「无自己目录」的照片；False 时不显示
+                       兜底项，避免用户点进去是空的
+
+        List only foldered species, appending an "other birds" catch-all when
+        the current filter still leaves unfoldered photos to reach.
+        """
         self._species_list = species
         self.species_combo.blockSignals(True)
         current = self.species_combo.currentData()
@@ -551,6 +568,12 @@ class FilterPanel(QWidget):
         self.species_combo.addItem(self.i18n.t("browser.species_all"), "")
         for sp in species:
             self.species_combo.addItem(sp, sp)
+        if has_other:
+            # 与磁盘上的「其他鸟类」目录同名，让下拉和目录结构对得上
+            # Same label as the on-disk folder so the two line up.
+            self.species_combo.addItem(
+                self.i18n.t("logs.folder_other_birds"), SPECIES_FILTER_OTHER
+            )
         idx = self.species_combo.findData(current)
         if idx >= 0:
             self.species_combo.setCurrentIndex(idx)

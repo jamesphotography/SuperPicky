@@ -682,13 +682,18 @@ class ReportDB:
             )
             return [dict(row) for row in cursor.fetchall()]
 
-    def get_distinct_species(self, use_en: bool = False, ratings: list = None) -> List[str]:
+    def get_distinct_species(self, use_en: bool = False, ratings: list = None,
+                             foldered_only: bool = False) -> List[str]:
         """
         获取数据库中去重后的鸟种名称列表（用于结果浏览器筛选下拉框）。
 
         Args:
             use_en: True 使用英文鸟种列，False 使用中文鸟种列
             ratings: 若提供，只返回在这些星级下有照片的鸟种
+            foldered_only: 只返回「磁盘上有自己目录」的鸟种（即有 2★以上照片的），
+                与 ratings 叠加。用于结果浏览器下拉，剔除只有低星照片、
+                因而从未建目录的鸟种。
+                Only species that own a folder on disk (i.e. have a 2★+ photo).
 
         Returns:
             鸟种名称列表（已去重、去空值）
@@ -710,6 +715,13 @@ class ReportDB:
                 placeholders = ", ".join(["?"] * len(valid))
                 where_clauses.append(f"rating IN ({placeholders})")
                 params.extend(valid)
+
+        if foldered_only:
+            where_clauses.append(
+                f"{column} IN (SELECT {column} FROM photos "
+                f"WHERE {column} IS NOT NULL AND TRIM({column}) != '' AND rating >= ?)"
+            )
+            params.append(_FOLDERED_MIN_RATING)
 
         where_sql = " AND ".join(where_clauses)
         with self._lock:
@@ -781,8 +793,23 @@ class ReportDB:
 
         if isinstance(species_val, str) and species_val.strip():
             assert species_col in {"bird_species_en", "bird_species_cn"}, f"Invalid column: {species_col}"
-            where_clauses.append(f"{species_col} = ?")
-            params.append(species_val.strip())
+            if species_val.strip() == SPECIES_FILTER_OTHER:
+                # 「其他鸟类」：没有自己鸟种目录的照片——未识别的，加上只有低星
+                # 照片、因而从未建目录的鸟种（如仅有一张 0★ 的塞舌尔花蜜鸟）。
+                # 与各鸟种条目构成不重不漏的划分，保证没有照片从鸟种维度消失。
+                # "Other birds": photos with no species folder of their own —
+                # unidentified ones plus species whose photos are all below 2★.
+                # Together with the per-species entries this partitions the library.
+                where_clauses.append(
+                    f"({species_col} IS NULL OR TRIM({species_col}) = '' "
+                    f"OR {species_col} NOT IN (SELECT {species_col} FROM photos "
+                    f"WHERE {species_col} IS NOT NULL AND TRIM({species_col}) != '' "
+                    f"AND rating >= ?))"
+                )
+                params.append(_FOLDERED_MIN_RATING)
+            else:
+                where_clauses.append(f"{species_col} = ?")
+                params.append(species_val.strip())
 
         # 精选(picked):直接用选鸟时写入的持久旗标列(3★ 中美学∩锐度 top% 的交集)。
         # 旧目录(未重跑选鸟)该列全为 0,需重跑后才有结果。
@@ -1188,6 +1215,20 @@ class ReportDB:
 
         return cleaned
 
+
+# 鸟种筛选哨兵值：代表「其他鸟类」——没有自己鸟种目录的照片（未识别的，
+# 以及只有低星照片、因而从未建目录的鸟种）。用不可能是鸟名的字符串，避免
+# 与真实鸟种冲突；中英文界面共用同一个值。
+# Sentinel for the "other birds" species filter: photos without a species
+# folder of their own (unidentified ones, plus species whose photos are all
+# below 2★ and therefore never foldered). Shared by both UI languages.
+SPECIES_FILTER_OTHER = "__superpicky_other_birds__"
+
+# 「有目录的鸟种」判据：存在 2★以上照片。与 core/folder_layout.py 的规则
+# （低星一律归「其他鸟类」，即使已识别出鸟种）严格对应。
+# A species is "foldered" iff it has at least one 2★+ photo, mirroring the
+# rule in core/folder_layout.py.
+_FOLDERED_MIN_RATING = 2
 
 def _now_iso() -> str:
     """返回当前 UTC 时间的 ISO 8601 字符串。"""

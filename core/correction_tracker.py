@@ -33,10 +33,19 @@ class CorrectionTracker:
         corrected_en: Optional[str],
         corrected_latin: Optional[str],
         birdid_confidence: Optional[float] = None,
+        photo_key: Any = None,
     ) -> Optional[int]:
         """
         反查 model_class_id 并写库。返回反查到的 class_id（未命中返回 None，
         仍写库但该列 None，供开发者事后人工归类）。
+
+        photo_key 用于合并报告模式：库里跨子目录可能存在同名照片（相机计数器
+        循环很常见），只给 filename 定位不到唯一子库，纠错记录会被丢掉。
+        调用方把 (source_dir, filename) 传进来即可精确落库；单目录模式下
+        ReportDB 忽略该字段。
+
+        photo_key disambiguates same-named photos across sub-directories in
+        merged mode; ignored by the single-directory ReportDB.
         """
         model_class_id: Optional[int] = None
         if corrected_latin or corrected_en:
@@ -44,6 +53,7 @@ class CorrectionTracker:
                 corrected_latin or "", english_name=corrected_en
             )
         self._db.insert_correction({
+            "photo_key": photo_key,
             "filename": filename,
             "wrong_cn": wrong_cn,
             "wrong_en": wrong_en,
