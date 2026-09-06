@@ -1469,3 +1469,113 @@ def test_rating_move_does_not_update_db_when_raw_stays_behind(tmp_path):
     row = db.get_photo("DSC_1234")
     assert row["current_path"] == os.path.join("白喉抚蜜鸟", "1星_普通", "DSC_1234.NEF"), \
         "DB 不得指向一个 RAW 并不在的位置"
+
+
+# ── H. 脏数据修复脚本 / The library repair script ───────────────────────────
+
+def _write_jpeg(path: str, dcraw: bool) -> str:
+    """
+    造一张 jpg：dcraw=True 时打上 SuperPicky 生成物的 Software 标记。
+    dcraw=True marks it as a SuperPicky-generated preview.
+    """
+    _make_jpeg(path)
+    if dcraw:
+        from tools.exiftool_manager import get_exiftool_manager
+        get_exiftool_manager().set_metadata(path, {"Software": "dcraw v9.26"})
+    return path
+
+
+def _repair_db(root: str, filename: str, current: str, original: str,
+               temp_jpeg=None):
+    from tools.report_db import ReportDB
+    db = ReportDB(root)
+    db.insert_photo({
+        "filename": filename, "current_path": current,
+        "original_path": original, "temp_jpeg_path": temp_jpeg,
+        "bird_species_cn": "家燕", "rating": 3,
+    })
+    db.close()
+
+
+def test_repair_deletes_stray_preview_beside_its_raw(tmp_path, _embedded_write_mode):
+    """误搬到照片目录、且同名 RAW 就在旁边的生成预览图 —— 删。"""
+    from scripts_dev.repair_stray_previews import plan
+
+    root = str(tmp_path)
+    _touch(os.path.join(root, "家燕", "3星_优选", "DSC_1.NEF"))
+    _write_jpeg(os.path.join(root, "家燕", "3星_优选", "DSC_1.jpg"), dcraw=True)
+    _repair_db(root, "DSC_1", "家燕/3星_优选/DSC_1.NEF", "DSC_1.NEF")
+
+    to_delete, _, _, _ = plan(root)
+
+    assert to_delete == [os.path.join("家燕", "3星_优选", "DSC_1.jpg")]
+
+
+def test_repair_never_deletes_camera_jpeg(tmp_path, _embedded_write_mode):
+    """
+    相机直出的 JPEG（没有 dcraw 标记）绝不能删——那是用户 RAW+JPEG
+    双格式拍摄的真照片。
+    """
+    from scripts_dev.repair_stray_previews import plan
+
+    root = str(tmp_path)
+    _touch(os.path.join(root, "家燕", "3星_优选", "DSC_1.NEF"))
+    _write_jpeg(os.path.join(root, "家燕", "3星_优选", "DSC_1.jpg"), dcraw=False)
+    _repair_db(root, "DSC_1", "家燕/3星_优选/DSC_1.NEF", "DSC_1.NEF")
+
+    to_delete, _, _, _ = plan(root)
+
+    assert to_delete == []
+
+
+def test_repair_never_deletes_a_lone_jpeg_without_its_raw(tmp_path, _embedded_write_mode):
+    """
+    身边没有同名 RAW 的 jpg 一律不删——它可能是这张照片仅存的图像文件
+    （例如用户在外部工具里改过名）。
+    """
+    from scripts_dev.repair_stray_previews import plan
+
+    root = str(tmp_path)
+    _write_jpeg(os.path.join(root, "家燕", "3星_优选", "DSC_9-2.jpg"), dcraw=True)
+    _repair_db(root, "DSC_9", "家燕/3星_优选/DSC_9.NEF", "DSC_9.NEF")
+
+    to_delete, _, _, _ = plan(root)
+
+    assert to_delete == []
+
+
+def test_repair_moves_stranded_raw_to_where_the_edit_intended(tmp_path, _embedded_write_mode):
+    """
+    RAW 被落在旧鸟种目录、DB 却指向新目录里的预览图 —— 把 RAW 搬过去，
+    并让 current_path 指向它（现网 _Z9W2571 就是这个形态）。
+    """
+    from scripts_dev.repair_stray_previews import plan, apply_plan
+    from tools.report_db import ReportDB
+
+    root = str(tmp_path)
+    _touch(os.path.join(root, "其他鸟类", "2星_良好", "DSC_1.NEF"))
+    _write_jpeg(os.path.join(root, "红头摄蜜鸟", "2星_良好", "DSC_1.jpg"), dcraw=True)
+    _repair_db(root, "DSC_1", "红头摄蜜鸟/2星_良好/DSC_1.jpg", "DSC_1.NEF")
+
+    stats = apply_plan(root)
+
+    assert stats["current_path_fixed"] == 1
+    assert os.path.exists(os.path.join(root, "红头摄蜜鸟/2星_良好/DSC_1.NEF"))
+    assert not os.path.exists(os.path.join(root, "其他鸟类/2星_良好/DSC_1.NEF"))
+    assert not os.path.exists(os.path.join(root, "红头摄蜜鸟/2星_良好/DSC_1.jpg"))
+    db = ReportDB(root)
+    try:
+        assert db.get_photo("DSC_1")["current_path"] == os.path.join(
+            "红头摄蜜鸟", "2星_良好", "DSC_1.NEF")
+    finally:
+        db.close()
+    # 幂等：再跑一次什么都不做
+    assert apply_plan(root) == {"deleted": 0, "current_path_fixed": 0,
+                                "temp_jpeg_cleared": 0, "relinked": 0}
+
+
+def test_repair_is_a_noop_without_a_report_db(tmp_path):
+    """目录里没有 report.db 时安全返回四个空列表（不能解包崩溃）。"""
+    from scripts_dev.repair_stray_previews import plan
+
+    assert plan(str(tmp_path)) == ([], [], [], [])
