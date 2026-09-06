@@ -39,8 +39,15 @@ from ui.comparison_viewer import ComparisonViewer
 from typing import Optional
 
 from tools.i18n import get_i18n
-from tools.report_db import ReportDB
+from tools.report_db import ReportDB, SPECIES_FILTER_OTHER
 from constants import APP_VERSION
+
+
+# _stack 的页面索引：0=网格 1=全屏 2=双图对比
+# Page indices of the main QStackedWidget.
+_PAGE_GRID = 0
+_PAGE_FULLSCREEN = 1
+_PAGE_COMPARISON = 2
 
 
 def _photo_identity(photo: dict) -> tuple:
@@ -257,6 +264,35 @@ def _trigger_rating_move(
     threading.Thread(target=_do, daemon=True).start()
 
 
+def compute_dropdown_species(db, use_en: bool, ratings=None):
+    """
+    算出鸟种下拉该显示什么：有目录的鸟种 + 是否需要「其他鸟类」兜底项。
+
+    磁盘上只有 2★以上的照片才会建鸟种目录（低星一律归「其他鸟类」，见
+    core/folder_layout.py）。所以只有低星照片的鸟种在磁盘上没有目录，列进
+    下拉纯属干扰；但它们的照片必须仍能从鸟种维度找到，故用兜底项接住。
+    兜底项跟随当前星级筛选：这一档下没有无目录照片就不显示，免得点进去是空的。
+
+    参数 / Args:
+        db:      ReportDB 或 MergedReportDB
+        use_en:  界面是否英文（决定用哪个鸟种列）
+        ratings: 当前星级筛选；None 表示不限
+
+    返回 / Returns:
+        (有目录的鸟种列表, 是否需要兜底项)
+
+    Decide dropdown contents: foldered species plus whether the "other birds"
+    catch-all is needed under the active rating filter.
+    """
+    species = db.get_distinct_species(use_en=use_en, ratings=ratings, foldered_only=True)
+    key = "bird_species_en" if use_en else "bird_species_cn"
+    probe = {key: SPECIES_FILTER_OTHER}
+    if ratings is not None:
+        probe["ratings"] = ratings
+    has_other = bool(db.get_photos_by_filters(probe))
+    return species, has_other
+
+
 def _photos_of_same_species(photos: list, target: dict) -> list:
     """
     从照片池里挑出与 target 同一鸟种的全部照片（用于整种合并）。
@@ -310,6 +346,8 @@ def _merge_reason_text(reason: str) -> str:
         )
     if reason == "target_exists":
         return i18n.t('browser.merge_reason_target_exists')
+    if reason == "source_missing":
+        return i18n.t('browser.merge_reason_source_missing')
     return reason
 
 
@@ -356,6 +394,190 @@ def _merge_target_folders(photos: list, new_bird_name: str, layout: str) -> list
     return sorted(folders)
 
 
+def _species_edit_targets(window, photo: dict) -> list:
+    """
+    决定「修改鸟种」这一次作用于哪些照片。
+
+    规则与 Finder / Lightroom 一致：右键点中的照片**在勾选集里**时作用于整个
+    勾选集，否则只作用于点中的那一张——用户明确指向了它，不该顺手改掉别的。
+    一张都没勾选时同样只改点中的那张（单张编辑的老行为）。
+
+    用 get_explicitly_selected_photos（严格勾选集）而非
+    get_multi_selected_photos：后者会为双图对比自动补入未勾选的锚点，拿它当
+    批量改鸟种的范围会改到用户没勾的照片。
+
+    Decide the scope of one species edit: the whole checked selection when the
+    right-clicked photo belongs to it, otherwise just that photo. Uses the
+    strict checked set, never the comparison-anchor-augmented one.
+
+    参数 / Args:
+        window: 持有 _thumb_grid 的浏览器窗口
+        photo:  右键点中（或铅笔所在）的照片
+
+    返回 / Returns:
+        list: 本次要改的照片列表，至少包含 photo 自身
+    """
+    # 全屏是单张浏览：画面上就只有这一张，勾选集与它无关，绝不能批量。
+    # Fullscreen shows exactly one photo; never batch from there.
+    stack = getattr(window, "_stack", None)
+    if stack is not None:
+        try:
+            if stack.currentIndex() == _PAGE_FULLSCREEN:
+                return [photo]
+        except Exception:
+            pass
+
+    grid = getattr(window, "_thumb_grid", None)
+    getter = getattr(grid, "get_explicitly_selected_photos", None)
+    if not callable(getter):
+        return [photo]
+    try:
+        selected = list(getter() or [])
+    except Exception:
+        return [photo]
+    if len(selected) <= 1:
+        return [photo]
+    identity = _photo_identity(photo)
+    if any(_photo_identity(p) == identity for p in selected):
+        return selected
+    return [photo]
+
+
+def _run_species_change(
+    dir_path: str,
+    photo: dict,
+    new_bird_cn: str,
+    new_bird_en: str,
+    report_db,
+    db_key,
+    on_failures=None,
+    old_bird_cn: str = "",
+    old_bird_en: str = "",
+    metadata_writer=None,
+) -> bool:
+    """
+    同步执行因改鸟种引发的 DB 更新与文件移动，并把失败原因回报给调用方。
+
+    与 _trigger_species_change 分开是为了可测试：后台线程版只负责调度，真正
+    的业务在这里，测试可以直接同步调用并断言结果。
+
+    失败必须回报——2026-09-05 之前这里连 failures 参数都没传给 core，移动
+    失败的原因在后台线程里被完全丢弃，用户只看到「改了没反应」。
+
+    Synchronous body of the species change so it can be unit-tested; also
+    collects and surfaces failures instead of discarding them.
+
+    参数 / Args:
+        dir_path:    批处理根目录（绝对路径）
+        photo:       照片字典（会被就地更新 current_path / 鸟名）
+        new_bird_cn: 新中文鸟名
+        new_bird_en: 新英文鸟名
+        report_db:   ReportDB / MergedReportDB 实例，或 None
+        db_key:      透传给 DB 的稳定键
+        on_failures: 可选回调；仅在存在失败时以 [(文件名, 原因码)] 调用一次
+        old_bird_cn / old_bird_en: 改之前的鸟名，用于把关键字里的旧鸟名删掉
+                     （调用方必须在覆盖 photo 鸟名之前取好）。
+                     The pre-edit names, used to drop the stale keyword.
+        metadata_writer: 元数据写入器，默认取常驻 ExifToolManager；测试可注入。
+                     Metadata writer; defaults to the resident ExifToolManager.
+
+    返回 / Returns:
+        bool: core 的返回值，True 表示执行了更新
+    """
+    from advanced_config import get_advanced_config
+    from core.rating_mover import change_bird_species
+
+    cfg = get_advanced_config()
+    layout = cfg.folder_layout
+    failures: list = []
+    changed_files: list = []
+    try:
+        result = change_bird_species(
+            dir_path, photo, new_bird_cn, new_bird_en, layout,
+            report_db, db_key, failures, changed_files,
+        )
+    except Exception as e:
+        from tools.utils import log_message
+        log_message(f"[rating_mover] species change failed: {e}")
+        failures.append((os.path.basename(photo.get("current_path") or ""),
+                         f"move_error:{e.__class__.__name__}"))
+        result = False
+
+    # 同步照片自身的鸟名元数据。主流程把鸟名写进 XMP:Title(+可选关键字)，
+    # 纠正鸟种若不跟着写，磁盘上与 Lightroom 里看到的一直是识别错的旧名。
+    # Propagate the correction into the files themselves; the main pipeline
+    # writes the species into XMP:Title, so a correction must update it too.
+    if changed_files:
+        _write_species_metadata(
+            changed_files, new_bird_cn, new_bird_en,
+            old_bird_cn, old_bird_en, cfg, metadata_writer,
+        )
+
+    if failures and callable(on_failures):
+        on_failures(failures)
+    return result
+
+
+def _species_metadata_title(bird_cn: str, bird_en: str) -> str:
+    """
+    按当前界面语言选写进元数据的鸟名，与主流程 bird_title 的取法一致。
+
+    Pick the species name written to metadata, matching the main pipeline.
+    """
+    if get_i18n().current_lang.startswith('en'):
+        return (bird_en or bird_cn or "").strip()
+    return (bird_cn or bird_en or "").strip()
+
+
+def _write_species_metadata(
+    files: list,
+    new_bird_cn: str,
+    new_bird_en: str,
+    old_bird_cn: str,
+    old_bird_en: str,
+    cfg,
+    metadata_writer=None,
+) -> None:
+    """
+    把新鸟名写进这些文件的 XMP 元数据（Title，按开关同步关键字）。
+
+    单个文件写失败不影响其余文件——元数据是附加价值，不能因为一张写不进去
+    就让整批纠错半途而废；失败只记日志。
+
+    Write the corrected species into each file's XMP metadata. A per-file
+    failure never aborts the rest; metadata is best-effort and only logged.
+
+    参数 / Args:
+        files: 需要写入的文件绝对路径列表
+        new_bird_cn / new_bird_en: 新鸟名（中/英）
+        old_bird_cn / old_bird_en: 旧鸟名（中/英），用于删除旧关键字
+        cfg: AdvancedConfig 实例（读 birdid_write_keywords 开关）
+        metadata_writer: 写入器，None 时取常驻 ExifToolManager
+    """
+    new_title = _species_metadata_title(new_bird_cn, new_bird_en)
+    if not new_title:
+        return
+    old_title = _species_metadata_title(old_bird_cn, old_bird_en)
+
+    writer = metadata_writer
+    if writer is None:
+        from tools.exiftool_manager import get_exiftool_manager
+        writer = get_exiftool_manager()
+
+    write_keywords = bool(getattr(cfg, "birdid_write_keywords", False))
+    for path in files:
+        try:
+            writer.update_species_metadata(
+                path, new_title, old_title=old_title or None,
+                write_keywords=write_keywords,
+            )
+        except Exception as e:
+            from tools.utils import log_message
+            log_message(
+                f"[species] metadata write failed [{os.path.basename(path)}]: {e}"
+            )
+
+
 def _trigger_species_change(
     dir_path: str,
     photo: dict,
@@ -363,6 +585,9 @@ def _trigger_species_change(
     new_bird_en: str,
     report_db,
     db_key,
+    on_failures=None,
+    old_bird_cn: str = "",
+    old_bird_en: str = "",
 ) -> None:
     """
     在后台线程中执行因改鸟种引发的 DB 更新与文件移动。
@@ -370,23 +595,19 @@ def _trigger_species_change(
 
     Spawn a daemon thread to update species in DB and move files after a species change.
     Burst groups are handled as a whole; single photos move individually.
+
+    参数 / Args:
+        on_failures: 可选回调，在**后台线程**中被调用；若要碰 UI，调用方需自行
+                     切回主线程（本文件用 QTimer.singleShot(0, ...) 转发）。
+                     Called on the worker thread; marshal to the GUI thread yourself.
     """
-    from advanced_config import get_advanced_config
-    from core.rating_mover import change_bird_species
-
-    layout = get_advanced_config().folder_layout
-
-    def _do() -> None:
-        try:
-            change_bird_species(
-                dir_path, photo, new_bird_cn, new_bird_en, layout, report_db, db_key
-            )
-        except Exception as e:
-            from tools.utils import log_message
-            log_message(f"[rating_mover] species change failed: {e}")
-
     import threading
-    threading.Thread(target=_do, daemon=True).start()
+    threading.Thread(
+        target=_run_species_change,
+        args=(dir_path, photo, new_bird_cn, new_bird_en, report_db, db_key,
+              on_failures, old_bird_cn, old_bird_en),
+        daemon=True,
+    ).start()
 
 
 # ============================================================
@@ -476,9 +697,17 @@ def _record_species_correction(window, photo: dict, new_cn: str, new_en: str,
             corrected_en=payload["corrected_en"],
             corrected_latin=payload["corrected_latin"],
             birdid_confidence=payload["birdid_confidence"],
+            # 合并模式下跨子目录可能重名，带上 (source_dir, filename) 精确落库
+            # Disambiguate same-named photos across sub-directories.
+            photo_key=_photo_db_key(photo),
         )
     except Exception as e:
-        print(f"⚠️ [Correction] 记录纠错失败(不阻断改鸟种): {e}")
+        # 走日志而非 print：打包版看不到 stdout，这里失败过整整一批也没人察觉
+        # （MergedReportDB 缺 insert_correction 时纠错样本静默丢了数月）。
+        # Log instead of print; a packaged build shows no stdout, which is how
+        # months of correction samples were lost unnoticed.
+        from tools.utils import log_message
+        log_message(f"[Correction] 记录纠错失败(不阻断改鸟种): {e}")
 
 
 def _open_submission_review(window) -> None:
@@ -688,7 +917,14 @@ def _build_context_menu(parent_widget, photo: dict, directory: str):
     # 有鸟名=纠错,无鸟名=人工补录,复用浏览器既有编辑弹窗与目录移动逻辑。
     # Edit/assign species (replaces the tile's always-on pencil; available
     # for every photo). Reuses the browser's existing edit dialog.
-    species_action = QAction(_i18n.t('browser.ctx_edit_species'), parent_widget)
+    # 多选时把张数写进菜单文案——不然用户不知道这一下会改 N 张
+    # Spell out the count so a batch edit is never a surprise.
+    _targets = _species_edit_targets(parent_widget, photo)
+    _species_label = (
+        _i18n.t('browser.ctx_edit_species_batch').format(count=len(_targets))
+        if len(_targets) > 1 else _i18n.t('browser.ctx_edit_species')
+    )
+    species_action = QAction(_species_label, parent_widget)
 
     def _edit_species(_checked=False, _p=photo):
         handler = getattr(parent_widget, "_on_species_edit_requested", None)
@@ -1223,8 +1459,10 @@ class ResultsBrowserWindow(QMainWindow):
         self._all_photos = self._db.get_all_photos()
         self._compute_burst_ids()
         self._filter_panel.reset_all()
-        species = self._db.get_distinct_species(use_en=self.i18n.current_lang.startswith('en'))
-        self._filter_panel.update_species_list(species)
+        species, has_other = compute_dropdown_species(
+            self._db, use_en=self.i18n.current_lang.startswith('en')
+        )
+        self._filter_panel.update_species_list(species, has_other)
         if len(self._all_photos) > 0 and len(self._filtered_photos) == 0:
             self._filter_panel.select_all_ratings()
         self.setWindowTitle(f"{self.i18n.t('browser.title')} \u2014 {short_name}")
@@ -1241,8 +1479,10 @@ class ResultsBrowserWindow(QMainWindow):
         self._all_photos = self._db.get_all_photos()
         self._compute_burst_ids()
         self._filter_panel.reset_all()
-        species = self._db.get_distinct_species(use_en=self.i18n.current_lang.startswith('en'))
-        self._filter_panel.update_species_list(species)
+        species, has_other = compute_dropdown_species(
+            self._db, use_en=self.i18n.current_lang.startswith('en')
+        )
+        self._filter_panel.update_species_list(species, has_other)
         if len(self._all_photos) > 0 and len(self._filtered_photos) == 0:
             self._filter_panel.select_all_ratings()
         short = os.path.basename(root_dir) or root_dir
@@ -1405,8 +1645,10 @@ class ResultsBrowserWindow(QMainWindow):
 
         # 动态刷新鸟种下拉：只显示当前星级筛选下有照片的鸟种
         use_en = self.i18n.current_lang.startswith('en')
-        species = self._db.get_distinct_species(use_en=use_en, ratings=filters.get('ratings'))
-        self._filter_panel.update_species_list(species)
+        species, has_other = compute_dropdown_species(
+            self._db, use_en=use_en, ratings=filters.get('ratings')
+        )
+        self._filter_panel.update_species_list(species, has_other)
 
         raw_photos = self._db.get_photos_by_filters(filters)
         resolved_photos = [self._resolve_photo_paths(p) for p in raw_photos]
@@ -1776,6 +2018,13 @@ class ResultsBrowserWindow(QMainWindow):
         from ui.bird_species_edit_dialog import BirdSpeciesEditDialog
         from PySide6.QtWidgets import QDialog
 
+        # 勾选了多张、且右键点中的就在勾选集里 → 批量改整个勾选集
+        # Batch the whole checked selection when the clicked photo belongs to it.
+        targets = _species_edit_targets(self, photo)
+        if len(targets) > 1:
+            self._batch_species_edit(targets)
+            return
+
         dialog = BirdSpeciesEditDialog(parent=self)
         if dialog.exec() != QDialog.Accepted:
             return
@@ -1791,6 +2040,13 @@ class ResultsBrowserWindow(QMainWindow):
         # 纠错记录：必须在覆盖 bird_species 字段之前抓原预测。
         # Record correction BEFORE overwriting species fields (original prediction).
         self._record_correction(photo, new_cn, new_en, dialog.selected_latin)
+
+        # 旧鸟名同样要在覆盖前抓住：写元数据时要把关键字里的旧鸟名删掉，
+        # 覆盖之后就再也拿不到了。
+        # Capture the previous names before overwriting; the metadata write
+        # needs them to drop the stale keyword.
+        old_cn = photo.get("bird_species_cn") or ""
+        old_en = photo.get("bird_species_en") or ""
 
         # 1. 同步更新 photo 副本 + 缓存列表
         # Update both the local photo copy and the cached list so show_photo displays the new name.
@@ -1810,20 +2066,59 @@ class ResultsBrowserWindow(QMainWindow):
                 "bird_species_en": new_en or None,
             })
 
-        # 3. 刷新详情面板
+        # 3. 刷新详情面板 + 全屏鸟名标签
+        #    全屏视图有自己的 _species_label，不刷它的话在全屏里改完鸟种
+        #    界面纹丝不动，用户以为没生效。
+        #    The fullscreen view owns its own species label; refresh it too.
         self._detail_panel.show_photo(photo)
+        self._fullscreen.refresh_species_label(photo)
 
         # 4. 刷新左侧鸟种下拉
         use_en = self.i18n.current_lang.startswith("en")
         current_filters = self._filter_panel.get_filters()
-        new_species = self._db.get_distinct_species(
-            use_en=use_en, ratings=current_filters.get("ratings")
+        new_species, new_has_other = compute_dropdown_species(
+            self._db, use_en=use_en, ratings=current_filters.get("ratings")
         )
-        self._filter_panel.update_species_list(new_species)
+        self._filter_panel.update_species_list(new_species, new_has_other)
 
         # 5. 后台执行文件移动（同时更新连拍组其他成员的 DB 鸟种字段及 current_path）
+        #    失败必须让用户看见——回调在工作线程里触发，用 QTimer 转回主线程弹窗。
         # Background: move files and update burst group members' DB records.
-        _trigger_species_change(base_dir, photo, new_cn, new_en, self._db, db_key)
+        # Failures are surfaced; the callback fires on the worker thread, so
+        # marshal back to the GUI thread before touching any widget.
+        def _report(failures: list) -> None:
+            QTimer.singleShot(0, lambda: self._show_species_change_failures(failures))
+
+        _trigger_species_change(
+            base_dir, photo, new_cn, new_en, self._db, db_key, on_failures=_report,
+            old_bird_cn=old_cn, old_bird_en=old_en,
+        )
+
+    def _show_species_change_failures(self, failures: list) -> None:
+        """
+        改鸟种移动失败时给出可读提示（主线程调用）。
+
+        沿用整种合并的原因码→本地化文案映射，保持两条路径口径一致。
+
+        Surface species-change move failures in the GUI thread, reusing the
+        merge flow's reason-code localization.
+
+        参数 / Args:
+            failures: [(文件名, 原因码)] 列表 / list of (basename, reason code).
+        """
+        if not failures:
+            return
+        from ui.custom_dialogs import StyledMessageBox
+        lines = [
+            self.i18n.t('browser.merge_result_failed').format(count=len(failures))
+        ]
+        for name, reason in failures[:20]:
+            lines.append(f"  • {name} — {_merge_reason_text(reason)}")
+        if len(failures) > 20:
+            lines.append("  …")
+        StyledMessageBox.information(
+            self, self.i18n.t('browser.merge_result_title'), "\n".join(lines)
+        )
 
     def _on_merge_species_requested(self, photo: dict):
         """
@@ -1889,7 +2184,100 @@ class ResultsBrowserWindow(QMainWindow):
         if confirmed != StyledMessageBox.Yes:
             return
 
-        # 4. 执行：合并库的照片分属不同批次目录，按 _base_dir 分组各调一次
+        # 4-6. 执行 + 刷新 + 结果报告（与多选批量共用同一套）
+        self._execute_batch_species_change(targets, new_cn, new_en, layout)
+
+    def _batch_species_edit(self, targets: list) -> None:
+        """
+        多选批量改鸟种：把勾选的若干张一次性改成同一个鸟种。
+
+        与「整种合并」的区别只在范围——这里是用户手动勾选的任意若干张（可跨
+        鸟种），合并那边是数据库里某个鸟种的全部照片。执行/刷新/汇报共用
+        _execute_batch_species_change。
+
+        勾选集里若含同一连拍组的多张，core 会按 burst_id 去重、整组处理一次，
+        组内未勾选的成员也一并改掉——同一组照片分属不同鸟种没有意义。
+
+        纠错样本按每张记录（与单张编辑一致），供「提交本次纠错」使用。
+
+        Batch-retag the checked selection to one species; scope is the only
+        difference from the whole-species merge, so execution is shared.
+
+        参数 / Args:
+            targets: 勾选的照片列表（current_path 已是绝对路径）
+        """
+        from ui.bird_species_edit_dialog import BirdSpeciesEditDialog
+        from ui.custom_dialogs import StyledMessageBox
+        from PySide6.QtWidgets import QDialog
+        from advanced_config import get_advanced_config
+
+        if not self._db or not targets:
+            return
+
+        i18n = self.i18n
+        use_en = i18n.current_lang.startswith("en")
+
+        dialog = BirdSpeciesEditDialog(parent=self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        new_cn = dialog.selected_cn
+        new_en = dialog.selected_en
+        if not new_cn and not new_en:
+            return
+        new_name = (new_en if use_en else new_cn) or ""
+
+        # 确认：把张数、连拍组数与真实目标目录摆出来再动手
+        layout = get_advanced_config().folder_layout
+        folders = _merge_target_folders(targets, new_name, layout)
+        burst_count = len({p.get("burst_id") for p in targets if p.get("burst_id")})
+        burst_note = (
+            i18n.t('browser.merge_burst_note').format(bursts=burst_count)
+            if burst_count else ""
+        )
+        body = i18n.t('browser.batch_species_confirm_body').format(
+            count=len(targets), burst_note=burst_note, new=new_name,
+            folders="\n".join(folders) if folders else "—",
+        )
+        if StyledMessageBox.question(
+            self, i18n.t('browser.batch_species_confirm_title'), body
+        ) != StyledMessageBox.Yes:
+            return
+
+        # 纠错样本：必须在鸟名被覆盖之前逐张记录（原预测就在 photo 现值里）
+        # Record corrections BEFORE the species fields get overwritten.
+        for p in targets:
+            self._record_correction(p, new_cn, new_en, dialog.selected_latin)
+
+        self._execute_batch_species_change(targets, new_cn, new_en, layout)
+
+    def _execute_batch_species_change(self, targets: list, new_cn: str,
+                                      new_en: str, layout: str) -> None:
+        """
+        批量改鸟种的执行体：带进度跑完 → 写元数据 → 刷新界面 → 结果报告。
+
+        「整种合并」与「多选批量改鸟种」共用本方法——两者只是目标集与确认文案
+        不同，执行、刷新与汇报完全一致，分开写必然各自漂移。
+
+        连拍组由 core 的 merge_bird_species 按 burst_id 去重整组处理，因此
+        即使用户勾了同一组里的好几张，也只会执行一次、且组内每张都被改到。
+
+        Shared execution body for both batch species flows (whole-species merge
+        and multi-selection edit): run with progress, write metadata, refresh,
+        then report. Burst groups are de-duplicated by core.
+
+        参数 / Args:
+            targets:  待改鸟种的照片列表（current_path 已是绝对路径）
+            new_cn:   新中文鸟名
+            new_en:   新英文鸟名
+            layout:   目录布局（species-first / rating-first / flat）
+        """
+        from ui.custom_dialogs import StyledMessageBox
+        from core.rating_mover import merge_bird_species
+
+        i18n = self.i18n
+
+        # 合并库的照片分属不同批次目录，按 _base_dir 分组各调一次
+        # Photos of a merged library live under different batch dirs.
         by_base: dict = {}
         for p in targets:
             by_base.setdefault(p.get("_base_dir") or self._directory, []).append(p)
@@ -1916,12 +2304,13 @@ class ResultsBrowserWindow(QMainWindow):
         total_moved = 0
         total_db_only = 0
         all_failed: list = []
+        changed_files: list = []
         cancelled = False
 
         for base_dir, group in by_base.items():
             result = merge_bird_species(
                 base_dir, group, new_cn, new_en, layout,
-                self._db, _photo_db_key, _on_progress,
+                self._db, _photo_db_key, _on_progress, changed_files,
             )
             total_moved += result["moved"]
             total_db_only += result["db_only"]
@@ -1933,11 +2322,20 @@ class ResultsBrowserWindow(QMainWindow):
 
         progress.close()
 
-        # 5. 刷新：重新读库并重放当前筛选（_apply_filters 会顺带刷新鸟种下拉）
+        # 元数据：旧鸟名不逐张传——批量里每张的旧名各不相同，写入器会从各自
+        # 文件现有的 Title 推断出来再删对应的旧关键字。
+        # Metadata: the writer infers each file's old species from its own Title.
+        if changed_files:
+            from advanced_config import get_advanced_config
+            _write_species_metadata(
+                changed_files, new_cn, new_en, "", "", get_advanced_config()
+            )
+
+        # 刷新：重新读库并重放当前筛选（_apply_filters 会顺带刷新鸟种下拉）
         self._all_photos = self._db.get_all_photos()
         self._apply_filters(self._filter_panel.get_filters())
 
-        # 6. 结果报告：不静默，成功和失败都说清楚
+        # 结果报告：不静默，成功和失败都说清楚
         lines: list = []
         if total_moved:
             lines.append(i18n.t('browser.merge_result_moved').format(count=total_moved))

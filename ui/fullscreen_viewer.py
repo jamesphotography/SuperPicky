@@ -826,12 +826,19 @@ class FullscreenViewer(QWidget):
     close_requested = Signal()
     prev_requested = Signal()
     next_requested = Signal()
-    burst_sequence_requested = Signal(dict)
-    delete_requested = Signal(dict)   # 功能1：携带当前 photo dict
-    context_menu_requested = Signal(dict, object)   # (photo, QPoint全局坐标)
-    species_edit_requested = Signal(dict)   # 左栏「编辑鸟种」→ 父窗口复用既有处理
-    crop_advice_requested = Signal(dict)    # 左栏「裁剪建议」→ 父窗口复用既有处理
-    auto_retouch_requested = Signal(dict)   # 左栏「自动修图」→ 打开工作区直接进自动修图
+    # 携带 photo 的信号一律用 Signal(object)：Signal(dict) 会被 PySide6 做
+    # QVariantMap 往返转换，父窗口拿到的是副本——改鸟种移动文件后写回的新
+    # current_path 落在副本里，全屏自己持有的 photo 仍指向已不存在的旧路径，
+    # 再次操作同一张就会静默失败(2026-09-05 现网缺陷根因)。
+    # Photo-carrying signals must use Signal(object); Signal(dict) copies via
+    # QVariantMap, so the new path written back after a move never reaches the
+    # viewer's own photo and the next edit silently aborts on a stale path.
+    burst_sequence_requested = Signal(object)
+    delete_requested = Signal(object)   # 功能1：携带当前 photo dict
+    context_menu_requested = Signal(object, object)   # (photo, QPoint全局坐标)
+    species_edit_requested = Signal(object)   # 左栏「编辑鸟种」→ 父窗口复用既有处理
+    crop_advice_requested = Signal(object)    # 左栏「裁剪建议」→ 父窗口复用既有处理
+    auto_retouch_requested = Signal(object)   # 左栏「自动修图」→ 打开工作区直接进自动修图
 
     def __init__(self, i18n, parent=None):
         super().__init__(parent)
@@ -1270,6 +1277,44 @@ class FullscreenViewer(QWidget):
         else:
             self._rating_label.setText("")
 
+    def _species_display_name(self, photo: dict) -> str:
+        """
+        按当前界面语言取该照片要显示的鸟名（英文环境优先英文名，反之亦然）。
+
+        Pick the species name to display for the active UI language.
+
+        参数 / Args:
+            photo (dict): 照片记录 / photo record.
+
+        返回 / Returns:
+            str: 鸟名，未识别时为空串 / species name, "" when unidentified.
+        """
+        if getattr(self.i18n, "current_lang", "zh_CN").startswith("en"):
+            return photo.get("bird_species_en") or photo.get("bird_species_cn") or ""
+        return photo.get("bird_species_cn") or photo.get("bird_species_en") or ""
+
+    def refresh_species_label(self, photo: dict) -> None:
+        """
+        仅刷新鸟名标签，不重新解码大图。
+
+        供浏览器在「改鸟种」确认后调用：全屏视图有自己的 _species_label，
+        原先只在 show_photo 里赋值，于是在全屏里改完鸟种界面纹丝不动，
+        用户以为没生效(2026-09-05 现网缺陷)。走 show_photo 虽然也能刷新，
+        但会连带重解码大图，纯属浪费。
+
+        Refresh only the species label (no image re-decode) after a species
+        edit; the fullscreen view owns this label and previously never
+        updated it outside show_photo.
+
+        参数 / Args:
+            photo (dict): 被改鸟种的照片；不是当前显示的那张时忽略。
+                          Ignored unless it is the photo on screen.
+        """
+        current = self._current_photo or {}
+        if not photo or current.get("filename") != photo.get("filename"):
+            return
+        self._species_label.setText(self._species_display_name(photo))
+
     def show_photo(self, photo: dict):
         """
         展示一张照片。流程：
@@ -1308,12 +1353,7 @@ class FullscreenViewer(QWidget):
         self._filename_label.setText(filename)
 
         # 鸟种名(居中,跟随语言)
-        _is_en = getattr(self.i18n, "current_lang", "zh_CN").startswith("en")
-        if _is_en:
-            _species = photo.get("bird_species_en") or photo.get("bird_species_cn") or ""
-        else:
-            _species = photo.get("bird_species_cn") or photo.get("bird_species_en") or ""
-        self._species_label.setText(_species)
+        self._species_label.setText(self._species_display_name(photo))
 
         self._update_burst_info(photo)
 
