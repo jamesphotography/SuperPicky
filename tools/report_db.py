@@ -87,8 +87,12 @@ PHOTO_COLUMNS = [
     ("burst_id",         "INTEGER", None),
     ("burst_position",   "INTEGER", None),
 
-    # V6: 懂鸟罕见指数 (0-10，越大越罕见)
-    # V6: BirdID rarity index (0-10, higher = rarer)
+    # V6 遗留：外部罕见指数 (0-10)。当前流程不再写入，罕见度一律用下面的
+    # gbif_rarity_100；可选的自定义指数走 core/custom_rarity.py 独立数据源，
+    # 不入本表。保留列名以兼容旧库。
+    # V6 legacy: external rarity index (0-10), no longer written. Rarity now
+    # uses gbif_rarity_100; the optional custom index lives in its own data
+    # source. Kept for backward compatibility with older databases.
     ("rarity_index",     "REAL", None),
 
     # V7: IUCN 红色名录保护级别 (LC/NT/VU/EN/CR/CR(PE)/CR(PEW)/EW/EX/DD/NE)
