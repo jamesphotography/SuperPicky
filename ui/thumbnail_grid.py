@@ -6,7 +6,9 @@ ThumbnailCard: 单张照片卡片（评分角标 + 对焦指示点）
 ThumbnailLoader: QThread 后台加载缩略图
 """
 
+import atexit
 import os
+import weakref
 import threading
 from collections import OrderedDict
 from typing import Optional
@@ -284,6 +286,47 @@ def _load_thumbnail_image(photo: dict, thumb_size: int) -> Optional[QImage]:
 class _LoaderSignals(QObject):
     thumbnail_ready = Signal(object, object)   # photo_key, QImage
     load_error = Signal(object)
+
+# ── 进程退出兜底 / Process-exit safety net ──────────────────────────────────
+# 工作线程阻塞在条件变量上等任务，只有 cancel() 能唤醒它们退出。若某个网格
+# 没走到 cleanup 就到了进程退出（忘了调、或走了不经过 closeEvent 的退出路径），
+# PySide 的 destructionVisitor 会析构仍在运行的 QThread，Qt 直接 qFatal 掉整个
+# 进程——线上表现为随机的 abort / 堆损坏 SIGTRAP（2026-09-07 定位，18 份崩溃
+# 报告同源）。这里登记所有活动网格，在解释器退出时统一收线程。
+# 用 WeakSet：注册表本身不得延长网格寿命。
+#
+# Worker threads park on a condition variable and only cancel() wakes them.
+# A grid that never gets cleaned up leaves live QThreads for PySide to destroy
+# at interpreter shutdown, which makes Qt qFatal the process. Track grids
+# weakly and drain them from an atexit hook.
+_LIVE_GRIDS: "weakref.WeakSet" = weakref.WeakSet()
+
+
+def _loader_still_running(loader) -> bool:
+    """
+    加载器是否还有线程在跑；对象已被 Qt 侧销毁时视为已结束。
+
+    Whether any worker thread is still alive; a destroyed object counts as done.
+    """
+    try:
+        return bool(loader.isRunning())
+    except (RuntimeError, AttributeError):
+        return False
+
+
+def _stop_all_grid_loaders() -> None:
+    """解释器退出前停掉所有网格的加载线程（atexit 钩子）。"""
+    for grid in list(_LIVE_GRIDS):
+        try:
+            grid.cleanup()
+        except Exception:
+            # 退出阶段 Qt 对象可能已部分失效，尽力而为即可
+            # Best-effort: Qt objects may already be partly torn down.
+            pass
+
+
+atexit.register(_stop_all_grid_loaders)
+
 
 class _ThumbnailWorker(QThread):
     def __init__(self, manager):
@@ -735,6 +778,11 @@ class ThumbnailGrid(QScrollArea):
         self._transition_anim: Optional[QPropertyAnimation] = None
         # C3 多选状态
         self._multi_selected: set = set()       # photo_key 集合
+        # 已废弃但线程可能还在收尾的加载器：必须持有引用直到它们真正结束，
+        # 否则 GC 回收后 QThread 在运行中被析构，Qt 会 qFatal。
+        # Retired loaders are kept referenced until their threads exit.
+        self._retired_loaders: list = []
+        _LIVE_GRIDS.add(self)
         self._last_clicked_idx: int = -1        # Shift 范围选起点
         self._anchor_photo: Optional[dict] = None  # 单选锚点（对比视图左侧）
         self._pending_photos: Optional[list] = None  # 延迟构建用
@@ -860,12 +908,27 @@ class ThumbnailGrid(QScrollArea):
         self._build_timer.start()
 
     def cleanup(self):
+        """
+        停掉本网格的所有加载线程（当前的与已废弃的），确定性等待其结束。
+
+        必须把 _retired_loaders 一并收干净：它们的线程同样会在进程退出时被
+        PySide 析构，届时若还在运行，Qt 会 qFatal 整个进程。
+
+        Stop every loader owned by this grid, retired ones included; a live
+        QThread at interpreter shutdown makes Qt abort the process.
+        """
         self._build_timer.stop()
         self._batch_timer.stop()
         self._clear_transition_overlay()
         if self._loader:
             self._loader.cleanup()   # 退出时确定性等待线程结束 / deterministic join on exit
             self._loader = None
+        for ldr in self._retired_loaders:
+            try:
+                ldr.cleanup()
+            except Exception:
+                pass
+        self._retired_loaders = []
 
     def _detach_loader(self):
         """
@@ -885,7 +948,23 @@ class ThumbnailGrid(QScrollArea):
         except (RuntimeError, TypeError):
             pass
         self._loader.cancel()
+        # 不能直接丢引用：cancel 只是叫线程退出，真正退出还需要一点时间，
+        # 期间若被 GC 回收，QThread 会在运行中析构 → Qt qFatal。
+        # Hold the reference until the threads have actually exited.
+        self._retired_loaders.append(self._loader)
         self._loader = None
+        self._reap_retired_loaders()
+
+    def _reap_retired_loaders(self) -> None:
+        """
+        放掉已经跑完的废弃加载器，避免连续切筛选时无限堆积。
+
+        Release retired loaders whose threads have finished.
+        """
+        self._retired_loaders = [
+            ldr for ldr in self._retired_loaders
+            if _loader_still_running(ldr)
+        ]
 
     def _deferred_build(self):
         """延迟构建网格开始（布局稳定后执行）。"""

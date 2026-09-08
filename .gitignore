@@ -145,6 +145,13 @@ models/*.pth
 models/*.onnx
 birdid/data/avonet.db
 
+# 自定义罕见指数：应用只提供接口，数据由用户自备且多半不可再分发。
+# 正常应放在用户配置目录（不会被 .spec 打包）；这条规则兜底，防止有人
+# 手工放进 birdid/data —— 那里会被整目录打进安装包。
+# Custom rarity index: user-supplied data, normally in the config dir.
+# This rule is a backstop against dropping it into the packaged birdid/data.
+birdid/data/custom_rarity.db
+
 # 针对各平台的临时宣发与推广素材（不上云）
 docs/wechat/promo/
 docs/Reddit/
