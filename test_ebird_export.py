@@ -444,3 +444,23 @@ def test_browser_export_warns_when_nothing_qualifies(tmp_path, qt_app, monkeypat
 
     assert warned, "应提示无可导出内容"
     assert not _os.path.exists(out), "不得生成空文件"
+
+
+def test_avilist_name_is_used_when_clements_column_is_empty():
+    """
+    可信匹配但 Clements 列为空时，回退用 AviList 的英文名，而不是白白降级。
+
+    参考库里有 105 个鸟种属于这种情况（match_type=exact 但 en_name_clements
+    为 NULL），它们的 AviList 名本身就是标准 eBird 命名（Ruddy Duck、
+    Willow Ptarmigan 等）。把它们也丢进「待核对」只会让用户白忙。
+    """
+    from core.ebird_export import resolve_species
+
+    # 白腹鹃鵙 Coracina papuensis：match_type=exact，Clements 列为 NULL，
+    # AviList 列为 White-bellied Cuckooshrike
+    s = resolve_species("白腹鹃鵙", "White-bellied Cuckooshrike")
+
+    assert s.common_name == "White-bellied Cuckooshrike"
+    assert (s.genus, s.species) == ("Coracina", "papuensis")
+    assert s.confident is True
+    assert s.comment == ""

@@ -128,7 +128,8 @@ def _load_reference() -> Dict[str, Tuple[str, str, str]]:
     both Chinese and English names since a photo may carry only one.
 
     返回 / Returns:
-        Dict[str, Tuple[str, str, str]]: 查不到参考库时为空字典
+        Dict[str, Tuple[str, str, str]]: (学名, eBird英文名, 匹配类型)；
+        查不到参考库时为空字典
     """
     global _reference_cache
     if _reference_cache is not None:
@@ -143,14 +144,18 @@ def _load_reference() -> Dict[str, Tuple[str, str, str]]:
             try:
                 rows = con.execute(
                     "SELECT b.chinese_simplified, b.english_name, b.scientific_name,"
-                    "       a.en_name_clements, a.match_type "
+                    "       a.en_name_clements, a.en_name_avilist, a.match_type "
                     "FROM BirdCountInfo b "
                     "LEFT JOIN avilist_map a ON a.scientific_name_model = b.scientific_name"
                 ).fetchall()
             finally:
                 con.close()
-            for cn, en, sci, clements, match in rows:
-                value = (sci or "", clements or "", match or "")
+            for cn, en, sci, clements, avilist, match in rows:
+                # Clements 列偶有缺失（105 种），此时用 AviList 名兜底——两者
+                # 都是权威分类，AviList 名同样是标准 eBird 命名，白白降级
+                # 只会让用户去核对本来没问题的鸟种。
+                # Fall back to the AviList name when Clements is missing.
+                value = (sci or "", (clements or avilist or ""), match or "")
                 for key in (cn, en):
                     if key:
                         table.setdefault(str(key).strip(), value)
