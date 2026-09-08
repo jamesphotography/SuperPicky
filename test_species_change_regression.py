@@ -309,6 +309,23 @@ def _stub_species_dialog(monkeypatch, cn: str, en: str, latin: str):
     monkeypatch.setattr(bsed, "BirdSpeciesEditDialog", _Stub)
 
 
+def _stub_batch_picker(monkeypatch):
+    """
+    把多目录合并的目录清单替换成「用户全选并点了打开」。
+
+    open_directory 遇到多个已处理批次时会弹清单让用户挑（ui/directory_
+    select_dialog.py）。无头测试里没人去点那个模态框，exec() 会永远阻塞，
+    整个测试进程静静地挂死——比断言失败难查得多，务必在建了多个批次的
+    端到端测试里 stub 掉。
+
+    Stub the batch picker: its modal exec() would block forever headless.
+    """
+    import ui.results_browser_window as rbw
+
+    monkeypatch.setattr(rbw.ResultsBrowserWindow, "_ask_which_batches",
+                        lambda self, processed: list(processed))
+
+
 def test_fullscreen_species_label_refreshes_after_edit(tmp_path, monkeypatch):
     """
     在全屏里改鸟种后，全屏顶部的鸟名标签必须显示新鸟名。
@@ -1330,6 +1347,7 @@ def test_species_edit_in_merged_mode_records_correction(tmp_path, monkeypatch):
     from tools.report_db import ReportDB
 
     _stub_species_dialog(monkeypatch, "家燕", "Barn Swallow", "Hirundo rustica")
+    _stub_batch_picker(monkeypatch)
 
     root = str(tmp_path)
     for i, day in enumerate(("2026-09-02", "2026-09-03")):
