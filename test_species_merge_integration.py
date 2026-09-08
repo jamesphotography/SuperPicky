@@ -39,8 +39,11 @@ class _FakeEditDialog:
     selected_en = "Intermediate Egret"
     selected_latin = "Ardea intermedia"
 
-    def __init__(self, parent=None):
-        pass
+    def __init__(self, parent=None, session_species=None, exclude_species=None):
+        # 签名跟随真实弹窗：它现在还接收「本次拍到的鸟种」与要排除的鸟种
+        # Mirrors the real dialog's signature.
+        self.session_species = list(session_species or [])
+        self.exclude_species = list(exclude_species or [])
 
     def exec(self):
         return QDialog.Accepted

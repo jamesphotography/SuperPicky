@@ -130,10 +130,19 @@ class BirdResultCard(QFrame):
     selected = Signal(dict)
 
     def __init__(
-        self, bird_data: Dict, tier_index: Optional[int] = None, parent=None
+        self, bird_data: Dict, tier_index: Optional[int] = None, parent=None,
+        badge: Optional[str] = None
     ):
+        """
+        参数 / Args:
+            bird_data:  该行鸟名记录
+            tier_index: 罕见度分级（无数据传 None，则不显示右侧字形）
+            parent:     父控件
+            badge:      右侧的一小段说明文字（如「本次」「30 张」）。默认无。
+        """
         super().__init__(parent)
         self.bird_data = bird_data
+        self._badge = (badge or "").strip()
         self._is_selected = False
 
         self.setFixedHeight(self.CARD_HEIGHT)
@@ -189,6 +198,16 @@ class BirdResultCard(QFrame):
 
         root.addLayout(text_col, 1)
 
+        # 右侧小标签（「本次」「30 张」这类），紧挨罕见度字形之前
+        # A short right-side badge, e.g. "this shoot" or a photo count.
+        if self._badge:
+            self.badge_label = QLabel(self._badge)
+            self.badge_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self.badge_label.setStyleSheet(
+                f"color: {COLORS['text_secondary']}; font-size: 11px; "
+                f"background: transparent;")
+            root.addWidget(self.badge_label, 0)
+
         # 右侧罕见度图标（仅在拿到分级时显示），颜色随分级 gray→green→…→red
         # Rarity glyph on the right, shown only when a tier is available.
         if tier_index is not None:
@@ -217,6 +236,10 @@ class BirdResultCard(QFrame):
                 border-color: {COLORS['accent']};
             }}
         """)
+
+    def badge_text(self) -> str:
+        """右侧小标签的文字；没有标签时为空串。"""
+        return self._badge
 
     def set_selected(self, selected: bool):
         """设置选中态并刷新样式（由上层在选中变化时调用）。"""
