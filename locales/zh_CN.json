@@ -1482,6 +1482,18 @@
     "submit_button": "📤 提交纠错",
     "pack_error": "打包失败：{error}"
   },
+  "ebird_export": {
+      "button": "导出 eBird",
+      "button_tip": "把识别结果整理成 eBird 观测记录，可在 eBird 网站导入",
+      "title": "导出 eBird 观测记录",
+      "location_prompt": "地点名称（eBird 用它定位，可填热点名或自定义地点）：",
+      "save_title": "保存 eBird 观测记录",
+      "no_photos": "当前没有载入照片。",
+      "no_records": "没有可导出的观测记录：需要 2★ 以上、已识别鸟种且带拍摄时间的照片。",
+      "write_failed": "写入失败：{error}",
+      "done": "已导出 {checklists} 份清单、{rows} 条观测记录。\n{path}\n\n在 eBird 网站选「导入数据」→「eBird Record Format (Extended)」上传即可。",
+      "needs_review": "其中 {count} 个鸟种未填通用名（映射不确定，只给了学名），导入后请在 eBird 核对："
+  },
   "report_export": {
     "button": "导出报告",
     "button_tip": "把这次选片的结果导出成一个可分享的 HTML 文件",
