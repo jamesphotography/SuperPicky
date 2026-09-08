@@ -1,3 +1,106 @@
+# SuperPicky 4.6.2
+
+This release is about looking at more than one shoot at a time: pick any folders
+you like — from any drive — and see them as a single set of results.
+
+## What's new
+
+1. **Merge several folders into one set of results.** Open a folder that holds
+   more than one processed batch and SuperPicky now asks which ones you want,
+   then shows them together: one photo count, one species count, one report. The
+   list is yours to build — an **Add Folder…** button lets you keep adding
+   folders from anywhere, including other drives, so the days you want to
+   combine no longer have to sit under a common parent. Add a parent folder and
+   it offers to pull in every processed batch inside it at once. Each row shows
+   that folder's photo and species count before you commit to opening it, and
+   you can remove any row you did not mean to add. The same **Merge Folders…**
+   button sits in the browser toolbar, so you can widen or narrow the set at any
+   time without going back to the main window.
+
+2. **The report now lists every species up front.** Under the "Species (N)"
+   heading there is now a compact index of every species and how many photos you
+   took of it, in the same rarity order as the gallery below. Click a name to
+   jump straight to its block. The gallery shows at most four frames per
+   species, so the per-species totals were previously nowhere to be found.
+
+3. **The species dropdown is numbered.** The filter's species list now numbers
+   its entries, so the last number tells you how many species the batch holds
+   without counting them yourself — useful when ten merged days run to forty or
+   fifty species.
+
+## Fixes
+
+4. **Merging more than ten folders no longer silently drops data.** SQLite
+   allows at most ten databases to be attached at once, and the eleventh onward
+   failed silently: the photo and species counts covered only the first ten
+   folders, with nothing to indicate the rest were missing. Wrong numbers that
+   look right are worse than an error message. Every folder is now queried on
+   its own, with no limit.
+
+5. **Folders processed by older versions can be merged again.** Databases
+   written by different versions do not all have the same columns, and one
+   folder with four leftover columns from an abandoned feature was enough to
+   make the whole merge fail with an unreadable SQL error. Columns are now
+   matched by name: missing ones read as empty, extra ones are ignored.
+
+6. **A batch nested inside another is no longer counted twice.** If a processed
+   folder contains another processed folder of the same photos — which happens
+   when a batch is re-run into a subfolder — both used to be included, inflating
+   every total. Only the outer one is kept now. A batch inside an *unprocessed*
+   folder (a camera card folder, say) is still counted, because there it is the
+   real batch.
+
+7. **Merging folders across different drives works.** Combining a folder on an
+   external drive with one on the internal drive used to fail outright on
+   Windows. This is a common way to work — today's shoot on the portable drive,
+   last week's already copied to the internal one — so it now simply works.
+
+---
+
+# SuperPicky 4.6.2（中文）
+
+这一版是为了「一次看不止一次外拍」：你可以自由挑任意几个目录——哪怕在不同硬盘
+上——把它们当成一份结果来看。
+
+## 这一版有什么新东西
+
+1. **把几个目录的选鸟结果合成一份。** 打开一个含多个已处理批次的文件夹时，
+   SuperPicky 会先问你要哪几个，然后合起来显示：一个总张数、一个鸟种数、一份
+   报告。这份清单完全由你决定——**「添加目录…」**按钮可以一直往里加，任意位置、
+   任意硬盘都行，要合并的那几天不必挤在同一个父目录下。加进来的若是父目录，它会
+   问一句要不要把里面的批次全部加入。每一行都先写明该目录有多少张、多少种，你
+   不必打开就知道量有多大，加错了也可以单独移除。工具栏上有同样的**「合并目录…」**
+   按钮，看完一天之后想把前几天也算进来，随时可以改，不用退回主界面。
+
+2. **报告开头先列出所有鸟种。** 「本次鸟种 (N)」标题下多了一段名录：每个鸟种加
+   它的张数，顺序与下方画廊一致（按罕见度）。点鸟名直接跳到对应的图片区块。画廊
+   每种最多放 4 张，所以某种到底拍了多少张，以前在报告里根本查不到。
+
+3. **鸟种下拉带序号了。** 筛选栏的鸟种列表逐项编号，拉到底看末位序号就知道这批
+   有多少种，不必自己数——合并十天常有四五十种。
+
+## 修复
+
+4. **合并超过 10 个目录不再静默丢数据。** SQLite 一次最多只能挂 10 个数据库，
+   第 11 个起会失败，而失败被吞掉了：你看到的张数和鸟种数只含前 10 个目录，界面
+   上却没有任何提示。看起来正常的错数字比报错危险得多。现在每个目录单独查询，
+   没有数量上限。
+
+5. **老版本处理过的目录又能参与合并了。** 不同版本写的数据库列数不一样，只要有
+   一个目录残留着某个已废弃功能的四个字段，整个合并就会抛一句读不懂的 SQL 错误
+   而失败。现在按列名对齐：缺的算空，多的忽略。
+
+6. **嵌套在里面的重复批次不再被算两遍。** 一个已处理目录里若还套着另一个装着同一
+   批照片的已处理目录（把同一批重跑进子目录时会出现），原先两个都算，所有合计
+   数字都会翻倍。现在只取外层。若外层目录本身没被处理过（比如相机卡目录），
+   里层仍然照常计入——那才是真正的批次。
+
+7. **跨硬盘合并目录能用了。** 把移动盘上的一个目录和内置盘上的一个目录合在一起，
+   在 Windows 上原先会直接失败。而这恰恰是常见的用法——当天的在移动盘、上周的
+   早已拷进内置盘——现在正常工作。
+
+---
+
 # SuperPicky 4.6.1
 
 This release is about getting your sightings out of the app and into eBird, and
