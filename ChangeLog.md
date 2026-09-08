@@ -1,3 +1,107 @@
+# SuperPicky 4.6.1
+
+This release is about getting your sightings out of the app and into eBird, and
+about making species corrections actually stick.
+
+## What's new
+
+1. **Export your sightings to eBird.** The results browser has a new Export
+   eBird button. It turns the birds you photographed into an eBird checklist
+   file you can upload on the eBird website — one checklist per shooting day,
+   one row per species, count of 1. You type the location name once; the
+   coordinates come from your photos' GPS automatically (the median of that
+   day's fixes, so one stray reading cannot drag the location off). Only photos
+   rated 2 stars or higher with an identified species are included. Species are
+   identified by scientific name, which works regardless of what display
+   language your eBird account uses — a common name that is correct globally can
+   still be rejected by an Australian or British account, and this avoids the
+   whole problem. Upload it on eBird under Import Data → eBird Record Format
+   (Extended).
+
+2. **Show a second rarity figure of your own.** If you have your own rarity
+   dataset — a 0 to 10 score per species from any source you trust — you can
+   import it in Settings → Bird ID, and the detail panel will show it next to
+   the built-in global rarity, like "Legendary (91.5 - 7.97)". SuperPicky ships
+   no such data; it only provides the slot. Star ratings and sorting are
+   unaffected — this is for your reference only.
+
+3. **RAW extraction now reports progress and can be stopped.** Extracting
+   previews from a large batch of RAW files used to look frozen. It now shows
+   progress as it goes, and the Stop button works during that stage instead of
+   only after it.
+
+## Fixes
+
+4. **Changing a bird's species now actually moves the photo.** Correcting a
+   species used to update the name but leave the file in the old species folder
+   — and a second correction on the same photo would silently do nothing at all.
+   Both are fixed. The correction also now writes the new name into the photo's
+   XMP metadata (title and keywords), so Lightroom and other tools see it too;
+   previously the file on disk kept the wrong name forever.
+
+5. **Correct several photos at once.** Tick multiple thumbnails, right-click,
+   and the species change applies to all of them. Burst groups are handled as a
+   whole, so correcting one frame corrects the entire burst.
+
+6. **Fixed a random crash.** The app could abort at unpredictable moments
+   because thumbnail loading threads were destroyed while still running. This
+   accounted for half the crash reports collected on the development machine.
+
+7. **The Video page is back in Settings.** It had been removed from the
+   settings navigation while the underlying feature was still active, which left
+   the video toggle unreachable for anyone who had not turned it on before
+   upgrading.
+
+8. **Cross-folder burst merging no longer creates folders from low-confidence
+   names.** A burst spanning two folders could end up filed under a species name
+   the identifier was not confident about.
+
+---
+
+# SuperPicky 4.6.1（中文）
+
+这一版的重点是把你的观测记录送进 eBird，以及让「改鸟种」真正生效。
+
+## 这一版有什么新东西
+
+1. **导出 eBird 观测记录。** 选鸟结果浏览器新增「导出 eBird」按钮，把你拍到的
+   鸟整理成 eBird 清单文件，可直接在 eBird 网站上传。按拍摄日期一天一份清单，
+   同一天同一鸟种一行，数量固定 1。地点名你填一次，坐标自动取自照片 GPS（取
+   当天的中位数，个别漂移点不会把位置带偏）。只统计 2 星以上、已识别出鸟种的
+   照片。鸟种用学名标识，因此不受你 eBird 账号显示语言的影响——一个全球通用
+   的英文名在澳洲或英国账号下仍可能被拒收，用学名可以完全绕开这个问题。上传
+   时在 eBird 选「Import Data」→「eBird Record Format (Extended)」。
+
+2. **可以显示你自己的第二套罕见度。** 如果你手上有一份自己信得过的鸟种罕见度
+   数据（每种 0 到 10 分），可以在「设置 → 识鸟」里导入，详情页就会把它显示在
+   内置的全球罕见度旁边，形如「传奇 (91.5 - 7.97)」。SuperPicky 本身不附带任何
+   这类数据，只提供接口。评星与排序完全不受影响，纯属参考。
+
+3. **RAW 提取阶段现在有进度，也能中途停止。** 处理大批 RAW 时的预览提取过去
+   看起来像卡住了，现在会持续报告进度，「停止」按钮在这一阶段也能立即响应，
+   不必等它跑完。
+
+## 修复
+
+4. **改鸟种现在真的会把照片移过去。** 过去改完鸟种，名字变了但文件还留在原来的
+   鸟种目录里；对同一张照片改第二次更是完全没有反应。两个问题都已修复。改鸟种
+   现在还会把新鸟名写进照片的 XMP 元数据（标题与关键字），Lightroom 等软件也能
+   看到——过去磁盘上的文件会一直保留着错误的鸟名。
+
+5. **可以一次改多张。** 勾选多张缩略图后右键改鸟种，会一次性全部改掉。连拍组
+   整组处理，改其中一张等于改整组。
+
+6. **修复了一个随机崩溃。** 缩略图加载线程在仍然运行时被销毁，会让程序在不确定
+   的时刻整个退出。开发机上收集到的崩溃报告有一半源于此。
+
+7. **设置中心的「视频」页回来了。** 之前它被从设置导航里摘掉，而视频功能本身
+   还在运行，导致升级前没开过该功能的人再也打不开这个开关。
+
+8. **跨目录连拍合并不再用低置信度鸟名建目录。** 跨两个目录的连拍组可能被归到
+   一个识别器本身并不确定的鸟种名下。
+
+---
+
 # SuperPicky 4.6.0
 
 This release is about getting your results out of the app: export a shareable
@@ -173,124 +277,3 @@ Apple 照片、以及一次改掉整个认错的鸟种。
     弹回；取消 Apple 照片导入现在是真的会停下来。
 
 ---
-
-# SuperPicky 4.5.0
-
-Stars are now given out by comparing photos within the same batch, you can cull
-without moving your files, bird identification knows where birds actually live,
-and everything runs about 30% faster.
-
-## What's new
-
-1. **Stars compare photos against each other, not against fixed scores.** One bar
-   splits your batch into 3-star / 2-star / 1-star. Beginner keeps 40% as 3-star,
-   Intermediate 30%, Master 20%.
-2. **Every species keeps its own best shots.** With Bird ID on, the proportion is
-   applied per species, so a hundred shots of one common bird can't crowd out
-   everything else. Rare birds always keep at least one.
-3. **New Flat mode: rate without moving files.** Everything gets tagged as usual,
-   but nothing is moved, so your Lightroom folders keep working.
-4. **Bird names go into your keywords.** Filter by species in Lightroom's keyword
-   panel. Your own keywords are never touched.
-5. **Common city birds can finally be identified.** House sparrows, feral pigeons,
-   starlings and blackbirds used to be impossible in places like Sydney. So were
-   391 species, anywhere on earth. The location data was rebuilt to fix it.
-6. **No more penguins in Iceland.** In regions with few recorded species the filter
-   used to give up entirely. Now it widens its search step by step. All 233
-   countries can be selected, too.
-7. **About 30% faster.** 495 Sony RAW files went from 135 seconds to 95.
-8. **Full-screen browsing is much lighter.** Holding an arrow key runs off cached
-   previews, and large libraries use around 2.4 GB less memory.
-9. **A second look when no bird is found.** Birds that were too small, too distant,
-   or mistaken for an aeroplane now get recovered.
-10. **Beauty scoring looks at the bird, not the background.** A plain background no
-    longer drags a good photo down.
-11. **Distant birds are no longer over-rated for sharpness.** The old measurement
-    quietly favoured small birds.
-12. **All settings in one window**, with the home panel staying in sync. New:
-    bird-name format, delete confirmation, and a button to clear preview caches.
-13. **Faster culling in the browser.** Press 0-3 to set stars; changing a star
-    rating or species moves the files for you; picks are marked with a crown.
-14. **The Lightroom plugin works properly again.** Writing bird names and captions
-    had been silently failing, Chinese text came back garbled, and the plugin often
-    couldn't connect at all.
-
-## Before you upgrade
-
-- **Colour labels changed.** Flight is now **blue** (was green), critical focus is
-  **green** (was red), and soft photos are **red**. If you built Lightroom smart
-  collections on "green means flying", change them to blue.
-- **Windows Lite is discontinued.** If you use Lite, uninstall it before installing
-  the full version — otherwise you end up with two SuperPicky entries. You can then
-  delete the AI engine Lite downloaded and free several GB.
-- **Sharpness numbers for small-in-frame birds are lower than before.** That is the
-  fix in point 11. Your thresholds still mean the same thing.
-- **Video Bird Analysis is gone from the menus**, along with smart enhance, crop
-  suggestions and update checks. This is deliberate, not a bug.
-
-## Which download do I want
-
-- **Mac, Apple Silicon** (M1 and newer): the standard installer.
-- **Mac, Intel** (roughly pre-2020): the Intel installer, uploaded separately so it
-  may appear a little later.
-- **Windows without an NVIDIA card**: the CPU version, on this page.
-- **Windows with an NVIDIA card**: the CUDA version, on the file-sharing links —
-  it's too large for GitHub.
-
-Full details for everything above: [ChangeLog-4.5.0-details.md](https://github.com/jamesphotography/SuperPicky/blob/master/docs/ChangeLog-4.5.0-details.md)
-
----
-
-# SuperPicky 4.5.0（中文）
-
-星级改成在同一批照片里互相比较，新增了不移动文件的选片模式，识鸟现在知道哪种鸟
-实际住在哪里，整体速度快了约 30%。
-
-## 这一版有什么新东西
-
-1. **星级是照片之间互相比，不再是跟固定分数线比。** 一根配额条把整批照片分成
-   3 星 / 2 星 / 1 星。新手档 3 星占 40%，进阶档 30%，大师档 20%。
-2. **每个鸟种都保住自己最好的照片。** 开了识鸟后，比例按鸟种分别执行，一百张同
-   一只常见鸟不会挤掉别的鸟种，罕见鸟至少留一张。
-3. **新增平铺模式：只评星，不移动文件。** 标签照常写，但文件一个都不动，你的
-   Lightroom 目录继续正常工作。
-4. **鸟名会写进关键字。** 可以在 Lightroom 的关键字面板按鸟种筛选，你自己打的关
-   键字不会被动。
-5. **城市里的常见鸟终于能认出来了。** 家麻雀、原鸽、紫翅椋鸟、乌鸫这类鸟在悉尼
-   这样的地方以前永远认不出，另有 391 个鸟种在全球任何地方都认不出。地理数据已
-   整个重建修好了这个问题。
-6. **冰岛不会再认出企鹅了。** 在记录鸟种很少的地区，旧的筛选会直接放弃不筛。现
-   在改为逐步放宽搜索范围。233 个国家现在也全都能选。
-7. **速度快了约 30%。** 495 张索尼 RAW 从 135 秒降到 95 秒。
-8. **全屏浏览轻快多了。** 长按方向键翻图完全走缓存，大图库内存占用少约 2.4 GB。
-9. **找不到鸟时会再看一遍。** 因为太小、太远、或被当成飞机而漏掉的鸟能被救回来。
-10. **美学评分只看鸟，不看背景。** 背景平淡不会再拖累一张好照片。
-11. **远处的小鸟不再被高估锐度。** 旧的测量方式暗中偏袒小鸟。
-12. **所有设置集中到一个窗口**，首页面板与它同步。新增：鸟名显示方式、删除前确
-    认、一键清理预览缓存。
-13. **浏览器里选片更快。** 数字键 0 到 3 直接打星；改星级或改鸟种会自动帮你移动
-    文件；精选的照片带皇冠角标。
-14. **Lightroom 插件恢复正常。** 写鸟名和写描述此前一直静默失效，中文会变乱码，
-    插件还经常连不上。
-
-## 升级前请留意
-
-- **颜色标签变了。** 飞鸟现在是**蓝色**（原来绿色），精准合焦是**绿色**（原来红
-  色），失焦的照片是**红色**。如果你在 Lightroom 建过「绿色代表飞鸟」的智能收藏
-  夹，请改成蓝色。
-- **Windows Lite 精简版停产了。** 如果你用的是 Lite，请先卸载再装完整版，否则系
-  统里会出现两个 SuperPicky。卸载后还可以把 Lite 下载的 AI 引擎删掉，能腾出好几
-  GB。
-- **画面里占比小的鸟，锐度数值会比以前低。** 这就是第 11 条修的问题，你的阈值含
-  义没有变。
-- **「视频选鸟」的菜单入口没有了**，一起去掉的还有智能修图、裁剪建议、更新检查。
-  这是有意为之，不是 bug。
-
-## 我该下载哪个
-
-- **Apple Silicon 的 Mac**（M1 及更新）：标准安装包。
-- **Intel 的 Mac**（大致 2020 年以前）：Intel 安装包，单独上传，出现时间可能稍晚。
-- **没有 NVIDIA 显卡的 Windows**：CPU 版，本页可下。
-- **有 NVIDIA 显卡的 Windows**：CUDA 版，走网盘链接，它太大放不进 GitHub。
-
-以上每一条的详细说明：[ChangeLog-4.5.0-details.md](https://github.com/jamesphotography/SuperPicky/blob/master/docs/ChangeLog-4.5.0-details.md)
