@@ -29,6 +29,32 @@ from typing import Any, Dict, List, Optional
 from core.recursive_scanner import is_processed
 
 
+def _source_key(sub_dir: str, root_dir: str) -> str:
+    """
+    算出一个子目录对外的 ``source_dir`` 标识。
+
+    正常情况用相对 root_dir 的路径，短且可读。但参与合并的目录不再保证有共同
+    父目录——用户可以把移动盘和内置盘上的批次凑在一起，Windows 上跨盘
+    ``os.path.relpath`` 直接抛 ValueError，整个合并就失败了。这种情况退回用
+    绝对路径：不好看，但唯一且稳定，而 source_dir 的职责只是唯一定位。
+
+    Fall back to the absolute path when the directory shares no root with
+    root_dir (relpath raises across Windows drives); source_dir only needs to
+    identify a batch, not to look nice.
+
+    参数 / Args:
+        sub_dir:  子目录绝对路径
+        root_dir: 合并根
+
+    返回 / Returns:
+        str: 唯一标识该子目录的字符串
+    """
+    try:
+        return os.path.relpath(sub_dir, root_dir)
+    except ValueError:
+        return os.path.abspath(sub_dir)
+
+
 class MergedReportDB:
     """
     多目录合并视图，对外暴露与 ReportDB 相同的查询/更新接口。
@@ -67,7 +93,7 @@ class MergedReportDB:
             if not os.path.exists(db_path):
                 self.skipped.append((sub_dir, "no_database"))
                 continue
-            rel = os.path.relpath(sub_dir, root_dir)
+            rel = _source_key(sub_dir, root_dir)
             try:
                 self._dbs[rel] = ReportDB(sub_dir)
             except Exception as e:
@@ -367,8 +393,79 @@ class MergedReportDB:
         return self.root_dir
 
 
+def summarize_directories(sub_dirs: List[str]) -> List[Dict[str, Any]]:
+    """
+    为每个批次目录给出概览：照片数与鸟种数，供用户在合并前挑选。
+
+    刻意用只读连接直查，**不经 ReportDB**——后者会触发 schema 升级、补列与
+    建索引。用户可能只是打开父目录看一眼、最后一个都不选，为了列表上的两个
+    数字就去改人家几十个库是不可接受的。
+
+    某个目录读不出来（库损坏、权限不足、老到没有 photos 表）时，该目录的
+    计数为 None 而不是 0——0 会让人以为「这天没拍到」，None 才如实表示
+    「读不出来」。其余目录不受影响。
+
+    Summarize each batch for the pre-merge picker using a read-only query;
+    opening a full ReportDB would migrate schemas for directories the user may
+    never open. Unreadable directories report None rather than 0.
+
+    参数 / Args:
+        sub_dirs: 批次目录绝对路径列表
+
+    返回 / Returns:
+        List[Dict[str, Any]]: 每项含 path / name / photos / species，
+        顺序与入参一致；photos、species 读不出时为 None。
+    """
+    import sqlite3
+
+    out: List[Dict[str, Any]] = []
+    for sub_dir in sub_dirs:
+        entry: Dict[str, Any] = {
+            "path": sub_dir,
+            "name": os.path.basename(sub_dir.rstrip(os.sep)) or sub_dir,
+            "photos": None,
+            "species": None,
+        }
+        db_path = os.path.join(sub_dir, ".superpicky", "report.db")
+        if os.path.exists(db_path):
+            try:
+                con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+                try:
+                    entry["photos"] = con.execute(
+                        "SELECT COUNT(*) FROM photos").fetchone()[0]
+                    entry["species"] = con.execute(
+                        "SELECT COUNT(DISTINCT bird_species_cn) FROM photos "
+                        "WHERE bird_species_cn IS NOT NULL "
+                        "AND TRIM(bird_species_cn) != ''").fetchone()[0]
+                finally:
+                    con.close()
+            except (sqlite3.Error, OSError):
+                pass          # 保持 None：读不出就如实说读不出
+        out.append(entry)
+    return out
+
+
 def find_processed_subdirs(root_dir: str) -> List[str]:
-    """查找根目录及其子目录中所有已处理的目录"""
+    """
+    查找根目录及其子目录中所有已处理的批次目录。
+
+    已处理目录内部再嵌一个已处理目录时**只保留外层**：内层几乎总是同一批
+    照片的重复副本（现网实例 2026-03-07 与 2026-03-07/2026-03-07 是同一批
+    195 张，文件名逐个相同），两个都算会让合计张数与鸟种数虚高一倍。
+
+    但外层若没被处理过，内层就是真正的批次，必须保留——相机卡目录或分类
+    文件夹里放着一个批次是常见情形（2026-06-08/115JMSZ9）。
+
+    Find processed batch directories. A processed directory nested inside
+    another is dropped as a duplicate copy; one nested in an *unprocessed*
+    folder is kept, since that folder is just a container.
+
+    参数 / Args:
+        root_dir: 要扫描的根目录
+
+    返回 / Returns:
+        List[str]: 批次目录绝对路径，按发现顺序
+    """
     result = []
 
     if is_processed(root_dir):
@@ -385,4 +482,72 @@ def find_processed_subdirs(root_dir: str) -> List[str]:
             if is_processed(full):
                 result.append(full)
 
-    return result
+    # 落在已收录批次内部的目录一律剔除（见上文的重复副本说明）
+    # Drop any batch that lives inside another already-collected batch.
+    kept: List[str] = []
+    for path in result:
+        parent_of_path = os.path.dirname(os.path.abspath(path))
+        if any(os.path.abspath(other) == parent_of_path
+               or parent_of_path.startswith(os.path.abspath(other) + os.sep)
+               for other in result if os.path.abspath(other) != os.path.abspath(path)):
+            continue
+        kept.append(path)
+    return kept
+
+
+def merge_root(sub_dirs: List[str]) -> str:
+    """
+    为一组要合并的目录选出合并根。
+
+    合并根只用来算各批次的 source_dir 相对路径，以及给导出文件挑个默认落点。
+    目录多半在同一个父目录下，取共同父目录即可；但用户可以自由添加任意位置的
+    目录，跨盘时根本没有共同路径（Windows 上 commonpath 抛 ValueError），
+    此时退回第一个目录的父目录——总得有个可写的落点。
+
+    Pick a root for a set of batches: their common parent when there is one,
+    otherwise the first directory's parent (paths may span volumes).
+
+    参数 / Args:
+        sub_dirs: 批次目录绝对路径
+
+    返回 / Returns:
+        str: 合并根；sub_dirs 为空时返回空串
+    """
+    paths = [os.path.abspath(d) for d in sub_dirs if d]
+    if not paths:
+        return ""
+    if len(paths) == 1:
+        return os.path.dirname(paths[0]) or paths[0]
+    try:
+        common = os.path.commonpath(paths)
+    except ValueError:
+        common = ""
+    if common and common not in paths:
+        return common
+    if common in paths:
+        # 有目录本身就是其他目录的父目录，用它当根会让自己的 source_dir 变成
+        # "."，仍然唯一，可接受。
+        return common
+    return os.path.dirname(paths[0]) or paths[0]
+
+
+def merged_span_label(sub_dirs: List[str]) -> str:
+    """
+    合并视图的一句话标识：首尾目录名，如 ``2026-08-23 ~ 2026-09-07``。
+
+    合并根的名字说明不了用户在看哪几天（多半是「2026」这种年份文件夹，跨盘时
+    甚至是「/」）。批次目录以日期命名，名字序即时间序，取排序后的首尾即可。
+
+    参数 / Args:
+        sub_dirs: 批次目录绝对路径
+
+    返回 / Returns:
+        str: 首尾目录名；只有一个目录时就是它的名字，无目录时为空串
+    """
+    names = sorted({os.path.basename(os.path.abspath(d).rstrip(os.sep)) or d
+                    for d in sub_dirs if d})
+    if not names:
+        return ""
+    if len(names) == 1:
+        return names[0]
+    return f"{names[0]} ~ {names[-1]}"
