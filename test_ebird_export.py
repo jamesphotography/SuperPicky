@@ -6,16 +6,23 @@ eBird 观测记录导出（eBird Record Format CSV）测试。
 引号、日期 M/D/YYYY、数量可为数字或 X。列错位会直接导致导入失败，因此列
 顺序在测试里逐一钉死。
 
-鸟名映射是本功能的主要风险：模型的英文名约两成与 eBird(Clements) 命名不同
-（Grey/Gray 拼写、分类学合并），直接填会被拒或收成别的鸟；而 avilist_map 里
-少数低可信匹配本身是错的（Accipiter gentilis 苍鹰 → Common Ostrich 鸵鸟）。
-错误的鸟名一旦填进 Common Name，eBird 会照收不误、用户看不到任何提示，等于
-静默污染公共数据库。故低可信映射一律不填通用名、只给学名，让 eBird 自己去
-匹配或提示——那才是用户能发现并修正的状态。
+**为什么只给学名、不填通用名**（2026-09-07 真实导入验证得出）：
+eBird 按**用户账号的显示语言**匹配通用名。同一个种在不同 locale 下名字不同：
 
-eBird Record Format: 19 fixed columns, no header row. Species naming is the
-main hazard: an unreliable mapping silently records the wrong bird, so
-low-confidence rows carry the scientific name only.
+    Myzomela obscura        en_US: Dusky Myzomela      en_AU: Dusky Honeyeater
+    Oriolus flavocinctus    en_US: Green Oriole        en_AU: Yellow Oriole
+    Myzomela erythrocephala en_US: Red-headed Myzomela en_AU: Red-headed Honeyeater
+
+首次导入时填的是全球(Clements/en_US)名，结果在澳洲账号下这三个种全部被判
+"unknown species"，而名字两地相同的十六个种全部成功——一一吻合。改为只填
+学名后同一批数据导入成功（清单 S390924778）。
+
+学名是分类学的唯一标识，不随 locale 变化，因此对任何国家的用户都稳。
+eBird 导入后会按各自的语言显示对应的通用名。
+
+Species are identified by scientific name only: eBird matches common names in
+the account's display language, so a globally-correct common name is rejected
+on e.g. an Australian account. Verified against a real import.
 """
 import os
 import sys
@@ -45,64 +52,72 @@ def test_column_order_matches_ebird_record_format():
     ]
 
 
-# ── 鸟名映射 / Species name resolution ──────────────────────────────────────
+# ── 鸟名解析 / Species resolution ───────────────────────────────────────────
 
-def test_confident_mapping_uses_ebird_common_name():
-    """可信映射：填 eBird(Clements) 通用名 + 拆开的属名与种加词。"""
+def test_known_species_is_identified_by_scientific_name_only():
+    """
+    已知鸟种只给学名，通用名一律留空。
+
+    eBird 按账号显示语言匹配通用名：填全球名在澳洲账号下会被判 unknown
+    （实测 Dusky Myzomela 被拒，该账号要的是 Dusky Honeyeater）。学名不随
+    locale 变化，是唯一对所有用户都成立的标识。
+    """
     from core.ebird_export import resolve_species
 
     s = resolve_species("澳洲中白鹭", "Plumed Egret")
 
-    assert s.common_name == "Plumed Egret"
+    assert s.common_name == "", "通用名必须留空，否则非美式英语账号会导入失败"
     assert (s.genus, s.species) == ("Ardea", "plumifera")
     assert s.confident is True
-    assert s.comment == ""
 
 
-def test_model_name_differing_from_ebird_is_translated():
+def test_species_with_locale_dependent_name_still_works():
     """
-    模型英文名与 eBird 命名不同的（拼写差异/分类学变更），必须译成 eBird 的说法。
-
-    直接填模型英文名会被 eBird 拒收——这正是必须走映射的原因。
+    通用名因 locale 而异的鸟种（首次导入失败的正是这三个），只给学名即可。
     """
     from core.ebird_export import resolve_species
 
-    s = resolve_species("新几内亚噪刺莺", "Grey Thornbill")
+    for cn, en, expect in (
+        ("暗摄蜜鸟", "Dusky Myzomela", ("Myzomela", "obscura")),
+        ("绿鹂", "Green Oriole", ("Oriolus", "flavocinctus")),
+        ("红头摄蜜鸟", "Red-headed Myzomela", ("Myzomela", "erythrocephala")),
+    ):
+        s = resolve_species(cn, en)
+        assert s.common_name == "", f"{cn} 不该填通用名"
+        assert (s.genus, s.species) == expect, f"{cn} 学名应为 {expect}"
+        assert s.confident is True
 
-    assert s.common_name == "Gray Thornbill", "应译成 eBird 的美式拼写"
-    assert s.confident is True
 
-
-def test_unreliable_mapping_omits_common_name(monkeypatch):
+def test_species_without_a_known_scientific_name_falls_back_to_common_name():
     """
-    低可信映射不得填通用名 —— 只给学名，并注明供人工核对。
+    参考库里查不到学名时，退而填模型的英文名 —— 那是仅存的线索。
 
-    Accipiter gentilis(苍鹰) 在 avilist_map 里被错标成 Common Ostrich(鸵鸟)。
-    填了它 eBird 会照收，用户看不到任何异常；只给学名则 eBird 会自行匹配或
-    提示，错误才是可见、可修的。
-    """
-    from core.ebird_export import resolve_species
-
-    s = resolve_species("苍鹰", "Northern Goshawk")
-
-    assert s.common_name == "", f"低可信映射不得填通用名，实际 {s.common_name!r}"
-    assert (s.genus, s.species) == ("Accipiter", "gentilis")
-    assert s.confident is False
-    assert "Northern Goshawk" in s.comment, "备注里要保留模型原始识别，供核对"
-
-
-def test_unknown_species_still_exported_with_whatever_is_known():
-    """
-    完全查不到的鸟种也要导出（用户要求全部导出，到 eBird 网页端再修），
-    但同样不能编造通用名。
+    这类记录 eBird 多半认不出，会让用户在导入界面手工选种；备注里写明来源
+    以便核对。总比整行没有任何标识强。
     """
     from core.ebird_export import resolve_species
 
     s = resolve_species("查无此鸟", "No Such Bird Anywhere")
 
-    assert s.common_name == ""
+    assert (s.genus, s.species) == ("", "")
+    assert s.common_name == "No Such Bird Anywhere", "无学名时用英文名兜底"
     assert s.confident is False
-    assert "No Such Bird Anywhere" in s.comment
+    assert "verify" in s.comment.lower()
+
+
+def test_conflicting_chinese_and_english_names_are_flagged():
+    """
+    中英文名指向不同鸟种时标记待核对 —— 两个名字本应来自同一次识别，
+    对不上说明记录有问题，不能默默挑一个。
+    """
+    from core.ebird_export import resolve_species
+
+    # 「棕胸金鹃」= Chalcites minutillus，而 Shining Bronze Cuckoo
+    # = Chalcites lucidus，是另一个种
+    s = resolve_species("棕胸金鹃", "Shining Bronze Cuckoo")
+
+    assert s.confident is False
+    assert s.comment, "冲突时必须留下核对提示"
 
 
 # ── 清单分组 / Checklist grouping ───────────────────────────────────────────
@@ -156,9 +171,9 @@ def test_low_rated_photos_are_excluded():
 
     lists = build_checklists(photos, "X")
 
-    names = [e.species.common_name or e.species.genus for e in lists[0].entries]
-    assert "Great Tit" in names
-    assert all("Swallow" not in n for n in names)
+    species = [(e.species.genus, e.species.species) for e in lists[0].entries]
+    assert ("Parus", "major") in species, "2★ 的大山雀应计入"
+    assert ("Hirundo", "rustica") not in species, "1★ 的家燕不该计入"
 
 
 def test_photos_without_species_or_date_are_skipped():
@@ -232,7 +247,7 @@ def test_csv_rows_have_no_header_and_fixed_fields():
     assert len(rows) == 1
     r = rows[0]
     assert len(r) == 19
-    assert r[0] == "Barn Swallow"          # Common Name
+    assert r[0] == ""                      # Common Name 留空（按学名匹配）
     assert (r[1], r[2]) == ("Hirundo", "rustica")
     assert r[3] == "1"                     # Number
     assert r[5] == "Hasties Swamp"         # Location Name
@@ -268,7 +283,7 @@ def test_written_file_has_no_header_row(tmp_path):
 
     first = open(out, encoding="utf-8").readline()
     assert "Common Name" not in first, "不得写表头"
-    assert first.startswith("Barn Swallow"), f"首行应是数据: {first!r}"
+    assert first.startswith(",Hirundo,rustica,"), f"首行应是数据: {first!r}"
 
 
 def test_conflicting_chinese_and_english_names_are_not_trusted():
@@ -296,8 +311,9 @@ def test_single_available_name_is_used_when_the_other_is_missing():
     only_cn = resolve_species("家燕", None)
     only_en = resolve_species(None, "Barn Swallow")
 
-    assert only_cn.common_name == "Barn Swallow" and only_cn.confident is True
-    assert only_en.common_name == "Barn Swallow" and only_en.confident is True
+    assert (only_cn.genus, only_cn.species) == ("Hirundo", "rustica")
+    assert (only_en.genus, only_en.species) == ("Hirundo", "rustica")
+    assert only_cn.confident is True and only_en.confident is True
 
 
 # ── 浏览器入口 / Browser entry point ────────────────────────────────────────
@@ -446,21 +462,18 @@ def test_browser_export_warns_when_nothing_qualifies(tmp_path, qt_app, monkeypat
     assert not _os.path.exists(out), "不得生成空文件"
 
 
-def test_avilist_name_is_used_when_clements_column_is_empty():
+def test_species_missing_from_clements_still_resolves_by_scientific_name():
     """
-    可信匹配但 Clements 列为空时，回退用 AviList 的英文名，而不是白白降级。
+    参考库 Clements 列为空的鸟种（有 105 个），照样能拿到学名并正常导出。
 
-    参考库里有 105 个鸟种属于这种情况（match_type=exact 但 en_name_clements
-    为 NULL），它们的 AviList 名本身就是标准 eBird 命名（Ruddy Duck、
-    Willow Ptarmigan 等）。把它们也丢进「待核对」只会让用户白忙。
+    白腹鹃鵙 Coracina papuensis 就是一例：曾因只看 Clements 通用名而被误判为
+    「映射不确定」，改用学名后不再是问题。
     """
     from core.ebird_export import resolve_species
 
-    # 白腹鹃鵙 Coracina papuensis：match_type=exact，Clements 列为 NULL，
-    # AviList 列为 White-bellied Cuckooshrike
     s = resolve_species("白腹鹃鵙", "White-bellied Cuckooshrike")
 
-    assert s.common_name == "White-bellied Cuckooshrike"
     assert (s.genus, s.species) == ("Coracina", "papuensis")
+    assert s.common_name == ""
     assert s.confident is True
-    assert s.comment == ""
+

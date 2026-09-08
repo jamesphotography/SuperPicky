@@ -8,23 +8,26 @@ eBird 观测记录导出 / Export observations in the eBird Record Format.
 格式要点（依据 eBird 官方文档与模板）：
   - 19 列，顺序固定，**不带表头**——列错位会直接导致导入失败；
   - 日期 M/D/YYYY，时间 H:MM；
-  - 字段内不得出现引号，导入器无法处理；
-  - 数量可为数字或 X（本模块一律 1）。
+  - 字段内不得出现引号，导入器无法处理。
 
-鸟名是本功能的主要风险。模型的英文名约两成与 eBird(Clements) 命名不同
-（Grey/Gray 拼写差异、分类学合并），直接填会被拒收或匹配成别的鸟；而参考库
-里少数低可信匹配本身就是错的（Accipiter gentilis 苍鹰被标成 Common Ostrich
-鸵鸟）。错误的通用名一旦填进去，eBird 会照单全收、用户看不到任何提示，等于
-静默污染公共数据库。因此：
+**鸟种只给学名，通用名一律留空**（2026-09-07 真实导入验证得出）：
+eBird 按**用户账号的显示语言**匹配通用名，同一个种在不同 locale 下名字不同：
 
-  可信映射   → 填 eBird 通用名 + 学名，正常导入；
-  低可信映射 → **不填通用名**，只给学名并在备注里保留模型的原始识别。
-               eBird 会用学名自行匹配，匹配不上则在导入时提示用户处理——
-               错误因此是可见、可修的。
+    Myzomela obscura         en_US: Dusky Myzomela       en_AU: Dusky Honeyeater
+    Oriolus flavocinctus     en_US: Green Oriole         en_AU: Yellow Oriole
+    Myzomela erythrocephala  en_US: Red-headed Myzomela  en_AU: Red-headed Honeyeater
 
-The main hazard is species naming: an unreliable mapping would silently
-record the wrong bird, so low-confidence rows carry the scientific name only
-and let eBird flag them.
+首版填的是全球(Clements)通用名，结果在澳洲账号下这三个种被判 "unknown
+species"，而两地同名的十六个种全部成功——一一吻合。改为只填学名后同一批
+数据导入成功。学名是分类学的唯一标识、不随 locale 变化，对任何国家的用户
+都成立；eBird 导入后会按各自语言显示对应的通用名。
+
+只有查不到学名时才退而填模型的英文名——那是仅存的线索，eBird 多半认不出，
+会让用户在导入界面手工选种，备注里写明来源便于核对。
+
+Species are identified by scientific name only: eBird matches common names in
+the account's display language, so a globally-correct common name gets
+rejected on e.g. an Australian account. Verified against a real import.
 """
 from __future__ import annotations
 
@@ -176,60 +179,48 @@ def reset_reference_cache() -> None:
 
 def resolve_species(cn_name: Optional[str], en_name: Optional[str]) -> SpeciesId:
     """
-    把照片里的鸟名解析成 eBird 记录所需的身份。
+    把照片里的鸟名解析成 eBird 记录所需的身份：**只给学名**。
 
-    可信映射给出 eBird 通用名；低可信或查不到时**不填通用名**，只给学名并在
-    备注里保留模型的原始识别——见模块开头对静默错误的说明。
+    通用名一律留空，因为 eBird 按账号显示语言匹配它——见模块开头对实测
+    失败的说明。只有查不到学名时才退而填模型英文名作为仅存线索。
 
-    Resolve a photo's species names into eBird identity fields; unreliable
-    mappings deliberately omit the common name.
+    Resolve into eBird identity fields using the scientific name only; the
+    common name is locale-dependent and would break non-en_US accounts.
 
     参数 / Args:
         cn_name: 中文鸟名，可为 None
         en_name: 英文鸟名，可为 None
 
     返回 / Returns:
-        SpeciesId: 通用名/属名/种加词/可信标记/核对备注
+        SpeciesId: 属名/种加词为主；查不到学名时用英文名兜底并标记待核对
     """
     table = _load_reference()
     raw_en = (en_name or "").strip()
     raw_cn = (cn_name or "").strip()
 
-    # 中英文名分别查，再比对：两个名字本应来自同一次识别，指向不同鸟种说明
-    # 数据有问题（手工改名只改了一半等）。此时任选一个填进 Common Name，就是
-    # 在 eBird 上静默记录一个可能错误的鸟种，故一律降级为「只给学名待核对」。
-    # Cross-check both names; a disagreement means the record is inconsistent,
-    # and picking either one would silently log a possibly wrong species.
+    # 中英文名分别查再比对：两个名字本应来自同一次识别，指向不同鸟种说明
+    # 记录有问题（手工改名只改了一半等），此时不能默默挑一个。
+    # Cross-check both names; a disagreement means the record is inconsistent.
     hit_cn = table.get(raw_cn) if raw_cn else None
     hit_en = table.get(raw_en) if raw_en else None
 
-    if hit_cn and hit_en and hit_cn[0] != hit_en[0]:
-        genus, _, species = (hit_cn[0] or "").partition(" ")
-        return SpeciesId(
-            common_name="", genus=genus, species=species, confident=False,
-            comment=_review_comment(f"{raw_cn} / {raw_en}"),
-        )
-
+    conflicting = bool(hit_cn and hit_en and hit_cn[0] != hit_en[0])
     entry = hit_cn or hit_en
 
-    if entry is None:
-        # 参考库里没有这个鸟种：仍然导出，但不编造任何 eBird 命名
-        # Unknown species: still exported, but nothing is invented.
+    if entry is None or not entry[0]:
+        # 查不到学名：填模型英文名作为仅存线索，eBird 多半会让用户手工选种
+        # No scientific name known: fall back to the model's English name.
         return SpeciesId(
-            common_name="", genus="", species="", confident=False,
+            common_name=_strip_quotes(raw_en or raw_cn),
+            genus="", species="", confident=False,
             comment=_review_comment(raw_en or raw_cn),
         )
 
-    scientific, clements, match_type = entry
-    genus, _, species = (scientific or "").partition(" ")
-
-    if clements and match_type in _TRUSTED_MATCH_TYPES:
-        return SpeciesId(common_name=clements, genus=genus, species=species,
-                         confident=True, comment="")
-
+    genus, _, species = (entry[0] or "").partition(" ")
     return SpeciesId(
-        common_name="", genus=genus, species=species, confident=False,
-        comment=_review_comment(raw_en or raw_cn),
+        common_name="", genus=genus, species=species,
+        confident=not conflicting,
+        comment=_review_comment(f"{raw_cn} / {raw_en}") if conflicting else "",
     )
 
 
