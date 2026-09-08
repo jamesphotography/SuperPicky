@@ -662,6 +662,11 @@ border-bottom:1px solid var(--line);font-weight:600}
 .sp .en{font-family:var(--serif);font-size:14px;color:var(--muted);
 font-style:italic}
 .sp .cnt{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.splist{margin:-10px 0 34px;font-size:13px;line-height:2.1;color:var(--muted)}
+.splist a{color:inherit;text-decoration:none;border-bottom:1px solid transparent}
+.splist a:hover{color:var(--text);border-bottom-color:var(--line)}
+.splist .n{font-variant-numeric:tabular-nums;opacity:.75;margin-left:4px}
+.splist .sep{opacity:.35;margin:0 5px}
 .tier{font-size:12px;padding:1px 8px;border-radius:10px;border:1px solid currentColor}
 .iucn{font-size:11px;padding:1px 7px;border-radius:10px;
 background:var(--iucn-bg);color:var(--iucn-fg);font-weight:600}
@@ -1160,6 +1165,41 @@ def _gallery_html(refs: List[PhotoRef], reg: "_ImageRegistry",
     return out
 
 
+def _species_index_html(data: ReportData, is_zh: bool) -> str:
+    """
+    鸟种名录：紧跟在「本次鸟种 (N)」标题下的一段「鸟名 张数」，顺序同画廊。
+
+    合并十天几十个鸟种时，光看画廊要滚很久才知道这趟到底拍到了哪些；而画廊
+    每种只放 4 张，某种究竟拍了多少张也只有这里写得出来。顺序刻意与下方画廊
+    完全一致（罕见度降序、同级张数多者在前），否则名录里第 3 个鸟种跑到画廊
+    第 8 块，反倒更难找——每一项都是锚点，点名字直接跳到对应区块。
+
+    中文报告用中文名、英文报告用英文名；该语言的名字缺失时退回另一种，
+    宁可显示外语名，也好过一个看不见的空链接。
+
+    A compact index of every species and its photo count, in the same order as
+    the gallery below, each item anchored to its block. The gallery shows at
+    most four frames per species, so the per-species totals appear only here.
+
+    参数 / Args:
+        data:  报告数据模型
+        is_zh: 是否中文报告
+
+    返回 / Returns:
+        str: 名录的 HTML；无鸟种时为空串（不留空段落）
+    """
+    if not data.species:
+        return ""
+    items = []
+    for index, block in enumerate(data.species, 1):
+        primary = (block.name_cn or block.name_en) if is_zh else (
+            block.name_en or block.name_cn)
+        items.append(f'<a href="#sp-{index}">{_esc(primary)}'
+                     f'<span class="n">{block.count}</span></a>')
+    sep = '<span class="sep">·</span>'
+    return f'<p class="splist">{sep.join(items)}</p>'
+
+
 def _species_html(data: ReportData, reg: "_ImageRegistry", is_zh: bool) -> str:
     """
     鸟种画廊：每种一块，区块按罕见度降序，块内版式随张数自适应（spec 5.1 ②）。
@@ -1175,8 +1215,9 @@ def _species_html(data: ReportData, reg: "_ImageRegistry", is_zh: bool) -> str:
         return ""
     title = "本次鸟种" if is_zh else "Species"
     unit = "张" if is_zh else " photos"
-    out = [f'<section class="sec wrap"><h2>{title} ({len(data.species)})</h2>']
-    for block in data.species:
+    out = [f'<section class="sec wrap"><h2>{title} ({len(data.species)})</h2>',
+           _species_index_html(data, is_zh)]
+    for index, block in enumerate(data.species, 1):
         primary = block.name_cn if is_zh else block.name_en
         secondary = block.name_en if is_zh else block.name_cn
         badges = ""
@@ -1190,7 +1231,7 @@ def _species_html(data: ReportData, reg: "_ImageRegistry", is_zh: bool) -> str:
         pick_bits = (_pick_bits(block.photos[0], block.beauty, is_zh)
                      if block.photos else None)
         out.append(
-            '<div class="sp"><div class="hd">'
+            f'<div class="sp" id="sp-{index}"><div class="hd">'
             f'<span class="cn">{_esc(primary)}</span>'
             f'<span class="en">{_esc(secondary)}</span>{badges}'
             f'<span class="cnt">{block.count}{unit}</span></div>'

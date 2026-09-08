@@ -553,6 +553,9 @@ class FilterPanel(QWidget):
         列在下拉里纯属干扰；但它们的照片必须仍能从鸟种维度找到，故用兜底项
         接住，两者构成不重不漏的划分。
 
+        鸟种逐项编号（「全部鸟种」与「其他鸟类」不编号：前者不是鸟种，后者是
+        兜底桶，可能装着好几种，给它们编号会让末位序号不再等于鸟种数）。
+
         参数 / Args:
             species:   有目录的鸟种名列表
             has_other: 当前筛选下是否存在「无自己目录」的照片；False 时不显示
@@ -566,8 +569,13 @@ class FilterPanel(QWidget):
         current = self.species_combo.currentData()
         self.species_combo.clear()
         self.species_combo.addItem(self.i18n.t("browser.species_all"), "")
-        for sp in species:
-            self.species_combo.addItem(sp, sp)
+        # 逐项编号：拉到底看最后一个序号就知道这批拍到了多少种，不必自己数
+        # （合并十天常有四五十种）。序号只进显示文案，itemData 仍是纯鸟种名——
+        # 筛选、记忆当前选中项、与数据库比对全靠它。
+        # Numbered for a species count at a glance; the item data stays the
+        # bare name, since every lookup keys on it.
+        for number, sp in enumerate(species, 1):
+            self.species_combo.addItem(f"{number}. {sp}", sp)
         if has_other:
             # 与磁盘上的「其他鸟类」目录同名，让下拉和目录结构对得上
             # Same label as the on-disk folder so the two line up.
