@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal, Slot, QProcess, QSize, QTimer
 from PySide6.QtGui import QAction, QKeyEvent, QIcon
+from ui.custom_dialogs import StyledMessageBox
 
 from ui.icon_utils import load_tinted_icon, ICON_IDLE
 
@@ -1316,6 +1317,16 @@ class ResultsBrowserWindow(QMainWindow):
         self._export_btn.clicked.connect(self._export_report)
         layout.addWidget(self._export_btn)
 
+        # 导出 eBird 观测记录：口径与报告一致，取全量而非当前筛选——
+        # 观测记录讲的是「这次拍到了什么」，跟随筛选会漏报。
+        # Export eBird observations over the full set, not the filtered view.
+        self._ebird_btn = QPushButton(self.i18n.t("ebird_export.button"))
+        self._ebird_btn.setObjectName("secondary")
+        self._ebird_btn.setFixedHeight(32)
+        self._ebird_btn.setToolTip(self.i18n.t("ebird_export.button_tip"))
+        self._ebird_btn.clicked.connect(self._export_ebird)
+        layout.addWidget(self._ebird_btn)
+
         # Apple Photos 导入严格限于 macOS；模块只在用户触发时惰性加载，Windows
         # 启动和打包运行路径不导入任何 AppleScript 控制代码。
         # Apple Photos import is macOS-only. Its controller is loaded lazily on
@@ -1528,6 +1539,80 @@ class ResultsBrowserWindow(QMainWindow):
         self.closed.emit()
 
     @Slot()
+    def _export_ebird(self) -> None:
+        """
+        导出 eBird 观测记录 CSV（eBird Record Format，可直接在网站导入）。
+
+        口径为当前载入的**全量**照片，与报告导出一致：观测记录讲的是这次
+        拍到了什么，跟随筛选会漏报。一天一份清单、同种一行、数量固定 1。
+
+        地点名由用户填写一次、所有清单共用（按日期拆出的多份多为同一次外出；
+        若确实换了地方，导入 eBird 后逐份改地点即可）。坐标自动取当天 GPS
+        中位数，没有 GPS 就留空——eBird 会用地点名帮用户定位。
+
+        Export observations in the eBird Record Format over the full loaded
+        set: one checklist per date, one row per species, count fixed at 1.
+        """
+        from PySide6.QtWidgets import QInputDialog, QFileDialog
+        from core.ebird_export import (build_checklists, summarize, to_rows,
+                                       write_csv)
+
+        if not self._all_photos or not self._directory:
+            StyledMessageBox.warning(self, self.i18n.t("messages.hint"),
+                                     self.i18n.t("ebird_export.no_photos"))
+            return
+
+        location, ok = QInputDialog.getText(
+            self, self.i18n.t("ebird_export.title"),
+            self.i18n.t("ebird_export.location_prompt"),
+        )
+        if not ok or not location.strip():
+            return
+
+        rows_in = [self._resolve_photo_paths(p) for p in self._all_photos]
+        checklists = build_checklists(rows_in, location.strip())
+        if not checklists:
+            StyledMessageBox.warning(self, self.i18n.t("messages.hint"),
+                                     self.i18n.t("ebird_export.no_records"))
+            return
+
+        default_name = f"ebird_{os.path.basename(self._directory.rstrip(os.sep))}.csv"
+        path, _ = QFileDialog.getSaveFileName(
+            self, self.i18n.t("ebird_export.save_title"),
+            os.path.join(os.path.expanduser("~/Desktop"), default_name),
+            "CSV (*.csv)",
+        )
+        if not path:
+            return
+
+        try:
+            write_csv(path, to_rows(checklists))
+        except OSError as e:
+            StyledMessageBox.warning(
+                self, self.i18n.t("messages.hint"),
+                self.i18n.t("ebird_export.write_failed").format(error=e),
+            )
+            return
+
+        stats = summarize(checklists)
+        lines = [self.i18n.t("ebird_export.done").format(
+            checklists=stats["checklists"], rows=stats["rows"], path=path)]
+        # 需要人工核对的鸟种必须点名列出：它们在 CSV 里只有学名没有通用名，
+        # 用户得知道进 eBird 后要处理哪几条。
+        # Name the species needing review; they carry no common name in the CSV.
+        review = stats["needs_review"]
+        if review:
+            lines.append("")
+            lines.append(self.i18n.t("ebird_export.needs_review").format(
+                count=len(review)))
+            for item in review[:10]:
+                lines.append(f"  • {item}")
+            if len(review) > 10:
+                lines.append("  …")
+        StyledMessageBox.information(
+            self, self.i18n.t("ebird_export.title"), "\n".join(lines)
+        )
+
     def _export_report(self) -> None:
         """
         导出可分享的 HTML 报告。

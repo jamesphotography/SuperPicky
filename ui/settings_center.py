@@ -53,6 +53,7 @@ from ui.icon_utils import (  # noqa: F401
 )
 from ui.styles import COLORS  # noqa: F401
 from ui.combo_popup import style_combo_popup
+from ui.custom_dialogs import StyledMessageBox
 
 
 # 各分页滚动内容容器的透明背景规则。
@@ -925,6 +926,42 @@ class SettingsCenter(QDialog):
         )
         lay.addWidget(fmt_hint)
 
+        # ── 自定义罕见指数（可选外部数据）/ Custom rarity index (optional) ───
+        # 应用只提供接口，不附带也不预设任何数据源：用户自备一份 0-10 的鸟种
+        # 罕见度数据即可并排展示。导入入口让用户不必知道配置目录在哪。
+        # The app ships no dataset — just this interface; the import entry
+        # spares users from hunting down the config directory.
+        lay.addWidget(self._divider())
+
+        dn_title = QLabel(self.i18n.t("settings.custom_rarity_section"))
+        dn_title.setStyleSheet(
+            f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
+        )
+        lay.addWidget(dn_title)
+
+        self._custom_rarity_status = QLabel("")
+        self._custom_rarity_status.setWordWrap(True)
+        self._custom_rarity_status.setStyleSheet(
+            f"color:{COLORS['text_secondary']};font-size:12px;"
+        )
+        lay.addWidget(self._custom_rarity_status)
+
+        dn_row = QHBoxLayout()
+        dn_import = QPushButton(self.i18n.t("settings.custom_rarity_import"))
+        dn_import.clicked.connect(self._on_import_custom_rarity)
+        dn_row.addWidget(dn_import)
+        dn_row.addStretch(1)
+        lay.addLayout(dn_row)
+
+        dn_hint = QLabel(self.i18n.t("settings.custom_rarity_hint"))
+        dn_hint.setWordWrap(True)
+        dn_hint.setStyleSheet(
+            f"color:{COLORS['text_muted']};font-size:11px;"
+        )
+        lay.addWidget(dn_hint)
+
+        self._refresh_custom_rarity_status()
+
         lay.addStretch(1)
 
         scroll.setWidget(inner)
@@ -1542,6 +1579,66 @@ class SettingsCenter(QDialog):
 
     # ── 输出页 / Output page ──────────────────────────────────────────────────
 
+    def _refresh_custom_rarity_status(self) -> None:
+        """
+        刷新自定义罕见指数的状态行：已启用（含鸟种数）或未启用。
+
+        Refresh the custom-rarity status line: enabled (with count) or not.
+        """
+        from core.custom_rarity import species_count
+
+        n = species_count()
+        if n:
+            self._custom_rarity_status.setText(
+                self.i18n.t("settings.custom_rarity_enabled").format(count=n)
+            )
+            self._custom_rarity_status.setStyleSheet(
+                f"color:{COLORS['text_secondary']};font-size:12px;"
+            )
+        else:
+            self._custom_rarity_status.setText(self.i18n.t("settings.custom_rarity_disabled"))
+            self._custom_rarity_status.setStyleSheet(
+                f"color:{COLORS['text_muted']};font-size:12px;"
+            )
+
+    def _on_import_custom_rarity(self) -> None:
+        """
+        导入自定义罕见指数数据库：选文件 → 校验 → 就位 → 立即生效。
+
+        校验不通过时原有数据保持不变（用户这份数据是自备的，误选一次不该把
+        已经装好的弄丢），并把稳定的原因码翻成本地化文案。
+
+        Import the dataset: pick, validate, install, take effect at once.
+        A rejected file leaves any existing data untouched.
+        """
+        from PySide6.QtWidgets import QFileDialog
+        from core.custom_rarity import install_database
+
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            self.i18n.t("settings.custom_rarity_import"),
+            "",
+            "SQLite (*.db *.sqlite);;All Files (*)",
+        )
+        if not path:
+            return
+
+        ok, reason, count = install_database(path)
+        if ok:
+            self._refresh_custom_rarity_status()
+            StyledMessageBox.information(
+                self,
+                self.i18n.t("settings.custom_rarity_section"),
+                self.i18n.t("settings.custom_rarity_import_ok").format(count=count),
+            )
+            return
+
+        StyledMessageBox.warning(
+            self,
+            self.i18n.t("settings.custom_rarity_section"),
+            self.i18n.t(f"settings.custom_rarity_err_{reason}"),
+        )
+
     def _build_output_page(self) -> QWidget:
         """
         构建输出设置页，包含：分目录布局(含连拍子目录开关)、元数据写入方式
@@ -1939,7 +2036,6 @@ class SettingsCenter(QDialog):
         """
         import shutil
 
-        from ui.custom_dialogs import StyledMessageBox
 
         t = self.i18n.t
         btn_title = t("advanced_settings.clear_cache_button")
