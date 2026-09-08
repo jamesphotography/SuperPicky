@@ -27,6 +27,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, Slot, QProcess, QSize, QTimer
 from PySide6.QtGui import QAction, QKeyEvent, QIcon
 from ui.custom_dialogs import StyledMessageBox
+from PySide6.QtWidgets import QDialog
+from ui.directory_select_dialog import DirectorySelectDialog
 
 from ui.icon_utils import load_tinted_icon, ICON_IDLE
 
@@ -1245,6 +1247,15 @@ class ResultsBrowserWindow(QMainWindow):
         back_btn.clicked.connect(self._go_back_to_main)
         layout.addWidget(back_btn)
 
+        # 合并目录入口：随时增删要一起统计的目录（可跨文件夹、跨盘）
+        # Entry point to the directory list; batches often live far apart.
+        merge_btn = QPushButton(self.i18n.t("browser.merge_dirs"))
+        merge_btn.setObjectName("tertiary")
+        merge_btn.setFixedHeight(32)
+        merge_btn.setToolTip(self.i18n.t("browser.merge_dirs_tooltip"))
+        merge_btn.clicked.connect(self._open_merge_picker)
+        layout.addWidget(merge_btn)
+
         layout.addSpacing(8)
 
         # Directory switcher combo box
@@ -1392,7 +1403,15 @@ class ResultsBrowserWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def open_directory(self, directory: str):
-        """Load report.db. Supports batch multi-dir mode."""
+        """
+        打开一个目录的选鸟结果。
+
+        目录下若有多个已处理批次，先弹目录清单让用户挑（并可继续添加别处、
+        别的盘上的目录）；只有一个批次就直接打开，不拿一行的选择框去打扰他。
+
+        参数 / Args:
+            directory: 用户选中的目录
+        """
         if not directory:
             return
 
@@ -1406,42 +1425,123 @@ class ResultsBrowserWindow(QMainWindow):
         self._is_merged = False
         self._sub_dirs = []
 
-        from tools.merged_report_db import find_processed_subdirs
-        processed = find_processed_subdirs(directory)
+        chosen = self._resolve_directories(directory)
+        if not chosen:
+            return
+        self._apply_selection(chosen)
 
+    def _resolve_directories(self, directory: str) -> list:
+        """
+        决定要载入哪些目录。
+
+        三种情况 / Three cases:
+          * 多个批次 → 弹清单让用户挑（预填找到的批次）
+          * 一个批次 → 直接用它
+          * 没有结果 → 给出原有提示，什么都不载入
+
+        参数 / Args:
+            directory: 用户选中的目录
+
+        返回 / Returns:
+            list: 要载入的目录；用户取消或无结果时为空
+        """
+        from tools.merged_report_db import find_processed_subdirs
+
+        processed = find_processed_subdirs(directory)
+        if len(processed) > 1:
+            return self._ask_which_batches(processed)
+        if processed:
+            return processed
+
+        db_path = os.path.join(directory, ".superpicky", "report.db")
+        if not os.path.exists(db_path):
+            self._show_no_db_hint(directory)
+            return []
+        return [directory]
+
+    def _apply_selection(self, dirs: list) -> None:
+        """
+        按给定的目录集合载入结果：一个目录走单目录模式，多个走合并模式。
+
+        合并根由 merge_root() 决定——用户可以把任意位置的目录凑在一起，不再
+        保证有共同父目录（甚至可能跨盘），所以根不能想当然地取「用户点开的
+        那个文件夹」。
+
+        参数 / Args:
+            dirs: 要载入的批次目录绝对路径
+        """
+        from tools.merged_report_db import merge_root
+
+        dirs = [d for d in dirs if d]
+        if not dirs:
+            return
+
+        if len(dirs) == 1:
+            self._sub_dirs = []
+            self._populate_dir_combo("", [])
+            self._directory = dirs[0]
+            self._load_single(dirs[0])
+            return
+
+        root = merge_root(dirs) or os.path.dirname(dirs[0])
+        self._sub_dirs = list(dirs)
+        self._populate_dir_combo(root, dirs)
+        self._directory = root
+        self._load_merged(root, dirs)
+
+    def _populate_dir_combo(self, root: str, dirs: list) -> None:
+        """
+        重建顶部的目录切换下拉；dirs 为空时隐藏它、改回单目录标签。
+
+        条目文案用相对合并根的路径，跨盘时 relpath 不可用，退回目录名。
+        Labels use paths relative to the merge root, falling back to the folder
+        name when the batch lives on another volume.
+        """
         self._dir_combo.blockSignals(True)
         self._dir_combo.clear()
 
-        if len(processed) > 1:
-            self._sub_dirs = processed
-            total = sum(self._count_db_photos(d) for d in processed)
-            self._dir_combo.addItem(f"\U0001f4c2 All ({total})", "__ALL__")
-            for d in processed:
-                rel = os.path.relpath(d, directory)
-                n = self._count_db_photos(d)
-                label = f"  ./ ({n})" if rel == '.' else f"  {rel}/ ({n})"
-                self._dir_combo.addItem(label, d)
-            self._dir_combo.show()
-            self._dir_label.hide()
-        else:
+        if not dirs:
             self._dir_combo.hide()
             self._dir_label.show()
-            if not processed:
-                db_path = os.path.join(directory, ".superpicky", "report.db")
-                if not os.path.exists(db_path):
-                    self._show_no_db_hint(directory)
-                    self._dir_combo.blockSignals(False)
-                    return
+            self._dir_combo.blockSignals(False)
+            return
 
+        total = sum(self._count_db_photos(d) for d in dirs)
+        self._dir_combo.addItem(f"\U0001f4c2 All ({total})", "__ALL__")
+        for d in dirs:
+            try:
+                rel = os.path.relpath(d, root)
+            except ValueError:
+                rel = os.path.basename(d) or d
+            n = self._count_db_photos(d)
+            label = f"  ./ ({n})" if rel == '.' else f"  {rel}/ ({n})"
+            self._dir_combo.addItem(label, d)
+        self._dir_combo.show()
+        self._dir_label.hide()
         self._dir_combo.blockSignals(False)
-        self._directory = directory
 
-        if len(processed) > 1:
-            self._load_merged(directory, processed)
-        elif len(processed) == 1:
-            self._load_single(processed[0])
-        else:
-            self._load_single(directory)
+    @Slot()
+    def _open_merge_picker(self) -> None:
+        """
+        随时打开目录清单，增删要合并的目录后重新载入。
+
+        入口不该只在「打开某个父目录」那一刻出现：用户常常先看完一天，才想起
+        要把前几天一起算进来，而那几天可能在别的文件夹、别的盘上。
+        """
+        current = list(self._sub_dirs) if self._sub_dirs else (
+            [self._directory] if self._directory else [])
+        chosen = self._ask_which_batches(current)
+        if not chosen:
+            return
+        if self._db:
+            try:
+                self._db.close()
+            except Exception:
+                pass
+            self._db = None
+        self._is_merged = False
+        self._sub_dirs = []
+        self._apply_selection(chosen)
 
     def _count_db_photos(self, directory: str) -> int:
         db_path = os.path.join(directory, ".superpicky", "report.db")
@@ -1478,8 +1578,39 @@ class ResultsBrowserWindow(QMainWindow):
             self._filter_panel.select_all_ratings()
         self.setWindowTitle(f"{self.i18n.t('browser.title')} \u2014 {short_name}")
 
+    def _ask_which_batches(self, processed: list) -> list:
+        """
+        弹出目录清单，返回用户勾选的目录；取消或未选则返回空列表。
+
+        清单预填传入的目录，用户可在框内继续添加任意位置（包括别的盘）的目录。
+        概览数字走只读查询（summarize_directories），不会为了列表上的两个数字
+        就去升级用户几十个库的 schema——他可能看一眼就取消了。
+
+        Ask which directories to merge, prefilled with the ones found; the user
+        can add more from anywhere. Per-row counts come from a read-only query
+        so nothing is migrated for a directory the user may not open.
+
+        参数 / Args:
+            processed: 预填的目录（可为空）
+
+        返回 / Returns:
+            list: 选中的目录绝对路径；用户取消时为空
+        """
+        from tools.merged_report_db import summarize_directories
+
+        entries = summarize_directories(processed)
+        dialog = DirectorySelectDialog(self.i18n, entries, self)
+        if dialog.exec() != QDialog.Accepted:
+            return []
+        chosen = dialog.selected_directories()
+        if not chosen:
+            StyledMessageBox.warning(self, self.i18n.t("messages.hint"),
+                                     self.i18n.t("dir_select.none_selected"))
+            return []
+        return chosen
+
     def _load_merged(self, root_dir: str, sub_dirs: list):
-        from tools.merged_report_db import MergedReportDB
+        from tools.merged_report_db import MergedReportDB, merged_span_label
         self._is_merged = True
         try:
             self._db = MergedReportDB(root_dir, sub_dirs)
@@ -1496,8 +1627,13 @@ class ResultsBrowserWindow(QMainWindow):
         self._filter_panel.update_species_list(species, has_other)
         if len(self._all_photos) > 0 and len(self._filtered_photos) == 0:
             self._filter_panel.select_all_ratings()
-        short = os.path.basename(root_dir) or root_dir
-        self.setWindowTitle(f"{self.i18n.t('browser.title')} \u2014 {short} (All)")
+        # 合并根的名字说明不了用户在看哪几天（多半是「2026」这种年份文件夹，
+        # 跨盘时甚至是「/」），所以标题给首尾目录名与目录个数。
+        # The merge root's name says nothing about which days are shown.
+        span = merged_span_label(sub_dirs) or (os.path.basename(root_dir) or root_dir)
+        self.setWindowTitle(
+            f"{self.i18n.t('browser.title')} \u2014 "
+            f"{self.i18n.t('browser.merged_title').format(span=span, count=len(sub_dirs))}")
 
     def _on_subdir_changed(self, index: int):
         if index < 0:

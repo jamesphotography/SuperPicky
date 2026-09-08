@@ -1005,3 +1005,89 @@ def test_each_photo_is_encoded_exactly_once():
     assert len(paths) == len(set(paths)), "同一张照片被编码了不止一次"
     # 封面与某张展示图可能是同一个文件，但那是两个不同尺寸的档位，允许
     assert len(jobs) == len(set(j.job_id for j in jobs))
+
+
+# ── 鸟种名录 / Species index ────────────────────────────────────────────────
+#
+# 合并十天几十个鸟种时，画廊要滚很久才能知道「这趟到底拍到了哪些」。名录把
+# 鸟名与张数压成一段，紧跟在「本次鸟种 (N)」标题下，顺序与下方画廊一致。
+
+def _index_段(html: str) -> str:
+    """取出名录那一段（<p class="splist">…</p>）。"""
+    import re
+
+    m = re.search(r'<p class="splist">(.*?)</p>', html, re.S)
+    return m.group(1) if m else ""
+
+
+def test_species_index_lists_every_species_with_its_count():
+    """名录列出全部鸟种及张数 —— 画廊每种只放 4 张，张数只能从这里看到。"""
+    photos = (
+        [_photo(filename=f"c{i}.NEF", bird_species_cn="麻雀",
+                bird_species_en="Sparrow", gbif_rarity_100=2.0) for i in range(10)]
+        + [_photo(filename="r1.NEF", bird_species_cn="传奇鸟",
+                  bird_species_en="Legend Bird", gbif_rarity_100=90.0)]
+    )
+    html = build_html(aggregate(photos), {}, is_zh=True)
+
+    段 = _index_段(html)
+    assert "传奇鸟" in 段 and "麻雀" in 段
+    assert "10" in 段, f"麻雀 10 张要写出来：{段}"
+
+
+def test_species_index_follows_the_gallery_order():
+    """
+    名录顺序＝画廊顺序（罕见度降序）—— 两者不一致的话，用户在名录里看到的
+    第 3 个鸟种跑到画廊第 8 块，反倒更难找。
+    """
+    photos = (
+        [_photo(filename=f"c{i}.NEF", bird_species_cn="麻雀",
+                bird_species_en="Sparrow", gbif_rarity_100=2.0) for i in range(10)]
+        + [_photo(filename="m1.NEF", bird_species_cn="中等鸟",
+                  bird_species_en="Middle Bird", gbif_rarity_100=45.0)]
+        + [_photo(filename="r1.NEF", bird_species_cn="传奇鸟",
+                  bird_species_en="Legend Bird", gbif_rarity_100=90.0)]
+    )
+    data = aggregate(photos)
+    段 = _index_段(build_html(data, {}, is_zh=True))
+
+    positions = [段.index(b.name_cn) for b in data.species]
+    assert positions == sorted(positions), f"名录顺序与画廊不一致：{段}"
+
+
+def test_species_index_uses_english_names_in_english_report():
+    """英文报告里名录用英文名，与画廊标题的主名一致。"""
+    html = build_html(aggregate([_photo()]), {}, is_zh=False)
+
+    段 = _index_段(html)
+    assert "White-bellied Sea Eagle" in 段
+    assert "白腹海雕" not in 段
+
+
+def test_species_index_links_to_each_gallery_block():
+    """
+    名录每项链到对应的画廊区块 —— 43 个鸟种时靠滚动找是折磨。
+    """
+    html = build_html(aggregate([_photo()]), {}, is_zh=True)
+
+    段 = _index_段(html)
+    assert 'href="#sp-' in 段, f"名录项应是锚点链接：{段}"
+    anchor = 段.split('href="#')[1].split('"')[0]
+    assert f'id="{anchor}"' in html, f"锚点 {anchor} 在画廊里没有落点"
+
+
+def test_species_index_escapes_hostile_species_names():
+    """鸟名来自数据库，可能含 HTML 元字符，名录里同样要转义。"""
+    html = build_html(
+        aggregate([_photo(bird_species_cn='<img src=x onerror=alert(1)>')]),
+        {}, is_zh=True)
+
+    assert "<img src=x" not in _index_段(html)
+
+
+def test_no_species_index_when_nothing_was_identified():
+    """一种鸟都没识别出来时不留一个空名录。"""
+    html = build_html(aggregate([_photo(has_bird=0, bird_species_cn="",
+                                        bird_species_en="")]), {}, is_zh=True)
+
+    assert '<p class="splist">' not in html

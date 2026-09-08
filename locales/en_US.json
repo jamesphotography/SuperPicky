@@ -1295,7 +1295,10 @@
     "compare_rate_left": "Rate left photo {stars}★  [key: {shortcut}]",
     "compare_rate_right": "Rate right photo {stars}★  [key: {shortcut}]",
     "picked_only": "Picked only",
-    "picked_only_tip": "Show only picked photos (3★ shots that top both sharpness and aesthetics)"
+    "picked_only_tip": "Show only picked photos (3★ shots that top both sharpness and aesthetics)",
+    "merge_dirs": "Merge Folders…",
+    "merge_dirs_tooltip": "Combine results from several folders into one report (any location or drive)",
+    "merged_title": "{span} ({count} folders)"
   },
   "video": {
     "title_phase1": "Video Analysis (Phase 1 · YOLO bird/no-bird only)",
@@ -1483,16 +1486,34 @@
     "pack_error": "Packaging failed: {error}"
   },
   "ebird_export": {
-      "button": "Export eBird",
-      "button_tip": "Turn identified birds into eBird observations for import on the eBird site",
-      "title": "Export eBird Observations",
-      "location_prompt": "Location name (eBird uses it to place the checklist; a hotspot or your own name):",
-      "save_title": "Save eBird Observations",
-      "no_photos": "No photos are loaded.",
-      "no_records": "Nothing to export: needs photos rated 2★ or higher, with an identified species and a capture time.",
-      "write_failed": "Could not write the file: {error}",
-      "done": "Exported {checklists} checklist(s), {rows} observation(s).\n{path}\n\nOn the eBird site choose Import Data → eBird Record Format (Extended).",
-      "needs_review": "{count} species were left without a common name (uncertain mapping, scientific name only). Please verify them on eBird after import:"
+    "button": "Export eBird",
+    "button_tip": "Turn identified birds into eBird observations for import on the eBird site",
+    "title": "Export eBird Observations",
+    "location_prompt": "Location name (eBird uses it to place the checklist; a hotspot or your own name):",
+    "save_title": "Save eBird Observations",
+    "no_photos": "No photos are loaded.",
+    "no_records": "Nothing to export: needs photos rated 2★ or higher, with an identified species and a capture time.",
+    "write_failed": "Could not write the file: {error}",
+    "done": "Exported {checklists} checklist(s), {rows} observation(s).\n{path}\n\nOn the eBird site choose Import Data → eBird Record Format (Extended).",
+    "needs_review": "{count} species were left without a common name (uncertain mapping, scientific name only). Please verify them on eBird after import:"
+  },
+  "dir_select": {
+    "title": "Choose Folders to Merge",
+    "header": "Add every folder you want in the report — they can live anywhere, on any drive. Checked folders are merged into one result.",
+    "add": "Add Folder…",
+    "add_title": "Choose a folder to add",
+    "remove": "Remove from list",
+    "empty": "No folders yet. Click “Add Folder…” to build your list.",
+    "row": "{name}    {photos} photos · {species} species",
+    "row_unreadable": "{name}    — (unreadable)",
+    "all": "All",
+    "none": "None",
+    "summary": "{count} folders selected · {photos} photos",
+    "open": "Open",
+    "none_selected": "Please select at least one folder.",
+    "batch_prompt_title": "Add the batches inside",
+    "batch_prompt": "“{name}” contains {count} processed folders. Add them all?",
+    "nothing_found": "No processed results found in “{name}”."
   },
   "report_export": {
     "button": "Export Report",

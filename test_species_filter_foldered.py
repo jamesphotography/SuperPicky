@@ -261,3 +261,76 @@ def test_dropdown_respects_current_rating_filter(tmp_path):
         assert has_other_all is True, "0★ 下有塞舌尔和未识别照片，应显示兜底项"
     finally:
         db.close()
+
+
+# ----------------------------------------------------------------------
+#  下拉编号：一眼看出拍到了多少种
+#  Numbered dropdown: the species count at a glance
+# ----------------------------------------------------------------------
+
+def _panel(species, has_other=False):
+    """造一个已填好鸟种的筛选面板。"""
+    from tools.i18n import get_i18n
+    from ui.filter_panel import FilterPanel
+
+    i18n = get_i18n()
+    i18n.switch_language("zh_CN")
+    panel = FilterPanel(i18n)
+    panel.update_species_list(species, has_other=has_other)
+    return panel
+
+
+def _texts(panel):
+    return [panel.species_combo.itemText(i)
+            for i in range(panel.species_combo.count())]
+
+
+def test_species_entries_are_numbered():
+    """
+    鸟种逐项编号 —— 拉到底看最后一个序号就知道这批拍到了多少种，
+    不必自己数（合并十天常有四五十种）。
+    """
+    panel = _panel(["粉顶果鸠", "棕胸金鹃", "绿鹂"])
+
+    assert _texts(panel)[1:] == ["1. 粉顶果鸠", "2. 棕胸金鹃", "3. 绿鹂"]
+
+
+def test_numbering_does_not_change_the_filter_value():
+    """
+    编号只进显示文案，itemData 仍是纯鸟种名 —— 筛选、记忆当前选中项、
+    与数据库比对全靠它，掺进序号就会全线错位。
+    """
+    panel = _panel(["粉顶果鸠", "棕胸金鹃"])
+
+    data = [panel.species_combo.itemData(i)
+            for i in range(panel.species_combo.count())]
+    assert data == ["", "粉顶果鸠", "棕胸金鹃"]
+    assert panel.get_filters()["bird_species_cn"] == ""
+
+
+def test_all_species_and_catch_all_are_not_numbered():
+    """
+    「全部鸟种」与「其他鸟类」不参与编号 —— 前者不是鸟种，后者是兜底桶
+    （可能装着好几种），给它们编号会让末位序号不再等于鸟种数。
+    """
+    panel = _panel(["粉顶果鸠", "棕胸金鹃"], has_other=True)
+
+    texts = _texts(panel)
+    assert not texts[0][0].isdigit(), f"「全部鸟种」不该带序号：{texts[0]}"
+    assert not texts[-1][0].isdigit(), f"「其他鸟类」不该带序号：{texts[-1]}"
+    assert texts[-2].startswith("2. "), f"末位鸟种序号应等于鸟种数：{texts}"
+
+
+def test_reselecting_after_refresh_survives_numbering():
+    """
+    重新填充列表后仍要选回原来的鸟种 —— 选中项是按 data 找回的，
+    编号变了（比如筛掉几种后序号整体前移）也不能把选择丢掉。
+    """
+    panel = _panel(["粉顶果鸠", "棕胸金鹃", "绿鹂"])
+    panel.species_combo.setCurrentIndex(3)          # 绿鹂
+    assert panel.species_combo.currentData() == "绿鹂"
+
+    panel.update_species_list(["棕胸金鹃", "绿鹂"])   # 粉顶果鸠 被筛掉
+
+    assert panel.species_combo.currentData() == "绿鹂"
+    assert panel.species_combo.currentText() == "2. 绿鹂"
