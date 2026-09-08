@@ -38,7 +38,16 @@ from typing import Dict, List, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-DEFAULT_CSV = os.path.join("birdid", "data", "rarity_match_report.csv")
+def _default_csv() -> str:
+    """
+    默认源 CSV 的位置：用户配置目录下的 rarity_source/。
+
+    刻意不放 birdid/data —— 那里会被三个 .spec 整目录打包进安装包，源数据
+    多半不允许随应用分发。.gitignore 只拦得住 git，拦不住 PyInstaller。
+    Kept out of birdid/data, which every .spec bundles into the installer.
+    """
+    from config import get_app_config_dir
+    return str(get_app_config_dir() / "rarity_source" / "rarity_match_report.csv")
 
 
 def _default_out() -> str:
@@ -150,7 +159,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(
         description="把 CSV 罕见度数据转成自定义罕见指数库（数据不得随应用分发）"
     )
-    ap.add_argument("--csv", default=DEFAULT_CSV, help=f"源 CSV（默认 {DEFAULT_CSV}）")
+    ap.add_argument("--csv", default=_default_csv(),
+                    help=f"源 CSV（默认 {_default_csv()}）")
     ap.add_argument("--out", default=_default_out(),
                     help=f"输出 db（默认 {_default_out()}）")
     args = ap.parse_args()
