@@ -1425,7 +1425,8 @@
     "prompt": "Enter a keyword to search for bird species",
     "no_match": "No matching species found",
     "confirm": "Confirm",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "this_shoot": "this shoot"
   },
   "crop_advisor": {
     "title": "Crop Advice",

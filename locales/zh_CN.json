@@ -1425,7 +1425,8 @@
     "prompt": "请输入关键词搜索鸟种",
     "no_match": "未找到匹配的鸟种",
     "confirm": "确认修改",
-    "cancel": "取消"
+    "cancel": "取消",
+    "this_shoot": "本次"
   },
   "crop_advisor": {
     "title": "裁剪建议",

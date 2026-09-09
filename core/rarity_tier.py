@@ -74,6 +74,18 @@ _TIER_THRESHOLDS = [8.0, 25.0, 50.0, 75.0]
 HARDCODE_OVERRIDES = {
     # 学名 → (override 分数 0-100, 理由)
     # scientific name → (override score 0-100, reason)
+    "Ardea coromanda": (
+        1.23,
+        "东方牛背鹭 — 与西方牛背鹭（Ardea ibis，1.24 分「常见」）拆分自同一合并种，"
+        "两者在各自分布区同样是农田伴牛的普通鸟，观察难度相当。但 eBird 等主力"
+        "数据源仍把绝大多数记录挂在合并名 Bubulcus ibis 下（CC 子集 316 万条），"
+        "拆分后的 B. coromandus 只分到 4527 条 → 单独计分得 53.56「罕见」。"
+        "此处按合并计数 3162542 插值定分 1.23，与西方牛背鹭同档。"
+        "Split from the same lumped species as Western Cattle Egret; records "
+        "remain overwhelmingly filed under the lumped name, so scoring the "
+        "split alone yields a spurious 'Rare'. Scored from the merged count. "
+        "[james 2026-09-09]",
+    ),
     "Quoyornis georgianus": (
         40.0,
         "白胸鸲鹟 — 2020 年从 Eopsaltria 拆出新属，GBIF backbone 仍按旧学名"

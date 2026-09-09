@@ -2231,6 +2231,29 @@ class ResultsBrowserWindow(QMainWindow):
             return path if path and os.path.exists(path) else None
         return None
 
+    def _session_species(self) -> list:
+        """
+        本次载入的照片里都有哪些鸟种，按张数降序。
+
+        用来给改鸟种弹窗做默认视图：认错多半是认成了隔壁那种，而那种当天通常
+        也拍到了，直接列出来比让用户重新打字快得多。合并模式下这是跨全部目录
+        的合计，正合适——用户要改成的那种可能出现在别的那一天。
+
+        张数相同的按名字排，免得同一批照片每次打开顺序都不一样。
+
+        The species actually photographed this time, most-shot first; used as
+        the picker's opening view.
+
+        返回 / Returns:
+            list: [(中文名, 张数)]，张数降序、同数按名字
+        """
+        counts: Counter = Counter()
+        for photo in (self._all_photos or []):
+            name = (photo.get("bird_species_cn") or "").strip()
+            if name:
+                counts[name] += 1
+        return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+
     def _on_species_edit_requested(self, photo: dict):
         """
         用户点击铅笔图标 → 弹出鸟种搜索对话框，确认后后台更新 DB + 移动文件。
@@ -2246,7 +2269,9 @@ class ResultsBrowserWindow(QMainWindow):
             self._batch_species_edit(targets)
             return
 
-        dialog = BirdSpeciesEditDialog(parent=self)
+        dialog = BirdSpeciesEditDialog(
+            parent=self, session_species=self._session_species(),
+            exclude_species=[photo.get("bird_species_cn") or ""])
         if dialog.exec() != QDialog.Accepted:
             return
 
@@ -2378,7 +2403,9 @@ class ResultsBrowserWindow(QMainWindow):
             return
 
         # 2. 选目标鸟种（复用单张编辑用的搜索弹窗）
-        dialog = BirdSpeciesEditDialog(parent=self)
+        dialog = BirdSpeciesEditDialog(
+            parent=self, session_species=self._session_species(),
+            exclude_species=[photo.get("bird_species_cn") or ""])
         if dialog.exec() != QDialog.Accepted:
             return
         new_cn = dialog.selected_cn
@@ -2438,7 +2465,14 @@ class ResultsBrowserWindow(QMainWindow):
         i18n = self.i18n
         use_en = i18n.current_lang.startswith("en")
 
-        dialog = BirdSpeciesEditDialog(parent=self)
+        # 勾选集同属一种时把它排除（改成自己没意义）；混着好几种就都留着，
+        # 因为其中任何一种都可能是用户要统一改成的那个。
+        # Exclude the current species only when the whole selection shares one.
+        current = {(t.get("bird_species_cn") or "").strip() for t in targets}
+        exclude = list(current) if len(current) == 1 else []
+        dialog = BirdSpeciesEditDialog(
+            parent=self, session_species=self._session_species(),
+            exclude_species=exclude)
         if dialog.exec() != QDialog.Accepted:
             return
         new_cn = dialog.selected_cn
