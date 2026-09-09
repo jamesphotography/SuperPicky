@@ -210,6 +210,88 @@ def test_detail_panel_shows_gbif_only_for_species_missing_from_dataset(panel, cu
     assert "(42.0)" in text, f"实际显示: {text!r}"
 
 
+# ── 查询鸟名面板 / Bird-name search panel ─────────────────────────────────
+#
+# 查询鸟名的详情区与选片详情页展示同一份罕见度，两处必须口径一致：
+# 同样并排显示自定义指数、同样保留两位小数、同样在数据缺席时原样降级。
+# The search panel's detail area mirrors the photo detail panel's rarity row.
+
+
+class _StubRefDB:
+    """
+    假的参考库：只回固定的罕见度/IUCN/简介，避开真实 36MB 库。
+
+    真实库里的分数会随数据修复而变（牛背鹭刚从 100.0 修到 1.23），
+    断言钉死具体分数会让测试跟着数据漂移。
+
+    Stub reference DB returning fixed values so assertions do not drift with
+    the real database's scores.
+    """
+
+    def __init__(self, rarity=1.2):
+        self._rarity = rarity
+
+    def get_extra_info_by_scientific_name(self, latin):
+        return {
+            "gbif_rarity_100": self._rarity,
+            "iucn_category": "LC",
+            "short_description_zh": "测试用简介",
+        }
+
+    def get_gbif_rarity_batch_by_scientific_names(self, names):
+        return {}
+
+
+@pytest.fixture
+def search_panel(qt_app, monkeypatch):
+    """构造查询鸟名面板，并把参考库换成桩。"""
+    from ui.birdname_search_widget import BirdNameSearchWidget
+
+    monkeypatch.setattr(
+        BirdNameSearchWidget, "_init_db_manager", staticmethod(lambda: _StubRefDB())
+    )
+    w = BirdNameSearchWidget()
+    yield w
+    w.close()
+
+
+_EGRET = {
+    "chinese_name": "牛背鹭",
+    "english_name": "Eastern Cattle Egret",
+    "latin_name": "Ardea coromanda",
+}
+
+
+def test_search_panel_shows_both_indices(search_panel, custom_db):
+    """有自定义罕见指数时，查询鸟名详情区也并排显示，两位小数。"""
+    search_panel._show_detail(_EGRET)
+
+    text = search_panel.detail_rarity_label.text()
+    assert "(1.2 - 5.29)" in text, f"实际显示: {text!r}"
+
+
+def test_search_panel_shows_gbif_only_without_custom_data(search_panel, no_custom_db):
+    """没装自定义罕见指数时（绝大多数用户的状态），显示与加功能前完全一致。"""
+    search_panel._show_detail(_EGRET)
+
+    text = search_panel.detail_rarity_label.text()
+    assert "(1.2)" in text, f"实际显示: {text!r}"
+    assert "-" not in text.split("(")[-1], f"不该出现悬空分隔符: {text!r}"
+
+
+def test_search_panel_gbif_only_for_species_missing_from_dataset(search_panel, custom_db):
+    """有指数库但查不到这个鸟种时，不留空括号或悬空的 -。"""
+    search_panel._show_detail({
+        "chinese_name": "查无此鸟",
+        "english_name": "No Such Bird",
+        "latin_name": "Nullus avis",
+    })
+
+    text = search_panel.detail_rarity_label.text()
+    assert "(1.2)" in text, f"实际显示: {text!r}"
+    assert "-" not in text.split("(")[-1], f"不该出现悬空分隔符: {text!r}"
+
+
 def test_detail_panel_unaffected_when_gbif_missing(panel, custom_db):
     """GBIF 没值时整行仍是占位符——自定义指数不能反客为主。"""
     panel.show_photo({

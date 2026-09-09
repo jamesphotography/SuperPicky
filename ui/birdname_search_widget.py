@@ -37,6 +37,12 @@ from config import get_birdname_settings_path, get_install_scoped_resource_path
 from core.rarity_tier import gbif_score_to_tier, tier_name, tier_icon, tier_color
 from ui.detail_panel import _format_iucn
 
+# 可选的自定义罕见指数（用户自备的 0-10 数据源）。文件缺席是常态，
+# lookup_index 此时返回 None，本面板显示与未装时逐字一致。
+# Optional user-supplied 0-10 rarity index; absent for most users, in which
+# case lookup_index returns None and the panel renders exactly as before.
+from core.custom_rarity import lookup_index as lookup_custom_rarity
+
 
 def get_birdname_db_path() -> str:
     """获取鸟类名称数据库路径"""
@@ -801,8 +807,19 @@ class BirdNameSearchWidget(QWidget):
         if score is not None:
             tier = gbif_score_to_tier(score)
             color = tier_color(tier) or COLORS["text_primary"]
+            # 用户若装了自定义罕见指数，并排显示作参照，与选片详情页同一口径
+            # （见 ui/detail_panel.py 罕见度行）。纯展示，不参与任何排序。
+            # 保留两位小数：这类 0-10 的评分取值高度集中，截成一位会把大部分
+            # 区分度抹掉（实测万余种数据 572 个取值压成 87 档）。
+            # Mirror the photo detail panel: show the optional custom index
+            # alongside, two decimals, display-only.
+            dn_idx = lookup_custom_rarity(cn, en)
+            score_text = (
+                f"{score:.1f} - {dn_idx:.2f}" if dn_idx is not None
+                else f"{score:.1f}"
+            )
             self.detail_rarity_label.setText(
-                f"{tier_icon(tier)} {tier_name(tier)} ({score:.1f})"
+                f"{tier_icon(tier)} {tier_name(tier)} ({score_text})"
             )
             self.detail_rarity_label.setStyleSheet(
                 f"color: {color}; font-size: 12px; font-weight: 600; "
