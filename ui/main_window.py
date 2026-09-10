@@ -10,6 +10,7 @@ import threading
 import subprocess
 from types import SimpleNamespace
 from pathlib import Path
+from typing import Optional
 
 
 def get_resource_path(relative_path):
@@ -34,6 +35,8 @@ from PySide6.QtCore import (
     QThread, QStandardPaths, QSize, QRect,
 )
 from PySide6.QtGui import QFont, QPixmap, QIcon, QAction, QTextCursor, QColor, QDragEnterEvent, QDropEvent, QKeySequence
+
+from ui.geometry_utils import clamp_rect_to_available
 
 from tools.i18n import get_i18n, set_primary_language
 from advanced_config import get_advanced_config
@@ -877,7 +880,9 @@ class SuperPickyMainWindow(QMainWindow):
         self.setWindowTitle(self.i18n.t("app.window_title"))
         self.setMinimumSize(800, 720)
         if not self._restore_main_window_geometry():
-            self.resize(960, 820)
+            # 首次启动只夹尺寸不定位置，位置交给窗口管理器
+            # First launch: clamp the size only, let the WM place the window.
+            self.resize(self._clamp_size_to_screen(QSize(960, 820)))
         if self.config.main_window_maximized:
             QTimer.singleShot(0, self.showMaximized)
 
@@ -909,8 +914,103 @@ class SuperPickyMainWindow(QMainWindow):
         if not self._is_valid_main_window_rect(rect):
             return False
 
-        self.setGeometry(rect)
+        # 保留用户的位置偏好，但必须夹进可用区域：保存时 Dock 自动隐藏、恢复时
+        # Dock 常驻，同一份几何就会把底部的「开始处理」按钮顶到屏幕外点不到。
+        # Keep the user's placement preference but clamp it into the available
+        # area: a geometry saved with the Dock auto-hidden pushes the bottom
+        # buttons off-screen once the Dock is pinned.
+        self.setGeometry(self._clamp_rect_to_screen(rect))
         return True
+
+    def _target_available_geometry(self, rect: QRect) -> Optional[QRect]:
+        """
+        取矩形所在屏幕的可用区域（扣除菜单栏/任务栏/Dock）。
+
+        优先选与矩形相交面积最大的屏幕（多屏时窗口可能横跨两块屏），
+        没有相交屏幕时回退主屏。
+
+        参数:
+        rect (QRect): 窗口矩形（屏幕坐标）。
+
+        返回:
+        Optional[QRect]: 目标屏幕的可用区域；无任何屏幕时返回 None。
+
+        Return the available geometry of the screen the rectangle belongs to.
+
+        Picks the screen with the largest intersection area (a window may span
+        two screens) and falls back to the primary screen when none intersects.
+
+        Parameters:
+        rect (QRect): Window rectangle in screen coordinates.
+
+        Return:
+        Optional[QRect]: The target screen's available area, or None when there
+        is no screen at all.
+        """
+        screens = QApplication.screens()
+        if not screens:
+            return None
+
+        def overlap_area(screen) -> int:
+            inter = screen.availableGeometry().intersected(rect)
+            return inter.width() * inter.height() if inter.isValid() else 0
+
+        best = max(screens, key=overlap_area)
+        if overlap_area(best) <= 0:
+            best = QApplication.primaryScreen() or best
+        return best.availableGeometry()
+
+    def _clamp_rect_to_screen(self, rect: QRect) -> QRect:
+        """
+        把窗口矩形夹进目标屏幕的可用区域。
+
+        参数:
+        rect (QRect): 待夹取的窗口矩形。
+
+        返回:
+        QRect: 夹取后的矩形；无屏幕信息时原样返回。
+
+        Clamp a window rectangle into the target screen's available area.
+
+        Parameters:
+        rect (QRect): Rectangle to clamp.
+
+        Return:
+        QRect: The clamped rectangle, unchanged when no screen info is available.
+        """
+        available = self._target_available_geometry(rect)
+        if available is None:
+            return rect
+        return clamp_rect_to_available(rect, available, self.minimumSize())
+
+    def _clamp_size_to_screen(self, size: QSize) -> QSize:
+        """
+        把默认窗口尺寸夹进主屏可用区域（不改变位置）。
+
+        参数:
+        size (QSize): 期望的窗口尺寸。
+
+        返回:
+        QSize: 不超过可用区域的尺寸；无屏幕信息时原样返回。
+
+        Clamp a default window size into the primary screen's available area
+        without touching placement.
+
+        Parameters:
+        size (QSize): Desired window size.
+
+        Return:
+        QSize: A size that fits the available area, unchanged when unknown.
+        """
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            return size
+        available = screen.availableGeometry()
+        return clamp_rect_to_available(
+            QRect(available.x(), available.y(), size.width(), size.height()),
+            available,
+            self.minimumSize(),
+        ).size()
 
     def _is_valid_main_window_rect(self, rect: QRect) -> bool:
         """
@@ -1843,7 +1943,10 @@ class SuperPickyMainWindow(QMainWindow):
             # 浏览器关闭时恢复主窗口（避免无可见窗口的"幽灵"状态）
             self._results_browser.closed.connect(self._show_main_window)
         self._results_browser.open_directory(self.directory_path)
-        self._results_browser.show()
+        # 最大化打开：14 寸小屏或放大字体时，1280x780 的默认窗口会挤压三栏布局
+        # Open maximized: on 14" screens or with enlarged text the 1280x780
+        # default squeezes the three-column layout.
+        self._results_browser.showMaximized()
         self._results_browser.raise_()
         self._results_browser.activateWindow()
         # 浏览器打开后隐藏主窗口（托盘图标保持可用）
