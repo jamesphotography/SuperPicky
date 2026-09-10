@@ -1,4 +1,4 @@
-# SuperPicky 4.6.3 RC2
+# SuperPicky 4.6.3 RC3
 
 **What's new since RC1:**
 
@@ -24,7 +24,7 @@ by both changes.
 
 ---
 
-# SuperPicky 4.6.3 RC2（中文）
+# SuperPicky 4.6.3 RC3（中文）
 
 **RC1 以来的变化：**
 

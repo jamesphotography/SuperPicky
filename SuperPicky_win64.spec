@@ -201,14 +201,24 @@ a.binaries = [
     entry for entry in a.binaries
     if _binary_basename(entry[0]) not in EXCLUDED_BINARY_NAMES
 ]
+# 注意：以下 print 必须是纯 ASCII。
+# .spec 由 PyInstaller 子进程执行，它的 stdout 编码不受本项目控制——在 Windows
+# runner 上是 cp1252，输出中文会抛 UnicodeEncodeError 并让整个构建失败
+# （v4.6.3-rc2 的 Windows 构建就是这么挂的）。中文说明写在注释里，运行时输出
+# 保持 ASCII，这样无论谁、用什么方式调用 pyinstaller 都不会炸。
+#
+# NOTE: these prints must stay pure ASCII. The .spec runs inside a PyInstaller
+# subprocess whose stdout encoding we do not control (cp1252 on the Windows
+# runner); non-ASCII output raises UnicodeEncodeError and fails the whole build.
+# Chinese explanations live in comments; runtime output stays ASCII.
 for _entry in _excluded_binaries:
-    print(f"[spec] 已排除二进制 / excluded binary: {_entry[0]}")
+    print("[spec] excluded binary: %s" % _entry[0])
 if not _excluded_binaries:
     # CPU 构建走到这里是正常的（本来就没有 cudnn DLL）；CUDA 构建若没排除到
     # 任何东西，说明 torch 的 cuDNN 布局变了，需要重新核对文件名。
     # Hitting this on a CPU build is expected; on a CUDA build it means torch's
     # cuDNN layout changed and the name list needs revisiting.
-    print('[spec] 未匹配到待排除的二进制 / no binaries matched the exclusion list')
+    print("[spec] no binaries matched the exclusion list (expected for CPU builds)")
 
 pyz = PYZ(a.pure)
 
