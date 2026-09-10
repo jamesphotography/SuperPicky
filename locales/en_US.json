@@ -1514,7 +1514,8 @@
     "none_selected": "Please select at least one folder.",
     "batch_prompt_title": "Add the batches inside",
     "batch_prompt": "“{name}” contains {count} processed folders. Add them all?",
-    "nothing_found": "No processed results found in “{name}”."
+    "nothing_found": "No processed results found in “{name}”.",
+    "nothing_found_many": "No processed results found in these {count} folders:\n{names}"
   },
   "report_export": {
     "button": "Export Report",

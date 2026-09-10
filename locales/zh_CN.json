@@ -1514,7 +1514,8 @@
     "none_selected": "至少选择一个目录。",
     "batch_prompt_title": "加入其中的批次",
     "batch_prompt": "「{name}」下有 {count} 个已处理的目录，全部加入吗？",
-    "nothing_found": "「{name}」里没有找到已处理的选鸟结果。"
+    "nothing_found": "「{name}」里没有找到已处理的选鸟结果。",
+    "nothing_found_many": "以下 {count} 个目录里没有找到已处理的选鸟结果：\n{names}"
   },
   "report_export": {
     "button": "导出报告",
