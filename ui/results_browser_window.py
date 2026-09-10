@@ -1206,6 +1206,15 @@ class ResultsBrowserWindow(QMainWindow):
 
     可以在主窗口之外独立显示/隐藏，不会阻塞主窗口操作。
     """
+
+    # 后台任务完成后回主线程刷新界面。
+    # 必须用信号而不是 QTimer.singleShot：后者从没有事件循环的工作线程调用
+    # 时不会触发（已实测），界面就永远停在旧状态。跨线程信号走队列连接，是
+    # Qt 里唯一可靠的回主线程方式。
+    # Cross-thread signals are the only reliable way back to the GUI thread;
+    # QTimer.singleShot silently never fires when called from a worker thread.
+    bg_refresh_requested = Signal()
+    species_change_failed = Signal(list)
     closed = Signal()   # 窗口关闭时通知主窗口
 
     def __init__(self, parent=None):
@@ -1302,6 +1311,10 @@ class ResultsBrowserWindow(QMainWindow):
         center_layout.addWidget(self._toolbar)
 
         self._thumb_grid = ThumbnailGrid(self.i18n, self)
+        # 后台线程完成后的界面刷新与失败提示，一律经信号回主线程
+        self.bg_refresh_requested.connect(self._refresh_after_background_change)
+        self.species_change_failed.connect(self._show_species_change_failures)
+
         self._thumb_grid.photo_selected.connect(self._on_photo_selected)
         self._thumb_grid.photo_double_clicked.connect(self._enter_fullscreen)
         self._thumb_grid.multi_selection_changed.connect(self._on_multi_selection_changed)
@@ -2450,6 +2463,11 @@ class ResultsBrowserWindow(QMainWindow):
         #    The fullscreen view owns its own species label; refresh it too.
         self._detail_panel.show_photo(photo)
         self._fullscreen.refresh_species_label(photo)
+        # 缩略图卡片底部的鸟名同样要跟着改：它是构造时算一次的独立 QLabel，
+        # 在此之前改完鸟种，网格里显示的还是旧鸟名。
+        # The card caption is a separate QLabel set only at construction; without
+        # this the grid kept showing the stale species after a correction.
+        self._thumb_grid.refresh_caption(photo)
 
         # 4. 刷新左侧鸟种下拉
         use_en = self.i18n.current_lang.startswith("en")
@@ -2465,7 +2483,11 @@ class ResultsBrowserWindow(QMainWindow):
         # Failures are surfaced; the callback fires on the worker thread, so
         # marshal back to the GUI thread before touching any widget.
         def _report(failures: list) -> None:
-            QTimer.singleShot(0, lambda: self._show_species_change_failures(failures))
+            # 同上：这里在工作线程里被调用，QTimer.singleShot 不会触发，
+            # 「失败必须让用户看见」因此一直没兑现。改走跨线程信号。
+            # Also called on a worker thread; the timer never fired, so the
+            # promised failure dialog never actually appeared.
+            self.species_change_failed.emit(failures)
 
         _trigger_species_change(
             base_dir, photo, new_cn, new_en, self._db, db_key, on_failures=_report,
@@ -2622,6 +2644,8 @@ class ResultsBrowserWindow(QMainWindow):
                 target["has_bird"] = 0
                 target["rating"] = -1
             self._thumb_grid.refresh_photo(photo, -1)
+            # 卡片底部的鸟名是独立 QLabel，refresh_photo 只重绘角标碰不到它
+            self._thumb_grid.refresh_caption(photo)
 
         # 详情面板与全屏鸟名标签跟着刷新，否则改完界面纹丝不动
         current = getattr(self._detail_panel, "_current_photo", None)
@@ -2642,27 +2666,29 @@ class ResultsBrowserWindow(QMainWindow):
                 from tools.utils import log_message
                 log_message(f"[mark_no_bird] failed: {e}")
             finally:
-                QTimer.singleShot(0, self._refresh_species_dropdown)
+                # 经信号回主线程；QTimer.singleShot 在工作线程里不会触发
+                self.bg_refresh_requested.emit()
 
         import threading
         threading.Thread(target=_do, daemon=True).start()
 
-    def _refresh_species_dropdown(self) -> None:
+    @Slot()
+    def _refresh_after_background_change(self) -> None:
         """
-        重算左侧鸟种下拉（主线程调用）。
+        后台改动落定后重放筛选，让整个浏览器反映新数据（主线程槽）。
 
-        标记无鸟之后那一种可能已经一张不剩，下拉里留着空项点进去什么都没有。
+        重读库而不是打补丁：标记为无鸟会同时改掉鸟种、星级和文件位置，牵动
+        缩略图、鸟种下拉、星级筛选与张数统计。批量改鸟种早就是这么收尾的
+        （_execute_batch_species_change），这里沿用同一条路径，免得两处的
+        刷新程度各不相同。
 
-        Recompute the species dropdown; a species may have no photos left.
+        Reload from the DB and re-apply filters so the whole browser reflects
+        the change; the batch species flow already ends this way.
         """
         if not self._db:
             return
-        use_en = self.i18n.current_lang.startswith("en")
-        current_filters = self._filter_panel.get_filters()
-        new_species, new_has_other = compute_dropdown_species(
-            self._db, use_en=use_en, ratings=current_filters.get("ratings")
-        )
-        self._filter_panel.update_species_list(new_species, new_has_other)
+        self._all_photos = self._db.get_all_photos()
+        self._apply_filters(self._filter_panel.get_filters())
 
     def _batch_species_edit(self, targets: list) -> None:
         """

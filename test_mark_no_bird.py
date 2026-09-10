@@ -331,3 +331,105 @@ def test_batch_species_edit_restores_has_bird(tmp_path, monkeypatch,
     finally:
         _join_worker_threads()
         win.close()
+
+
+# ── F. 缩略图卡片的文字必须跟着变 ────────────────────────────────────────
+
+def _card_text(win, photo) -> str:
+    """取这张照片在网格里那张卡片底部显示的文字。"""
+    from ui.thumbnail_grid import _photo_key
+    card = win._thumb_grid._cards.get(_photo_key(photo))
+    assert card is not None, "网格里找不到这张照片的卡片"
+    return card.name_label.text()
+
+
+def test_mark_no_bird_refreshes_card_caption(tmp_path, monkeypatch,
+                                             _embedded_write_mode):
+    """标记为无鸟后，卡片底部不能还写着那个错鸟名。
+
+    卡片文字在构造时算一次就再没人更新过（ThumbnailCard.name_label），
+    refresh_photo 只重绘评分角标。用户看到的就是「点完没反应」。
+
+    The card caption is set once at construction and never updated; only the
+    rating badge is repainted, so the stale species name stays on screen.
+    """
+    _stub_dialog_marks_no_bird(monkeypatch)
+    _auto_confirm(monkeypatch)
+
+    root = str(tmp_path)
+    win = _browser_with_identified_photos(
+        root, [("DSC_1", "白喉抚蜜鸟/3星_优选/DSC_1.jpg", 3, None)])
+    try:
+        photo = next(p for p in win._filtered_photos if p["filename"] == "DSC_1")
+        assert _card_text(win, photo) == "白喉抚蜜鸟"
+
+        win._on_species_edit_requested(photo)
+        _join_worker_threads()
+
+        # 无鸟种时卡片退回显示文件名（_tile_label_text 的既有规则）
+        assert _card_text(win, photo) == "DSC_1", "卡片还挂着旧鸟名"
+    finally:
+        _join_worker_threads()
+        win.close()
+
+
+def test_species_edit_refreshes_card_caption(tmp_path, monkeypatch,
+                                             _embedded_write_mode):
+    """改鸟种后卡片文字也必须跟着变——同一个根因，改鸟种一直也没刷。"""
+    from test_species_change_regression import _stub_species_dialog
+
+    _stub_species_dialog(monkeypatch, "家燕", "Barn Swallow", "Hirundo rustica")
+    _auto_confirm(monkeypatch)
+
+    root = str(tmp_path)
+    win = _browser_with_identified_photos(
+        root, [("DSC_1", "白喉抚蜜鸟/3星_优选/DSC_1.jpg", 3, None)])
+    try:
+        photo = next(p for p in win._filtered_photos if p["filename"] == "DSC_1")
+        assert _card_text(win, photo) == "白喉抚蜜鸟"
+
+        win._on_species_edit_requested(photo)
+        _join_worker_threads()
+
+        assert _card_text(win, photo) == "家燕", "卡片还挂着旧鸟名"
+    finally:
+        _join_worker_threads()
+        win.close()
+
+
+def test_mark_no_bird_refreshes_species_dropdown(tmp_path, monkeypatch,
+                                                 _embedded_write_mode):
+    """标记完最后一张，左侧鸟种下拉里不能还留着那个鸟种。
+
+    后台线程跑完要回主线程刷新界面。QTimer.singleShot 从没有事件循环的工作
+    线程调用**根本不会触发**（已实测），所以这条刷新必须走跨线程信号，否则
+    用户点完只看到缩略图变了、筛选器纹丝不动。
+
+    The post-move UI refresh must be delivered by a cross-thread signal:
+    QTimer.singleShot never fires when called from a plain worker thread.
+    """
+    from PySide6.QtWidgets import QApplication
+
+    _stub_dialog_marks_no_bird(monkeypatch)
+    _auto_confirm(monkeypatch)
+
+    root = str(tmp_path)
+    win = _browser_with_identified_photos(
+        root, [("DSC_1", "白喉抚蜜鸟/3星_优选/DSC_1.jpg", 3, None)])
+    try:
+        combo = win._filter_panel.species_combo
+        before = [combo.itemText(i) for i in range(combo.count())]
+        assert any("白喉抚蜜鸟" in t for t in before), f"前置条件不成立：{before}"
+
+        photo = next(p for p in win._filtered_photos if p["filename"] == "DSC_1")
+        win._on_species_edit_requested(photo)
+        _join_worker_threads()
+        # 跨线程信号要走事件循环才能派发到主线程
+        for _ in range(20):
+            QApplication.processEvents()
+
+        after = [combo.itemText(i) for i in range(combo.count())]
+        assert not any("白喉抚蜜鸟" in t for t in after), f"下拉没刷新：{after}"
+    finally:
+        _join_worker_threads()
+        win.close()
