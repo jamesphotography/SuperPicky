@@ -1,3 +1,117 @@
+# SuperPicky 4.6.3 RC1
+
+This release is about correcting the AI when it is plainly wrong, and about
+windows that stay where you can reach them.
+
+## What's new
+
+1. **Tell SuperPicky "this is not a bird".** Every so often the detector calls a
+   crocodile — or a branch, or a rock — a bird, and until now there was no way to
+   say otherwise: you could change the species, but not remove it. The species
+   dialog now has a **Not a bird** button. It clears the species, drops the photo
+   to 0 stars, moves it to the reject pile and takes it out of the report's
+   species list, all in one step. Tick several thumbnails first and the whole
+   selection goes at once. Got it wrong? Just set a species again — the photo
+   counts as a bird once more (you will want to restore its rating yourself,
+   since naming a species deliberately leaves your stars alone).
+
+2. **The species picker opens with the birds you actually photographed.** When a
+   bird is misidentified it is usually mistaken for the species next to it, and
+   that one was very likely photographed the same day. The dialog now lists this
+   shoot's species first, most-shot at the top, before you type anything; once
+   you do type, they still sort to the top of the matches.
+
+3. **The results browser opens maximized.** On a 14-inch MacBook — or at any
+   enlarged text size — the old fixed window squeezed the three-column layout.
+   It now opens maximized, keeping the title bar and toolbar (this is not
+   macOS full screen).
+
+4. **Pick several folders at once when merging.** The system folder chooser now
+   accepts a multiple selection, so building a merged set no longer means
+   opening the dialog once per folder.
+
+5. **Your own rarity index sits next to the global one.** The bird-name lookup
+   now shows the custom rarity score beside the global figure, the same way the
+   results browser does.
+
+## Fixes
+
+6. **The main window no longer opens with its buttons off-screen.** The window
+   remembered a size and position without checking whether they still fit the
+   screen, so a window saved while the Dock was hidden came back with **Start**
+   and **Reset** cut off underneath a pinned Dock — visible in the layout,
+   impossible to click. The saved placement is now clamped into the screen's
+   usable area, keeping your preferred position while guaranteeing the whole
+   window is reachable.
+
+7. **78 common species are no longer labelled "legendary".** A flaw in how
+   rarity data was matched stored a genus-level key for species whose exact
+   match failed, and a genus key finds no occurrence records — so the count came
+   back as zero and the bird was scored as impossibly rare. The Eastern Cattle
+   Egret, one of the most widespread herons in the world, was rated legendary.
+   All affected entries have been rebuilt.
+
+8. **Changing a species now updates the thumbnail.** The caption under each
+   thumbnail was written once when the grid was built and never again, so after
+   correcting a species the grid kept showing the old name until you reopened
+   the folder.
+
+9. **You can finally see it when a file move fails.** Corrections that could not
+   move a file were supposed to report the reason; the notice was scheduled in a
+   way that never actually ran, so a failed correction looked exactly like a
+   successful one. It now reaches you.
+
+---
+
+# SuperPicky 4.6.3 RC1（中文）
+
+这一版是关于两件事：AI 认错得离谱时你能纠正它，以及窗口别跑到你够不着的地方。
+
+## 这一版有什么新东西
+
+1. **可以告诉 SuperPicky「这不是鸟」。** 识别偶尔会把鳄鱼——或者一根树枝、一块
+   石头——当成鸟，而在此之前你拿它没办法：能改鸟种，却不能说「这压根不是鸟」。
+   改鸟种的弹窗里现在多了**「这不是鸟」**。点一下，鸟种清空、降为 0 星、移进
+   「其他鸟类/0星_放弃」，报告的鸟种名录里也不再有它，一步到位。先勾几张再点，
+   整批一起标掉。标错了？重新指定鸟种即可，它又算作有鸟——星级要你自己升回来，
+   因为改鸟种不擅自动你的星。
+
+2. **选鸟种时先列出你今天真拍到的那些。** 认错多半是认成了隔壁那种，而那种当天
+   通常也拍到了。弹窗打开时（还没打字）先按张数列出本次拍到的鸟种；开始搜索后，
+   它们仍然排在匹配结果的最前面。
+
+3. **选鸟结果浏览器默认最大化打开。** 在 14 寸 MacBook 上，或者你把系统字号调大
+   之后，原先固定大小的窗口会把三栏布局挤变形。现在最大化打开，标题栏和工具栏
+   都还在（不是 macOS 那种全屏）。
+
+4. **合并目录时可以一次选中好几个。** 系统的目录选取框现在支持多选，攒一份合并
+   清单不必再一个一个地开弹窗。
+
+5. **查询鸟名时并排显示你自己的罕见指数。** 鸟名查询的详情区现在把自定义罕见
+   指数摆在全球罕见度旁边，与选鸟结果里的显示方式一致。
+
+## 修复
+
+6. **主窗口不会再把按钮开到屏幕外面。** 窗口会记住上次的大小和位置，却从不检查
+   这套数值在当前屏幕上还放不放得下——于是在 Dock 自动隐藏时存下的位置，等你把
+   Dock 固定显示之后再打开，**「开始处理」**和**「重置」**就被 Dock 压在下面：
+   布局里明明有，就是点不到。现在会把记住的位置夹进屏幕可用区域，既保留你惯用的
+   位置，也保证整个窗口都够得着。
+
+7. **78 个常见鸟种不再被标成「传奇」。** 罕见度数据在匹配失败时会退而存下属一级
+   的标识，而属一级的标识查不到任何观测记录——数量返回 0，于是这个鸟种被算成了
+   稀世罕见。牛背鹭，全世界分布最广的鹭之一，就这么成了「传奇」。所有受影响的
+   条目都已重建。
+
+8. **改完鸟种，缩略图上的名字会跟着变了。** 缩略图下方那行字只在建网格时写过
+   一次，之后再没更新过，所以改完鸟种，网格里显示的还是旧鸟名，除非你重开目录。
+
+9. **文件搬不动的时候，你终于能看见了。** 改鸟种时若文件移动失败，本该告诉你
+   原因，但那条提示的触发方式实际上从来没执行过——失败看起来和成功一模一样。
+   现在它会真的弹出来。
+
+---
+
 # SuperPicky 4.6.2
 
 This release is about looking at more than one shoot at a time: pick any folders
