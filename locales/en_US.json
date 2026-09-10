@@ -1298,7 +1298,9 @@
     "picked_only_tip": "Show only picked photos (3★ shots that top both sharpness and aesthetics)",
     "merge_dirs": "Merge Folders…",
     "merge_dirs_tooltip": "Combine results from several folders into one report (any location or drive)",
-    "merged_title": "{span} ({count} folders)"
+    "merged_title": "{span} ({count} folders)",
+    "mark_no_bird_confirm_title": "Mark as no bird",
+    "mark_no_bird_confirm_body": "{count} selected photos will be marked as having no bird: species cleared, rating dropped to 0 stars, files moved to the reject pile.\n\nTo undo, just set a species again."
   },
   "video": {
     "title_phase1": "Video Analysis (Phase 1 · YOLO bird/no-bird only)",
@@ -1426,7 +1428,9 @@
     "no_match": "No matching species found",
     "confirm": "Confirm",
     "cancel": "Cancel",
-    "this_shoot": "this shoot"
+    "this_shoot": "this shoot",
+    "not_a_bird": "Not a bird",
+    "not_a_bird_tip": "Mark as no bird: clear the species, drop to 0 stars and move to the reject pile"
   },
   "crop_advisor": {
     "title": "Crop Advice",

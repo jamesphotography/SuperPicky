@@ -581,6 +581,126 @@ def _write_species_metadata(
             )
 
 
+def _mark_no_bird_files(photo: dict) -> list:
+    """
+    收集这张照片需要清鸟名元数据的文件：RAW/JPEG 本体 + 配套 JPEG。
+
+    内部缓存预览不算——它不是用户的文件，跟改鸟种那边的判断保持一致。
+
+    The files whose species metadata must be cleared; the internal cache
+    preview is excluded, matching the species-change path.
+    """
+    files = []
+    main = photo.get("current_path") or photo.get("original_path") or ""
+    if main and os.path.exists(main):
+        files.append(main)
+    jpeg = photo.get("temp_jpeg_path") or ""
+    if jpeg and os.path.exists(jpeg) and not _is_internal_cache_path(jpeg):
+        files.append(jpeg)
+    return files
+
+
+def _run_mark_no_bird(
+    dir_path: str,
+    photo: dict,
+    report_db,
+    db_key,
+    i18n,
+    old_bird_cn: str = "",
+    old_bird_en: str = "",
+    metadata_writer=None,
+) -> bool:
+    """
+    同步把一张照片标记为「没有鸟」：写库 + 移文件 + 清元数据。
+
+    必须一次写三个字段，缺一个就自相矛盾：
+      - has_bird=0    —— 报告的鸟种名录按它过滤（core/report_export.py），
+                         不改的话误检的鸟种照样列在名录里、还算一张；
+      - 鸟种名清空    —— 决定目录归属，清空后自动落到「其他鸟类」分支；
+      - rating=-1     —— -1 就是既有的「无鸟」档，同时把文件带进 0星_放弃。
+
+    连拍组不扩散：无鸟是逐张的判断（同一组里别的帧可能真拍到了鸟），与改星级
+    的既有行为一致，而不同于改鸟种的整组处理。
+
+    Mark one photo as having no bird: DB, file move, and metadata in one go.
+    All three fields must change together; burst groups are NOT propagated
+    because "no bird" is a per-frame judgement.
+
+    参数 / Args:
+        dir_path:        批处理根目录（绝对路径）
+        photo:           照片字典（会被就地更新：鸟名清空、rating、current_path）
+        report_db:       ReportDB / MergedReportDB 实例，或 None
+        db_key:          _photo_db_key(photo) 的结果
+        i18n:            用于取当前语言下的鸟名（决定旧目录名）
+        old_bird_cn / old_bird_en: 改之前的鸟名。调用方通常已在主线程做过乐观
+                         更新（界面要立刻变），那时 photo 里的鸟名已被清空，
+                         清关键字就再也认不出该删哪一项——所以必须由调用方在
+                         清空前取好传进来。省略时退回从 photo 现值读取。
+                         The pre-clear names; the caller's optimistic UI update
+                         wipes them from `photo`, so they must be passed in.
+        metadata_writer: 元数据写入器，默认取常驻 ExifToolManager；测试可注入
+
+    返回 / Returns:
+        bool: 是否发生了文件移动
+    """
+    from advanced_config import get_advanced_config
+    from core.rating_mover import move_photo_on_metadata_change
+
+    cfg = get_advanced_config()
+    layout = cfg.folder_layout
+
+    # 旧鸟名要在清空之前抓住：清元数据时要靠它认出该删哪个关键字。
+    # Capture the old names before clearing; the metadata cleanup needs them.
+    old_cn = (old_bird_cn or photo.get("bird_species_cn") or "").strip()
+    old_en = (old_bird_en or photo.get("bird_species_en") or "").strip()
+
+    # 1. 先写库：即使随后文件移动失败，报告也已经不再把它算成那种鸟。
+    if report_db is not None:
+        report_db.update_photo(db_key, {
+            "has_bird": 0,
+            "bird_species_cn": None,
+            "bird_species_en": None,
+            "rating": -1,
+        })
+
+    # 2. 同步内存副本，界面刷新与目录计算都读它
+    photo["bird_species_cn"] = ""
+    photo["bird_species_en"] = ""
+    photo["has_bird"] = 0
+    photo["rating"] = -1
+
+    # 3. 移文件：鸟名已清空 + rating=-1 → compute_target_folder 落到
+    #    「其他鸟类/0星_放弃」。连拍组内与根目录下的文件由 core 自行跳过。
+    moved = False
+    try:
+        moved = move_photo_on_metadata_change(
+            dir_path, photo, -1, "", layout, report_db, db_key
+        )
+    except Exception as e:
+        from tools.utils import log_message
+        log_message(f"[rating_mover] mark-no-bird move failed: {e}")
+
+    # 4. 清掉文件里的鸟名，并把星级同步进元数据。
+    #    移动之后 photo["current_path"] 已被 core 更新为新路径。
+    writer = metadata_writer
+    if writer is None:
+        from tools.exiftool_manager import get_exiftool_manager
+        writer = get_exiftool_manager()
+    write_keywords = bool(getattr(cfg, "birdid_write_keywords", False))
+    for path in _mark_no_bird_files(photo):
+        try:
+            writer.clear_species_metadata(
+                path, old_title=_species_metadata_title(old_cn, old_en) or None,
+                write_keywords=write_keywords,
+            )
+            writer.set_rating_and_pick(path, -1)
+        except Exception as e:
+            from tools.utils import log_message
+            log_message(f"[mark_no_bird] metadata write failed for {path}: {e}")
+
+    return moved
+
+
 def _trigger_species_change(
     dir_path: str,
     photo: dict,
@@ -2275,6 +2395,13 @@ class ResultsBrowserWindow(QMainWindow):
         if dialog.exec() != QDialog.Accepted:
             return
 
+        # 「这不是鸟」：误检没有正确鸟种可选，整条标掉，不走改鸟种流程。
+        # getattr 兼容旧的弹窗替身（测试里的 stub 没有这个属性）。
+        # A false detection has no correct species; mark the whole photo instead.
+        if getattr(dialog, "mark_no_bird", False):
+            self._mark_photos_no_bird([photo])
+            return
+
         new_cn = dialog.selected_cn
         new_en = dialog.selected_en
         if not new_cn and not new_en:
@@ -2307,10 +2434,15 @@ class ResultsBrowserWindow(QMainWindow):
         # 2. 同步写入 DB 鸟种字段（使下拉刷新立即生效；文件移动仍在后台执行）
         # Write species fields to DB synchronously so the dropdown refresh sees new data immediately.
         if self._db:
+            # has_bird 置回 1：用户指名了鸟种就等于确认这是鸟，这也是
+            # 「标记为无鸟」标错之后的撤销路径（报告的鸟种名录按 has_bird 过滤）。
+            # Restoring has_bird=1 is the undo path for a wrong "no bird" mark.
             self._db.update_photo(db_key, {
                 "bird_species_cn": new_cn or None,
                 "bird_species_en": new_en or None,
+                "has_bird": 1,
             })
+            photo["has_bird"] = 1
 
         # 3. 刷新详情面板 + 全屏鸟名标签
         #    全屏视图有自己的 _species_label，不刷它的话在全屏里改完鸟种
@@ -2435,6 +2567,103 @@ class ResultsBrowserWindow(QMainWindow):
         # 4-6. 执行 + 刷新 + 结果报告（与多选批量共用同一套）
         self._execute_batch_species_change(targets, new_cn, new_en, layout)
 
+    def _mark_photos_no_bird(self, targets: list) -> None:
+        """
+        把选中的照片标记为「没有鸟」：写库 + 界面立刻反映 + 后台移文件清元数据。
+
+        单张与批量共用本方法。多于一张时先弹确认——这一步会移动文件并把星级
+        压到 0 星，勾错了不好恢复（唯一的回头路是重新指定鸟种）。
+
+        界面先按结果乐观更新，耗时的文件移动与元数据写入放后台线程；这与改
+        鸟种/改星级的既有节奏一致，避免点完之后界面愣住。
+
+        Mark the given photos as having no bird. Shared by the single-photo and
+        batch entry points; the UI updates optimistically while the file move
+        and metadata writes run in the background.
+
+        参数 / Args:
+            targets: 待标记的照片列表（current_path 已是绝对路径）
+        """
+        from ui.custom_dialogs import StyledMessageBox
+
+        if not targets:
+            return
+
+        i18n = self.i18n
+        if len(targets) > 1:
+            if StyledMessageBox.question(
+                self,
+                i18n.t('browser.mark_no_bird_confirm_title'),
+                i18n.t('browser.mark_no_bird_confirm_body').format(
+                    count=len(targets)),
+            ) != StyledMessageBox.Yes:
+                return
+
+        # 旧鸟名必须在乐观更新之前逐张抓好：后台清关键字时要靠它认出该删哪项。
+        # Capture the old names BEFORE the optimistic update wipes them.
+        jobs = []
+        for photo in targets:
+            jobs.append((
+                photo,
+                photo.get("_base_dir") or self._directory,
+                _photo_db_key(photo),
+                (photo.get("bird_species_cn") or "").strip(),
+                (photo.get("bird_species_en") or "").strip(),
+            ))
+
+        # 乐观更新内存副本 + 缓存列表，界面立刻显示为无鸟 / 0 星
+        for photo, _base, _key, _ocn, _oen in jobs:
+            for target in (photo, *[
+                p for p in self._filtered_photos
+                if _photo_identity(p) == _photo_identity(photo)
+            ]):
+                target["bird_species_cn"] = ""
+                target["bird_species_en"] = ""
+                target["has_bird"] = 0
+                target["rating"] = -1
+            self._thumb_grid.refresh_photo(photo, -1)
+
+        # 详情面板与全屏鸟名标签跟着刷新，否则改完界面纹丝不动
+        current = getattr(self._detail_panel, "_current_photo", None)
+        if current is not None and any(
+            _photo_identity(current) == _photo_identity(p) for p, *_ in jobs
+        ):
+            self._detail_panel.show_photo(current)
+            self._fullscreen.refresh_species_label(current)
+
+        db = self._db
+
+        def _do() -> None:
+            try:
+                for photo, base_dir, db_key, old_cn, old_en in jobs:
+                    _run_mark_no_bird(base_dir, photo, db, db_key, i18n,
+                                      old_bird_cn=old_cn, old_bird_en=old_en)
+            except Exception as e:
+                from tools.utils import log_message
+                log_message(f"[mark_no_bird] failed: {e}")
+            finally:
+                QTimer.singleShot(0, self._refresh_species_dropdown)
+
+        import threading
+        threading.Thread(target=_do, daemon=True).start()
+
+    def _refresh_species_dropdown(self) -> None:
+        """
+        重算左侧鸟种下拉（主线程调用）。
+
+        标记无鸟之后那一种可能已经一张不剩，下拉里留着空项点进去什么都没有。
+
+        Recompute the species dropdown; a species may have no photos left.
+        """
+        if not self._db:
+            return
+        use_en = self.i18n.current_lang.startswith("en")
+        current_filters = self._filter_panel.get_filters()
+        new_species, new_has_other = compute_dropdown_species(
+            self._db, use_en=use_en, ratings=current_filters.get("ratings")
+        )
+        self._filter_panel.update_species_list(new_species, new_has_other)
+
     def _batch_species_edit(self, targets: list) -> None:
         """
         多选批量改鸟种：把勾选的若干张一次性改成同一个鸟种。
@@ -2474,6 +2703,11 @@ class ResultsBrowserWindow(QMainWindow):
             parent=self, session_species=self._session_species(),
             exclude_species=exclude)
         if dialog.exec() != QDialog.Accepted:
+            return
+        # 「这不是鸟」：整个勾选集一起标掉（勾了一串鳄鱼的情形）。
+        # Mark the whole checked selection as having no bird.
+        if getattr(dialog, "mark_no_bird", False):
+            self._mark_photos_no_bird(targets)
             return
         new_cn = dialog.selected_cn
         new_en = dialog.selected_en
@@ -2574,6 +2808,15 @@ class ResultsBrowserWindow(QMainWindow):
             if result["cancelled"]:
                 cancelled = True
                 break
+            # has_bird 置回 1：与单张改鸟种一致——指名了鸟种就等于确认这是鸟，
+            # 也是「标记为无鸟」标错之后的批量撤销路径。core 只管鸟名与移动，
+            # has_bird 归 UI 层统一收口。
+            # Same as the single-photo path: naming a species confirms it is a
+            # bird, and this is the batch undo for a wrong "no bird" mark.
+            if self._db:
+                for p in group:
+                    self._db.update_photo(_photo_db_key(p), {"has_bird": 1})
+                    p["has_bird"] = 1
 
         progress.close()
 

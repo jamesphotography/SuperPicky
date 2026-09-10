@@ -1167,6 +1167,65 @@ class ExifToolManager:
                 ) and ok
         return ok
 
+    def clear_species_metadata(
+        self,
+        file_path: str,
+        old_title: Optional[str] = None,
+        write_keywords: bool = False,
+    ) -> bool:
+        """
+        把鸟名从文件元数据里清掉——照片被标记为「不是鸟」时用。
+
+        与 update_species_metadata 对称：那边是把 Title 换成新鸟名，这边是
+        整个清空。误检（比如把鳄鱼认成鸟）没有正确的鸟名可写，留着旧名会让
+        Lightroom 和按关键字检索继续把它当成那种鸟。
+
+        - ``XMP:Title`` 置空（exiftool 写空值即清除该标签，已实测）；
+        - ``write_keywords`` 为真时，从 ``XMP-dc:Subject`` 里删掉旧鸟名这一
+          项，其余关键字保持原样原序。
+
+        replace_keyword_in_list 在新鸟名为空时按设计返回 None（不改动），所以
+        这里不能复用它，必须自己做删除。
+
+        Clear the species from a file's metadata when the photo is marked as
+        "not a bird". Symmetric to update_species_metadata: Title is emptied
+        (an empty exiftool value removes the tag) and the stale species keyword
+        is dropped from XMP-dc:Subject, leaving other keywords untouched.
+        replace_keyword_in_list cannot be reused: it intentionally no-ops when
+        the new keyword is empty.
+
+        参数 / Parameters:
+            file_path (str): 目标文件（已移动到新目录后的路径）。
+            old_title (Optional[str]): 要删除的旧鸟名；None 时从文件现有
+                Title 读取（必须在清空之前读）。
+            write_keywords (bool): 是否同步清理 XMP-dc:Subject 关键字。
+
+        返回 / Returns:
+            bool: 全部写入成功（或按配置跳过）为 True，失败为 False。
+        """
+        if not file_path or not os.path.exists(file_path):
+            return False
+
+        read_target = self._sidecar_read_target(file_path)
+        # 旧鸟名必须在清空 Title **之前**读，否则就再也认不出该删哪个关键字。
+        # Read the old name BEFORE clearing Title, or the keyword is unidentifiable.
+        if write_keywords and not (old_title or "").strip():
+            old_title = self._read_title(read_target)
+
+        ok = self.set_metadata(file_path, {'Title': ''})
+
+        old = (old_title or "").strip()
+        if write_keywords and old:
+            existing = self._read_subject_list(read_target)
+            updated = [kw for kw in existing if kw != old]
+            if len(updated) != len(existing):
+                # 整表回写（exiftool 不支持逐项删除的追加语法）；空列表写空值即清空。
+                # Whole-list rewrite; an empty value clears the tag.
+                ok = self.set_metadata(
+                    file_path, {'XMP-dc:Subject': updated or ''}
+                ) and ok
+        return ok
+
     def set_metadata(self, file_path: str, tags: Dict[str, str]) -> bool:
         """
         通用单文件元数据写入（V4.5，走 write 常驻进程）。
