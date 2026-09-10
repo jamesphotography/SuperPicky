@@ -65,10 +65,15 @@ jobs:
         with:
           path: ./output/installer_cpu/SuperPicky.iss
 
-      # Full CUDA installer 单文件预期 > 2 GiB，超过 GitHub Releases 单 asset 上限。
-      # 因此 CUDA 产物只作为 workflow artifact 保留 90 天，由维护者手动转存到
-      # 百度 / 夸克网盘等大文件分发渠道，不进入 release_assets。失败不阻塞
-      # Full CPU 的 release 流程（continue-on-error）。
+      # Full CUDA installer 直接进 Release。GitHub 单 asset 上限是二进制
+      # 2 GiB = 2,147,483,648 字节；实测 4.5.0-rc6 至 4.6.3-rc1 的 CUDA 安装器
+      # 稳定在 1.962~1.967 GiB（约 2.11 GB 十进制显示），从未超限——早先「预期
+      # > 2 GiB」是把十进制 GB 当成 GiB 的误判，网盘手动转存因此可以取消。
+      # 余量只有约 35 MiB，所以 stage-optional-asset 带体积卡口：超限就自动回退
+      # 到 workflow artifact 通道并发出 CI warning，不阻塞 Full CPU 的发布。
+      # The CUDA installer now ships in the Release itself: the limit is 2 GiB
+      # (binary), and measured builds sit at ~1.966 GiB. The size gate falls back
+      # to the artifact channel if a future build ever crosses the limit.
       - name: Build Full CUDA release
         continue-on-error: true
         env:
@@ -82,18 +87,28 @@ jobs:
         with:
           path: ./output/installer_cuda/SuperPicky-cuda.iss
 
-      - name: Upload Full CUDA installer as workflow artifact
+      - name: Prepare release assets
+        run: |
+          python scripts/ci_release.py collect-assets --output-dir release_assets --pattern output/installer_cpu/Output/SuperPicky_Setup_Full_Win64_*.exe
+
+      # 体积卡口：在上限内则 staged=true 并随 Release 上传；超限或产物缺失则
+      # staged=false，下一步回退到 workflow artifact。
+      # Size gate: staged=true ships it in the Release; otherwise the next step
+      # falls back to the workflow artifact.
+      - name: Stage Full CUDA installer for release
+        id: cuda_stage
         if: steps.cuda_inno.outcome == 'success'
+        run: |
+          python scripts/ci_release.py stage-optional-asset --output-dir release_assets --pattern "output/installer_cuda/Output/SuperPicky_Setup_FullCUDA_Win64_*.exe"
+
+      - name: Upload Full CUDA installer as workflow artifact (fallback)
+        if: steps.cuda_inno.outcome == 'success' && steps.cuda_stage.outputs.staged != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: SuperPicky_FullCUDA_Win64
           path: output/installer_cuda/Output/SuperPicky_Setup_FullCUDA_Win64_*.exe
           retention-days: 90
           if-no-files-found: warn
-
-      - name: Prepare release assets
-        run: |
-          python scripts/ci_release.py collect-assets --output-dir release_assets --pattern output/installer_cpu/Output/SuperPicky_Setup_Full_Win64_*.exe
 
       - name: Build code patch zip
         run: python scripts/ci_release.py build-patch --output-dir release_assets --patch-version ${{ steps.release_meta.outputs.tag }}

@@ -76,11 +76,17 @@ git push origin v4.6.0-rc1
 
 ## 3. 构建产物 / Artifacts
 
-- **Windows CUDA 包 >2GB**，超过 GitHub Release 单 asset 上限（2 GiB），
-  **只会留在 Actions artifact 里，不会自动进 Release**。必须手工下载后上传到
-  网盘（Google Drive / 百度网盘）。
+- **Windows CUDA 包现在会自动进 Release**（2026-09-10 起）。此前本节写的是
+  「>2GB，进不了 Release，必须手工传网盘」——那是把十进制 GB 当成了 GiB 的
+  误判：GitHub 的上限是 **2 GiB = 2,147,483,648 字节**，而 4.5.0-rc6 至
+  4.6.3-rc1 的 CUDA 安装器实测稳定在 **1.962~1.967 GiB**（约 2.11 GB，很多
+  工具就是这么显示的），一次都没超过。手工转存网盘这一步可以取消。
+- **余量只有约 35 MiB**，所以 CI 加了体积卡口
+  （`ci_release.py stage-optional-asset`）：超过 2 GiB 会自动回退到旧的
+  artifact 通道并在 Actions 页打出 warning。**看到那条 warning 就说明需要
+  按第 3.1 节瘦身，或者临时恢复网盘转存。**
 - 下载 2GB 级 artifact 用 `curl -C -` 续传；解压报 "EOCD 缺失" 基本都是没下完。
-- **Intel Mac 版需要手工构建上传**，CI 不产出。
+  （仅在卡口触发、CUDA 包回退到 artifact 时才需要。）
 
 ---
 
@@ -118,7 +124,9 @@ git push origin v4.6.0-rc1
 }
 ```
 
-`win_cuda` 只在 `drive` / `baidu` 里有（因为它进不了 Release，见第 3 节）。
+`win_cuda` 自 2026-09-10 起也进 Release，`files` 里可以直接填它的文件名；
+`drive` / `baidu` 继续保留网盘镜像（大陆用户走网盘更快）。只有在体积卡口触发、
+CUDA 包回退到 artifact 时，`win_cuda` 才会重新变成只有网盘（见第 3 节）。
 
 > ⚠️ **提交时，`drive` / `baidu` 里必须是 `/dl/<id>` 站内路径，不是网盘直链。**
 > 真实地址存在 `SuperPicky-Site/src/dl-map.json` 里，由 Worker 做 302 跳转。
@@ -196,9 +204,11 @@ npx vitest run
 ## 5. 已知约束（不要试图"修复"）/ Known constraints
 
 - **应用内不做自动更新检测**。`tools/update_checker.py` 的
-  `ONLINE_UPDATE_CHECK_DISABLED = True` 自 4.3.0 起未变。动因：CUDA 包进不了
-  Release、Full 与 Lite 的 inno AppId 不同会脏覆盖同一目录、补丁覆盖层会用旧代码
-  覆盖新代码。这三条至今成立。
+  `ONLINE_UPDATE_CHECK_DISABLED = True` 自 4.3.0 起未变。原本有三条动因，
+  其中「CUDA 包进不了 Release」**已于 2026-09-10 失效**（见第 3 节：它一直在
+  2 GiB 上限内，现已自动进 Release）。另外两条至今成立，仍足以支撑这个开关：
+  Full 与 Lite 的 inno AppId 不同会脏覆盖同一目录、补丁覆盖层会用旧代码覆盖
+  新代码。
 - 「关于」页的**按需**版本查询不受该开关约束，因为它只在用户点击时读一个静态
   JSON，不碰 Release API、不下载、不安装。
 - 官网域名是 **`superpicky.app`**（见 `docs/CNAME`）。
