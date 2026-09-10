@@ -88,6 +88,27 @@ git push origin v4.6.0-rc1
 - 下载 2GB 级 artifact 用 `curl -C -` 续传；解压报 "EOCD 缺失" 基本都是没下完。
   （仅在卡口触发、CUDA 包回退到 artifact 时才需要。）
 
+### 3.1 CUDA 包瘦身备选 / Shrinking the CUDA build
+
+余量吃紧时按收益排序动手（2026-09-10 实测数据）：
+
+1. ✅ **已做 · 删 `torch/lib/cudnn_adv64_9.dll`**（未压缩 229.9 MiB，安装器预计
+   约省 80 MB）。cuDNN 9 已拆成 dispatcher（`cudnn64_9.dll` 仅 0.4 MiB）+ 按需
+   加载的子库，`adv` 只服务 RNN/LSTM/attention，本项目全是 CNN 前向，运行时
+   永远不会加载它。实现在 `SuperPicky_win64.spec` 的 `EXCLUDED_BINARY_NAMES`。
+   **下一个 CUDA 包出来后必须在 Windows 实机跑一轮完整流程验证**（YOLO 检测 +
+   识鸟 + 美学评分都要走到 GPU），并核对安装器实际减了多少。
+2. ✅ **已做 · 移除 `torchaudio`**（`requirements*.txt` 三处）。注意**它不减包
+   体**：全仓库零 import，PyInstaller 本来就没把它打进任何安装包。省的是 CI 装
+   依赖的时间和 venv 体积，顺带消除「以为它在包里」的误导。
+3. **模型权重改 fp16 存储**（四个 .pth 合计 fp32 518 MiB → 259 MiB，安装器约省
+   200 MB，CPU 版与 Mac 版同样受益）。需要重跑 OSEA 一致性验证与美学分 A/B。
+4. **不要动** `cusolver` / `cusolverMg` / `cufft` / `cusparse` / `curand` /
+   `cublasLt` / `cudnn_engines_precompiled`：PyTorch v2.7.1 只对 `nvcuda.dll`
+   做了 DELAYLOAD（`caffe2/CMakeLists.txt:553-559`），其余 CUDA 库都是 PE 静态
+   导入，删任何一个 `import torch` 直接失败。
+- **Intel Mac 版需要手工构建上传**，CI 不产出。
+
 ---
 
 ## 4. 发版后 —— 最容易漏的一步 / After release

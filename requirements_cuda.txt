@@ -8,6 +8,7 @@
 --extra-index-url https://download.pytorch.org/whl/cu118
 torch==2.7.1+cu118
 torchvision==0.22.1+cu118
-torchaudio==2.7.1+cu118
+# torchaudio 已移除：全项目零 import，PyInstaller 不会打包它，只是白装。
+# torchaudio removed: never imported, never bundled by PyInstaller.
 pyinstaller
 lap
