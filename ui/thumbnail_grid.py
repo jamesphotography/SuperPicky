@@ -546,6 +546,24 @@ class ThumbnailCard(QFrame):
             # 基础 C++ 对象已销毁，忽略此次更新
             pass
 
+    def refresh_caption(self) -> None:
+        """
+        按 photo 现值重算卡片底部文字（鸟名，无鸟种时退回文件名）。
+
+        标签在构造时算过一次就再没人更新——改鸟种、标记为无鸟之后，卡片上
+        显示的还是那个旧鸟名，用户看到的就是「点完没反应」。连拍数量后缀由
+        卡片自身属性重算，不依赖调用方。
+
+        Recompute the footer caption from the photo's current values. The label
+        was only ever set at construction, so a species change or a "no bird"
+        mark left the stale name on screen.
+        """
+        burst_suffix = (
+            f" ({self.burst_count})"
+            if (self.is_burst_group and self.burst_count > 1) else ""
+        )
+        self.name_label.setText(_tile_label_text(self.photo, burst_suffix))
+
     def _draw_overlays(self):
         """在 img_label 的 pixmap 上绘制动态叠加层（选中边框、多选勾选）。"""
         try:
@@ -1141,6 +1159,20 @@ class ThumbnailGrid(QScrollArea):
         self._clear_multi_selection()
         self._anchor_photo = None
         self._emit_multi_selection()
+
+    def refresh_caption(self, photo_or_key) -> None:
+        """
+        刷新指定照片卡片的底部文字（鸟名/文件名）。
+
+        与 refresh_photo 分开：那个只重绘评分角标（高频、纯重绘），这个用于
+        鸟种发生变化的场合（改鸟种、标记为无鸟）。
+
+        Refresh one card's footer caption after its species changed.
+        """
+        photo_key = _photo_key(photo_or_key) if isinstance(photo_or_key, dict) else photo_or_key
+        card = self._cards.get(photo_key)
+        if card:
+            card.refresh_caption()
 
     def refresh_photo(self, photo_or_key, new_rating: int):
         """

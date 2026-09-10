@@ -268,6 +268,97 @@ def test_adding_a_directory_without_results_reports_it(tmp_path):
         dlg.deleteLater()
 
 
+# ── 选择框多选 / Multi-select in the file dialog ────────────────────────────
+#
+# 要合并的批次通常是同一个父目录下的某几天。系统原生目录框一次只能选一个，
+# 逐个加太累——改用 Qt 自绘框后可以按住 Cmd/Shift 一次选中多个目录。
+# The native directory dialog only allows one folder at a time; the non-native
+# Qt dialog lets the user pick several at once.
+
+def test_picking_several_directories_adds_them_all(tmp_path):
+    """选择框一次返回多个目录时，全部加入清单。"""
+    root = str(tmp_path)
+    a = _seed(root, "2026-09-01", [("A1", "家燕", 3)])
+    b = _seed(root, "2026-09-02", [("B1", "绿鹂", 3)])
+    c = _seed(root, "2026-09-03", [("C1", "大山雀", 3)])
+
+    dlg = _dialog()
+    dlg._pick_directory = lambda: [a, b, c]
+    try:
+        assert dlg.browse_and_add() == 3
+        assert sorted(dlg.directories()) == sorted([a, b, c])
+    finally:
+        dlg.deleteLater()
+
+
+def test_picking_a_single_directory_still_works(tmp_path):
+    """只选一个目录时行为与改动前一致——单选是最常见的用法。"""
+    a = _seed(str(tmp_path), "2026-09-01", [("A1", "家燕", 3)])
+
+    dlg = _dialog()
+    dlg._pick_directory = lambda: [a]
+    try:
+        assert dlg.browse_and_add() == 1
+        assert dlg.directories() == [a]
+    finally:
+        dlg.deleteLater()
+
+
+def test_cancelling_the_picker_adds_nothing(tmp_path):
+    """用户取消选择框时什么都不加。"""
+    dlg = _dialog()
+    dlg._pick_directory = lambda: []
+    try:
+        assert dlg.browse_and_add() == 0
+        assert dlg.directories() == []
+    finally:
+        dlg.deleteLater()
+
+
+def test_multi_pick_reports_unusable_directories_once(tmp_path):
+    """
+    多选里混进没有选鸟结果的目录时，汇总成一条提示，而不是逐个弹框。
+
+    一次选中 5 个目录、其中 3 个没结果就连弹 3 次，比不提示还烦人。
+    Batch the "nothing found" notice instead of firing one dialog per folder.
+    """
+    root = str(tmp_path)
+    a = _seed(root, "2026-09-01", [("A1", "家燕", 3)])
+    empty1 = tmp_path / "空目录1"
+    empty1.mkdir()
+    empty2 = tmp_path / "空目录2"
+    empty2.mkdir()
+
+    dlg = _dialog()
+    dlg._pick_directory = lambda: [a, str(empty1), str(empty2)]
+    singles, batched = [], []
+    dlg._notify_nothing_found = lambda path: singles.append(path)
+    dlg._notify_nothing_found_many = lambda paths: batched.append(list(paths))
+    try:
+        assert dlg.browse_and_add() == 1
+        assert dlg.directories() == [a]
+        assert singles == [], f"多选时不该逐个弹框，实际弹了 {singles}"
+        assert batched == [[str(empty1), str(empty2)]], f"应汇总一次，实际 {batched}"
+    finally:
+        dlg.deleteLater()
+
+
+def test_single_pick_keeps_the_per_directory_notice(tmp_path):
+    """只选一个目录且它没结果时，仍走原来的单条提示。"""
+    empty = tmp_path / "空目录"
+    empty.mkdir()
+
+    dlg = _dialog()
+    dlg._pick_directory = lambda: [str(empty)]
+    told = []
+    dlg._notify_nothing_found = lambda path: told.append(path)
+    try:
+        assert dlg.browse_and_add() == 0
+        assert told == [str(empty)]
+    finally:
+        dlg.deleteLater()
+
+
 def test_adding_the_same_directory_twice_is_ignored(tmp_path):
     """
     重复添加同一个目录不produce 第二行 —— 否则它的照片会被算两遍。

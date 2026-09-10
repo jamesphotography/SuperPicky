@@ -115,6 +115,11 @@ class BirdSpeciesEditDialog(QDialog):
         self.selected_cn: str = ""
         self.selected_en: str = ""
         self.selected_latin: str = ""
+        # 「这不是鸟」：用户点了它就不是改鸟种，而是把照片标记为无鸟。
+        # 调用方须在读 selected_* 之前先看这个标志——两者互斥。
+        # Set when the user marks the photo as "not a bird"; callers must check
+        # this before reading selected_*, the two are mutually exclusive.
+        self.mark_no_bird: bool = False
         self._selected_data: Optional[Dict] = None
 
         self._db_path = _get_birdname_db_path()
@@ -258,6 +263,31 @@ class BirdSpeciesEditDialog(QDialog):
         """)
         cancel_btn.clicked.connect(self.reject)
 
+        # 「这不是鸟」：YOLO 偶尔把鳄鱼之类的东西认成鸟，这种照片没有正确的
+        # 鸟种可选，只能整条标掉。放在最左侧、用次要样式，与右侧的确认/取消
+        # 拉开距离，避免误点。
+        # No species is correct for a false detection; this marks the photo as
+        # having no bird at all. Kept visually secondary and far from Confirm.
+        self._no_bird_btn = QPushButton(self.i18n.t("bird_species_edit.not_a_bird"))
+        self._no_bird_btn.setFixedHeight(36)
+        self._no_bird_btn.setToolTip(self.i18n.t("bird_species_edit.not_a_bird_tip"))
+        self._no_bird_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                border: 1px solid {COLORS['border']};
+                border-radius: 6px;
+                color: {COLORS['text_muted']};
+                font-size: 13px;
+                padding: 0 14px;
+            }}
+            QPushButton:hover {{
+                border-color: {COLORS['warning']};
+                color: {COLORS['warning']};
+            }}
+        """)
+        self._no_bird_btn.clicked.connect(self._on_mark_no_bird)
+
+        btn_row.addWidget(self._no_bird_btn)
         btn_row.addStretch()
         btn_row.addWidget(cancel_btn)
         btn_row.addWidget(self._confirm_btn)
@@ -265,6 +295,22 @@ class BirdSpeciesEditDialog(QDialog):
 
         # 自动聚焦搜索框
         QTimer.singleShot(50, self._search_input.setFocus)
+
+    def _on_mark_no_bird(self):
+        """
+        「这不是鸟」按钮：置标志并以 Accepted 关闭弹窗。
+
+        鸟种字段保持为空——调用方靠 mark_no_bird 区分「标记无鸟」与「什么都
+        没选」，后者才是取消。
+
+        Set the flag and accept; species fields stay empty so the caller can
+        tell "mark as no bird" apart from "nothing selected".
+        """
+        self.mark_no_bird = True
+        self.selected_cn = ""
+        self.selected_en = ""
+        self.selected_latin = ""
+        self.accept()
 
     def _on_text_changed(self, text: str):
         """搜索框内容变化：300ms 防抖后触发搜索。"""
