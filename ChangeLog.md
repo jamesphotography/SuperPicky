@@ -1,3 +1,49 @@
+# SuperPicky 4.6.3 RC3
+
+**What's new since RC1:**
+
+There are no changes to the app itself in RC2 — it is the same build as RC1.
+What changed is how the NVIDIA GPU version reaches you.
+
+1. **The CUDA (NVIDIA GPU) installer is now on the GitHub release page.** Until
+   now it was the one download you could not get from GitHub: it was believed to
+   exceed GitHub's 2 GiB per-file limit, so every release it had to be copied by
+   hand to a cloud drive. It never actually exceeded the limit — the file is
+   1.97 GiB, which many tools display as "2.11 GB", and that display is what the
+   assumption was built on. It now ships in the release like every other
+   download. The cloud-drive mirrors stay as they are.
+
+2. **The CUDA installer is smaller.** A cuDNN component that only serves
+   recurrent and attention networks was being bundled, and this app runs neither
+   — every model in it is a plain convolutional network. Removing it takes
+   roughly 80 MB off the download. Nothing about detection, identification or
+   scoring changes.
+
+The CPU version for Windows and the macOS version are byte-for-byte unaffected
+by both changes.
+
+---
+
+# SuperPicky 4.6.3 RC3（中文）
+
+**RC1 以来的变化：**
+
+RC2 的程序本身与 RC1 完全相同，改的是 N 卡（CUDA）版怎么送到你手上。
+
+1. **CUDA（N 卡）安装包现在直接放在 GitHub 发布页上。** 在此之前它是唯一一个
+   在 GitHub 上下不到的版本：一直以为它超过了 GitHub 单文件 2 GiB 的上限，所以
+   每次发版都要手工搬到网盘。其实它从来没超过——文件是 1.97 GiB，只是很多工具
+   把它显示成「2.11 GB」，当初就是照着这个显示下的判断。现在它和其他下载一样
+   随发布页一起发出。网盘镜像照旧保留。
+
+2. **CUDA 安装包变小了。** 包里一直带着一个只服务循环网络与注意力网络的 cuDNN
+   组件，而这个程序里一个都没用到——所有模型都是普通的卷积网络。去掉它，下载量
+   少了大约 80 MB。识别、检测、评分的行为一点不变。
+
+这两项改动都不影响 Windows CPU 版和 macOS 版，那两个包与 RC1 逐字节相同。
+
+---
+
 # SuperPicky 4.6.3 RC1
 
 This release is about correcting the AI when it is plainly wrong, and about

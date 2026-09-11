@@ -123,10 +123,31 @@ def run_command(
     if logger.isEnabledFor(logging.DEBUG):
         logger.debug("执行命令: %s", " ".join(command))
 
+    # 强制子进程与本进程之间走 UTF-8。
+    # 此前只写了 text=True 而不指定 encoding，子进程的 stdout 就用系统区域编码：
+    # 在 GitHub Windows runner 上是 cp1252，任何子进程输出非 ASCII 都会抛
+    # UnicodeEncodeError 并让构建失败（v4.6.3-rc2 就是被 .spec 里一行中文 print
+    # 挂掉的）。PYTHONUTF8=1 是 PEP 540 的 UTF-8 模式，让子 Python 的 stdio 一律
+    # 用 UTF-8；encoding="utf-8" 则保证本进程按同样的编码解码回来。
+    #
+    # Force UTF-8 between this process and its children. Previously text=True was
+    # used without an encoding, so a child's stdout fell back to the system
+    # locale encoding (cp1252 on the Windows runner) and any non-ASCII output
+    # raised UnicodeEncodeError. PYTHONUTF8=1 enables PEP 540 UTF-8 mode in child
+    # Python processes; encoding="utf-8" decodes their output the same way.
+    child_env = {
+        **os.environ,
+        "PYTHONUTF8": "1",
+        "PYTHONIOENCODING": "utf-8",
+    }
+
     result = subprocess.run(
         list(command),
         cwd=str(cwd),
         text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=child_env,
         capture_output=capture_output,
     )
 

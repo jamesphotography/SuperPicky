@@ -5,7 +5,8 @@
 
 torch==2.8.0
 torchvision
-torchaudio
+# torchaudio 已移除：全项目零 import，PyInstaller 不会打包它，只是白装。
+# torchaudio removed: never imported, never bundled by PyInstaller.
 
 pyinstaller
 huggingface_hub

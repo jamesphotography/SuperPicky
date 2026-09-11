@@ -76,10 +76,42 @@ git push origin v4.6.0-rc1
 
 ## 3. 构建产物 / Artifacts
 
-- **Windows CUDA 包 >2GB**，超过 GitHub Release 单 asset 上限（2 GiB），
-  **只会留在 Actions artifact 里，不会自动进 Release**。必须手工下载后上传到
-  网盘（Google Drive / 百度网盘）。
+- **Windows CUDA 包现在会自动进 Release**（2026-09-10 起）。此前本节写的是
+  「>2GB，进不了 Release，必须手工传网盘」——那是把十进制 GB 当成了 GiB 的
+  误判：GitHub 的上限是 **2 GiB = 2,147,483,648 字节**，而 4.5.0-rc6 至
+  4.6.3-rc1 的 CUDA 安装器实测稳定在 **1.962~1.967 GiB**（约 2.11 GB，很多
+  工具就是这么显示的），一次都没超过。v4.6.3-rc3 已实测走通：2 GB 文件上传
+  Release 没有超时，手工转存网盘这一步可以取消。
+- **余量 134 MiB**（v4.6.3-rc3 实测：安装器 2,006,961,683 字节）。CI 加了体积卡口
+  （`ci_release.py stage-optional-asset`）：超过 2 GiB 会自动回退到旧的
+  artifact 通道并在 Actions 页打出 warning。**看到那条 warning 就说明需要
+  按第 3.1 节瘦身，或者临时恢复网盘转存。**
 - 下载 2GB 级 artifact 用 `curl -C -` 续传；解压报 "EOCD 缺失" 基本都是没下完。
+  （仅在卡口触发、CUDA 包回退到 artifact 时才需要。）
+
+### 3.1 CUDA 包瘦身备选 / Shrinking the CUDA build
+
+余量吃紧时按收益排序动手（2026-09-10 实测数据）：
+
+1. ✅ **已做 · 删 `torch/lib/cudnn_adv64_9.dll`**（未压缩 229.9 MiB，安装器
+   **实测省 104.2 MB**：rc1 2,111,142,835 → rc3 2,006,961,683 字节。比按
+   deflate 压缩比估的 80 MB 更多，LZMA2 对这个 DLL 的压缩率没那么高）。
+   cuDNN 9 已拆成 dispatcher（`cudnn64_9.dll` 仅 0.4 MiB）+ 按需
+   加载的子库，`adv` 只服务 RNN/LSTM/attention，本项目全是 CNN 前向，运行时
+   永远不会加载它。实现在 `SuperPicky_win64.spec` 的 `EXCLUDED_BINARY_NAMES`。
+   CI 构建已验证（v4.6.3-rc3 全绿，CPU 包 −0.97 MB、mac dmg −0.95 MB，都在
+   内容变化的量级内，证实此过滤对两者是空操作）。**但仍须在 Windows 实机跑一轮
+   完整流程**（YOLO 检测 + 识鸟 + 美学评分都要走到 GPU）——CI 绿只证明构建得
+   出来，证明不了运行时不缺这个 DLL。
+2. ✅ **已做 · 移除 `torchaudio`**（`requirements*.txt` 三处）。注意**它不减包
+   体**：全仓库零 import，PyInstaller 本来就没把它打进任何安装包。省的是 CI 装
+   依赖的时间和 venv 体积，顺带消除「以为它在包里」的误导。
+3. **模型权重改 fp16 存储**（四个 .pth 合计 fp32 518 MiB → 259 MiB，安装器约省
+   200 MB，CPU 版与 Mac 版同样受益）。需要重跑 OSEA 一致性验证与美学分 A/B。
+4. **不要动** `cusolver` / `cusolverMg` / `cufft` / `cusparse` / `curand` /
+   `cublasLt` / `cudnn_engines_precompiled`：PyTorch v2.7.1 只对 `nvcuda.dll`
+   做了 DELAYLOAD（`caffe2/CMakeLists.txt:553-559`），其余 CUDA 库都是 PE 静态
+   导入，删任何一个 `import torch` 直接失败。
 - **Intel Mac 版需要手工构建上传**，CI 不产出。
 
 ---
@@ -118,7 +150,9 @@ git push origin v4.6.0-rc1
 }
 ```
 
-`win_cuda` 只在 `drive` / `baidu` 里有（因为它进不了 Release，见第 3 节）。
+`win_cuda` 自 2026-09-10 起也进 Release，`files` 里可以直接填它的文件名；
+`drive` / `baidu` 继续保留网盘镜像（大陆用户走网盘更快）。只有在体积卡口触发、
+CUDA 包回退到 artifact 时，`win_cuda` 才会重新变成只有网盘（见第 3 节）。
 
 > ⚠️ **提交时，`drive` / `baidu` 里必须是 `/dl/<id>` 站内路径，不是网盘直链。**
 > 真实地址存在 `SuperPicky-Site/src/dl-map.json` 里，由 Worker 做 302 跳转。
@@ -196,9 +230,11 @@ npx vitest run
 ## 5. 已知约束（不要试图"修复"）/ Known constraints
 
 - **应用内不做自动更新检测**。`tools/update_checker.py` 的
-  `ONLINE_UPDATE_CHECK_DISABLED = True` 自 4.3.0 起未变。动因：CUDA 包进不了
-  Release、Full 与 Lite 的 inno AppId 不同会脏覆盖同一目录、补丁覆盖层会用旧代码
-  覆盖新代码。这三条至今成立。
+  `ONLINE_UPDATE_CHECK_DISABLED = True` 自 4.3.0 起未变。原本有三条动因，
+  其中「CUDA 包进不了 Release」**已于 2026-09-10 失效**（见第 3 节：它一直在
+  2 GiB 上限内，现已自动进 Release）。另外两条至今成立，仍足以支撑这个开关：
+  Full 与 Lite 的 inno AppId 不同会脏覆盖同一目录、补丁覆盖层会用旧代码覆盖
+  新代码。
 - 「关于」页的**按需**版本查询不受该开关约束，因为它只在用户点击时读一个静态
   JSON，不碰 Release API、不下载、不安装。
 - 官网域名是 **`superpicky.app`**（见 `docs/CNAME`）。
