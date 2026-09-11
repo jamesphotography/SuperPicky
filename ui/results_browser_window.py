@@ -65,6 +65,70 @@ def _photo_db_key(photo: dict):
     return filename
 
 
+def _patch_cached_photos(photo: dict, updates: dict, *caches) -> None:
+    """
+    把一批字段改动同步到照片本身与所有内存缓存列表。
+
+    浏览器持有**两份**缓存，读它们的人各不相同，漏掉任何一份都会让界面与
+    产物对不上：
+
+      - ``_filtered_photos`` —— 当前筛选下的可见列表，缩略图网格与详情面板读它；
+      - ``_all_photos``      —— 全量列表，HTML 报告、eBird 导出、「本次拍到的
+        鸟种」、整种合并的取样池读它。
+
+    匹配范围是「这张照片 + 它所在的连拍组全部成员」：改鸟种会把整组一起改掉
+    （``core.rating_mover._change_bird_species_burst`` 更新组内每条记录），只补
+    被点的那一张，组里其余成员就会在报告里停在旧鸟名。
+
+    两条匹配边界必须守住：
+
+    - ``burst_id`` 为空时**不**按组匹配，否则所有非连拍照片（burst_id 同为
+      None）会被一次全改；
+    - 按组匹配时**同时比对 source_dir**。这是防御性的，不是在修一个现行缺陷：
+      库里的 burst_id 确实是 per-目录 的、跨批次会撞号（见
+      ``tools/merged_report_db.get_photos_by_burst_id`` 的说明），但浏览器两条
+      载入路径（``_load_single`` / ``_load_merged``）都会调 ``_compute_burst_ids``
+      清空重算，重算是在全量照片上做的，所以载入后的 id 在当前视图内是唯一的，
+      撞号到不了这里。留这道判断是因为它几乎不要钱，而一旦重算逻辑变化、或将来
+      有路径不重算就载入合并数据，只比 burst_id 就会把另一批次里同号的整组连拍
+      一起改掉——那批的库与文件都没动，只有内存错，报告会凭空多出一组张冠李戴的
+      记录，且界面上看不出任何异常。
+
+    参数 / Parameters:
+    photo (dict): 被改动的照片记录，会就地更新。
+    updates (dict): 要写入的字段，如 ``{"bird_species_cn": "家燕"}``。
+    *caches: 若干缓存列表（``_filtered_photos`` / ``_all_photos``），可为 None。
+
+    返回 / Return:
+    None: 全部就地修改。
+
+    Apply one set of field updates to the photo and to every in-memory cache.
+    The browser keeps two caches with different consumers — the grid reads
+    `_filtered_photos` while the report, eBird export, session-species list and
+    species-merge pool read `_all_photos` — so patching only one makes the UI
+    and the exported artifacts disagree. Burst group members are matched too,
+    because a species change rewrites the whole group in the DB.
+    """
+    burst_id = photo.get("burst_id")
+    target_identity = _photo_identity(photo)
+    source_dir = photo.get("source_dir") or ""
+
+    def _matches(candidate: dict) -> bool:
+        if _photo_identity(candidate) == target_identity:
+            return True
+        if not burst_id or candidate.get("burst_id") != burst_id:
+            return False
+        # 同号还不够，必须同一批次——合并浏览时 burst_id 跨目录撞号
+        # Same burst id is not enough: ids collide across merged batches.
+        return (candidate.get("source_dir") or "") == source_dir
+
+    photo.update(updates)
+    for cache in caches:
+        for cached in cache or []:
+            if cached is not photo and _matches(cached):
+                cached.update(updates)
+
+
 def _coerce_photo(photo_or_filename, photo_pool: list, fallback_photo: Optional[dict] = None) -> Optional[dict]:
     if isinstance(photo_or_filename, dict):
         return photo_or_filename
@@ -2434,15 +2498,18 @@ class ResultsBrowserWindow(QMainWindow):
         old_cn = photo.get("bird_species_cn") or ""
         old_en = photo.get("bird_species_en") or ""
 
-        # 1. 同步更新 photo 副本 + 缓存列表
-        # Update both the local photo copy and the cached list so show_photo displays the new name.
-        photo["bird_species_cn"] = new_cn
-        photo["bird_species_en"] = new_en
-        for p in self._filtered_photos:
-            if _photo_identity(p) == _photo_identity(photo):
-                p["bird_species_cn"] = new_cn
-                p["bird_species_en"] = new_en
-                break
+        # 1. 同步更新 photo 副本 + 两份缓存列表
+        #    必须连 _all_photos 一起补：报告、eBird 导出、「本次拍到的鸟种」和
+        #    整种合并的取样池都读它。此前只补了 _filtered_photos，于是鸟种下拉
+        #    （直接查库）是新鸟名、导出的报告却还是旧鸟名。
+        # Patch _all_photos too: the report, eBird export, session-species list
+        # and species-merge pool all read it. Patching only _filtered_photos
+        # left the dropdown (which queries the DB) right and the report wrong.
+        _patch_cached_photos(
+            photo,
+            {"bird_species_cn": new_cn, "bird_species_en": new_en},
+            self._filtered_photos, self._all_photos,
+        )
 
         # 2. 同步写入 DB 鸟种字段（使下拉刷新立即生效；文件移动仍在后台执行）
         # Write species fields to DB synchronously so the dropdown refresh sees new data immediately.
@@ -2455,7 +2522,13 @@ class ResultsBrowserWindow(QMainWindow):
                 "bird_species_en": new_en or None,
                 "has_bird": 1,
             })
-            photo["has_bird"] = 1
+            # has_bird 同样要进两份缓存：报告的鸟种名录按它过滤
+            # （report_export.aggregate 的 bird_rows），只补鸟名不补 has_bird，
+            # 被误标为无鸟的照片重新指名鸟种后仍然进不了报告。
+            # has_bird must reach both caches: the report filters its species
+            # list by it, so a re-named photo would still be missing.
+            _patch_cached_photos(photo, {"has_bird": 1},
+                                 self._filtered_photos, self._all_photos)
 
         # 3. 刷新详情面板 + 全屏鸟名标签
         #    全屏视图有自己的 _species_label，不刷它的话在全屏里改完鸟种
