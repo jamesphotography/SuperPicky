@@ -1250,7 +1250,7 @@
     "batch_species_confirm_title": "Change Species in Bulk",
     "batch_species_confirm_body": "About to retag the {count} selected photo(s){burst_note} as \"{new}\".\n\nThey will move to:\n{folders}\n\nContinue?",
     "merge_confirm_title": "Merge Species",
-    "merge_confirm_body": "All {count} photo(s) of “{old}”{burst_note} will be changed to “{new}”.\n\nTarget folders:\n{folders}\n\nThis moves files and cannot be undone. Continue?",
+    "merge_confirm_body": "All {count} photo(s) of “{old}”{burst_note} will be changed to “{new}”.\n{batch_note}\n{folders_label}:\n{folders}\n\nThis moves files and cannot be undone. Continue?",
     "merge_burst_note": " (including {bursts} burst group(s))",
     "merge_progress_title": "Merging…",
     "merge_progress_label": "Processing {name}",
@@ -1300,7 +1300,12 @@
     "merge_dirs_tooltip": "Combine results from several folders into one report (any location or drive)",
     "merged_title": "{span} ({count} folders)",
     "mark_no_bird_confirm_title": "Mark as no bird",
-    "mark_no_bird_confirm_body": "{count} selected photos will be marked as having no bird: species cleared, rating dropped to 0 stars, files moved to the reject pile.\n\nTo undo, just set a species again."
+    "mark_no_bird_confirm_body": "{count} selected photos will be marked as having no bird: species cleared, rating dropped to 0 stars, files moved to the reject pile.\n\nTo undo, just set a species again.",
+    "merge_batch_note": "\nSpread across {count} batches: {batches}\n",
+    "merge_batch_sep": ", ",
+    "merge_batch_more": "and {n} more",
+    "merge_folders_label": "Target folders",
+    "merge_folders_label_merged": "Target folders (in each batch)"
   },
   "video": {
     "title_phase1": "Video Analysis (Phase 1 · YOLO bird/no-bird only)",
