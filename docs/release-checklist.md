@@ -80,8 +80,9 @@ git push origin v4.6.0-rc1
   「>2GB，进不了 Release，必须手工传网盘」——那是把十进制 GB 当成了 GiB 的
   误判：GitHub 的上限是 **2 GiB = 2,147,483,648 字节**，而 4.5.0-rc6 至
   4.6.3-rc1 的 CUDA 安装器实测稳定在 **1.962~1.967 GiB**（约 2.11 GB，很多
-  工具就是这么显示的），一次都没超过。手工转存网盘这一步可以取消。
-- **余量只有约 35 MiB**，所以 CI 加了体积卡口
+  工具就是这么显示的），一次都没超过。v4.6.3-rc3 已实测走通：2 GB 文件上传
+  Release 没有超时，手工转存网盘这一步可以取消。
+- **余量 134 MiB**（v4.6.3-rc3 实测：安装器 2,006,961,683 字节）。CI 加了体积卡口
   （`ci_release.py stage-optional-asset`）：超过 2 GiB 会自动回退到旧的
   artifact 通道并在 Actions 页打出 warning。**看到那条 warning 就说明需要
   按第 3.1 节瘦身，或者临时恢复网盘转存。**
@@ -92,12 +93,16 @@ git push origin v4.6.0-rc1
 
 余量吃紧时按收益排序动手（2026-09-10 实测数据）：
 
-1. ✅ **已做 · 删 `torch/lib/cudnn_adv64_9.dll`**（未压缩 229.9 MiB，安装器预计
-   约省 80 MB）。cuDNN 9 已拆成 dispatcher（`cudnn64_9.dll` 仅 0.4 MiB）+ 按需
+1. ✅ **已做 · 删 `torch/lib/cudnn_adv64_9.dll`**（未压缩 229.9 MiB，安装器
+   **实测省 104.2 MB**：rc1 2,111,142,835 → rc3 2,006,961,683 字节。比按
+   deflate 压缩比估的 80 MB 更多，LZMA2 对这个 DLL 的压缩率没那么高）。
+   cuDNN 9 已拆成 dispatcher（`cudnn64_9.dll` 仅 0.4 MiB）+ 按需
    加载的子库，`adv` 只服务 RNN/LSTM/attention，本项目全是 CNN 前向，运行时
    永远不会加载它。实现在 `SuperPicky_win64.spec` 的 `EXCLUDED_BINARY_NAMES`。
-   **下一个 CUDA 包出来后必须在 Windows 实机跑一轮完整流程验证**（YOLO 检测 +
-   识鸟 + 美学评分都要走到 GPU），并核对安装器实际减了多少。
+   CI 构建已验证（v4.6.3-rc3 全绿，CPU 包 −0.97 MB、mac dmg −0.95 MB，都在
+   内容变化的量级内，证实此过滤对两者是空操作）。**但仍须在 Windows 实机跑一轮
+   完整流程**（YOLO 检测 + 识鸟 + 美学评分都要走到 GPU）——CI 绿只证明构建得
+   出来，证明不了运行时不缺这个 DLL。
 2. ✅ **已做 · 移除 `torchaudio`**（`requirements*.txt` 三处）。注意**它不减包
    体**：全仓库零 import，PyInstaller 本来就没把它打进任何安装包。省的是 CI 装
    依赖的时间和 venv 体积，顺带消除「以为它在包里」的误导。
