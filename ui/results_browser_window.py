@@ -461,6 +461,73 @@ def _merge_target_folders(photos: list, new_bird_name: str, layout: str) -> list
     return sorted(folders)
 
 
+# 确认弹窗里最多逐个列出几个批次。批次名可能是「2026/03/15」这类嵌套路径，
+# 全列会把弹窗撑得看不完；超出的部分只报个数。
+# Max batches listed by name in the confirmation; the rest are counted.
+MERGE_BATCH_PREVIEW_LIMIT = 6
+
+
+def _merge_batch_labels(photos: list) -> list:
+    """
+    取出这批照片涉及的批次名（去重排序），用于整种合并的确认弹窗。
+
+    批次名即 ``source_dir``——合并视图下每条记录带的、相对合并根的目录路径，
+    也正是用户在目录选择框里勾的那些名字。单目录浏览的照片没有这个字段，返回
+    空列表，调用方据此**完全不显示**批次提示，单目录弹窗因此逐字不变。
+
+    去重后排序而不是保持出现顺序：同一批照片两次打开弹窗必须给出同样的文案，
+    否则用户会以为范围变了。
+
+    参数 / Parameters:
+    photos (list): 待合并的照片记录列表。
+
+    返回 / Return:
+    list: 去重并排序的批次名；单目录模式下为空列表。
+
+    Distinct, sorted batch names (``source_dir``) for the merge confirmation.
+    Single-directory photos carry no ``source_dir``, so this returns an empty
+    list and the caller shows no hint at all — keeping that dialog unchanged.
+    """
+    return sorted({
+        (photo.get("source_dir") or "").strip()
+        for photo in photos
+        if (photo.get("source_dir") or "").strip()
+    })
+
+
+def _merge_batch_note(labels: list, i18n) -> str:
+    """
+    把批次名渲染成确认弹窗里的那句提示。
+
+    只有**两个及以上**批次才出提示：合并视图里只勾了一个目录时，「分布在 1 个
+    批次」是纯噪音。超过 MERGE_BATCH_PREVIEW_LIMIT 个时列出前几个并补一句还有
+    多少个——总数必须说清，用户才知道自己动的是 8 天而不是 6 天。
+
+    参数 / Parameters:
+    labels (list): _merge_batch_labels 的结果。
+    i18n: 国际化单例，文案与分隔符都跟随当前界面语言。
+
+    返回 / Return:
+    str: 提示文本；不需要提示时为空串（直接拼进正文模板即可）。
+
+    Render the batch hint. Shown only for two or more batches, truncated past
+    the preview limit with the remaining count spelled out.
+    """
+    if len(labels) < 2:
+        return ""
+
+    separator = i18n.t('browser.merge_batch_sep')
+    shown = labels[:MERGE_BATCH_PREVIEW_LIMIT]
+    text = separator.join(shown)
+    remaining = len(labels) - len(shown)
+    if remaining:
+        text += separator + i18n.t('browser.merge_batch_more').format(n=remaining)
+
+    return i18n.t('browser.merge_batch_note').format(
+        count=len(labels), batches=text
+    )
+
+
 def _species_edit_targets(window, photo: dict) -> list:
     """
     决定「修改鸟种」这一次作用于哪些照片。
@@ -2641,7 +2708,7 @@ class ResultsBrowserWindow(QMainWindow):
             return
         new_name = (new_en if use_en else new_cn) or ""
 
-        # 3. 确认：把张数、连拍组数和真实目标目录摆出来再动手
+        # 3. 确认：把张数、连拍组数、涉及的批次和真实目标目录摆出来再动手
         layout = get_advanced_config().folder_layout
         folders = _merge_target_folders(targets, new_name, layout)
         burst_count = len({p.get("burst_id") for p in targets if p.get("burst_id")})
@@ -2649,9 +2716,28 @@ class ResultsBrowserWindow(QMainWindow):
             i18n.t('browser.merge_burst_note').format(bursts=burst_count)
             if burst_count else ""
         )
+
+        # 合并浏览时本操作的作用域是全部批次，而目标目录清单是相对各自批次的
+        # 路径再去重——day1 与 day2 的照片若星级相同就只显示一行，看起来像一个
+        # 文件夹，实际是两个日期目录下各一份。补一句批次说明，并把目录标题换成
+        # 「（各批次下）」，让这份清单的口径自己说清楚。
+        # 单批次（含单目录浏览）时 batch_note 为空串、标题用不带括号的那个，
+        # 渲染结果与加这段之前逐字相同。
+        # The merge spans every batch, but the folder list is per-batch relative
+        # paths, de-duplicated — so one line can mean one folder in each of
+        # several date directories. Name the batches and qualify the heading.
+        batch_labels = _merge_batch_labels(targets)
+        batch_note = _merge_batch_note(batch_labels, i18n)
+        folders_label = i18n.t(
+            'browser.merge_folders_label_merged' if batch_note
+            else 'browser.merge_folders_label'
+        )
+
         body = i18n.t('browser.merge_confirm_body').format(
             old=old_name, count=len(targets), burst_note=burst_note,
-            new=new_name, folders="\n".join(folders) if folders else "—",
+            batch_note=batch_note, new=new_name,
+            folders_label=folders_label,
+            folders="\n".join(folders) if folders else "—",
         )
         confirmed = StyledMessageBox.question(
             self, i18n.t('browser.merge_confirm_title'), body
