@@ -1,3 +1,35 @@
+# SuperPicky 4.6.3 RC4
+
+**What's new since RC3:**
+
+1. **A species correction now reaches the report.** After you corrected a bird's
+   species, the exported HTML report still listed the photo under the species
+   you had just replaced — and so did the eBird export and the "birds you
+   photographed this session" list that the correction dialog opens with. The
+   browser itself was right: the species dropdown and the thumbnail caption both
+   updated immediately, which is exactly why this was easy to miss. You would
+   only find out when you opened the report. Corrections made before this build
+   are unaffected in your library — the database was always written correctly —
+   so simply exporting the report again with this build gives you the right
+   names. Bursts are handled too: correcting one frame of a burst updates every
+   frame of that burst in the report, the way it always did on disk.
+
+---
+
+# SuperPicky 4.6.3 RC4（中文）
+
+**RC3 以来的变化：**
+
+1. **改完鸟种，报告终于跟着改了。** 在选鸟结果浏览器里纠正鸟种之后，导出的
+   HTML 报告里那张照片仍然挂在你刚刚换掉的那个鸟种下面——eBird 导出、以及改鸟种
+   弹窗开场列出的「本次拍到的鸟种」也一样。而浏览器本身是对的：左侧鸟种下拉和
+   缩略图下的鸟名都立刻更新了，所以这个问题很容易被忽略，只有打开报告才会发现。
+   这次修复之前做过的纠错不影响你的照片库——数据库一直写的是对的——所以用这一版
+   重新导出一次报告，鸟名就都正确了。连拍也一并处理：改一张连拍的鸟种，报告里
+   整组都会跟着改，与磁盘上一贯的行为一致。
+
+---
+
 # SuperPicky 4.6.3 RC3
 
 **What's new since RC1:**
