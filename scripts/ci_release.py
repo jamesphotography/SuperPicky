@@ -28,6 +28,16 @@ from typing import Iterable
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
+
+# GitHub Releases 单个 asset 上限：2 GiB（官方文档 "Each file included in a
+# release must be under 2 GiB"）。注意是二进制 GiB = 2,147,483,648 字节，不是
+# 十进制 2 GB = 2,000,000,000 字节；CUDA 安装器长期显示为 "2.11 GB" 而被误判
+# 超限，实际只有 1.966 GiB，一直在上限之内。
+# GitHub's per-asset limit is 2 GiB (2,147,483,648 bytes), NOT decimal 2 GB.
+# The CUDA installer displays as "2.11 GB" in many tools but is 1.966 GiB and
+# has always been within the limit.
+GITHUB_RELEASE_ASSET_LIMIT_BYTES = 2 * 1024 ** 3
+
 PATCH_ITEMS = (
     "constants.py",
     "advanced_config.py",
@@ -132,22 +142,161 @@ def ensure_single_match(pattern: str) -> Path:
     return matches[0]
 
 
+def find_optional_match(pattern: str) -> Path | None:
+    """
+    查找可选资产 / Find an optional asset.
+
+    与 ensure_single_match 的区别：找不到文件时返回 None 而不是抛错，
+    用于 CUDA 安装器这类「构建失败也不阻塞发布」的可选产物。
+
+    Unlike ensure_single_match, this returns None instead of raising when the
+    file is missing, for optional artifacts such as the CUDA installer whose
+    build failure must not block the release.
+
+    参数 / Parameters:
+    pattern (str): 文件 glob 模式 / File glob pattern.
+
+    返回 / Return:
+    Path | None: 命中的唯一文件；无命中返回 None / The single match, or None.
+
+    异常 / Raises:
+    RuntimeError: 命中多于一个文件时 / When more than one file matches.
+    """
+
+    matches = [Path(item) for item in glob.glob(pattern) if Path(item).is_file()]
+    if not matches:
+        return None
+    if len(matches) > 1:
+        raise RuntimeError(f"Expected at most one asset for pattern '{pattern}', found {len(matches)}.")
+    return matches[0]
+
+
+def format_size(size_bytes: int) -> str:
+    """
+    格式化字节数 / Format a byte count for logs.
+
+    同时给出二进制 GiB 与十进制 GB，因为 GitHub 卡的是 GiB，而多数工具显示
+    的是 GB——历史上这两者的混淆让 CUDA 安装器被误判为「超过 2GB 上限」。
+
+    Prints both GiB and GB: GitHub enforces GiB while most tools display GB,
+    and confusing the two previously caused the CUDA installer to be wrongly
+    treated as exceeding the limit.
+
+    参数 / Parameters:
+    size_bytes (int): 字节数 / Size in bytes.
+
+    返回 / Return:
+    str: 形如 "2,111,142,835 bytes (1.9662 GiB / 2.111 GB)" 的描述文本。
+         小数位取到 4 位，否则临界情况（超限 1 字节）在日志里会和上限显示成
+         同一个数字 / Four decimals, otherwise a 1-byte overage renders
+         identically to the limit in CI logs.
+    """
+
+    return (
+        f"{size_bytes:,} bytes "
+        f"({size_bytes / 1024 ** 3:.4f} GiB / {size_bytes / 10 ** 9:.3f} GB)"
+    )
+
+
+def check_asset_size(path: Path, max_bytes: int) -> tuple[int, bool]:
+    """
+    检查单个资产是否符合体积上限 / Check one asset against the size limit.
+
+    参数 / Parameters:
+    path (Path): 待检查的文件 / File to inspect.
+    max_bytes (int): 允许的最大字节数 / Maximum allowed size in bytes.
+
+    返回 / Return:
+    tuple[int, bool]: (文件字节数, 是否在上限内) / (size in bytes, within limit).
+    """
+
+    size_bytes = path.stat().st_size
+    return size_bytes, size_bytes <= max_bytes
+
+
 def cmd_collect_assets(args: argparse.Namespace) -> int:
     """
     收集 release 资产 / Collect release assets.
+
+    每个资产都会经过体积卡口：超过 --max-bytes（默认 GitHub 单文件上限
+    2 GiB）时直接失败，避免把注定上传失败的文件交给 release 步骤。
+
+    Every asset passes a size gate: exceeding --max-bytes (default: GitHub's
+    2 GiB per-file limit) fails fast instead of handing a doomed upload to the
+    release step.
+
+    异常 / Raises:
+    RuntimeError: 任一资产超过体积上限时 / When any asset exceeds the limit.
     """
 
     output_dir = repo_path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    max_bytes = int(args.max_bytes)
 
     copied_files: list[str] = []
     for pattern in args.pattern:
         source_file = ensure_single_match(str(repo_path(pattern)))
+        size_bytes, within_limit = check_asset_size(source_file, max_bytes)
+        print(f"[体积检查 / size check] {source_file.name}: {format_size(size_bytes)}")
+        if not within_limit:
+            raise RuntimeError(
+                f"Asset '{source_file.name}' is {format_size(size_bytes)}, "
+                f"over the {format_size(max_bytes)} limit."
+            )
         destination = output_dir / source_file.name
         shutil.copy2(source_file, destination)
         copied_files.append(destination.name)
 
     print(json.dumps({"output_dir": str(output_dir), "files": copied_files}, ensure_ascii=False))
+    return 0
+
+
+def cmd_stage_optional_asset(args: argparse.Namespace) -> int:
+    """
+    暂存可选 release 资产 / Stage an optional release asset.
+
+    专供 CUDA 安装器：体积在上限内就复制进 release 资产目录随正式发布上传；
+    超限或产物缺失则跳过并输出 staged=false，由 workflow 回退到 workflow
+    artifact 通道，全程不使发布失败。
+
+    Built for the CUDA installer: stage it into the release asset directory when
+    it fits the limit, otherwise emit staged=false so the workflow can fall back
+    to the workflow-artifact channel. Never fails the release.
+
+    返回 / Return:
+    int: 始终为 0（该步骤不阻塞发布）/ Always 0; this step never blocks release.
+    """
+
+    output_dir = repo_path(args.output_dir)
+    max_bytes = int(args.max_bytes)
+    source_file = find_optional_match(str(repo_path(args.pattern)))
+
+    if source_file is None:
+        print(f"[跳过 / skip] 未找到可选资产 / optional asset not found: {args.pattern}")
+        write_github_outputs({"staged": "false", "reason": "missing", "size_bytes": "0"}, args.github_output)
+        return 0
+
+    size_bytes, within_limit = check_asset_size(source_file, max_bytes)
+    print(f"[体积检查 / size check] {source_file.name}: {format_size(size_bytes)}")
+    print(f"[上限 / limit] {format_size(max_bytes)}")
+
+    if not within_limit:
+        print(
+            f"::warning::{source_file.name} 超过 GitHub 单文件上限 "
+            f"({format_size(size_bytes)} > {format_size(max_bytes)})，"
+            f"改为上传 workflow artifact / exceeds the GitHub per-file limit; "
+            f"falling back to the workflow artifact channel."
+        )
+        write_github_outputs({"staged": "false", "reason": "oversize", "size_bytes": str(size_bytes)}, args.github_output)
+        return 0
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    destination = output_dir / source_file.name
+    shutil.copy2(source_file, destination)
+    headroom = max_bytes - size_bytes
+    print(f"[余量 / headroom] {format_size(headroom)}")
+    write_github_outputs({"staged": "true", "reason": "ok", "size_bytes": str(size_bytes)}, args.github_output)
+    print(json.dumps({"output_dir": str(output_dir), "file": destination.name}, ensure_ascii=False))
     return 0
 
 
@@ -319,7 +468,28 @@ def build_parser() -> argparse.ArgumentParser:
     collect_parser = subparsers.add_parser("collect-assets", help="按 glob 收集 release 资产")
     collect_parser.add_argument("--output-dir", required=True, help="资产输出目录")
     collect_parser.add_argument("--pattern", action="append", required=True, help="需要匹配的文件 glob，可重复指定")
+    collect_parser.add_argument(
+        "--max-bytes",
+        type=int,
+        default=GITHUB_RELEASE_ASSET_LIMIT_BYTES,
+        help=f"单个资产体积上限，默认 GitHub 上限 {GITHUB_RELEASE_ASSET_LIMIT_BYTES} 字节 (2 GiB)",
+    )
     collect_parser.set_defaults(func=cmd_collect_assets)
+
+    stage_parser = subparsers.add_parser(
+        "stage-optional-asset",
+        help="按体积上限暂存可选资产（CUDA 安装器），超限或缺失时跳过而不失败",
+    )
+    stage_parser.add_argument("--output-dir", required=True, help="资产输出目录")
+    stage_parser.add_argument("--pattern", required=True, help="需要匹配的文件 glob")
+    stage_parser.add_argument(
+        "--max-bytes",
+        type=int,
+        default=GITHUB_RELEASE_ASSET_LIMIT_BYTES,
+        help=f"单个资产体积上限，默认 GitHub 上限 {GITHUB_RELEASE_ASSET_LIMIT_BYTES} 字节 (2 GiB)",
+    )
+    stage_parser.add_argument("--github-output", help="可选，显式指定 GITHUB_OUTPUT 文件路径")
+    stage_parser.set_defaults(func=cmd_stage_optional_asset)
 
     patch_parser = subparsers.add_parser("build-patch", help="生成 code patch ZIP 与 patch_meta.json")
     patch_parser.add_argument("--output-dir", required=True, help="补丁输出目录")

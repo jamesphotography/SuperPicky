@@ -86,13 +86,40 @@ class BirdSpeciesEditDialog(QDialog):
     _WIDTH = 420
     _HEIGHT = 520
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, session_species=None, exclude_species=None):
+        """
+        参数 / Args:
+            parent:          父窗口
+            session_species: 本次拍到的鸟种 [(中文名, 张数)]，按张数降序。
+                             搜索框还空着时先列出它们——改鸟种最常见的情形是
+                             「认成了隔壁那种」，而那种当天多半也拍到了。
+                             传 None 则维持原样：打开是空的，等用户打字。
+            exclude_species: 不列出的中文名（正在改的那一种）。把 X 改成 X
+                             毫无意义，点了还会白跑一趟整批移动。
+
+        注意：这是**默认视图**，不是过滤。整批从头认错时正确鸟种一张都没认对
+        过，绝不在本次列表里，搜全库的路必须一直通着。
+        A default view, never a filter — a wholly misidentified batch has the
+        right species nowhere in that list.
+        """
         super().__init__(parent)
         self.i18n = get_i18n()
+
+        self._exclude = {(n or "").strip() for n in (exclude_species or [])}
+        self._session: list = [
+            (name, count) for name, count in (session_species or [])
+            if (name or "").strip() and name not in self._exclude
+        ]
+        self._session_names = {name for name, _ in self._session}
 
         self.selected_cn: str = ""
         self.selected_en: str = ""
         self.selected_latin: str = ""
+        # 「这不是鸟」：用户点了它就不是改鸟种，而是把照片标记为无鸟。
+        # 调用方须在读 selected_* 之前先看这个标志——两者互斥。
+        # Set when the user marks the photo as "not a bird"; callers must check
+        # this before reading selected_*, the two are mutually exclusive.
+        self.mark_no_bird: bool = False
         self._selected_data: Optional[Dict] = None
 
         self._db_path = _get_birdname_db_path()
@@ -107,6 +134,7 @@ class BirdSpeciesEditDialog(QDialog):
         )
 
         self._build_ui()
+        self._show_session_species()
 
     def _build_ui(self):
         """构建弹窗 UI：搜索框 + 候选列表 + 确认/取消按钮。"""
@@ -235,6 +263,31 @@ class BirdSpeciesEditDialog(QDialog):
         """)
         cancel_btn.clicked.connect(self.reject)
 
+        # 「这不是鸟」：YOLO 偶尔把鳄鱼之类的东西认成鸟，这种照片没有正确的
+        # 鸟种可选，只能整条标掉。放在最左侧、用次要样式，与右侧的确认/取消
+        # 拉开距离，避免误点。
+        # No species is correct for a false detection; this marks the photo as
+        # having no bird at all. Kept visually secondary and far from Confirm.
+        self._no_bird_btn = QPushButton(self.i18n.t("bird_species_edit.not_a_bird"))
+        self._no_bird_btn.setFixedHeight(36)
+        self._no_bird_btn.setToolTip(self.i18n.t("bird_species_edit.not_a_bird_tip"))
+        self._no_bird_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                border: 1px solid {COLORS['border']};
+                border-radius: 6px;
+                color: {COLORS['text_muted']};
+                font-size: 13px;
+                padding: 0 14px;
+            }}
+            QPushButton:hover {{
+                border-color: {COLORS['warning']};
+                color: {COLORS['warning']};
+            }}
+        """)
+        self._no_bird_btn.clicked.connect(self._on_mark_no_bird)
+
+        btn_row.addWidget(self._no_bird_btn)
         btn_row.addStretch()
         btn_row.addWidget(cancel_btn)
         btn_row.addWidget(self._confirm_btn)
@@ -243,13 +296,29 @@ class BirdSpeciesEditDialog(QDialog):
         # 自动聚焦搜索框
         QTimer.singleShot(50, self._search_input.setFocus)
 
+    def _on_mark_no_bird(self):
+        """
+        「这不是鸟」按钮：置标志并以 Accepted 关闭弹窗。
+
+        鸟种字段保持为空——调用方靠 mark_no_bird 区分「标记无鸟」与「什么都
+        没选」，后者才是取消。
+
+        Set the flag and accept; species fields stay empty so the caller can
+        tell "mark as no bird" apart from "nothing selected".
+        """
+        self.mark_no_bird = True
+        self.selected_cn = ""
+        self.selected_en = ""
+        self.selected_latin = ""
+        self.accept()
+
     def _on_text_changed(self, text: str):
         """搜索框内容变化：300ms 防抖后触发搜索。"""
         text = text.strip()
         if hasattr(self, "_search_timer"):
             self._search_timer.stop()
         if not text:
-            self._clear_results()
+            self._show_session_species()
             return
         self._search_timer = QTimer(self)
         self._search_timer.setSingleShot(True)
@@ -270,7 +339,15 @@ class BirdSpeciesEditDialog(QDialog):
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             q_lower = query.lower()
-            sql = """
+            # 本次拍到的鸟种排在最前（优先级 0）。这一条必须写进 SQL 的排序，
+            # 不能等取回结果再重排：下面有 LIMIT 50，搜「莺」这类宽泛的字库里
+            # 有几百种，本次那几种若排在第 50 名之后压根不会被取回来——用户搜
+            # 一个宽泛的词反而更找不到自己刚拍的鸟。
+            # The priority lives in ORDER BY, not in post-processing: with the
+            # LIMIT below, sorting after the fetch would come too late.
+            session = sorted(self._session_names)
+            session_ph = ",".join("?" * len(session)) if session else "NULL"
+            sql = f"""
                 SELECT * FROM birds
                 WHERE version_id = ? AND (
                     chinese_name LIKE ? OR
@@ -283,6 +360,7 @@ class BirdSpeciesEditDialog(QDialog):
                 )
                 ORDER BY
                     CASE
+                        WHEN chinese_name IN ({session_ph}) THEN 0
                         WHEN chinese_name = ?          THEN 1
                         WHEN english_name = ?          THEN 2
                         WHEN abbreviation = ?          THEN 3
@@ -299,6 +377,7 @@ class BirdSpeciesEditDialog(QDialog):
                 f"%{query}%", f"%{query}%", f"%{query}%",
                 f"%{query}%", f"%{query}%",
                 f"%{q_lower}%", f"%{q_lower}%",
+                *session,
                 query, query, query, q_lower,
                 f"{query}%", f"{query}%",
             )
@@ -310,7 +389,18 @@ class BirdSpeciesEditDialog(QDialog):
             self._clear_results()
 
     def _show_results(self, rows):
-        """将搜索结果渲染为 BirdResultCard 列表。"""
+        """
+        将搜索结果渲染为 BirdResultCard 列表。
+
+        本次拍到的鸟种排在最前面并带「本次」标记：搜「鹭」时当天拍到的那几种
+        鹭直接在最上面，不必在二三十个同属鸟里挑。其余结果顺序不变（库里那套
+        精确匹配优先的排序仍然有效）。
+        Species from this shoot float to the top, marked; everything else keeps
+        the database's own ordering.
+        """
+        rows = [r for r in rows if r["chinese_name"] not in self._exclude]
+        rows = ([r for r in rows if r["chinese_name"] in self._session_names] +
+                [r for r in rows if r["chinese_name"] not in self._session_names])
         self._clear_results()
         if not rows:
             self._empty_label.setText(self.i18n.t("bird_species_edit.no_match"))
@@ -330,12 +420,81 @@ class BirdSpeciesEditDialog(QDialog):
                 "pinyin_name":  row["pinyin_name"],
                 "abbreviation": row["abbreviation"],
             }
-            card = BirdResultCard(bird_data, tier_index=None)
+            badge = (self.i18n.t("bird_species_edit.this_shoot")
+                     if row["chinese_name"] in self._session_names else None)
+            card = BirdResultCard(bird_data, tier_index=None, badge=badge)
             card.selected.connect(self._on_card_selected)
             # 双击直接确认
             card.mouseDoubleClickEvent = lambda _evt, d=bird_data: self._confirm_with(d)
             self._list_layout.addWidget(card)
             self._cards.append(card)
+
+    def _show_session_species(self) -> None:
+        """
+        渲染「本次拍到的鸟种」默认视图（搜索框为空时）。
+
+        鸟名要拿去写库和建目录，所以必须以鸟名库里的正式记录为准——本次鸟种
+        只用中文名反查，查不到的（历史遗留名、手工填的名字）跳过，不能凭空
+        造一条记录出去。查不到一个就跳一个，其余照常列出。
+
+        Look every session species up in the name database and skip the ones
+        that are not there; the picked name gets written to disk, so it must be
+        a real record rather than something assembled here.
+        """
+        self._clear_results()
+        if not self._session:
+            return
+
+        rows = self._lookup_by_chinese([name for name, _ in self._session])
+        counts = dict(self._session)
+        listed = [rows[name] for name, _ in self._session if name in rows]
+        if not listed:
+            return
+
+        self._empty_label.hide()
+        self._scroll.show()
+        unit = "张" if not self.i18n.current_lang.startswith("en") else ""
+        for row in listed:
+            bird_data = {
+                "bird_id":      row["bird_id"],
+                "chinese_name": row["chinese_name"],
+                "english_name": row["english_name"],
+                "latin_name":   row["latin_name"],
+                "pinyin_name":  row["pinyin_name"],
+                "abbreviation": row["abbreviation"],
+            }
+            n = counts.get(row["chinese_name"], 0)
+            badge = f"{n}{unit}" if n else None
+            card = BirdResultCard(bird_data, tier_index=None, badge=badge)
+            card.selected.connect(self._on_card_selected)
+            card.mouseDoubleClickEvent = lambda _evt, d=bird_data: self._confirm_with(d)
+            self._list_layout.addWidget(card)
+            self._cards.append(card)
+
+    def _lookup_by_chinese(self, names: list) -> Dict[str, "sqlite3.Row"]:
+        """
+        按中文名批量查鸟名库，返回 {中文名: row}；查不到的不在结果里。
+
+        参数 / Args:
+            names: 中文鸟名
+
+        返回 / Returns:
+            Dict[str, sqlite3.Row]: 命中的记录
+        """
+        if not names or not self._version_id or not os.path.exists(self._db_path):
+            return {}
+        try:
+            conn = sqlite3.connect(self._db_path)
+            conn.row_factory = sqlite3.Row
+            placeholders = ",".join("?" * len(names))
+            rows = conn.execute(
+                f"SELECT * FROM birds WHERE version_id = ? "
+                f"AND chinese_name IN ({placeholders})",
+                (self._version_id, *names)).fetchall()
+            conn.close()
+            return {r["chinese_name"]: r for r in rows}
+        except Exception:
+            return {}
 
     def _on_card_selected(self, bird_data: Dict):
         """单击卡片：选中高亮，激活确认按钮。"""

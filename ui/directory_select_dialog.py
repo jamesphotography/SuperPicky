@@ -24,8 +24,9 @@ from typing import Any, Dict, List, Optional
 
 from PySide6.QtCore import QStandardPaths, Qt
 from PySide6.QtWidgets import (
-    QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout, QLabel,
-    QPushButton, QScrollArea, QToolButton, QVBoxLayout, QWidget,
+    QAbstractItemView, QCheckBox, QDialog, QDialogButtonBox, QFileDialog,
+    QHBoxLayout, QLabel, QListView, QPushButton, QScrollArea, QToolButton,
+    QTreeView, QVBoxLayout, QWidget,
 )
 
 from ui.styles import COLORS
@@ -125,7 +126,8 @@ class DirectorySelectDialog(QDialog):
 
     # ── 对外接口 / Public API ──────────────────────────────────────────────
 
-    def add_directory(self, directory: str) -> int:
+    def add_directory(self, directory: str,
+                      unusable: Optional[List[str]] = None) -> int:
         """
         把一个目录加入清单。
 
@@ -137,24 +139,34 @@ class DirectorySelectDialog(QDialog):
 
         参数 / Args:
             directory: 用户挑中的目录
+            unusable: 传入一个列表时，「没有结果」的目录只追加进去而不弹框，
+                      由调用方汇总提示（多选时用）。默认 None = 立即弹框。
 
         返回 / Returns:
             int: 实际新增的行数（已在清单里的不重复计入）
+
+        Pass `unusable` to collect unusable directories instead of showing a
+        dialog per directory; used when several folders were picked at once.
         """
         from tools.merged_report_db import find_processed_subdirs, is_processed
 
+        def _unusable(path: str) -> int:
+            if unusable is None:
+                self._notify_nothing_found(path)
+            else:
+                unusable.append(path)
+            return 0
+
         directory = _norm(directory)
         if not os.path.isdir(directory):
-            self._notify_nothing_found(directory)
-            return 0
+            return _unusable(directory)
 
         if is_processed(directory):
             found = [directory]
         else:
             found = find_processed_subdirs(directory)
             if not found:
-                self._notify_nothing_found(directory)
-                return 0
+                return _unusable(directory)
             if not self._confirm_add_batches(
                     os.path.basename(directory) or directory, len(found)):
                 return 0
@@ -166,13 +178,31 @@ class DirectorySelectDialog(QDialog):
 
     def browse_and_add(self) -> int:
         """
-        弹系统目录选择框，把选中的目录加进清单。
+        弹目录选择框，把选中的（可能多个）目录加进清单。
+
+        选中多个时，「里面没有选鸟结果」的目录不逐个弹框——一次选 5 个、
+        其中 3 个没结果就连弹 3 次，比不提示还烦人——而是攒起来汇总成一条。
+        只选一个时仍走原来的单条提示，那时它就是针对性的反馈。
 
         返回 / Returns:
             int: 新增的行数；用户取消时为 0
+
+        Add every picked directory. With a multi-selection, the "nothing found"
+        notices are batched into one message instead of one dialog per folder.
         """
         picked = self._pick_directory()
-        return self.add_directory(picked) if picked else 0
+        if not picked:
+            return 0
+        if len(picked) == 1:
+            return self.add_directory(picked[0])
+
+        unusable: List[str] = []
+        added = 0
+        for path in picked:
+            added += self.add_directory(path, unusable=unusable)
+        if unusable:
+            self._notify_nothing_found_many(unusable)
+        return added
 
     def remove_directory(self, path: str) -> None:
         """从清单里移除某个目录（不影响磁盘上的任何东西）。"""
@@ -228,13 +258,25 @@ class DirectorySelectDialog(QDialog):
     # 也方便将来换成别的呈现方式。
     # Pulled out so the add logic itself stays testable without real dialogs.
 
-    def _pick_directory(self) -> str:
+    def _pick_directory(self) -> List[str]:
         """
-        弹系统目录选择框，返回选中的目录（取消时为空串）。
+        弹目录选择框，返回选中的目录列表（取消时为空列表）。
 
         起始位置取最后加入那个目录的上一级——接着加的多半是它的邻居（同一个
         年份文件夹里的另一天），从头翻起太累。清单还空着就回退到「图片」目录。
-        Start next to the last added folder; its siblings are the likely picks.
+
+        **为什么不用系统原生框**：要合并的批次通常是同一父目录下的某几天，
+        而 QFileDialog.getExistingDirectory 一次只能选一个，逐个加太累。
+        Qt 在目录模式下不暴露原生框的多选开关（macOS 的 NSOpenPanel 本身
+        支持，但封装没给），只有非原生的 Qt 自绘框能把内部视图改成多选。
+        代价是对话框不再是系统原生样式，换来一次选中多个目录。
+
+        Returns:
+            List[str]: 选中的目录绝对路径；用户取消时为空列表。
+
+        The native directory dialog allows only one folder at a time and Qt
+        exposes no multi-select switch for it, so this uses the non-native Qt
+        dialog with its internal views switched to extended selection.
         """
         if self._rows:
             start = os.path.dirname(self._rows[-1]["path"])
@@ -243,9 +285,45 @@ class DirectorySelectDialog(QDialog):
                 QStandardPaths.StandardLocation.PicturesLocation) or ""
         if not os.path.isdir(start):
             start = ""
-        return QFileDialog.getExistingDirectory(
-            self, self.i18n.t("dir_select.add_title"), start,
-            QFileDialog.Option.ShowDirsOnly)
+
+        dlg = QFileDialog(self, self.i18n.t("dir_select.add_title"), start)
+        dlg.setFileMode(QFileDialog.FileMode.Directory)
+        dlg.setOption(QFileDialog.Option.DontUseNativeDialog, True)
+        dlg.setOption(QFileDialog.Option.ShowDirsOnly, True)
+        for view in (dlg.findChild(QListView, "listView"),
+                     dlg.findChild(QTreeView)):
+            if view is not None:
+                view.setSelectionMode(
+                    QAbstractItemView.SelectionMode.ExtendedSelection)
+
+        if not dlg.exec():
+            return []
+
+        # 选中项要自己从 selectionModel 取：目录模式下 selectedFiles() 读的是
+        # 输入框里那一个路径，多选的其余项拿不到。
+        # selectedFiles() reflects only the line edit in Directory mode.
+        picked: List[str] = []
+        for view in (dlg.findChild(QListView, "listView"),
+                     dlg.findChild(QTreeView)):
+            model = view.model() if view is not None else None
+            if model is None or not hasattr(model, "filePath"):
+                continue
+            sel = view.selectionModel()
+            if sel is None:
+                continue
+            for index in sel.selectedIndexes():
+                path = model.filePath(index)
+                if path and os.path.isdir(path) and path not in picked:
+                    picked.append(path)
+            if picked:
+                break
+
+        # 没选中任何项就点了确定 —— 用户双击进入某目录、意思是「就选这个」。
+        # 不兜这一手会把最常见的单选用法弄坏。
+        # Nothing highlighted means "the folder I navigated into".
+        if not picked:
+            picked = [p for p in dlg.selectedFiles() if os.path.isdir(p)]
+        return picked
 
     def _confirm_add_batches(self, name: str, count: int) -> bool:
         """问用户是否把该目录下的 N 个批次全部加入。"""
@@ -264,6 +342,24 @@ class DirectorySelectDialog(QDialog):
             self, self.i18n.t("messages.hint"),
             self.i18n.t("dir_select.nothing_found").format(
                 name=os.path.basename(path) or path))
+
+    def _notify_nothing_found_many(self, paths: List[str]) -> None:
+        """
+        一次告知多个「没有选鸟结果」的目录（多选时用），逐个弹框太烦。
+
+        参数 / Args:
+            paths: 没找到结果的目录路径
+
+        One notice listing every unusable directory from a multi-selection.
+        """
+        from ui.custom_dialogs import StyledMessageBox
+
+        names = "\n".join(
+            f"· {os.path.basename(p) or p}" for p in paths)
+        StyledMessageBox.warning(
+            self, self.i18n.t("messages.hint"),
+            self.i18n.t("dir_select.nothing_found_many").format(
+                count=len(paths), names=names))
 
     # ── 内部 / Internals ───────────────────────────────────────────────────
 

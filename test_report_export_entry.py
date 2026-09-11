@@ -78,7 +78,17 @@ def test_report_export_locale_keys_match():
 
 
 def test_report_export_keys_cover_all_usages():
-    """代码中用到的每个 report_export.* 键都必须在 locale 中存在。"""
+    """代码中用到的每个 report_export.* 键都必须在 locale 中存在。
+
+    键必须以引号开头匹配（i18n 调用总是 t("report_export.xxx") 的形式）。
+    早先的正则不带引号，把注释里提到的文件路径 `core/report_export.py` 也
+    当成了键，凭空要求 locale 里有一个叫 "py" 的条目——注释里写文件路径是
+    再正常不过的写法，不该因此让这个测试变红。
+
+    Anchor on the opening quote: i18n lookups are always string literals.
+    Without it a file path mentioned in a comment (core/report_export.py) was
+    parsed as a key named "py".
+    """
     import json
     import re
     here = os.path.dirname(__file__)
@@ -87,6 +97,6 @@ def test_report_export_keys_cover_all_usages():
     used = set()
     for name in ("ui/results_browser_window.py", "ui/report_export_dialog.py"):
         with open(os.path.join(here, name), encoding="utf-8") as fh:
-            used |= set(re.findall(r'report_export\.(\w+)', fh.read()))
+            used |= set(re.findall(r'[\'"]report_export\.(\w+)', fh.read()))
     missing = used - set(zh)
     assert not missing, f"locale 缺少这些键: {sorted(missing)}"

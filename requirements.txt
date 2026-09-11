@@ -7,6 +7,7 @@
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch==2.7.1+cpu
 torchvision==0.22.1+cpu
-torchaudio==2.7.1+cpu
+# torchaudio 已移除：全项目零 import，PyInstaller 不会打包它，只是白装。
+# torchaudio removed: never imported, never bundled by PyInstaller.
 pyinstaller
 lap

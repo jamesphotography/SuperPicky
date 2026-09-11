@@ -1298,7 +1298,9 @@
     "picked_only_tip": "只显示精选照片（3★ 中锐度与美学双双上榜的那批）",
     "merge_dirs": "合并目录…",
     "merge_dirs_tooltip": "把多个目录的选鸟结果合并成一份统计（可跨文件夹、跨硬盘）",
-    "merged_title": "{span}（{count} 个目录）"
+    "merged_title": "{span}（{count} 个目录）",
+    "mark_no_bird_confirm_title": "标记为没有鸟",
+    "mark_no_bird_confirm_body": "将把选中的 {count} 张照片标记为没有鸟：清除鸟种、降为 0 星并移入「其他鸟类/0星_放弃」。\n\n要改回来，重新指定鸟种即可。"
   },
   "video": {
     "title_phase1": "视频分析（Phase 1 · 仅 YOLO 有鸟/无鸟）",
@@ -1425,7 +1427,10 @@
     "prompt": "请输入关键词搜索鸟种",
     "no_match": "未找到匹配的鸟种",
     "confirm": "确认修改",
-    "cancel": "取消"
+    "cancel": "取消",
+    "this_shoot": "本次",
+    "not_a_bird": "这不是鸟",
+    "not_a_bird_tip": "标记为无鸟：清除鸟种、降为 0 星并移入「其他鸟类/0星_放弃」"
   },
   "crop_advisor": {
     "title": "裁剪建议",
@@ -1513,7 +1518,8 @@
     "none_selected": "至少选择一个目录。",
     "batch_prompt_title": "加入其中的批次",
     "batch_prompt": "「{name}」下有 {count} 个已处理的目录，全部加入吗？",
-    "nothing_found": "「{name}」里没有找到已处理的选鸟结果。"
+    "nothing_found": "「{name}」里没有找到已处理的选鸟结果。",
+    "nothing_found_many": "以下 {count} 个目录里没有找到已处理的选鸟结果：\n{names}"
   },
   "report_export": {
     "button": "导出报告",
