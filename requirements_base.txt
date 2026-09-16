@@ -1,6 +1,8 @@
 # Shared dependencies for SuperPicky (CPU and CUDA builds)
 
-ultralytics>=8.0.0
+# 锁定版本：未锁时 CI 悄悄升到 8.4.x，其全局 Image.open 补丁引出 NEF 识鸟拉起新窗口的缺陷。升级须先验证。
+# Pinned: unpinned CI silently moved to 8.4.x whose global Image.open patch caused a regression. Validate before bumping.
+ultralytics==8.4.147
 opencv-python>=4.0.0
 rawpy>=0.18.0
 imageio>=2.0.0

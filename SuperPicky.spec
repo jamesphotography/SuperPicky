@@ -71,6 +71,11 @@ all_datas.extend(copy_metadata('imageio'))
 all_datas.extend(copy_metadata('rawpy'))
 all_datas.extend(copy_metadata('ultralytics'))
 all_datas.extend(copy_metadata('pillow_heif'))
+# pi_heif 元数据必须带上：ultralytics check_requirements("pi-heif") 靠 importlib.metadata 判断是否已装，
+# 缺元数据会被判为未安装并尝试 pip 安装（与 SuperPicky_win64.spec 对齐）。
+# pi_heif metadata is required: ultralytics check_requirements("pi-heif") uses
+# importlib.metadata, and missing metadata is treated as not installed (matches win64 spec).
+all_datas.extend(copy_metadata('pi_heif'))
 
 a = Analysis(
     ['main.py'],
