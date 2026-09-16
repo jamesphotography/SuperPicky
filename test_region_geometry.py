@@ -51,3 +51,24 @@ def test_distance_inside_point_is_to_nearest_edge():
     """内部点到最近边的距离 / Inside point measures to the nearest edge."""
     pts = quantize_ring(SQUARE)
     assert distance_to_ring_km(9.0, 5.0, pts) == pytest.approx(110.574, abs=0.5)
+
+
+def test_antimeridian_clipped_halves():
+    """防线子午线裁剪后的两个半环被独立处理 / Antimeridian-clipped halves are evaluated independently."""
+    # 西半环：lon 170..180, lat 50..60 / Western half: lon 170..180, lat 50..60
+    square_west = [[170.0, 50.0], [180.0, 50.0], [180.0, 60.0], [170.0, 60.0], [170.0, 50.0]]
+    pts_west = quantize_ring(square_west)
+
+    # 东半环：lon -180..-170, lat 50..60 / Eastern half: lon -180..-170, lat 50..60
+    square_east = [[-180.0, 50.0], [-170.0, 50.0], [-170.0, 60.0], [-180.0, 60.0], [-180.0, 50.0]]
+    pts_east = quantize_ring(square_east)
+
+    # 点 (55, 175) 在西半环内，不在东半环内
+    # Point (55, 175) is inside western half, outside eastern half
+    assert point_in_ring(55.0, 175.0, pts_west) is True
+    assert point_in_ring(55.0, 175.0, pts_east) is False
+
+    # 点 (55, -175) 在东半环内，不在西半环内
+    # Point (55, -175) is inside eastern half, outside western half
+    assert point_in_ring(55.0, -175.0, pts_east) is True
+    assert point_in_ring(55.0, -175.0, pts_west) is False

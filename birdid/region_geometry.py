@@ -5,10 +5,20 @@
 边界环以 0.01° 精度量化为整数点 (lon*100, lat*100)，zlib 压缩后存入 ebird_regions.db。
 本模块只做纯计算，构建脚本与运行时定位器共用，保证编码与解码永远一致。
 
+重要前置条件 / Critical Precondition:
+环不跨越防线子午线（Natural Earth 在 ±180° 处裁剪多边形，因此每个环的连续顶点经度差 < 180°）。
+±180° 附近的点会对每个裁剪后的半环分别求值；跨越 ±180° 接缝的距离不会被包装（179.9° 处的点与 -179.9° 处的环无法判定为"接近"）。
+
 Boundary rings are quantized to integer points (lon*100, lat*100) at 0.01
 degree precision and stored zlib-compressed in ebird_regions.db. This module is
 pure computation shared by the build script and the runtime locator, so the
 encoder and decoder can never drift apart.
+
+Critical Precondition:
+Rings must not cross the antimeridian (Natural Earth clips polygons at ±180°,
+so every ring's consecutive vertices differ by <180° longitude). A point near
+±180° is evaluated against each clipped half separately; distance across the
+±180° seam is not wrapped (a point at 179.9° is not "near" a ring at -179.9°).
 """
 from __future__ import annotations
 
@@ -103,6 +113,12 @@ def point_in_ring(lat: float, lon: float, points: Sequence[Point]) -> bool:
     """
     射线法判断点是否在环内 / Ray-casting point-in-ring test.
 
+    前置条件：环不跨越防线子午线（Natural Earth 在 ±180° 处裁剪）。
+    ±180° 附近的点会对每个裁剪后的半环分别求值。
+
+    Precondition: Ring must not cross the antimeridian (Natural Earth clips at
+    ±180°). A point near ±180° is evaluated against each clipped half separately.
+
     参数 / Parameters:
         lat (float): 纬度 / Latitude.
         lon (float): 经度 / Longitude.
@@ -133,9 +149,16 @@ def distance_to_ring_km(lat: float, lon: float, points: Sequence[Point]) -> floa
 
     在点所在纬度做等距矩形投影，数百公里内误差可忽略，足以判断离岸容差。
 
+    前置条件：环不跨越防线子午线（Natural Earth 在 ±180° 处裁剪）。
+    跨越 ±180° 接缝的距离不会被包装；±180° 处的点与对侧环的接近度不可比较。
+
     Uses an equirectangular projection at the point's latitude; the error is
     negligible within a few hundred kilometres, which is all the offshore
     tolerance needs.
+
+    Precondition: Ring must not cross the antimeridian (Natural Earth clips at
+    ±180°). Distance across the ±180° seam is not wrapped; a point at ±180°
+    is not considered "near" a ring on the opposite side of the seam.
 
     参数 / Parameters:
         lat (float): 纬度 / Latitude.
