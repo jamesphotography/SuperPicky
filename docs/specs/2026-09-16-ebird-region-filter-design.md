@@ -150,23 +150,28 @@ Natural Earth（公有领域）`ne_10m_admin_1_states_provinces` 与 `ne_50m_adm
 
 1. **归并到物种级**：分类表 `category == "species"` 直接保留；`issf` / `form` / `domestic` 等若有
    `reportAs` 且目标为物种，则归并到该物种；`hybrid` / `spuh` / `slash` / `intergrade` 剔除。
-2. **映射到模型类别编号**（得到集合，允许一对多），按顺序取第一个非空结果：
-   1. `avilist_map.cornell_code == code` 且 `model_class_id` 非空；
-   2. eBird `sciName` 精确匹配 `BirdCountInfo.scientific_name`；
-   3. **同物异名**：用 GBIF species match API 把 eBird `sciName` 解析为 accepted `usageKey`，
-      与 `gbif_rarity_100.specieskey` 相等的模型类别即命中（构建期联网，结果缓存）；
-   4. 人工覆盖表 `scripts_dev/ebird_overrides.json`（`{"speciesCode": [class_id, ...]}`）。
+2. **映射到模型类别编号**（得到集合，允许一对多），对**整个分类表**的物种按顺序取第一个非空结果：
+   1. 人工覆盖 `scripts_dev/ebird_overrides.json` 的 `map`（人工结论优先于自动结果）；
+   2. `avilist_map.cornell_code == code` 且 `model_class_id` 非空；
+   3. eBird `sciName` 精确匹配 `BirdCountInfo.scientific_name`；
+   4. GBIF v2 species match 把 eBird `sciName` 解析为物种级 accepted key，命中 `gbif_rarity_100.specieskey`；
+   5. **同科种加词**：在前四步未占用的模型类别中，找「同科 + 种加词词干（去阴阳性词尾）相同」且双方唯一的配对。
+      科名取 eBird 分类表的属→科关系，缺失时用 `bird_ioc`。设计阶段实测 111 例全部为属名调整且配对正确；
+      不加同科约束会出现 `Crithagra striatipectus` ↔ `Nystalus striatipectus` 这类跨科错配。
 3. 未命中的物种记入报告。
 
 ### 4.3 构建卡口 / Build gate
 
-构建结束输出映射报告，并按以下规则决定成败：
+模型 10,964 类、eBird 物种 11,167 个，天然存在模型没有的物种，无法自动区分「模型没有」与「漏接」，
+因此卡口改为可判定的规则：
 
-- **硬失败**：某 eBird 物种未映射，但 GBIF 解析出的 accepted key 在 `gbif_rarity_100` 中存在
-  （即模型确有该种却没接上）。这正是旧版 42 个 `ostric2` 类错误的形态。
-- **硬失败**：任一模型类别被映射到超过 3 个互不相同的 eBird 物种（防止默认值污染式错误）。
-- **只报告**：模型本身没有的物种（模型识别不出，丢失无影响）。
-- **硬失败**：`regions` 表中任一省州或国家的物种数为 0，或 Natural Earth 代码无法对应到 eBird 区域（§5.2）。
+- **硬失败**：哨兵物种缺失——`SENTINELS` 中列出的（区域, 模型学名）必须出现在该区域候选集中
+  （取自 §2.2 旧版误杀案例：褐刺嘴莺、红耳绿鹦鹉、澳洲燕鸻、黄腹山雀、蓑羽鹤、金眶鸻、蒙古沙鸻、黄林莺）。
+- **硬失败**：任一模型类别被映射到超过 3 个 eBird 物种，且不在 `allow_multi` 白名单中。
+- **硬失败**：任一区域物种数为 0；任一中澳美省州没有边界；`CN`/`AU`/`US` 没有国家边界。
+- **硬失败**：国家中文名缺失（`tools/country_names.py` 未收录），或省州中文名含繁体字。
+- **只报告**：未映射物种清单（代码、学名、英文名、出现在多少个区域）与第 5 步配对清单，写入
+  `scripts_dev/.ebird_cache/mapping_report.txt` 供人工复核，发现错配就加进 `map` 覆盖。
 
 ### 4.4 产物 / Output — `birdid/data/ebird_regions.db`
 
