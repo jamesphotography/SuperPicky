@@ -295,6 +295,45 @@ def load_overrides(path: str) -> Tuple[Dict[str, List[int]], Set[int]]:
     return mapping, allow
 
 
+def publish_database(staging: str, output: str, max_bytes: int) -> bool:
+    """
+    检查大小限制后发布数据库 / Check size limit and publish the database.
+
+    先检查临时文件大小，如果超限则删除临时文件、保留现有输出、返回 False；
+    否则原子替换现有文件。如果检查失败或替换过程中发生错误，清理临时文件
+    但保留现有输出。
+
+    Checks the staging file size; if it exceeds max_bytes, deletes the staging
+    file, leaves any existing output untouched, and returns False. Otherwise,
+    atomically replaces the output file and returns True. On any error, cleans
+    up the staging file but preserves any existing output.
+
+    参数 / Parameters:
+        staging (str): 临时数据库路径 / Path to the staging database.
+        output (str): 最终输出路径 / Path to the final output database.
+        max_bytes (int): 大小上限（字节） / Size limit in bytes.
+
+    返回 / Returns:
+        bool: True 发布成功；False 超限或错误 / True on success; False on oversized or error.
+    """
+    try:
+        if not os.path.exists(staging):
+            return False
+        size = os.path.getsize(staging)
+        if size > max_bytes:
+            os.remove(staging)
+            return False
+        os.replace(staging, output)
+        return True
+    except Exception:  # noqa: BLE001
+        try:
+            if os.path.exists(staging):
+                os.remove(staging)
+        except Exception:  # noqa: BLE001
+            pass
+        return False
+
+
 def _write_report(
     path: str,
     taxonomy: Dict[str, dict],
@@ -414,11 +453,18 @@ def main(argv: Optional[List[str]] = None) -> int:
             errors.append(f"subnational missing Chinese name: {entry['code']}")
         regions.append((entry["code"], entry["parent"], entry["name"], name,
                         len(region_species.get(entry["code"], set()))))
-    errors += [f"traditional characters (add to SUBNATIONAL_ZH_OVERRIDES): {code} {name}"
-               for code, name in sorted(find_traditional_names(names_zh).items())]
+
+    # Separate traditional-characters errors into console-safe (ASCII) and report-detailed (full)
+    traditional_codes = sorted(find_traditional_names(names_zh).items())
+    errors += [f"traditional characters (add to SUBNATIONAL_ZH_OVERRIDES): {code}"
+               for code, name in traditional_codes]
+    report_detail_lines = [
+        f"traditional characters (add to SUBNATIONAL_ZH_OVERRIDES): {code} {name}"
+        for code, name in traditional_codes
+    ]
 
     report = os.path.join(args.cache_dir, "mapping_report.txt")
-    _write_report(report, taxonomy, mapping, region_lists, skipped1, skipped0, errors)
+    _write_report(report, taxonomy, mapping, region_lists, skipped1, skipped0, errors + report_detail_lines)
     print(f"steps: {dict(Counter(mapping.steps.values()))}; unmapped: {len(mapping.unmapped)}")
     print(f"report: {report}")
     if errors:
@@ -435,12 +481,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         "boundaries_source": f"Natural Earth v5.1.2 (public domain): {NE_ADMIN0}, {NE_ADMIN1}",
         "builder_version": BUILDER_VERSION,
     }
-    write_database(args.output, regions, region_species, rows0 + rows1, meta)
-    size = os.path.getsize(args.output)
-    print(f"wrote {args.output}: {size / 1024 / 1024:.2f} MB, {len(regions)} regions")
-    if size > MAX_DB_BYTES:
+    staging = args.output + ".staging"
+    write_database(staging, regions, region_species, rows0 + rows1, meta)
+    if not publish_database(staging, args.output, MAX_DB_BYTES):
         print(f"database exceeds {MAX_DB_BYTES} bytes")
         return 1
+    size = os.path.getsize(args.output)
+    print(f"wrote {args.output}: {size / 1024 / 1024:.2f} MB, {len(regions)} regions")
     return 0
 
 

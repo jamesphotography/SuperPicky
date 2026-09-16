@@ -11,6 +11,7 @@ from scripts_dev.build_ebird_regions import (
     check_sentinels,
     country_rows,
     load_overrides,
+    publish_database,
     write_database,
 )
 from scripts_dev.ebird_region_boundaries import RingRow
@@ -105,3 +106,37 @@ def test_load_overrides(tmp_path):
     p.write_text(json.dumps({"map": {"lirplo": [1513]}, "allow_multi": [42]}), encoding="utf-8")
     mapping, allow = load_overrides(str(p))
     assert mapping == {"lirplo": [1513]} and allow == {42}
+
+
+def test_publish_database_within_limit(tmp_path):
+    """大小在限制内时发布并删除临时文件 / Publishes and removes staging when within limit."""
+    staging = tmp_path / "staging.db"
+    output = tmp_path / "final.db"
+    write_database(str(staging), [("AU", None, "Australia", "澳大利亚", 1)], {"AU": {1}}, [], {})
+    assert staging.exists()
+    assert not output.exists()
+
+    success = publish_database(str(staging), str(output), 100 * 1024 * 1024)  # 100 MB limit
+    assert success
+    assert output.exists()
+    assert not staging.exists()  # Staging file should be gone
+
+
+def test_publish_database_oversized(tmp_path):
+    """大小超限时删除临时文件、保留现有输出 / Deletes staging and preserves existing output when oversized."""
+    staging = tmp_path / "staging.db"
+    output = tmp_path / "final.db"
+
+    # Create an existing output file
+    write_database(str(output), [("IS", None, "Iceland", "冰岛", 1)], {"IS": {1}}, [], {})
+    original_content = output.read_bytes()
+
+    # Create an oversized staging file
+    write_database(str(staging), [("AU", None, "Australia", "澳大利亚", 1)], {"AU": {1}}, [], {})
+
+    # Attempt to publish with a very small limit
+    success = publish_database(str(staging), str(output), 1)  # 1 byte limit (too small)
+    assert not success
+    assert not staging.exists()  # Staging should be cleaned up
+    assert output.exists()  # Output should still exist
+    assert output.read_bytes() == original_content  # Output should be unchanged
