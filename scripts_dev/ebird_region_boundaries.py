@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Iterator, List, Optional, Sequence, Set, Tuple
 
-from birdid.region_geometry import pack_ring, quantize_ring, ring_bbox
+from birdid.region_geometry import SCALE, pack_ring, quantize_ring, ring_bbox
 
 SUBNATIONAL_COUNTRIES: Tuple[str, ...] = ("CN", "AU", "US")
 
@@ -145,11 +145,61 @@ def _rows_for_feature(feature: dict, region: str, level: int, start_id: int) -> 
     return rows
 
 
+def _outer_area(feature: dict) -> float:
+    """
+    要素外环的量化面积（度²，鞋带公式）/ Quantized outer-ring area (deg^2, shoelace).
+
+    Natural Earth 的 area_sqkm 字段对部分要素（如全部 AU admin-1 要素）恒为 0，
+    不能用来判断哪个要素是该省州代码下面积最大的主体（州本体 vs 附属小岛）。
+    改用量化后坐标的鞋带公式自算面积：只累加外环（非洞）绝对面积，忽略内环洞，
+    与写库时 quantize_ring 用的同一批整数点保证结果与最终入库边界一致。
+
+    Natural Earth's area_sqkm is 0 for every AU admin-1 feature, so it cannot
+    tell the state's main body apart from a tiny attached island sharing the
+    same code. This computes area with the shoelace formula on the same
+    quantized points that get written to the database, summing only outer
+    (non-hole) ring areas so the result matches what is actually stored.
+
+    参数 / Parameters:
+        feature (dict): GeoJSON 要素 / GeoJSON feature.
+
+    返回 / Returns:
+        float: 外环面积之和，单位度² / Sum of outer-ring areas in square degrees.
+    """
+    total = 0.0
+    for coords, is_hole in iter_geometry_rings(feature.get("geometry") or {}):
+        if is_hole:
+            continue
+        points = quantize_ring(coords)
+        if len(points) < 3:
+            continue
+        shoelace = 0.0
+        n = len(points)
+        for i in range(n):
+            x1, y1 = points[i]
+            x2, y2 = points[(i + 1) % n]
+            shoelace += x1 * y2 - x2 * y1
+        total += abs(shoelace) / 2.0
+    return total / (SCALE * SCALE)
+
+
 def admin1_rings(
     features: List[dict], valid_codes: Set[str]
 ) -> Tuple[List[RingRow], Dict[str, str], List[str]]:
     """
     提取中澳美省州边界 / Extract CN/AU/US subnational boundaries.
+
+    同一 eBird 代码下可能有多个 Natural Earth 要素（州本体+附属小岛，如
+    AU-NSW 还带出豪勋爵岛）；中文名取其中量化外环面积（`_outer_area`）
+    最大的要素，而不是 Natural Earth 的 area_sqkm（该字段对 AU 全部为 0，
+    会导致"最后一个要素覆盖前面"的错误结果，见 2026-09 复核修复）。
+
+    A single eBird code can span several Natural Earth features (a state's
+    main body plus an attached island, e.g. AU-NSW also carries Lord Howe
+    Island). The Chinese name is taken from whichever feature has the
+    largest quantized outer-ring area (`_outer_area`), not area_sqkm (which
+    is 0 for every AU feature and let a later, smaller feature silently
+    overwrite the state name — fixed in the 2026-09 review).
 
     参数 / Parameters:
         features (list[dict]): ne_10m_admin_1 的要素 / Admin-1 features.
@@ -176,8 +226,8 @@ def admin1_rings(
         new_rows = _rows_for_feature(feat, code, 1, next_id.get(code, 0))
         rows.extend(new_rows)
         next_id[code] = next_id.get(code, 0) + len(new_rows)
-        area = float(props.get("area_sqkm") or 0)
-        if area >= best_area.get(code, -1.0):
+        area = _outer_area(feat)
+        if area > best_area.get(code, -1.0):
             best_area[code] = area
             names[code] = str(props.get("name_zh") or "")
     return rows, names, sorted(skipped)

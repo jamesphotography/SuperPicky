@@ -20,7 +20,7 @@ from typing import Dict, Tuple
 
 # {代码: (英文名, 中文名)} / {code: (English, Chinese)}
 _NAMES: Dict[str, Tuple[str, str]] = {
-    "AC": ("Ashmore and Cartier Islands", "阿什莫尔和卡捷群岛"),
+    "AC": ("Ashmore and Cartier Islands", "阿什莫尔和卡地亚群岛"),
     "AD": ("Andorra", "安道尔"),
     "AE": ("United Arab Emirates", "阿联酋"),
     "AF": ("Afghanistan", "阿富汗"),
@@ -118,7 +118,7 @@ _NAMES: Dict[str, Tuple[str, str]] = {
     "GW": ("Guinea-Bissau", "几内亚比绍"),
     "GY": ("Guyana", "圭亚那"),
     "HK": ("Hong Kong", "香港"),
-    "HM": ("Heard Island and McDonald Islands", "赫德岛和麦克唐纳岛"),
+    "HM": ("Heard Island and McDonald Islands", "赫德岛和麦克唐纳群岛"),
     "HN": ("Honduras", "洪都拉斯"),
     "HR": ("Croatia", "克罗地亚"),
     "HT": ("Haiti", "海地"),

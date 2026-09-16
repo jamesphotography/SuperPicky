@@ -11,6 +11,8 @@ from scripts_dev.ebird_region_boundaries import (
 )
 
 SQUARE = [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]]
+BIG_SQUARE = [[[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]]]
+TINY_SQUARE = [[[20, 20], [20.1, 20], [20.1, 20.1], [20, 20.1], [20, 20]]]
 HOLED = [[[0, 0], [4, 0], [4, 4], [0, 4], [0, 0]], [[1, 1], [2, 1], [2, 2], [1, 2], [1, 1]]]
 
 
@@ -37,10 +39,13 @@ def test_subnational_code_rules():
 
 
 def test_admin1_rings_picks_largest_name_and_skips():
-    """同一代码取面积最大要素的中文名；无效代码记为跳过 / Largest feature names the region."""
+    """同一代码取几何外环面积最大要素的中文名（area_sqkm 故意反向，证明未被使用）；
+    无效代码记为跳过 / The geometrically largest feature names the region
+    (area_sqkm deliberately reversed to prove it is not consulted); invalid
+    codes are recorded as skipped."""
     feats = [
-        feature({"iso_a2": "AU", "iso_3166_2": "AU-NSW", "name_zh": "豪勋爵岛", "area_sqkm": 15}, SQUARE),
-        feature({"iso_a2": "AU", "iso_3166_2": "AU-NSW", "name_zh": "新南威尔士州", "area_sqkm": 800000}, SQUARE),
+        feature({"iso_a2": "AU", "iso_3166_2": "AU-NSW", "name_zh": "豪勋爵岛", "area_sqkm": 800000}, SQUARE),
+        feature({"iso_a2": "AU", "iso_3166_2": "AU-NSW", "name_zh": "新南威尔士州", "area_sqkm": 15}, BIG_SQUARE),
         feature({"iso_a2": "AU", "iso_3166_2": "AU-X04~", "name_zh": "阿什莫尔", "area_sqkm": 1}, SQUARE),
         feature({"iso_a2": "JP", "iso_3166_2": "JP-13", "name_zh": "东京都", "area_sqkm": 2000}, SQUARE),
     ]
@@ -50,6 +55,19 @@ def test_admin1_rings_picks_largest_name_and_skips():
     assert all(r.level == 1 for r in rows)
     assert names == {"AU-NSW": "新南威尔士州"}
     assert skipped == ["AU-X04~"]
+
+
+def test_admin1_rings_uses_geometry_area_when_area_sqkm_is_zero():
+    """area_sqkm 恒为 0（真实 AU admin-1 要素场景）时按量化外环面积选中文名，
+    与要素在列表中的先后顺序无关 / When area_sqkm is 0 for every feature (the
+    real AU admin-1 case), the Chinese name is chosen by quantized outer-ring
+    area, independent of list order."""
+    feats = [
+        feature({"iso_a2": "AU", "iso_3166_2": "AU-NSW", "name_zh": "新南威尔士州", "area_sqkm": 0}, BIG_SQUARE),
+        feature({"iso_a2": "AU", "iso_3166_2": "AU-NSW", "name_zh": "豪勋爵岛", "area_sqkm": 0}, TINY_SQUARE),
+    ]
+    rows, names, _ = admin1_rings(feats, valid_codes={"AU-NSW"})
+    assert names == {"AU-NSW": "新南威尔士州"}
 
 
 def test_admin1_marks_holes():
