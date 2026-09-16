@@ -5,6 +5,10 @@ import os
 # Disable Ultralytics per-inference logging. Must be set BEFORE importing
 # ultralytics — it reads this env var at its own import time.
 os.environ.setdefault('YOLO_VERBOSE', 'False')
+# 同理禁止运行时自动 pip 安装：打包版 sys.executable 是 App 本体，会拉起第二个窗口（详见 config.py）。
+# Likewise forbid runtime pip auto-install: in frozen builds sys.executable is the app
+# itself and would launch a second window (see config.py).
+os.environ.setdefault('YOLO_AUTOINSTALL', 'False')
 
 import time
 import cv2

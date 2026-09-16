@@ -1,3 +1,43 @@
+# SuperPicky 4.6.3 RC5
+
+**What's new since RC4:**
+
+1. **Dropping a NEF into Bird ID no longer opens a second copy of the app.**
+   On the Mac build, dragging a Nikon NEF (or another RAW without GPS data)
+   into the Bird ID panel could launch a second SuperPicky window while the
+   original panel kept spinning forever. The cause was a bundled component
+   that, after failing to open the RAW as a regular image, tried to install a
+   missing package on the fly — and in the packaged app that "installer" was
+   SuperPicky itself. Runtime self-installation is now switched off, the
+   package information it was looking for is bundled, and the component is
+   pinned to a tested version.
+2. **The whole-species merge confirmation now tells you it spans several
+   batches.** When you browse several folders together and change every photo
+   of a species at once, the change applies to all of those batches. The
+   confirmation dialog now says how many batches are involved and lists them,
+   so a single line such as "Cattle Egret/3 stars" is no longer mistaken for
+   one folder. Browsing a single folder shows exactly the same dialog as
+   before.
+
+---
+
+# SuperPicky 4.6.3 RC5（中文）
+
+**RC4 以来的变化：**
+
+1. **把 NEF 拖进识鸟面板，不会再多开一个程序了。** 在 Mac 版里，把尼康 NEF
+   （或其他不带 GPS 的 RAW）拖进识鸟面板，可能会拉起第二个 SuperPicky 窗口，
+   原来的面板则一直转圈。原因是内置的一个组件把 RAW 当普通图片打开失败后，
+   会尝试临时安装一个缺失的包——而在打包版里，这个「安装程序」就是 SuperPicky
+   自己。现在已关闭运行时自动安装，补齐了它要查找的包信息，并把该组件锁定在
+   验证过的版本。
+2. **整种合并的确认弹窗会提示跨了几个批次。** 同时浏览多个目录时，把某个鸟种
+   的照片一次全部改掉，作用范围是所有这些批次。确认弹窗现在会写明涉及几个批次
+   并列出来，不会再把「牛背鹭/3星_优选」这样一行误当成一个文件夹。只浏览单个
+   目录时，弹窗与以前完全相同。
+
+---
+
 # SuperPicky 4.6.3 RC4
 
 **What's new since RC3:**

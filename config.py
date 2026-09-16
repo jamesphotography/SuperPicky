@@ -21,6 +21,27 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+# 禁止 ultralytics 运行时自动 pip 安装依赖。必须在任何 import ultralytics 之前设置——
+# ultralytics 在自身 import 时把 YOLO_AUTOINSTALL 读成模块常量，之后再设无效。
+# 8.4.x 起它全局替换了 PIL.Image.open：任意 Image.open 失败（如 PIL 打开 NEF）
+# 都会 check_requirements("pi-heif")，缺包元数据时执行 [sys.executable, "-m", "pip", ...]。
+# 打包版的 sys.executable 就是 SuperPicky 本体，结果是拉起第二个完整 GUI 窗口，
+# 而调用方同步等待这个永不退出的「pip」，识鸟面板一直转圈。依赖由打包/requirements 管理，
+# 应用不应自行安装。用 setdefault 以便开发者需要时仍可通过环境变量覆盖。
+# 注意：ai_model.py 在导入本模块之前就 import ultralytics，那里单独设置了同一变量。
+#
+# Forbid ultralytics from auto-installing packages via pip at runtime. Must be set
+# BEFORE any `import ultralytics` — it reads YOLO_AUTOINSTALL into a module constant
+# at import time. Since 8.4.x it globally replaces PIL.Image.open: any failed open
+# (e.g. PIL on a NEF) calls check_requirements("pi-heif"), which runs
+# [sys.executable, "-m", "pip", ...] when package metadata is missing. In a frozen
+# build sys.executable is the SuperPicky app itself, so a second full GUI launches
+# while the caller blocks forever on that "pip", leaving the BirdID dock spinning.
+# Dependencies are managed by packaging/requirements; the app must never self-install.
+# setdefault keeps an env-var override available for developers.
+# Note: ai_model.py imports ultralytics before this module and sets the same variable.
+os.environ.setdefault("YOLO_AUTOINSTALL", "False")
+
 logger = logging.getLogger(__name__)
 
 # Torch is intentionally imported lazily.
