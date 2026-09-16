@@ -355,10 +355,9 @@
     "rescue_direct": "  Rescue scan: high-res rescan found a bird (conf {conf})",
     "rescue_confirmed": "  Rescue scan: {source} candidate confirmed as {species} ({conf}%) → bird",
     "geo_db_failed": "[GeoFilter] Database connection failed: {e}",
-    "geo_cell_failed": "[GeoFilter] Cell query failed: {e}",
-    "geo_country_failed": "[GeoFilter] Country query failed: {e}",
-    "geo_unavailable": "[GeoFilter] Geo-distribution DB unavailable, geo filtering skipped",
-    "geo_init_failed": "[GeoFilter] Init failed: {e}"
+    "geo_unavailable": "[GeoFilter] Region list DB unavailable, geo filtering skipped",
+    "geo_init_failed": "[GeoFilter] Init failed: {e}",
+    "geo_region_failed": "[GeoFilter] Region query failed: {e}"
   },
   "server": {
     "server_already_running": "✅ Server already running on port {port}",
@@ -1006,17 +1005,15 @@
     "screen_record_title": "Screen Recording Access Needed",
     "win_shortcut_unsupported": "Windows screenshot shortcut not supported in this environment",
     "query_birdname_btn": "Look up Bird Name",
-    "geo_tier_cell_strong": "🗺️ Filtered by location ({count} species)",
-    "geo_tier_cell_all": "🗺️ Filtered by location ({count} species, incl. rare records)",
-    "geo_tier_neighborhood": "⚠️ Few records at this location, widened to nearby area ({count} species)",
-    "geo_tier_country": "⚠️ Fell back to country-level filter {country} ({count} species)",
+    "geo_tier_country": "🗺️ Filtered by country: {region} ({count} species)",
     "geo_tier_none": "⚠️ No geographic filter, identifying against all species",
     "info_gps_coords": "📍 GPS: {lat}, {lon}",
     "screenshot_permission_title": "Screen Recording Access Needed",
     "screenshot_permission_body": "SuperPicky needs screen recording permission to capture screenshots.\n\nTap \"Open Settings\" — find this app and flip the switch on.\nThen come back and try again!",
     "screenshot_permission_open": "  Open Settings  ",
     "screenshot_permission_later": "Later",
-    "screenshot_hotkey_failed": "Screenshot hotkey failed: {error}"
+    "screenshot_hotkey_failed": "Screenshot hotkey failed: {error}",
+    "geo_tier_subnational": "🗺️ Filtered by state/province: {region} ({count} species)"
   },
   "cli": {
     "banner": "  🐦 SuperPicky CLI v{version} - AI Photo Selector (Command Line)",

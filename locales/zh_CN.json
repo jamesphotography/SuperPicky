@@ -355,10 +355,9 @@
     "rescue_direct": "  补救扫描: 高分辨率重扫检出鸟 (置信度 {conf})",
     "rescue_confirmed": "  补救扫描: {source} 候选经识鸟确认为 {species} ({conf}%) → 判有鸟",
     "geo_db_failed": "[GeoFilter] 数据库连接失败: {e}",
-    "geo_cell_failed": "[GeoFilter] 网格查询失败: {e}",
-    "geo_country_failed": "[GeoFilter] 国家查询失败: {e}",
-    "geo_unavailable": "[GeoFilter] 地理分布库不可用，地理过滤将被跳过",
-    "geo_init_failed": "[GeoFilter] 初始化失败: {e}"
+    "geo_unavailable": "[GeoFilter] 区域清单库不可用，地理过滤将被跳过",
+    "geo_init_failed": "[GeoFilter] 初始化失败: {e}",
+    "geo_region_failed": "[GeoFilter] 区域查询失败: {e}"
   },
   "server": {
     "server_already_running": "✅ 服务器已在端口 {port} 运行",
@@ -974,17 +973,15 @@
     "screen_record_title": "需要屏幕录制权限",
     "win_shortcut_unsupported": "当前环境不支持 Windows 截图快捷键",
     "query_birdname_btn": "查询鸟名",
-    "geo_tier_cell_strong": "🗺️ 按拍摄地过滤（{count} 种）",
-    "geo_tier_cell_all": "🗺️ 按拍摄地过滤（{count} 种，含少见记录）",
-    "geo_tier_neighborhood": "⚠️ 拍摄地记录较少，已扩大到周边区域（{count} 种）",
-    "geo_tier_country": "⚠️ 已回退到国家级过滤 {country}（{count} 种）",
+    "geo_tier_country": "🗺️ 按国家过滤：{region}（{count} 种）",
     "geo_tier_none": "⚠️ 无地理过滤，按全球鸟种识别",
     "info_gps_coords": "📍 GPS: {lat}, {lon}",
     "screenshot_permission_title": "需要屏幕录制权限",
     "screenshot_permission_body": "截图识鸟功能需要「屏幕录制」权限才能工作。\n\n点击下方按钮一键跳转设置页，为本应用开启权限后即可使用。",
     "screenshot_permission_open": "  打开系统设置  ",
     "screenshot_permission_later": "稍后再说",
-    "screenshot_hotkey_failed": "截图快捷键发送失败: {error}"
+    "screenshot_hotkey_failed": "截图快捷键发送失败: {error}",
+    "geo_tier_subnational": "🗺️ 按省/州过滤：{region}（{count} 种）"
   },
   "rating_engine": {
     "reject_no_bird": "未检测到鸟类",
