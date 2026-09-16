@@ -47,6 +47,43 @@ def locator():
         # 离岸 / Offshore
         ("悉尼以东约 45 km", -33.87, 151.75, LocateResult("AU", "AU-NSW")),
         ("塔斯曼海中部", -37.0, 162.0, LocateResult(None, None)),
+        # fix round 1：国家层 admin-0（50m）漏掉/误判的小块领土，只有省州层
+        # admin-1（10m）能正确收录，用于验证步骤 (b) 的跨国直查兜底
+        # （见 birdid/region_locator.py 的 _resolve 文档）。
+        # fix round 1: territory the country-level admin-0 (50m) layer drops
+        # or misattributes, correctly captured only by the subnational-level
+        # admin-1 (10m) layer — exercises step (b)'s cross-country direct
+        # search fallback (see the _resolve docstring in
+        # birdid/region_locator.py).
+        ("塞拜岛 Saibai", -9.425, 142.645, LocateResult("AU", "AU-QLD")),
+        ("博伊古岛 Boigu", -9.286, 142.204, LocateResult("AU", "AU-QLD")),
+        # 万山群岛：万山主岛中心点在国家层被划入 HK（50m 精度），但省州层
+        # admin-1 正确收录为 CN-44（广东）；步骤 (b) 优先于步骤 (a) 之后的
+        # 国家层就近匹配生效。
+        # Wanshan Archipelago: the island centre is swallowed into HK at the
+        # country level (50m), but the subnational admin-1 layer correctly
+        # attributes it to CN-44 (Guangdong); step (b) resolves it directly.
+        ("万山群岛 Wanshan", 21.97, 113.75, LocateResult("CN", "CN-44")),
+        # 罗伯茨角（Point Roberts, WA）：整块半岛在国家层 50m 精度下大部分被并入
+        # 加拿大（美加边界在此处被粗化拉直），省州层 US-WA 的更高精度多边形
+        # 正确收录了它；审校给出的原始坐标 (48.97, -123.09) 恰好落在该省州环
+        # 量化后的一个顶点上（点在多边形算法在顶点处结果不确定），故换成同一
+        # 半岛上明确落在环内部、且 ±0.002°（约 220 m）扰动下结果稳定的坐标
+        # （已用 RegionLocator._resolve 逐点验证，步骤 a 在此点两个国家层都
+        # 找不到、步骤 b 直接命中 US-WA）。
+        # Point Roberts, WA: most of this tiny peninsula is swallowed into
+        # Canada by the coarse 50m country-level layer (the US-Canada border
+        # is straightened across it there); the higher-resolution US-WA
+        # subnational polygon correctly attributes it to Washington. The
+        # reviewer's original coordinate (48.97, -123.09) happens to sit
+        # exactly on a vertex of that quantized subnational ring (point-in-
+        # polygon is ill-defined exactly on a vertex), so this uses a nearby
+        # coordinate on the same peninsula that is unambiguously interior and
+        # stable under +-0.002 degrees (~220 m) of perturbation (verified
+        # point-by-point via RegionLocator._resolve: step a finds neither
+        # country there, step b hits US-WA directly).
+        ("罗伯茨角 Point Roberts", 48.975, -123.08, LocateResult("US", "US-WA")),
+        ("豪勋爵岛附近海域", -31.60, 159.20, LocateResult("AU", "AU-NSW")),
     ],
 )
 def test_known_locations(locator, name, lat, lon, expected):
