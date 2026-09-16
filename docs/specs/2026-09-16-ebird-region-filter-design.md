@@ -139,8 +139,10 @@ Natural Earth（公有领域）`ne_10m_admin_1_states_provinces` 与 `ne_50m_adm
 - key 仅从环境变量 `EBIRD_API_KEY` 读取，缺失时立即报错退出；不写入任何文件与日志。
 - 请求量约 250（国家）+ 约 90（省州），串行 + 失败重试即可；原始响应只缓存在
   `scripts_dev/.ebird_cache/`（加入 `.gitignore`），不进仓库、不进安装包。
-- 实施第一步用 key 核实 eBird 中国省级代码格式（预期 `CN-11` 数字码），以及台湾/香港/澳门
-  是否为独立国家代码（旧数据中 `CN-71/91/92` 清单为空，预期为 `TW/HK/MO`）。
+- 已用 key 实测（2026-09-16）：国家 253 个；中国省级 31 个，数字码 `CN-11`…`CN-65`；
+  台湾/香港/澳门为独立国家代码 `TW/HK/MO`；澳洲 8 个；美国 51 个（含 `US-DC`）；
+  `AU-NSW` 清单 644 项（2025-09 旧数据 637 项）。
+- key 沿用旧版 `ebird_country_filter.py` 中的那一个（用户决定），运行时经环境变量传入，仓库中不出现。
 
 ### 4.2 归并与映射 / Normalize & map
 
@@ -237,12 +239,12 @@ def locate(lat: float, lon: float) -> LocateResult:
 
 - **中国**：Natural Earth `CN-BJ` 等字母码按 GB/T 2260 对照到 eBird 数字码（`CN-11` 北京…`CN-65` 新疆）。
   对照表写在构建脚本中，构建时校验 31 个省级单位两侧一一对应。
-- **台湾/香港/澳门**：以 admin-0 的 `TW/HK/MO` 作为国家级处理，不作为中国省级（与 eBird 区域划分一致，§4.1 核实）。
+- **台湾/香港/澳门**：以 admin-0 的 `TW/HK/MO` 作为国家级处理，不作为中国省级（eBird 同为独立国家代码，§4.1 已实测）。
 - **西沙群岛** `CN-X01~`：仅归国家级 `CN`，无省级。
 - **澳洲**：豪勋爵岛 → `AU-NSW`（Natural Earth 本已如此）；杰维斯湾 `AU-X02~` → `AU-ACT`；
   麦夸里岛 `AU-X03~` → `AU-TAS`；阿什莫尔 `AU-X04~` → 仅国家级 `AU`。实施时逐条用 eBird 区域核实，
   以 eBird 的实际归属为准。
-- **美国**：`US-DC` 需确认 eBird 是否为独立省州代码；若不是，归入国家级。
+- **美国**：51 条一一对应，`US-DC` 在 eBird 中为独立代码（§4.1 已实测）。
 - 国家级用 `ISO_A2_EH`（§2.6）。
 - 中文名：国家沿用 `tools/country_names.py`（补齐 eBird 有而现表缺的代码）；三国省州用 Natural Earth `name_zh`
   加覆盖表修正繁体与不规范名称；构建卡口要求 `name_zh` 全部非空。
