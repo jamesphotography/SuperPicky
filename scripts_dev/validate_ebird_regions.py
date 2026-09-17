@@ -18,6 +18,7 @@ import statistics
 import subprocess
 import sys
 import time
+from pathlib import Path
 from typing import List, Optional, Tuple
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -29,9 +30,48 @@ CROSS_HEMISPHERE_ERRORS: Tuple[str, ...] = ("小企鹅", "蓝脚鲣鸟", "角海
 Check = Tuple[str, bool, str]
 
 
+def _ascii_error(exc: BaseException) -> str:
+    """
+    把异常信息转成纯 ASCII，避免控制台编码失败 / Render an exception message as pure ASCII.
+
+    参数 / Parameters:
+        exc (BaseException): 原始异常 / The original exception.
+
+    返回 / Returns:
+        str: 非 ASCII 字符被转义后的说明 / Message with non-ASCII escaped.
+    """
+    return str(exc).encode("ascii", "backslashreplace").decode("ascii")
+
+
+def _open_report_db_readonly(path: str) -> sqlite3.Connection:
+    """
+    以只读方式打开 report.db，绝不创建或修改文件 / Open report.db read-only, never creating or modifying it.
+
+    参数 / Parameters:
+        path (str): report.db 路径 / Path to report.db.
+
+    返回 / Returns:
+        sqlite3.Connection: 只读连接 / Read-only connection.
+
+    异常 / Raises:
+        sqlite3.Error: 路径不存在或不是合法 SQLite 库时抛出 / Raised when the path is missing
+            or is not a valid SQLite database.
+    """
+    uri = Path(path).resolve().as_uri() + "?mode=ro"
+    conn = sqlite3.connect(uri, uri=True)
+    conn.execute("SELECT 1 FROM photos LIMIT 1")
+    return conn
+
+
 def compare_report_dbs(baseline_db: str, new_db: str) -> List[Check]:
     """
     逐项比对两次处理的 report.db（spec §8 验收 5）/ Compare two report.db runs.
+
+    两个库均以只读 URI 方式打开，绝不创建或修改用户真实照片库的 report.db；
+    路径不存在或缺 photos 表时返回单条失败检查而不抛异常。
+    Both databases are opened read-only via a URI so the user's real report.db
+    is never created or modified; a missing path or a missing ``photos`` table
+    yields a single failing check instead of raising.
 
     参数 / Parameters:
         baseline_db (str): 4.6 结果 / The 4.6 run.
@@ -47,9 +87,18 @@ def compare_report_dbs(baseline_db: str, new_db: str) -> List[Check]:
         ).fetchone()[0]
         return int(total), int(count)
 
-    old = sqlite3.connect(baseline_db)
-    new = sqlite3.connect(new_db)
+    old: Optional[sqlite3.Connection] = None
+    new: Optional[sqlite3.Connection] = None
     try:
+        try:
+            old = _open_report_db_readonly(baseline_db)
+        except sqlite3.Error as exc:
+            return [("report_db_readable", False, f"baseline: {_ascii_error(exc)}")]
+        try:
+            new = _open_report_db_readonly(new_db)
+        except sqlite3.Error as exc:
+            return [("report_db_readable", False, f"new: {_ascii_error(exc)}")]
+
         placeholders = ",".join("?" * len(CROSS_HEMISPHERE_ERRORS))
         residual = new.execute(
             f"SELECT COUNT(*) FROM photos WHERE bird_species_cn IN ({placeholders})", CROSS_HEMISPHERE_ERRORS
@@ -58,8 +107,10 @@ def compare_report_dbs(baseline_db: str, new_db: str) -> List[Check]:
         new_total, new_named = named(new)
         gps = new.execute("SELECT COUNT(*) FROM photos WHERE gps_latitude IS NOT NULL").fetchone()[0]
     finally:
-        old.close()
-        new.close()
+        if old is not None:
+            old.close()
+        if new is not None:
+            new.close()
     return [
         ("cross_hemisphere_errors", residual == 0, f"residual={residual}"),
         ("named_not_lower", new_named >= old_named,

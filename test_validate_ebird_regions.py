@@ -38,3 +38,28 @@ def test_compare_fails_when_naming_drops(tmp_path):
     make_report(tmp_path / "new.db", [("北极海鹦", 90, 63.4), ("", 0, 63.4)])
     results = dict((name, ok) for name, ok, _ in compare_report_dbs(str(tmp_path / "old.db"), str(tmp_path / "new.db")))
     assert results["named_not_lower"] is False
+
+
+def test_compare_fails_when_baseline_missing_and_creates_no_file(tmp_path):
+    """baseline 路径不存在 → 失败且绝不创建文件 / Missing baseline fails and creates no file."""
+    make_report(tmp_path / "new.db", [("北极海鹦", 90, 63.4)])
+    missing = tmp_path / "missing.db"
+    results = dict(
+        (name, ok) for name, ok, _ in compare_report_dbs(str(missing), str(tmp_path / "new.db"))
+    )
+    assert results["report_db_readable"] is False
+    assert not missing.exists()
+
+
+def test_compare_fails_when_photos_table_missing(tmp_path):
+    """report.db 缺 photos 表 → 失败且不抛异常 / DB without a photos table fails, no exception."""
+    bad_db = tmp_path / "bad.db"
+    conn = sqlite3.connect(str(bad_db))
+    conn.execute("CREATE TABLE other (x TEXT)")
+    conn.commit()
+    conn.close()
+    make_report(tmp_path / "new.db", [("北极海鹦", 90, 63.4)])
+    results = dict(
+        (name, ok) for name, ok, _ in compare_report_dbs(str(bad_db), str(tmp_path / "new.db"))
+    )
+    assert results["report_db_readable"] is False
