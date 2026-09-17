@@ -1,3 +1,69 @@
+# SuperPicky 4.6.3 RC6
+
+**What's new since RC5:**
+
+1. **Bird ID's location filter is back on eBird's own regional checklists.**
+   The filter that narrows candidate species by where a photo was taken now
+   reads eBird region lists instead of the bundled grid database. For China,
+   Australia and the United States you can again pick a province/state in
+   Settings, and when a photo carries GPS the region is worked out offline
+   from the coordinates — province/state where one is known, country
+   otherwise. Overseas territories (for example the French and British ones)
+   now use their own checklist instead of the mother country's, region codes
+   are accepted in any case ("au-nsw" works like "AU-NSW"), and a
+   province/state on its own implies its country. The grid database this
+   replaces was 35 MB, so the download and the installed app are that much
+   smaller.
+2. **A burst is no longer split across two species folders.** Identifying a
+   burst frame by frame could return different species for frames of the same
+   sequence (21 of 1,372 real bursts here), which then sent one burst into two
+   species folders. The whole burst now takes the species of its most
+   confident frame, and the remaining frames with a bird in them follow it;
+   if no frame reaches the confidence threshold, nothing is changed. The
+   unification happens before star ratings are assigned, so quotas, folders
+   and the report all see one species. The log line says which frame the
+   decision came from.
+3. **"Other birds" now shows the species Bird ID was unsure about.** When
+   confidence falls below the threshold the photo still goes to "other
+   birds", but the browser previously showed nothing about what it might be.
+   Thumbnails and the detail panel now read "Species name (unconfirmed N%)"
+   for those photos, and the same line is written to the EXIF title of
+   2-star-and-up photos — as a title only, not as a keyword, so unconfirmed
+   guesses never mix into your species searches. Candidates below 30%
+   confidence are not shown at all.
+4. **Fixed: the species line vanished from photo descriptions.** The star
+   rating pass rewrote the whole description and wiped the "Species:" and
+   "Alternative species" lines it had just written (in one 683-photo batch
+   only 54 kept them). The description prefix is now written after the rating
+   pass.
+
+---
+
+# SuperPicky 4.6.3 RC6（中文）
+
+**RC5 以来的变化：**
+
+1. **识鸟的地理过滤改回 eBird 自己的区域清单。** 按拍摄地点缩小候选鸟种的过滤器，
+   现在读 eBird 区域清单，不再用内置的网格库。中国、澳大利亚、美国重新可以在设置里
+   选省/州；照片带 GPS 时，离线根据坐标判断区域——能定到省州就用省州，否则用国家。
+   海外领地（如法属、英属各地）不再并入宗主国，改用自己的清单；区域代码不再区分
+   大小写（「au-nsw」与「AU-NSW」等效）；只给省州时会自动推出所属国家。被替换掉的
+   网格库有 35 MB，下载包和安装后的体积都相应变小。
+2. **同一组连拍不会再被拆进两个鸟种目录。** 逐帧识鸟可能给同一组连拍里的不同帧判出
+   不同鸟种（实测 1372 组连拍中有 21 组），结果一组连拍被分到两个鸟种目录。现在整组
+   连拍统一采用置信度最高那一帧的鸟种，组内其余有鸟的帧跟随；如果组内没有一帧达到
+   置信度阈值，则不做改动。统一发生在评星分配之前，因此配额、分目录和报告看到的
+   都是同一个鸟种，日志会写明依据的是哪一帧。
+3. **「其他鸟类」会显示识鸟没把准的那个鸟种了。** 置信度低于阈值的照片仍然归入
+   「其他鸟类」，但过去在浏览器里完全看不到它可能是什么。现在缩略图和详情面板会显示
+   「鸟名（待确定 N%）」，终评 2 星及以上的照片也把同样的文字写进 EXIF 标题——只写
+   标题不写关键字，避免没确定的猜测混进鸟种检索。置信度低于 30% 的候选不显示。
+4. **修复：照片说明里的鸟种行会消失。** 评星环节会整段重写说明文字，把刚写好的
+   「鸟种：」「备选鸟种」两行抹掉（某个 683 张的批次里只有 54 张保住）。现在说明文字
+   的前缀改到评星之后再写。
+
+---
+
 # SuperPicky 4.6.3 RC5
 
 **What's new since RC4:**
