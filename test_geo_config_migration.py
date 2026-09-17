@@ -98,6 +98,14 @@ def test_region_data_subnational_for_cn_au_us():
     nsw = next(r for r in by_code["AU"]["regions"] if r["code"] == "AU-NSW")
     assert nsw["name_cn"] == "新南威尔士州" and nsw["species_count"] > 0
 
+    # 省州按 eBird code 排序：中国省份遵循 GB/T 2260 行政区划顺序，首项应为
+    # CN-11（北京）/ Subnational regions are ordered by eBird code: China's
+    # follow the GB/T 2260 administrative order, so the first entry is CN-11
+    # (Beijing).
+    cn_codes = [r["code"] for r in by_code["CN"]["regions"]]
+    assert cn_codes == sorted(cn_codes), f"CN 省州应按 code 升序: {cn_codes}"
+    assert cn_codes[0] == "CN-11", f"CN 首项应为 CN-11（北京）, 实际 {cn_codes[0]}"
+
 
 def test_region_data_has_display_names():
     """每个国家与省州都有中英文名 / Every country and subnational unit has both names."""

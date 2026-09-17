@@ -91,9 +91,21 @@ def load_regions_data() -> dict[str, Any]:
                 "SELECT code, name_en, name_zh, species_count FROM regions "
                 "WHERE parent IS NULL AND species_count > 0 ORDER BY code"
             ).fetchall()
+            # 省州按 eBird code 排序（非按英文名字母序）：中国省份的 code 遵循
+            # GB/T 2260 行政区划顺序（CN-11 北京、CN-12 天津、CN-13 河北……），
+            # 这是中文用户熟悉的顺序；按 name_en 排会把它打乱成拼音字母序。
+            # AU/US 的 code 本身就是缩写序，两种排序对它们没有实质差别，用同一
+            # 排序键即可，不必按国家分支判断。
+            # Order subnational regions by eBird code, not the English name:
+            # China's codes follow the GB/T 2260 administrative order (CN-11
+            # Beijing, CN-12 Tianjin, CN-13 Hebei, ...), which is the order
+            # Chinese users expect; sorting by name_en would scramble it into
+            # English-alphabetical order. AU/US codes are already
+            # abbreviation-ordered, so code order works for them too — no
+            # per-country branching needed.
             region_rows = conn.execute(
                 "SELECT code, parent, name_en, name_zh, species_count FROM regions "
-                "WHERE parent IS NOT NULL AND species_count > 0 ORDER BY parent, name_en"
+                "WHERE parent IS NOT NULL AND species_count > 0 ORDER BY parent, code"
             ).fetchall()
         finally:
             conn.close()
