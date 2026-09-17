@@ -1,11 +1,11 @@
 """
 配置键迁移与国家列表数据源测试 / Config-key migration and country-list source tests.
 
-覆盖 birdid_use_ebird → birdid_use_geo_filter 的一次性迁移，以及国家列表
-从 geo_distribution.db 生成。
+覆盖 birdid_use_ebird → birdid_use_geo_filter 的一次性迁移，以及国家与省州列表
+从 ebird_regions.db 生成。
 
 Covers the one-shot migration from birdid_use_ebird to birdid_use_geo_filter,
-and generating the country list from geo_distribution.db.
+and generating the country and subnational lists from ebird_regions.db.
 """
 import json
 
@@ -77,27 +77,36 @@ def test_set_birdid_region_writes_new_key(tmp_path):
     assert saved["birdid_country_code"] == "AU"
 
 
-def test_region_data_from_geo_db():
-    """国家列表来自 geo_distribution.db，且不含 species_count=0 的空壳国家"""
+def test_region_data_from_ebird_db():
+    """国家列表来自 ebird_regions.db，且不含空清单国家 / Countries come from ebird_regions.db."""
     from core.region_data import load_regions_data
 
-    data = load_regions_data()
-    countries = data["countries"]
-    assert len(countries) >= 200, "GBIF 覆盖应远多于旧的 49 国"
-    assert all(c["species_count"] > 0 for c in countries), "不应有空壳国家"
+    countries = load_regions_data()["countries"]
+    assert len(countries) >= 200, "eBird 国家级应覆盖 200+ 国家/地区"
+    assert all(c["species_count"] > 0 for c in countries), "不应有空清单国家"
     codes = {c["code"] for c in countries}
-    # 旧版三方错位的两类受害者都应出现
-    assert {"IS"} <= codes, "冰岛缺失（旧版空白区，正是误识别案例的拍摄地）"
-    assert {"PA", "UG", "BO"} <= codes, "旧版有数据但 UI 选不到的国家缺失"
+    assert {"IS", "PA", "UG", "BO", "TW", "HK", "MO"} <= codes
+
+
+def test_region_data_subnational_for_cn_au_us():
+    """只有中澳美带省州，数量与 eBird 一致 / Only CN/AU/US carry subnational lists."""
+    from core.region_data import load_regions_data
+
+    by_code = {c["code"]: c for c in load_regions_data()["countries"]}
+    assert (by_code["CN"]["regions_count"], by_code["AU"]["regions_count"], by_code["US"]["regions_count"]) == (31, 8, 51)
+    assert by_code["IS"]["has_regions"] is False and by_code["IS"]["regions"] == []
+    nsw = next(r for r in by_code["AU"]["regions"] if r["code"] == "AU-NSW")
+    assert nsw["name_cn"] == "新南威尔士州" and nsw["species_count"] > 0
 
 
 def test_region_data_has_display_names():
-    """每个国家都要有可显示的中英文名，不能只有代码"""
+    """每个国家与省州都有中英文名 / Every country and subnational unit has both names."""
     from core.region_data import load_regions_data
 
-    for c in load_regions_data()["countries"][:50]:
-        assert c["name"], f"{c['code']} 缺英文名"
-        assert c["name_cn"], f"{c['code']} 缺中文名"
+    for c in load_regions_data()["countries"]:
+        assert c["name"] and c["name_cn"], f"{c['code']} 缺名称"
+        for r in c["regions"]:
+            assert r["name"] and r["name_cn"], f"{r['code']} 缺名称"
 
 
 def _isolate_advanced_config(monkeypatch):
@@ -131,8 +140,8 @@ def test_settings_center_shows_gps_scope_hint(monkeypatch):
     """
     识鸟页必须展示「手选地区仅无 GPS 时生效」的提示。
 
-    有 GPS 的照片按 1°网格过滤、手选国家不参与，这一点若不明说，用户会以为
-    选了没生效（旧版本无任何提示，是已知困惑点）。
+    有 GPS 的照片按拍摄地自动判断省州/国家、手选不参与，这一点若不明说，用户会
+    以为选了没生效。
     """
     import os
 
@@ -155,11 +164,11 @@ def test_settings_center_shows_gps_scope_hint(monkeypatch):
     w.close()
 
 
-def test_about_page_shows_gbif_attribution(monkeypatch):
+def test_about_page_shows_ebird_attribution(monkeypatch):
     """
-    关于页必须展示 GBIF 署名（CC-BY 要求），且带真实快照日期。
+    关于页展示 eBird 与 Natural Earth 署名，且带真实获取日期。
 
-    快照日期从 geo_distribution.db 的 meta 表动态读取，不能并入静态 about.content。
+    获取日期从 ebird_regions.db 的 meta 表动态读取，不能并入静态 about.content。
     """
     import os
 
@@ -173,11 +182,11 @@ def test_about_page_shows_gbif_attribution(monkeypatch):
     _isolate_advanced_config(monkeypatch)
     w = SettingsCenter(get_i18n())
     attr = w._geo_attribution_text()
-    assert attr, "署名文本为空（geo_distribution.db 应可用）"
-    assert "GBIF" in attr, f"署名未提及 GBIF: {attr}"
-    assert "CC" in attr, f"署名未提及许可: {attr}"
+    assert attr, "署名文本为空（ebird_regions.db 应可用）"
+    assert "eBird" in attr and "Natural Earth" in attr, f"署名不完整: {attr}"
+    assert "GBIF" not in attr, f"地理数据已不来自 GBIF: {attr}"
 
     w.show_page("about")
     texts = [lbl.text() for lbl in w.findChildren(QLabel)]
-    assert attr in texts, "关于页未展示 GBIF 署名行"
+    assert attr in texts, "关于页未展示署名行"
     w.close()

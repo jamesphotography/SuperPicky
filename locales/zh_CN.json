@@ -536,8 +536,8 @@
     "culling_algo_v1_warn_high": "⚠️ 你当前的美学阈值 {nima} 偏高，实测这会让绝大多数照片被判废，建议切换后先把它调到 5.5 以下。",
     "culling_algo_v1_warn_ok": "确认切换到 V1",
     "culling_algo_v1_warn_cancel": "保持 V2",
-    "birdid_region_hint": "仅在照片没有 GPS 信息时生效；有 GPS 的照片自动按拍摄位置过滤",
-    "geo_attribution": "鸟类地理分布 - GBIF.org 观察记录 ({snapshot})，仅含 CC0-1.0 与 CC-BY-4.0 数据",
+    "birdid_region_hint": "有 GPS 的照片按拍摄地自动判断省/州或国家；这里的选择只对没有 GPS 的照片生效",
+    "geo_attribution": "鸟类区域清单 - eBird（康奈尔鸟类学实验室），获取于 {fetched_at}，依 eBird API 使用条款提供；行政区边界 - Natural Earth（公有领域）",
     "telemetry_label": "发送匿名使用统计",
     "telemetry_desc": "发送版本号、操作系统、语言与一个每日变更的随机编号等，用于了解有多少人在使用。不含任何照片、文件路径或个人信息。"
   },

@@ -56,66 +56,69 @@ def _get_birdid_data_path(relative_path: str) -> str:
 
 def load_regions_data() -> dict[str, Any]:
     """
-    从 `birdid/data/geo_distribution.db` 的 `country_species` 表生成国家列表。
+    从 `birdid/data/ebird_regions.db` 生成国家与中澳美省州列表。
 
-    旧实现读 `ebird_regions.json`，该文件与离线数据、`REGION_BOUNDS` 三方错位：
-    列出的 49 国里有 11 国无任何数据（选中即静默落空），另有 14 国有数据却选不到。
-    改为与网格数据同源后，国家列表恒等于实际可用的过滤数据，错位不再可能。
+    国家与省州都来自 eBird 区域清单（与过滤用的是同一份数据），列表中出现的每个区域
+    都保证有候选物种；只有中国、澳洲、美国带省州。
 
-    Build the country list from the `country_species` table of
-    geo_distribution.db. The previous implementation read `ebird_regions.json`,
-    which was out of sync with both the offline data and REGION_BOUNDS: 11 of its
-    49 countries had no data at all (selecting them silently did nothing), while
-    14 countries with data could not be selected. Sourcing it from the same
-    dataset as the grid makes that mismatch structurally impossible.
+    Build the country list, with subnational units for CN/AU/US, from
+    ebird_regions.db. Both come from the same eBird region lists the filter
+    uses, so every listed region has candidate species.
 
     返回 / Returns:
-        dict: 含 `"countries"` 列表的字典，每项有 `code` / `name` / `name_cn` /
-              `species_count` 等字段；失败时返回 `{"countries": []}` /
+        dict: 含 `"countries"` 列表；每个国家含 `code` / `name` / `name_cn` /
+              `has_regions` / `regions_count` / `regions` / `species_count`；
+              失败时返回 `{"countries": []}` /
               Dict with a `"countries"` list; `{"countries": []}` on failure.
 
     异常 / Exceptions:
-        不抛出异常；所有错误以 print 记录后返回空结构。
-        Does not raise; all errors are printed and an empty structure is returned.
+        不抛出异常；错误以 print 记录后返回空结构。
+        Does not raise; errors are printed and an empty structure is returned.
     """
     import sqlite3
 
     from birdid.geo_filter import default_db_path
-    from tools.country_names import country_display_names
 
     db_path = default_db_path()
     if not os.path.exists(db_path):
-        print(f"[region_data] 地理分布库不存在 / geo DB missing: {db_path}")
+        print(f"[region_data] region DB missing: {db_path}")
         return {"countries": []}
 
     try:
         conn = sqlite3.connect(db_path)
-        rows = conn.execute(
-            "SELECT country, COUNT(*) FROM country_species "
-            "GROUP BY country HAVING COUNT(*) > 0 ORDER BY country"
-        ).fetchall()
-        conn.close()
+        try:
+            countries_rows = conn.execute(
+                "SELECT code, name_en, name_zh, species_count FROM regions "
+                "WHERE parent IS NULL AND species_count > 0 ORDER BY code"
+            ).fetchall()
+            region_rows = conn.execute(
+                "SELECT code, parent, name_en, name_zh, species_count FROM regions "
+                "WHERE parent IS NOT NULL AND species_count > 0 ORDER BY parent, name_en"
+            ).fetchall()
+        finally:
+            conn.close()
     except Exception as exc:  # noqa: BLE001
-        print(f"[region_data] 读取国家列表失败 / Failed to read countries: {exc}")
+        print(f"[region_data] failed to read regions: {exc}")
         return {"countries": []}
 
+    by_parent: dict[str, list[dict[str, Any]]] = {}
+    for code, parent, name_en, name_zh, count in region_rows:
+        by_parent.setdefault(str(parent), []).append(
+            {"code": str(code), "name": str(name_en), "name_cn": str(name_zh), "species_count": int(count)}
+        )
+
     countries: list[dict[str, Any]] = []
-    for code, count in rows:
-        english, chinese = country_display_names(str(code))
+    for code, name_en, name_zh, count in countries_rows:
+        regions = by_parent.get(str(code), [])
         countries.append(
             {
                 "code": str(code),
-                "name": english,
-                "name_cn": chinese,
+                "name": str(name_en),
+                "name_cn": str(name_zh),
                 "is_continent": False,
-                # 州/省级数据本设计不提供：GBIF 网格已按 GPS 精确到 1°，
-                # 手选地区只在无 GPS 时作国家级回退用。
-                # No subnational data by design: the GBIF grid already resolves
-                # to 1 degree by GPS, and manual selection only serves as a
-                # country-level fallback for photos without GPS.
-                "has_regions": False,
-                "regions_count": 0,
-                "regions": [],
+                "has_regions": bool(regions),
+                "regions_count": len(regions),
+                "regions": regions,
                 "species_count": int(count),
             }
         )
