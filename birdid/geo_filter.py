@@ -49,6 +49,22 @@ def default_db_path() -> str:
     return os.path.join(base, rel)
 
 
+def _normalize_code(code: Optional[str]) -> Optional[str]:
+    """
+    区域代码去空白并转大写 / Strip and upper-case a region code.
+
+    参数 / Parameters:
+        code (Optional[str]): 原始代码 / Raw code.
+
+    返回 / Returns:
+        Optional[str]: 规范化后的代码；None 或空白串返回 None / Normalized code, None for None or blank.
+    """
+    if code is None:
+        return None
+    normalized = str(code).strip().upper()
+    return normalized or None
+
+
 class RegionFilter:
     """
     eBird 区域候选过滤器 / eBird region candidate filter.
@@ -168,14 +184,27 @@ class RegionFilter:
         """
         按层产出候选集，调用方逐层放宽直到有结果 / Yield tiers until recognition succeeds.
 
-        GPS 国家存在于库中时只走 GPS 链（照片可能拍于他处，手选不应覆盖实际拍摄地）；
-        否则走手选链。省州必须隶属于同链的国家，不一致的省州按「整个国家」处理——
-        老配置里残留的省州代码因此不会再让过滤失效（spec §2.5、§6.3）。空清单层被跳过。
+        规则 / Rules:
+        - 代码不区分大小写，四个入参先去首尾空白并转大写（"au-nsw" 等同 "AU-NSW"）。
+        - 只给省州、没给国家时，由省州推出其所属国家（CLI `--region AU-SA`、服务端只传
+          region_code、迁移后国家为空的老配置都走这条）；GPS 链同理。
+        - GPS 国家存在于库中时只走 GPS 链（照片可能拍于他处，手选不应覆盖实际拍摄地）；
+          否则走手选链。
+        - 省州必须隶属于同链的国家；未知或不一致的省州按「整个国家」处理，落到国家层
+          （老配置里残留的省州代码因此不会让过滤失效，spec §2.5、§6.3）。
+        - 空清单层被跳过。
 
-        When the GPS country exists in the database only the GPS chain is used (the
-        photo may be from elsewhere, so the manual choice must not override it);
-        otherwise the manual chain is used. A subnational code must belong to the
-        chain's country or it is treated as "entire country". Empty tiers are skipped.
+        - Codes are case-insensitive: all four inputs are stripped and upper-cased
+          ("au-nsw" equals "AU-NSW").
+        - A subnational code alone implies its country (CLI `--region AU-SA`, the
+          server receiving only region_code, migrated configs with a null
+          country); the same applies to the GPS chain.
+        - When the GPS country exists in the database only the GPS chain is used
+          (the photo may be from elsewhere, so the manual choice must not
+          override it); otherwise the manual chain is used.
+        - A subnational code must belong to the chain's country; an unknown or
+          mismatched one falls through to the country tier.
+        - Empty tiers are skipped.
 
         参数 / Parameters:
             gps_country (Optional[str]): GPS 定位国家 / Country from GPS.
@@ -190,6 +219,13 @@ class RegionFilter:
         if not self.is_available():
             yield None, TIER_NONE, None
             return
+
+        gps_country, gps_subnational, manual_country, manual_subnational = (
+            _normalize_code(code)
+            for code in (gps_country, gps_subnational, manual_country, manual_subnational)
+        )
+        gps_country = self._country_or_implied(gps_country, gps_subnational)
+        manual_country = self._country_or_implied(manual_country, manual_subnational)
 
         if self._is_country(gps_country):
             country, subnational = gps_country, gps_subnational
@@ -207,6 +243,23 @@ class RegionFilter:
             if species:
                 yield species, TIER_COUNTRY, country
         yield None, TIER_NONE, None
+
+    def _country_or_implied(self, country: Optional[str], subnational: Optional[str]) -> Optional[str]:
+        """
+        国家无效时由已知省州推出国家 / Derive the country from a known subnational when the country is invalid.
+
+        参数 / Parameters:
+            country (Optional[str]): 已规范化的国家代码 / Normalized country code.
+            subnational (Optional[str]): 已规范化的省州代码 / Normalized subnational code.
+
+        返回 / Returns:
+            Optional[str]: 有效国家原样返回；否则省州的上级国家；都没有时原样返回 country /
+                The country if valid, else the subnational's parent, else country unchanged.
+        """
+        if self._is_country(country) or not subnational:
+            return country
+        parent = self.parent_of(subnational)
+        return parent if self._is_country(parent) else country
 
     def _is_country(self, code: Optional[str]) -> bool:
         """

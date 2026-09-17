@@ -62,6 +62,37 @@ def test_manual_subnational_must_match_country(region_filter):
     assert labels(out) == [(TIER_COUNTRY, "IS"), (TIER_NONE, None)]
 
 
+def test_manual_subnational_alone_implies_country(region_filter):
+    """只给省州（CLI --region AU-NSW、迁移后国家为空）：省州 → 国家 → 不过滤 /
+    A subnational alone implies its country."""
+    out = list(region_filter.iter_candidates(None, None, None, "AU-NSW"))
+    assert labels(out) == [(TIER_SUBNATIONAL, "AU-NSW"), (TIER_COUNTRY, "AU"), (TIER_NONE, None)]
+    out = list(region_filter.iter_candidates(None, None, "GLOBAL", "AU-NSW"))
+    assert labels(out) == [(TIER_SUBNATIONAL, "AU-NSW"), (TIER_COUNTRY, "AU"), (TIER_NONE, None)]
+
+
+def test_gps_subnational_alone_implies_country(region_filter):
+    """GPS 链只有省州时同样推出国家，并优先于手选 / GPS subnational alone implies its country too."""
+    out = list(region_filter.iter_candidates(None, "AU-NSW", "IS", None))
+    assert labels(out) == [(TIER_SUBNATIONAL, "AU-NSW"), (TIER_COUNTRY, "AU"), (TIER_NONE, None)]
+
+
+def test_codes_are_case_insensitive(region_filter):
+    """小写与带空白的代码等同于大写 / Lowercase and padded codes behave like upper case."""
+    expected = [(TIER_SUBNATIONAL, "AU-NSW"), (TIER_COUNTRY, "AU"), (TIER_NONE, None)]
+    assert labels(region_filter.iter_candidates(None, None, "au", "au-nsw")) == expected
+    assert labels(region_filter.iter_candidates(None, None, None, " au-nsw ")) == expected
+    assert labels(region_filter.iter_candidates("au", "Au-Nsw", None, None)) == expected
+    assert labels(region_filter.iter_candidates(None, None, "global", None)) == [(TIER_NONE, None)]
+
+
+def test_unknown_subnational_with_valid_country_uses_country_tier(region_filter):
+    """未知省州 + 有效国家：只走国家层 / An unknown subnational falls through to the country tier."""
+    out = list(region_filter.iter_candidates(None, None, "AU", "AU-XYZ"))
+    assert labels(out) == [(TIER_COUNTRY, "AU"), (TIER_NONE, None)]
+    assert labels(region_filter.iter_candidates(None, None, None, "AU-XYZ")) == [(TIER_NONE, None)]
+
+
 def test_unknown_or_global_manual_is_unfiltered(region_filter):
     """GLOBAL、未知代码都不过滤 / GLOBAL and unknown codes are unfiltered."""
     assert labels(region_filter.iter_candidates(None, None, "GLOBAL", None)) == [(TIER_NONE, None)]
