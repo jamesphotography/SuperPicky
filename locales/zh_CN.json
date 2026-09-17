@@ -357,7 +357,9 @@
     "geo_db_failed": "[GeoFilter] 数据库连接失败: {e}",
     "geo_unavailable": "[GeoFilter] 区域清单库不可用，地理过滤将被跳过",
     "geo_init_failed": "[GeoFilter] 初始化失败: {e}",
-    "geo_region_failed": "[GeoFilter] 区域查询失败: {e}"
+    "geo_region_failed": "[GeoFilter] 区域查询失败: {e}",
+    "burst_species_unified": "🔗 连拍 #{group}：{count} 张统一为 {name}（依据 {source}，{confidence}%）",
+    "caption_burst_unified": "连拍统一鸟种（依据 {source}）"
   },
   "server": {
     "server_already_running": "✅ 服务器已在端口 {port} 运行",

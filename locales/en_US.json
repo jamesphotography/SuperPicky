@@ -357,7 +357,9 @@
     "geo_db_failed": "[GeoFilter] Database connection failed: {e}",
     "geo_unavailable": "[GeoFilter] Region list DB unavailable, geo filtering skipped",
     "geo_init_failed": "[GeoFilter] Init failed: {e}",
-    "geo_region_failed": "[GeoFilter] Region query failed: {e}"
+    "geo_region_failed": "[GeoFilter] Region query failed: {e}",
+    "burst_species_unified": "🔗 Burst #{group}: {count} photo(s) unified to {name} (from {source}, {confidence}%)",
+    "caption_burst_unified": "Burst-unified species (from {source})"
   },
   "server": {
     "server_already_running": "✅ Server already running on port {port}",

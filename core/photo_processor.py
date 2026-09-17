@@ -25,7 +25,7 @@ from collections import deque
 import numpy as np
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, List, Optional, Callable, Tuple
+from typing import Dict, List, Optional, Callable, Set, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -42,6 +42,7 @@ from core.keypoint_detector import KeypointDetector, get_keypoint_detector
 from core.flight_detector import FlightDetector, get_flight_detector, FlightResult
 from core.exposure_detector import ExposureDetector, get_exposure_detector, ExposureResult
 from core.focus_point_detector import get_focus_detector, verify_focus_in_bbox, arbitrate_focus_weights
+from core.burst_species import BirdIdOutcome, reconcile_burst_species
 
 from constants import RATING_FOLDER_NAMES, RAW_EXTENSIONS, JPG_EXTENSIONS, HEIF_EXTENSIONS, get_rating_folder_names
 
@@ -1258,6 +1259,14 @@ class PhotoProcessor:
         birdid_executor = ThreadPoolExecutor(max_workers=_birdid_workers) if self.settings.auto_identify else None
         birdid_tasks = deque()
         identify_bird_fn = None
+        # 连拍鸟种统一：识鸟结果先暂存，全部到齐后按连拍组统一再写入（core/burst_species.py）
+        # Burst species unification: Bird ID results are stashed and written only
+        # after every result is in and bursts are unified (core/burst_species.py).
+        birdid_outcomes: Dict[str, BirdIdOutcome] = {}   # 前缀 → 识鸟结论 / prefix → outcome
+        birdid_sources: Dict[str, str] = {}              # 前缀 → 日志显示名 / prefix → display name
+        species_title_targets: Dict[str, List[str]] = {} # 前缀 → 标题写入文件 / prefix → title files
+        bird_prefixes: Set[str] = set()                  # 检测到鸟的照片 / photos with a detected bird
+        species_caption_jobs: List[Tuple[str, str]] = [] # 待写入的鸟种说明前缀 / pending caption prefixes
 
         # V4.5: 统一工作单元进度——照片与识鸟任务同权重计入一个分数，
         # 使循环结束后的 BirdID 收尾阶段进度条持续前进，而非停在 100%。
@@ -1353,12 +1362,45 @@ class PhotoProcessor:
             except Exception as e:
                 self._log(f"  ⚠️ Bird ID failed [{source_display}]: {e}", "warning")
         
+        def birdid_tier(gbif_rarity_100):
+            """
+            GBIF 罕见度 → (tier 编号, 日志后缀) / GBIF rarity to (tier index, log suffix).
+
+            参数 / Parameters:
+                gbif_rarity_100 (Optional[float]): GBIF 罕见度 0-100 / GBIF rarity.
+
+            返回 / Returns:
+                tuple: (tier 编号或 None, 日志后缀字符串) / (tier index or None, log suffix).
+            """
+            if gbif_rarity_100 is None:
+                return None, ""
+            from core.rarity_tier import gbif_score_to_tier, tier_icon, tier_name
+            tier_idx = gbif_score_to_tier(gbif_rarity_100)
+            is_zh = not self.i18n.current_lang.startswith('en')
+            return tier_idx, f"  {tier_icon(tier_idx)} {tier_name(tier_idx, is_zh=is_zh)}"
+
         def apply_birdid_result(
             file_prefix: str,
             title_targets: List[str],
             birdid_result: Dict,
             source_filename: Optional[str] = None
         ):
+            """
+            暂存单张识鸟结果并实时输出日志；数据库/EXIF 写入延后到连拍统一之后。
+
+            同一连拍组逐帧识鸟可能得出不同鸟种，必须等全部结果到齐、按连拍组统一后再写入，
+            否则会先写错再改写（EXIF 写两遍），且按鸟种的星级配额会用到未统一的鸟种。
+
+            Stash one Bird ID result and log it live; DB/EXIF writes are deferred
+            until burst species unification, so a burst never gets written with
+            conflicting species first and rewritten later.
+
+            参数 / Parameters:
+                file_prefix (str): 照片前缀（DB 主键）/ Photo prefix (DB key).
+                title_targets (List[str]): 需写入标题的文件 / Files receiving the title.
+                birdid_result (Dict): identify_bird 返回值 / identify_bird result.
+                source_filename (Optional[str]): 日志显示名 / Display name for logs.
+            """
             if not birdid_result:
                 return
             if birdid_result.get('error'):
@@ -1367,32 +1409,75 @@ class PhotoProcessor:
                 return
             source_display = source_filename or file_prefix or "?"
             top_result = birdid_result['results'][0]
-            birdid_confidence = top_result.get('confidence', 0)
-            cn_name = top_result.get('cn_name', '')
-            en_name = top_result.get('en_name', '')
-            iucn_category = top_result.get('iucn_category')  # IUCN 等级 (LC/NT/VU/EN/CR/...)，可能为 None
-            gbif_rarity_100 = top_result.get('gbif_rarity_100')  # GBIF 全球罕见度 (0-100)，可能为 None
-            aesthetic_index = top_result.get('aesthetic_index')  # iRateBird 颜值 (0-100)，可能为 None
+            outcome = BirdIdOutcome(
+                cn_name=top_result.get('cn_name', '') or '',
+                en_name=top_result.get('en_name', '') or '',
+                confidence=top_result.get('confidence', 0) or 0,
+                iucn_category=top_result.get('iucn_category'),       # IUCN 等级，可能为 None
+                gbif_rarity_100=top_result.get('gbif_rarity_100'),   # GBIF 全球罕见度 (0-100)，可能为 None
+                aesthetic_index=top_result.get('aesthetic_index'),   # iRateBird 颜值 (0-100)，可能为 None
+            )
+            birdid_outcomes[file_prefix] = outcome
+            birdid_sources[file_prefix] = source_display
+            if title_targets:
+                species_title_targets[file_prefix] = list(title_targets)
+            bird_prefixes.add(file_prefix)
+
+            is_en = self.i18n.current_lang.startswith('en')
+            if outcome.confidence >= self.settings.birdid_confidence_threshold:
+                bird_log = (outcome.en_name or outcome.cn_name) if is_en else (outcome.cn_name or outcome.en_name)
+                # V4.2.7: 跟随鸟名输出 GBIF 罕见度 tier（5 级圆形充填图标 + 中英文）
+                # V4.2.7: Append GBIF rarity tier to the bird-id log line.
+                _tier_idx, tier_suffix = birdid_tier(outcome.gbif_rarity_100)
+                self._log(f"  🐦 Bird ID [{source_display}]: {bird_log} ({outcome.confidence:.0f}%){tier_suffix}", "species")
+            else:
+                low_conf_name = (outcome.en_name or outcome.cn_name) if is_en else (outcome.cn_name or outcome.en_name)
+                self._log(self.i18n.t(
+                    "logs.birdid_low_confidence",
+                    source=source_display,
+                    name=low_conf_name or '?',
+                    confidence=outcome.confidence,
+                    threshold=self.settings.birdid_confidence_threshold,
+                ))
+
+        def write_species(
+            file_prefix: str,
+            title_targets: List[str],
+            outcome: "BirdIdOutcome",
+            burst_source: Optional[str] = None,
+        ):
+            """
+            把（统一后的）鸟种结论写入统计、file_bird_species、report.db 与 EXIF 队列。
+
+            达到阈值：写 DB 鸟种/置信度/IUCN/罕见度/颜值、说明文字前缀「鸟种：」，
+            并把 Title（及可选关键字）排入 EXIF 队列；低于阈值：只把「备选鸟种」写入
+            DB 说明文字，不写 EXIF Title、不用于分目录。
+
+            Write a (unified) species outcome to stats, file_bird_species, the
+            report DB, and the EXIF queue. At or above threshold the species,
+            confidence and species-level metrics are stored and Title/keywords are
+            queued; below threshold only an "Alt. species" caption line is stored.
+
+            参数 / Parameters:
+                file_prefix (str): 照片前缀（DB 主键）/ Photo prefix (DB key).
+                title_targets (List[str]): 需写入标题的文件 / Files receiving the title.
+                outcome (BirdIdOutcome): 最终结论 / Final outcome.
+                burst_source (Optional[str]): 若为连拍统一改写，胜出帧显示名 /
+                    Winning frame's display name when rewritten by burst unification.
+            """
+            cn_name = outcome.cn_name
+            en_name = outcome.en_name
+            birdid_confidence = outcome.confidence
+            iucn_category = outcome.iucn_category
+            gbif_rarity_100 = outcome.gbif_rarity_100
+            aesthetic_index = outcome.aesthetic_index
 
             if birdid_confidence >= self.settings.birdid_confidence_threshold:
                 if self.i18n.current_lang.startswith('en'):
-                    bird_log = en_name or cn_name
                     bird_title = en_name or cn_name
                 else:
-                    bird_log = cn_name or en_name
                     bird_title = cn_name or en_name
-                
-                # V4.2.7: 跟随鸟名输出 GBIF 罕见度 tier（5 级圆形充填图标 + 中英文）
-                # V4.2.7: Append GBIF rarity tier to the bird-id log line.
-                tier_suffix = ""
-                tier_idx = None
-                if gbif_rarity_100 is not None:
-                    from core.rarity_tier import gbif_score_to_tier, tier_icon, tier_name
-                    tier_idx = gbif_score_to_tier(gbif_rarity_100)
-                    is_zh = not self.i18n.current_lang.startswith('en')
-                    tier_suffix = f"  {tier_icon(tier_idx)} {tier_name(tier_idx, is_zh=is_zh)}"
-
-                self._log(f"  🐦 Bird ID [{source_display}]: {bird_log} ({birdid_confidence:.0f}%){tier_suffix}", "species")
+                tier_idx, _tier_suffix = birdid_tier(gbif_rarity_100)
 
                 species_entry = {'cn_name': cn_name, 'en_name': en_name}
                 if tier_idx is not None:
@@ -1423,26 +1508,22 @@ class PhotoProcessor:
                         if aesthetic_index is not None:
                             db_updates['aesthetic_index'] = aesthetic_index
                         self.report_db.update_photo(file_prefix, db_updates)
-                        # 将鸟种 + IUCN 追加到已生成的 DB caption 最前面
-                        # Prepend species + IUCN lines to the DB caption.
-                        existing = self.report_db.get_photo(file_prefix) or {}
-                        old_cap = existing.get('caption') or ''
+                        # 将鸟种 + IUCN 追加到 DB caption 最前面（见下方延后写入）
+                        # Prepend species + IUCN lines to the DB caption (deferred below).
                         # V4.3.0: 鸟种名跟随界面语言（bird_title 已按语言选名），标签走 i18n
                         # V4.3.0: Species name follows UI language (bird_title already
                         # picks en/cn by locale); labels via i18n.
                         prefix_lines = [self.i18n.t("logs.caption_species", name=bird_title)]
                         if iucn_category:
                             prefix_lines.append(self.i18n.t("logs.caption_iucn", category=iucn_category))
+                        # 连拍统一改写的帧注明依据，便于用户在浏览器里核对
+                        # Frames rewritten by burst unification note their source
+                        if burst_source:
+                            prefix_lines.append(self.i18n.t("logs.caption_burst_unified", source=burst_source))
                         prefix_block = "\n".join(prefix_lines)
-                        # 去重检查兼容中英双语前缀，避免跨语言重复处理时重复添加
-                        # Dedup check covers both zh/en prefixes for cross-language reprocessing.
-                        already_prefixed = old_cap.startswith(
-                            ('鸟种：', 'Species: ', '备选鸟种', 'Alt. species')
-                        )
-                        if old_cap and not already_prefixed:
-                            self.report_db.update_photo(file_prefix, {'caption': prefix_block + '\n' + old_cap})
-                        elif not old_cap:
-                            self.report_db.update_photo(file_prefix, {'caption': prefix_block})
+                        # 说明文字前缀延后到评星 V2 收尾之后再写：V2 会整段重写 DB caption
+                        # Caption prefix is applied after the V2 post-pass, which rewrites the whole DB caption
+                        species_caption_jobs.append((file_prefix, prefix_block))
                     except Exception as _e:
                         self._log(f"  ⚠️ Bird species DB write failed [{file_prefix}]: {_e}", "warning")
 
@@ -1468,15 +1549,8 @@ class PhotoProcessor:
                             meta_item['keywords'] = [bird_title]
                         queue_metadata(meta_item)
             else:
-                # 低置信度：记日志，并将候选鸟名存入 file_bird_species 供 caption 使用
+                # 低置信度：将候选鸟名存入 file_bird_species 供 caption 使用
                 low_conf_name = (en_name or cn_name) if self.i18n.current_lang.startswith('en') else (cn_name or en_name)
-                self._log(self.i18n.t(
-                    "logs.birdid_low_confidence",
-                    source=source_display,
-                    name=low_conf_name or '?',
-                    confidence=birdid_confidence,
-                    threshold=self.settings.birdid_confidence_threshold,
-                ))
                 if cn_name:
                     self.file_bird_species[file_prefix] = {
                         'cn_name': cn_name,
@@ -1487,23 +1561,15 @@ class PhotoProcessor:
                     # 低置信度：只写 Caption / DB，不写 EXIF Title，不用于分目录
                     # 将候选鸟名追加到 DB caption 最前面（备选鸟种）
                     if self.report_db:
-                        try:
-                            existing = self.report_db.get_photo(file_prefix) or {}
-                            old_cap = existing.get('caption') or ''
-                            # V4.3.0: \u5907\u9009\u9e1f\u79cd\u540d\u8ddf\u968f\u754c\u9762\u8bed\u8a00\uff08low_conf_name\uff09\uff0c\u6807\u7b7e/\u628a\u63e1\u5ea6\u8d70 i18n
-                            # V4.3.0: Alt-species name follows UI language; labels via i18n.
-                            bird_line = self.i18n.t(
-                                "logs.caption_alt_species",
-                                name=low_conf_name,
-                                confidence=f"{birdid_confidence:.0f}",
-                            )
-                            if old_cap and not old_cap.startswith(('\u5907\u9009\u9e1f\u79cd', 'Alt. species')):
-                                self.report_db.update_photo(file_prefix, {'caption': bird_line + '\n' + old_cap})
-                            elif not old_cap:
-                                self.report_db.update_photo(file_prefix, {'caption': bird_line})
-                        except Exception as _e:
-                            self._log(f"  \u26a0\ufe0f Low conf caption update failed [{file_prefix}]: {_e}", "warning")
-
+                        # V4.3.0: 备选鸟种名跟随界面语言（low_conf_name），标签/把握度走 i18n；
+                        # 与达阈值分支一样延后到评星 V2 收尾之后写入 caption。
+                        # V4.3.0: Alt-species name follows UI language; like the confident
+                        # branch, the caption line is applied after the V2 post-pass.
+                        species_caption_jobs.append((file_prefix, self.i18n.t(
+                            "logs.caption_alt_species",
+                            name=low_conf_name,
+                            confidence=f"{birdid_confidence:.0f}",
+                        )))
 
         def collect_birdid_tasks(wait: bool = False):
             """Collect completed BirdID tasks.
@@ -2810,6 +2876,12 @@ class PhotoProcessor:
                         # V4.6 (rating-v2/T3): gate BirdID on hard gates + a coarse
                         # sharpness screen instead of "rating >= 2" — V2 assigns
                         # stars in the post-pass, so no instant rating exists here.
+                        # 记录有鸟照片的标题写入目标：未送识鸟的帧也可能在连拍统一时继承鸟种
+                        # Record title targets for every photo with a bird: frames not sent to
+                        # Bird ID may still inherit their burst's species during unification.
+                        if detected:
+                            species_title_targets.setdefault(original_prefix, list(birdid_title_targets))
+                            bird_prefixes.add(original_prefix)
                         if self.settings.auto_identify and (
                             rating_value >= 2 or (
                                 detected
@@ -2858,6 +2930,12 @@ class PhotoProcessor:
                         # V4.6 (rating-v2/T3): gate BirdID on hard gates + a coarse
                         # sharpness screen instead of "rating >= 2" — V2 assigns
                         # stars in the post-pass, so no instant rating exists here.
+                        # 记录有鸟照片的标题写入目标：未送识鸟的帧也可能在连拍统一时继承鸟种
+                        # Record title targets for every photo with a bird: frames not sent to
+                        # Bird ID may still inherit their burst's species during unification.
+                        if detected:
+                            species_title_targets.setdefault(original_prefix, [target_file_path])
+                            bird_prefixes.add(original_prefix)
                         if self.settings.auto_identify and (
                             rating_value >= 2 or (
                                 detected
@@ -2999,6 +3077,47 @@ class PhotoProcessor:
         if birdid_tasks:
             self._log(self.i18n.t("logs.birdid_waiting", count=len(birdid_tasks)))
         collect_birdid_tasks(wait=True)
+
+        # 连拍鸟种统一后一次性写入：同一连拍组取达到阈值、置信度最高帧的鸟种作为整组鸟种，
+        # 组内其余有鸟的帧（含低于阈值/未识别）继承；必须在按鸟种分配星级配额之前完成。
+        # Unify burst species, then write once: the highest-confidence frame at or
+        # above the threshold names the whole burst and every other frame with a
+        # bird inherits it. This must run before per-species star quotas.
+        if birdid_outcomes:
+            burst_of: Dict[str, int] = {}
+            if self.settings.detect_burst and self.burst_map:
+                for burst_path, group_id in self.burst_map.items():
+                    if group_id:
+                        burst_of[os.path.splitext(os.path.basename(burst_path))[0]] = group_id
+            final_outcomes, unifications = reconcile_burst_species(
+                burst_of,
+                birdid_outcomes,
+                bird_prefixes,
+                float(self.settings.birdid_confidence_threshold),
+            )
+            unified_source: Dict[str, str] = {}
+            is_en_log = self.i18n.current_lang.startswith('en')
+            for record in unifications:
+                source = birdid_sources.get(record.winner_prefix, record.winner_prefix)
+                for changed_prefix in record.changed:
+                    unified_source[changed_prefix] = source
+                winner_name = ((record.winner.en_name or record.winner.cn_name) if is_en_log
+                               else (record.winner.cn_name or record.winner.en_name))
+                self._log(self.i18n.t(
+                    "logs.burst_species_unified",
+                    group=record.group_id,
+                    count=len(record.changed),
+                    name=winner_name,
+                    source=source,
+                    confidence=f"{record.winner.confidence:.0f}",
+                ), "species")
+            for prefix in sorted(final_outcomes):
+                write_species(
+                    prefix,
+                    species_title_targets.get(prefix, []),
+                    final_outcomes[prefix],
+                    unified_source.get(prefix),
+                )
         
         if birdid_executor is not None:
             try:
@@ -3110,6 +3229,25 @@ class PhotoProcessor:
                     f"{name} {c3}/{cn}" for name, (c3, cn) in
                     sorted(sp_stats.items(), key=lambda kv: -kv[1][1]))
                 self._log(f"    {detail}")
+
+        # 鸟种说明前缀在评星 V2 收尾之后写入：V2 收尾会用终评 caption 整段覆盖 DB caption，
+        # 早先写入的「鸟种：…」「备选鸟种…」「连拍统一…」行会被抹掉（09-15 批次仅 54/683 保留）。
+        # Species caption prefixes are applied after the V2 post-pass: it overwrites
+        # the whole DB caption with the final one, which used to erase the species,
+        # alt-species and burst-unified lines written earlier.
+        if self.report_db and species_caption_jobs:
+            for caption_prefix_key, prefix_block in species_caption_jobs:
+                try:
+                    existing = self.report_db.get_photo(caption_prefix_key) or {}
+                    old_cap = existing.get('caption') or ''
+                    # 去重检查兼容中英双语前缀，避免跨语言重复处理时重复添加
+                    # Dedup check covers both zh/en prefixes for cross-language reprocessing.
+                    if old_cap.startswith(('鸟种：', 'Species: ', '备选鸟种', 'Alt. species')):
+                        continue
+                    new_cap = prefix_block + ('\n' + old_cap if old_cap else '')
+                    self.report_db.update_photo(caption_prefix_key, {'caption': new_cap})
+                except Exception as _e:
+                    self._log(f"  ⚠️ Bird species caption update failed [{caption_prefix_key}]: {_e}", "warning")
 
         # 批量落盘 EXIF 队列（避免每张图一次写入）
         if metadata_batch:
