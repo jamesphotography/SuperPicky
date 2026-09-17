@@ -54,7 +54,7 @@ def test_distance_inside_point_is_to_nearest_edge():
 
 
 def test_antimeridian_clipped_halves():
-    """防线子午线裁剪后的两个半环被独立处理 / Antimeridian-clipped halves are evaluated independently."""
+    """反子午线裁剪后的两个半环被独立处理 / Antimeridian-clipped halves are evaluated independently."""
     # 西半环：lon 170..180, lat 50..60 / Western half: lon 170..180, lat 50..60
     square_west = [[170.0, 50.0], [180.0, 50.0], [180.0, 60.0], [170.0, 60.0], [170.0, 50.0]]
     pts_west = quantize_ring(square_west)

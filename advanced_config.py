@@ -998,7 +998,8 @@ class AdvancedConfig:
     @property
     def birdid_use_geo_filter(self) -> bool:
         """
-        获取是否启用地理过滤（GPS 网格 + 国家级候选层）。
+        获取是否启用 eBird 区域过滤：有 GPS 时按定位到的省州（仅中澳美）或国家的
+        eBird 清单过滤，否则按手选的国家/省州过滤。
 
         该开关控制整个地理过滤链路，而非仅某个数据源；旧键 `birdid_use_ebird`
         的迁移在 `load()` 中完成，此处只读新键。
@@ -1006,7 +1007,9 @@ class AdvancedConfig:
         返回:
         bool: 是否启用（默认 True）
 
-        Get whether geographic filtering is enabled (GPS grid + country tiers).
+        Get whether eBird region filtering is enabled: with GPS, candidates come
+        from the eBird list of the located state/province (CN/AU/US only) or
+        country; otherwise from the manually selected country/province.
         The switch governs the whole geo-filter pipeline, not one data source;
         migration from the legacy `birdid_use_ebird` key happens in `load()`.
 
