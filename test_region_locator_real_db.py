@@ -6,6 +6,7 @@ import os
 
 import pytest
 
+from birdid.region_geometry import point_in_ring
 from birdid.region_locator import LocateResult, RegionLocator
 
 DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "birdid", "data", "ebird_regions.db")
@@ -84,8 +85,55 @@ def locator():
         # country there, step b hits US-WA directly).
         ("罗伯茨角 Point Roberts", 48.975, -123.08, LocateResult("US", "US-WA")),
         ("豪勋爵岛附近海域", -31.60, 159.20, LocateResult("AU", "AU-NSW")),
+        # 海外领地（终审修复）：eBird 把它们当独立国家，有自己的清单；以前被并进宗主国
+        # （卡宴→FR 等），会用宗主国清单过滤。几何取自 10m map_units，并从 50m 宗主国剔除。
+        # Overseas territories (final-review fix): eBird treats them as countries
+        # with their own lists; they used to resolve to the sovereign (Cayenne -> FR).
+        ("卡宴 Cayenne", 4.93, -52.33, LocateResult("GF", None)),
+        ("圣但尼 Saint-Denis, Réunion", -20.88, 55.45, LocateResult("RE", None)),
+        ("皮特尔角城 Pointe-à-Pitre", 16.24, -61.53, LocateResult("GP", None)),
+        ("法兰西堡 Fort-de-France", 14.60, -61.07, LocateResult("MQ", None)),
+        ("马穆楚 Mamoudzou", -12.78, 45.23, LocateResult("YT", None)),
+        ("克拉伦代克 Kralendijk", 12.15, -68.27, LocateResult("BQ", None)),
+        ("飞鱼湾 Flying Fish Cove", -10.42, 105.68, LocateResult("CX", None)),
+        ("科科斯西岛 West Island", -12.19, 96.83, LocateResult("CC", None)),
+        ("中途岛 Midway", 28.21, -177.38, LocateResult("UM", None)),
+        ("朗伊尔城 Longyearbyen", 78.22, 15.65, LocateResult("SJ", None)),
+        ("阿姆斯特丹 Amsterdam", 52.37, 4.90, LocateResult("NL", None)),
+        ("麦夸里岛 Macquarie", -54.50, 158.94, LocateResult("AU", "AU-TAS")),
     ],
 )
 def test_known_locations(locator, name, lat, lon, expected):
     """已知坐标定位正确 / Known coordinates resolve correctly."""
     assert locator.locate(lat, lon) == expected, name
+
+
+@pytest.mark.parametrize(
+    "name,lat,lon",
+    [
+        ("卡宴 Cayenne", 4.93, -52.33),
+        ("圣但尼 Saint-Denis", -20.88, 55.45),
+        ("皮特尔角城 Pointe-à-Pitre", 16.24, -61.53),
+        ("克拉伦代克 Kralendijk", 12.15, -68.27),
+        ("中途岛 Midway", 28.21, -177.38),
+        ("熊岛 Bjørnøya", 74.43, 19.00),
+        ("巴黎", 48.86, 2.35),
+    ],
+)
+def test_territory_not_also_contained_by_sovereign(locator, name, lat, lon):
+    """
+    领地点最多被一个国家外环严格包含 / At most one country's outer rings contain a territory point.
+
+    「外包框面积小者优先」会掩盖宗主国分块未剔除的问题，所以直接数包含它的国家。
+    The smaller-bbox tie-break would hide an uncarved sovereign part, so count
+    the containing countries directly.
+    """
+    containing = {
+        ring.region
+        for ring in locator._groups[(0, None)]
+        if not ring.is_hole
+        and ring.bbox[0] <= lat <= ring.bbox[1]
+        and ring.bbox[2] <= lon <= ring.bbox[3]
+        and point_in_ring(lat, lon, locator._points(ring))
+    }
+    assert len(containing) == 1, (name, sorted(containing))

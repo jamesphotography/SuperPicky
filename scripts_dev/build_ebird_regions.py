@@ -34,10 +34,12 @@ if PROJECT_ROOT not in sys.path:
 
 from scripts_dev.ebird_region_boundaries import (  # noqa: E402
     SUBNATIONAL_COUNTRIES,
+    TERRITORY_CARVE_BOXES,
     RingRow,
     admin0_rings,
     admin1_rings,
     find_traditional_names,
+    territory_rings,
 )
 from scripts_dev.ebird_region_mapping import (  # noqa: E402
     SpeciesMapping,
@@ -54,6 +56,7 @@ GBIF_MATCH = "https://api.gbif.org/v2/species/match"
 NE_BASE = "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/geojson/"
 NE_ADMIN0 = "ne_50m_admin_0_countries.geojson"
 NE_ADMIN1 = "ne_10m_admin_1_states_provinces.geojson"
+NE_MAP_UNITS = "ne_10m_admin_0_map_units.geojson"
 
 CACHE_DIR = os.path.join(PROJECT_ROOT, "scripts_dev", ".ebird_cache")
 OUTPUT = os.path.join(PROJECT_ROOT, "birdid", "data", "ebird_regions.db")
@@ -74,6 +77,20 @@ SENTINELS: Tuple[Tuple[str, str], ...] = (
     ("CN-11", "Charadrius mongolus"),
     ("US-CA", "Setophaga petechia"),
 )
+
+# 有物种清单却允许没有边界环的区域（显式、最小化；每项须写明为何无法制图）。
+# Regions allowed to have a species list but no boundary ring (explicit and
+# minimal; every entry must say why it cannot be mapped).
+UNMAPPABLE_REGIONS: Dict[str, str] = {
+    # 公海：eBird 的非地理区域，按定义没有多边形 / High Seas: non-geographic by definition.
+    "XX": "High Seas (non-geographic eBird region)",
+    # 珊瑚海群岛：Natural Earth 10m 只有一个约 200 m 的礁点（154.39E, 21.03S），
+    # 0.01° 量化后塌成单点被丢弃；实际领地是散布在约 78 万 km² 海域的礁石，没有可用陆地多边形。
+    # Coral Sea Islands: Natural Earth 10m has a single ~200 m speck that
+    # collapses to one point at 0.01 degree quantization; the territory is reefs
+    # scattered over ~780,000 km2 of ocean with no usable land polygon.
+    "CS": "Coral Sea Islands (Natural Earth polygon collapses below 0.01 deg)",
+}
 
 # Natural Earth 中文名的人工修正（繁体或不规范）/ Manual fixes for Natural Earth Chinese names.
 SUBNATIONAL_ZH_OVERRIDES: Dict[str, str] = {
@@ -187,6 +204,40 @@ def check_sentinels(
         if not classes or not (classes & region_species.get(region, set())):
             errors.append(f"sentinel missing: {sci} not in {region}")
     return errors
+
+
+def missing_boundary_errors(
+    regions: Sequence[tuple],
+    rings: Iterable[RingRow],
+    allow: Optional[Dict[str, str]] = None,
+) -> List[str]:
+    """
+    有物种清单的区域必须有边界环 / Every region with species must have a boundary ring.
+
+    没有环的区域永远无法被 GPS 定位，照片会被宗主国或邻国清单过滤（如法属圭亚那落入
+    法国），或者直接不过滤；这正是海外领地缺陷的根源，因此作为构建卡口。
+
+    A region without rings can never be located by GPS, so its photos get the
+    sovereign's or a neighbour's list (e.g. French Guiana as France) or no
+    filter at all; this was the root cause of the overseas-territory defect, so
+    it is a build gate.
+
+    参数 / Parameters:
+        regions (Sequence[tuple]): (code, parent, name_en, name_zh, species_count)
+        rings (Iterable[RingRow]): 全部边界行 / Every boundary row.
+        allow (Optional[dict]): 允许无边界的代码；None 时用 UNMAPPABLE_REGIONS /
+            Codes allowed without rings; UNMAPPABLE_REGIONS when None.
+
+    返回 / Returns:
+        list[str]: 每个缺边界的区域一条纯 ASCII 错误 / One ASCII message per region missing rings.
+    """
+    allowed = UNMAPPABLE_REGIONS if allow is None else allow
+    ringed = {r.region for r in rings}
+    return [
+        f"no boundary ring for region with species: {row[0]}"
+        for row in sorted(regions, key=lambda r: r[0])
+        if row[4] > 0 and row[0] not in ringed and row[0] not in allowed
+    ]
 
 
 def country_rows(
@@ -431,9 +482,12 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     admin0 = plain.get_json(NE_BASE + NE_ADMIN0, "ne/" + NE_ADMIN0)["features"]
     admin1 = plain.get_json(NE_BASE + NE_ADMIN1, "ne/" + NE_ADMIN1)["features"]
+    map_units = plain.get_json(NE_BASE + NE_MAP_UNITS, "ne/" + NE_MAP_UNITS)["features"]
     country_codes = {e["code"] for e in countries}
     sub_codes = {e["code"] for e in subnationals}
-    rows0, skipped0 = admin0_rings(admin0, country_codes)
+    rows0, skipped0, carved = admin0_rings(admin0, country_codes)
+    rows_territory, missing_units = territory_rings(map_units, country_codes)
+    rows0 += rows_territory
     rows1, names_zh, skipped1 = admin1_rings(admin1, sub_codes)
     names_zh.update(SUBNATIONAL_ZH_OVERRIDES)
 
@@ -442,6 +496,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     errors += [f"no boundary: {code}" for code in sorted(sub_codes - {r.region for r in rows1})]
     errors += [f"no country boundary: {code}" for code in SUBNATIONAL_COUNTRIES
                if code not in {r.region for r in rows0}]
+    errors += [f"territory map unit missing (fix TERRITORY_UNITS): {unit}" for unit in missing_units]
+    errors += [f"territory carve box removed nothing (fix TERRITORY_CARVE_BOXES): {code}[{i}]"
+               for code, (_parent, boxes) in sorted(TERRITORY_CARVE_BOXES.items())
+               for i in range(len(boxes)) if not carved.get((code, i))]
     errors += [f"class {cls} mapped from {codes}" for cls, codes in
                sorted(find_overloaded_classes(mapping, allow_multi).items())]
     errors += check_sentinels(region_species, index.by_sci, SENTINELS)
@@ -453,6 +511,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             errors.append(f"subnational missing Chinese name: {entry['code']}")
         regions.append((entry["code"], entry["parent"], entry["name"], name,
                         len(region_species.get(entry["code"], set()))))
+    errors += missing_boundary_errors(regions, rows0 + rows1)
 
     # Separate traditional-characters errors into console-safe (ASCII) and report-detailed (full)
     traditional_codes = sorted(find_traditional_names(names_zh).items())
@@ -478,7 +537,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "fetched_at": datetime.date.today().isoformat(),
         "ebird_terms_url": "https://www.birds.cornell.edu/home/ebird-api-terms-of-use/",
         "attribution": "eBird, Cornell Lab of Ornithology; derived class-id lists, eBird API Terms of Use apply",
-        "boundaries_source": f"Natural Earth v5.1.2 (public domain): {NE_ADMIN0}, {NE_ADMIN1}",
+        "boundaries_source": f"Natural Earth v5.1.2 (public domain): {NE_ADMIN0}, {NE_MAP_UNITS} (territories), {NE_ADMIN1}",
         "builder_version": BUILDER_VERSION,
     }
     staging = args.output + ".staging"

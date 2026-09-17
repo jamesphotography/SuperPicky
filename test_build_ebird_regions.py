@@ -11,6 +11,7 @@ from scripts_dev.build_ebird_regions import (
     check_sentinels,
     country_rows,
     load_overrides,
+    missing_boundary_errors,
     publish_database,
     write_database,
 )
@@ -140,3 +141,26 @@ def test_publish_database_oversized(tmp_path):
     assert not staging.exists()  # Staging should be cleaned up
     assert output.exists()  # Output should still exist
     assert output.read_bytes() == original_content  # Output should be unchanged
+
+
+def test_missing_boundary_errors_flags_regions_with_species_but_no_rings():
+    """有物种但无环的区域报错；无物种或在允许表中的不报 / Species without rings is a gate error."""
+    regions = [
+        ("FR", None, "France", "法国", 700),
+        ("GF", None, "French Guiana", "法属圭亚那", 707),
+        ("XX", None, "High Seas", "公海", 372),
+        ("ZZ", None, "Empty", "空", 0),
+        ("AU-NSW", "AU", "New South Wales", "新南威尔士州", 5),
+    ]
+    rings = [square_row("FR", 0, 42, -4), square_row("AU-NSW", 1, -37, 141)]
+    errors = missing_boundary_errors(regions, rings, allow={"XX": "High Seas"})
+    assert errors == ["no boundary ring for region with species: GF"]
+    assert all(msg.isascii() for msg in errors)
+
+
+def test_unmappable_allow_list_is_minimal():
+    """允许表只含已核实无法制图的代码 / The allow-list holds only verified unmappable codes."""
+    from scripts_dev.build_ebird_regions import UNMAPPABLE_REGIONS
+
+    assert set(UNMAPPABLE_REGIONS) == {"XX", "CS"}
+    assert missing_boundary_errors([("XX", None, "High Seas", "公海", 372)], []) == []
