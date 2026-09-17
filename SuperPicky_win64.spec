@@ -123,6 +123,8 @@ a = Analysis(
         'birdid',
         'birdid.bird_identifier',
         'birdid.geo_filter',       # 地理过滤：bird_identifier 顶层导入，其余调用点为函数内延迟导入
+        'birdid.region_locator',   # GPS 区域定位：bird_identifier 函数内延迟导入，PyInstaller 静态分析看不到
+        'birdid.region_geometry',  # 区域定位的几何工具，由 region_locator 导入
         'tools.country_names',     # 国家显示名：仅被 region_data / birdid_server 函数内导入
         'birdid_server',
         'server_manager',  # V4.0.0: 服务器管理模块

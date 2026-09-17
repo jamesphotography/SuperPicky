@@ -44,15 +44,7 @@ except ImportError:
     imageio = cast(Any, None)
     RAW_SUPPORT = False
 
-# V4.2.7: reverse_geocoder lazy 单例 — 首次用时加载 ~70MB cKDTree 数据，
-# 之后所有线程共享同一个只读索引。
-# V4.2.7: reverse_geocoder lazy singleton — first use loads ~70MB cKDTree,
-# subsequent calls share the read-only index across threads.
 import threading
-
-_RG_LOCK = threading.Lock()
-_RG_INSTANCE: Any = None  # 标记是否已初始化（None 表示未尝试）
-_RG_AVAILABLE = True
 
 # 分类器推理锁：批处理 BirdID executor 与补救扫描确认可能跨线程并发调用
 # forward，MPS/CUDA 下并发安全性有限，统一串行化。
@@ -62,29 +54,35 @@ _RG_AVAILABLE = True
 _CLASSIFIER_INFER_LOCK = threading.Lock()
 
 
-def _resolve_country_code_from_gps(lat: float, lon: float) -> Optional[str]:
+def _locate_gps(lat: float, lon: float) -> Tuple[Optional[str], Optional[str]]:
     """
-    用 reverse_geocoder 把 GPS 坐标反查成 ISO 3166-1 alpha-2 国家代码。
+    GPS → eBird 国家与省州代码 / GPS to eBird country and subnational codes.
 
-    Convert a GPS coordinate to ISO 3166-1 alpha-2 country code via
-    reverse_geocoder (offline, cKDTree-backed). Returns None when the
-    library is unavailable or the lookup fails.
+    旧实现依赖 reverse_geocoder，但它从未进入打包版，打包版里判国一直静默失效
+    （spec §2.4）。现改用 ebird_regions.db 自带的边界离线定位。
+
+    The old implementation relied on reverse_geocoder, which never shipped in
+    packaged builds, so country lookup silently failed there (spec section 2.4).
+    This uses the boundaries bundled in ebird_regions.db instead.
+
+    参数 / Parameters:
+        lat (float): 纬度 / Latitude.
+        lon (float): 经度 / Longitude.
+
+    返回 / Returns:
+        tuple: (国家代码或 None, 省州代码或 None)；定位器不可用或出错时均为 None /
+            (country or None, subnational or None); both None when unavailable.
     """
-    global _RG_INSTANCE, _RG_AVAILABLE
-    if not _RG_AVAILABLE:
-        return None
     try:
-        if _RG_INSTANCE is None:
-            with _RG_LOCK:
-                if _RG_INSTANCE is None:
-                    import reverse_geocoder as rg
-                    _RG_INSTANCE = rg
-        result = _RG_INSTANCE.search([(lat, lon)], mode=1, verbose=False)
-        if result and result[0].get("cc"):
-            return str(result[0]["cc"]).upper()
-    except Exception:
-        _RG_AVAILABLE = False  # 永久禁用，避免反复 import 失败
-    return None
+        from birdid.region_locator import get_region_locator
+
+        locator = get_region_locator()
+        if locator is None:
+            return None, None
+        located = locator.locate(lat, lon)
+        return located.country, located.subnational
+    except Exception:  # noqa: BLE001
+        return None, None
 
 try:
     from ultralytics import YOLO
@@ -1003,39 +1001,38 @@ def _read_focus_point_for_path(
 def _identify_with_tiers(
     image,
     top_k: int,
-    lat: Optional[float],
-    lon: Optional[float],
-    country_code: Optional[str],
+    gps_country: Optional[str],
+    gps_subnational: Optional[str],
+    manual_country: Optional[str],
+    manual_subnational: Optional[str],
     is_yolo_cropped: bool,
     name_format: Optional[str],
     photo_country_code: Optional[str],
-) -> Tuple[List[Dict], str, Optional[int]]:
+) -> Tuple[List[Dict], str, Optional[int], Optional[str]]:
     """
-    遍历地理候选层，命中即停 / Walk the geo candidate tiers, stopping at the first hit.
+    遍历区域候选层，命中即停 / Walk the region candidate tiers, stopping at the first hit.
 
-    旧实现一次性取候选集，过窄时直接崩到无过滤（冰岛网格仅 54 类即触发该路径，
-    产出小企鹅、蓝脚鲣鸟等跨半球错误）。改为逐层放宽后，稀疏网格会平滑降到
-    邻域或国家级，不再出现「候选集塌陷 → 完全放弃过滤」。
+    注意 predict_bird 只有在 top-100 中无一落入候选集时才返回空，因此放宽只在候选集
+    完全不含相近种时发生；效果取决于候选集是否准确，而不是放宽机制。
 
-    The old implementation took a single candidate set and collapsed straight to
-    unfiltered when it was too narrow (Iceland's 54-class cell triggered exactly
-    that, yielding cross-hemisphere errors). Widening tier by tier lets sparse
-    cells degrade smoothly to the neighbourhood or country level.
+    predict_bird returns nothing only when none of its top 100 falls in the
+    candidate set, so widening happens only when the set lacks any similar
+    species; accuracy depends on the set, not on the widening.
 
     参数 / Parameters:
         image: 待识别图像 / Image to identify.
         top_k (int): 返回结果数 / Number of results.
-        lat (Optional[float]): 纬度 / Latitude.
-        lon (Optional[float]): 经度 / Longitude.
-        country_code (Optional[str]): 国家/地区代码 / Country or region code.
+        gps_country (Optional[str]): GPS 定位国家 / Country from GPS.
+        gps_subnational (Optional[str]): GPS 定位省州 / Subnational from GPS.
+        manual_country (Optional[str]): 手选国家 / Manually selected country.
+        manual_subnational (Optional[str]): 手选省州 / Manually selected subnational.
         is_yolo_cropped (bool): 是否已由 YOLO 裁剪 / Whether YOLO already cropped.
         name_format (Optional[str]): 鸟名格式 / Bird name format.
-        photo_country_code (Optional[str]): 拍摄国家，供 GBIF 罕见度使用 /
-            Shooting country, used for GBIF rarity.
+        photo_country_code (Optional[str]): 拍摄国家，供罕见度使用 / Shooting country for rarity.
 
     返回 / Returns:
-        tuple: (结果列表, 命中的层标签, 该层候选数或 None) /
-            (results, tier label, candidate count or None).
+        tuple: (结果列表, 层标签, 该层候选数或 None, 该层区域代码或 None) /
+            (results, tier label, candidate count or None, region code or None).
     """
     geo = get_geo_filter()
     if geo is None:
@@ -1047,9 +1044,11 @@ def _identify_with_tiers(
             name_format=name_format,
             photo_country_code=photo_country_code,
         )
-        return results, TIER_NONE, None
+        return results, TIER_NONE, None, None
 
-    for candidates, tier in geo.iter_candidates(lat, lon, country_code):
+    for candidates, tier, region in geo.iter_candidates(
+        gps_country, gps_subnational, manual_country, manual_subnational
+    ):
         results = predict_bird(
             image,
             top_k=top_k,
@@ -1059,8 +1058,8 @@ def _identify_with_tiers(
             photo_country_code=photo_country_code,
         )
         if results:
-            return results, tier, (len(candidates) if candidates else None)
-    return [], TIER_NONE, None
+            return results, tier, (len(candidates) if candidates else None), region
+    return [], TIER_NONE, None, None
 
 
 def identify_bird(
@@ -1121,43 +1120,43 @@ def identify_bird(
 
         lat = lon = None
         photo_country_code: Optional[str] = None
+        gps_subnational: Optional[str] = None
 
-        # V4.2.7: 提前提取 GPS（无论是否启用 ebird 过滤），用于反查拍摄国家
-        # → 为 GBIF 按国家归一化 rarity 提供输入
-        # V4.2.7: Extract GPS upfront (regardless of ebird filter) so we can
-        # reverse-geocode the shooting country for country-aware GBIF rarity.
+        # 提取 GPS 并离线定位到 eBird 国家/省州；定位结果同时供罕见度与地理过滤使用
+        # Extract GPS and locate the eBird country/subnational offline; the result
+        # feeds both rarity and the geo filter.
         if use_gps:
             try:
                 lat, lon, _gps_msg = extract_gps_from_exif(image_path)
                 # 0.0 是合法坐标（赤道/本初子午线），必须用 is not None 语义判断
-                # 0.0 is a legal coordinate (equator/prime meridian) — presence
-                # must be checked with is-not-None semantics, not truthiness.
+                # 0.0 is a legal coordinate — presence must use is-not-None semantics.
                 if _gps_coords_present(lat, lon):
                     result["gps_info"] = {
                         "latitude": lat,
                         "longitude": lon,
                         "info": _gps_msg,
                     }
-                    photo_country_code = _resolve_country_code_from_gps(lat, lon)
+                    photo_country_code, gps_subnational = _locate_gps(lat, lon)
                     if photo_country_code:
                         result["gps_info"]["country_code"] = photo_country_code
+                    if gps_subnational:
+                        result["gps_info"]["subnational_code"] = gps_subnational
             except Exception:
                 pass
 
-        # 地理过滤：分层候选集逐层放宽，替代旧的「一次性候选 + 三级断裂兜底」。
-        # 无 GPS 时用用户手选的地区/国家从 L4 起步；两者都缺则直接无过滤。
-        # Geo filter: layered candidates widened tier by tier, replacing the old
-        # single candidate set with three disconnected fallbacks. Without GPS we
-        # start at L4 using the user's chosen region/country; lacking both, we
-        # go unfiltered.
-        effective_region = region_code or country_code or photo_country_code
+        # 地理过滤：有可定位的 GPS 时按拍摄地的省州/国家，否则按手选；GPS 与手选分开传入，
+        # 不再把省州代码当国家代码混用（spec §2.5 的根因）。
+        # Geo filter: use the photo's located subnational/country when available,
+        # otherwise the manual selection. They are passed separately instead of
+        # conflating a subnational code with a country code (root cause, spec 2.5).
         if use_geo_filter:
-            results, tier, count = _identify_with_tiers(
+            results, tier, count, used_region = _identify_with_tiers(
                 image,
                 top_k=top_k,
-                lat=lat if use_gps else None,
-                lon=lon if use_gps else None,
-                country_code=effective_region,
+                gps_country=photo_country_code,
+                gps_subnational=gps_subnational,
+                manual_country=country_code,
+                manual_subnational=region_code,
                 is_yolo_cropped=is_yolo_cropped,
                 name_format=name_format,
                 photo_country_code=photo_country_code,
@@ -1166,7 +1165,7 @@ def identify_bird(
                 "enabled": tier != TIER_NONE,
                 "tier": tier,
                 "species_count": count,
-                "country_code": effective_region,
+                "region_code": used_region,
             }
         else:
             results = predict_bird(
@@ -1181,7 +1180,7 @@ def identify_bird(
                 "enabled": False,
                 "tier": TIER_NONE,
                 "species_count": None,
-                "country_code": None,
+                "region_code": None,
             }
 
         result["success"] = True

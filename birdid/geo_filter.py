@@ -1,107 +1,40 @@
 # -*- coding: utf-8 -*-
 """
-分层地理候选过滤器 / Layered geographic candidate filter.
+eBird 区域候选过滤器 / eBird region candidate filter.
 
-基于 `birdid/data/geo_distribution.db`（GBIF CC0/CC-BY 观察记录派生）按层产出
-候选物种集合：本格强候选 → 本格全部 → 邻域 3x3 → 国家级 → 不过滤。
-调用方逐层放宽直到识别有结果，避免旧实现中候选集过窄时直接崩到无过滤。
+基于 `birdid/data/ebird_regions.db`（eBird 清单派生的模型类别编号）按层产出候选集：
+省州（仅中澳美）→ 国家 → 不过滤。有 GPS 时用 GPS 定位结果，否则用用户手选。
+取代 4.6 的 GBIF 1° 网格实现（spec docs/specs/2026-09-16-ebird-region-filter-design.md）。
 
-Yields candidate species sets in widening tiers from geo_distribution.db
-(derived from GBIF CC0/CC-BY occurrence data): strong in-cell, all in-cell, 3x3
-neighbourhood, country, unfiltered. Callers widen until recognition returns a
-result, avoiding the old implementation's collapse straight to no filtering.
+Yields candidate sets from ebird_regions.db in widening tiers: subnational
+(CN/AU/US only), country, unfiltered. GPS location is used when available,
+otherwise the user's manual selection. Replaces the 4.6 GBIF 1-degree grid.
 """
 from __future__ import annotations
 
 import os
 import sqlite3
 import sys
-from typing import Dict, Iterator, List, Optional, Set, Tuple
+import threading
+from typing import Dict, Iterator, Optional, Set, Tuple
 
 from tools.i18n import t as _t
 
-TIER_CELL_STRONG = "L1_cell_strong"
-TIER_CELL_ALL = "L2_cell_all"
-TIER_NEIGHBORHOOD = "L3_neighborhood"
-TIER_COUNTRY = "L4_country"
-TIER_NONE = "L5_none"
+TIER_SUBNATIONAL = "region_subnational"
+TIER_COUNTRY = "region_country"
+TIER_NONE = "none"
 
-# L1 默认策略：保留累积覆盖该格 99.9% 观察记录的物种（Task 1 标定值）
-# Default L1 strategy: keep species covering 99.9% of the cell's records.
-_DEFAULT_TIER1 = "cumulative:0.999"
-
-
-def cell_id_for(lat: float, lon: float) -> int:
-    """
-    把经纬度编码成 1°网格编号 / Encode a coordinate into a 1-degree cell id.
-
-    参数 / Parameters:
-        lat (float): 纬度 / Latitude, -90..90.
-        lon (float): 经度 / Longitude, -180..180.
-
-    返回 / Returns:
-        int: 0..64799 的网格编号 / Cell id in 0..64799.
-    """
-    lat_bin = max(-90, min(89, _floor_int(lat)))
-    lon_bin = max(-180, min(179, _floor_int(lon)))
-    return (lat_bin + 90) * 360 + (lon_bin + 180)
-
-
-def _floor_int(value: float) -> int:
-    """
-    向下取整为 int / Floor a float to int.
-
-    参数 / Parameters:
-        value (float): 输入值 / Input value.
-
-    返回 / Returns:
-        int: 向下取整结果 / Floored value.
-    """
-    return int(value // 1)
-
-
-def _neighbour_cells(lat: float, lon: float) -> List[int]:
-    """
-    3x3 邻域的网格编号 / The cell ids of the 3x3 neighbourhood.
-
-    跨日期变更线时经度回绕；越过极点的纬度直接跳过。
-
-    Longitude wraps across the dateline; latitudes beyond the poles are skipped.
-
-    参数 / Parameters:
-        lat (float): 中心纬度 / Centre latitude.
-        lon (float): 中心经度 / Centre longitude.
-
-    返回 / Returns:
-        list[int]: 最多 9 个网格编号 / Up to nine cell ids.
-    """
-    lat_bin = max(-90, min(89, _floor_int(lat)))
-    lon_bin = max(-180, min(179, _floor_int(lon)))
-    out: List[int] = []
-    for dlat in (-1, 0, 1):
-        la = lat_bin + dlat
-        if la < -90 or la > 89:
-            continue
-        for dlon in (-1, 0, 1):
-            lo = lon_bin + dlon
-            if lo > 179:
-                lo -= 360
-            elif lo < -180:
-                lo += 360
-            out.append((la + 90) * 360 + (lo + 180))
-    return out
+DB_FILENAME = "ebird_regions.db"
 
 
 def default_db_path() -> str:
     """
-    解析 geo_distribution.db 路径，兼容开发与打包环境。
-
-    Resolve geo_distribution.db, covering development and packaged builds.
+    解析 ebird_regions.db 路径，兼容开发与打包环境 / Resolve the database path.
 
     返回 / Returns:
         str: 绝对路径 / Absolute path.
     """
-    rel = os.path.join("birdid", "data", "geo_distribution.db")
+    rel = os.path.join("birdid", "data", DB_FILENAME)
     if getattr(sys, "frozen", False) and sys.platform == "win32":
         from config import get_install_scoped_resource_path
 
@@ -116,187 +49,229 @@ def default_db_path() -> str:
     return os.path.join(base, rel)
 
 
-class GeoFilter:
+def _normalize_code(code: Optional[str]) -> Optional[str]:
     """
-    分层地理候选过滤器 / Layered geographic candidate filter.
+    区域代码去空白并转大写 / Strip and upper-case a region code.
 
     参数 / Parameters:
-        db_path (Optional[str]): 数据库路径；None 时自动解析 /
-            Database path; auto-resolved when None.
+        code (Optional[str]): 原始代码 / Raw code.
+
+    返回 / Returns:
+        Optional[str]: 规范化后的代码；None 或空白串返回 None / Normalized code, None for None or blank.
+    """
+    if code is None:
+        return None
+    normalized = str(code).strip().upper()
+    return normalized or None
+
+
+class RegionFilter:
+    """
+    eBird 区域候选过滤器 / eBird region candidate filter.
+
+    区域元数据在构造时全部读入（约 340 行）；物种集合按需读取并缓存，
+    避免一次性把几十万个类别编号装进内存。
+
+    Region metadata (about 340 rows) is loaded up front; species sets are read on
+    demand and cached, rather than loading hundreds of thousands of ids at once.
+
+    参数 / Parameters:
+        db_path (Optional[str]): 数据库路径；None 时自动解析 / Path, auto-resolved when None.
     """
 
     def __init__(self, db_path: Optional[str] = None) -> None:
         self.db_path = db_path or default_db_path()
         self._conn: Optional[sqlite3.Connection] = None
-        self._tier1_strategy = _DEFAULT_TIER1
-        if os.path.exists(self.db_path):
-            try:
-                self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
-                row = self._conn.execute(
-                    "SELECT value FROM meta WHERE key='tier1_threshold'"
-                ).fetchone()
-                if row and row[0]:
-                    self._tier1_strategy = str(row[0])
-            except sqlite3.Error as e:
-                print(_t("logs.geo_db_failed", e=e))
-                self._conn = None
+        self._lock = threading.Lock()
+        self._regions: Dict[str, Tuple[Optional[str], str, str]] = {}
+        self._species: Dict[str, frozenset] = {}
+        if not os.path.exists(self.db_path):
+            return
+        try:
+            self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            for code, parent, name_en, name_zh in self._conn.execute(
+                "SELECT code, parent, name_en, name_zh FROM regions"
+            ):
+                self._regions[str(code)] = (parent, str(name_en), str(name_zh))
+        except sqlite3.Error as e:
+            print(_t("logs.geo_db_failed", e=e))
+            self._conn = None
+            self._regions = {}
 
     def is_available(self) -> bool:
         """
         数据库是否可用 / Whether the database is usable.
 
         返回 / Returns:
-            bool: 连接正常且 cell_species 非空时为 True /
-                True when connected and cell_species is non-empty.
+            bool: 连接正常且有区域数据 / Connected with region data.
         """
-        if self._conn is None:
-            return False
-        try:
-            row = self._conn.execute("SELECT 1 FROM cell_species LIMIT 1").fetchone()
-            return row is not None
-        except sqlite3.Error:
-            return False
+        return self._conn is not None and bool(self._regions)
 
-    def _cell_counts(self, cell_ids: List[int]) -> Dict[int, int]:
+    def has_region(self, code: Optional[str]) -> bool:
         """
-        查询若干网格合并后的物种观察数 / Merged per-species counts for cells.
+        区域代码是否存在 / Whether a region code exists.
 
         参数 / Parameters:
-            cell_ids (list[int]): 网格编号 / Cell ids.
+            code (Optional[str]): 区域代码 / Region code.
 
         返回 / Returns:
-            dict[int, int]: {class_id: 观察记录数} / {class_id: occurrence count}.
+            bool: 存在为 True / True when present.
         """
-        if self._conn is None or not cell_ids:
-            return {}
-        try:
-            marks = ",".join("?" * len(cell_ids))
-            rows = self._conn.execute(
-                f"SELECT class_id, SUM(n) FROM cell_species "
-                f"WHERE cell_id IN ({marks}) GROUP BY class_id",
-                cell_ids,
-            ).fetchall()
-            return {int(c): int(n) for c, n in rows}
-        except sqlite3.Error as e:
-            print(_t("logs.geo_cell_failed", e=e))
-            return {}
+        return bool(code) and code in self._regions
 
-    def _tier1_filter(self, counts: Dict[int, int]) -> Set[int]:
+    def parent_of(self, code: str) -> Optional[str]:
         """
-        按标定的策略裁剪出 L1 强候选 / Apply the calibrated L1 strategy.
-
-        支持三种策略，由 `meta.tier1_threshold` 决定：
-        `cumulative:<cover>` 保留累积覆盖 cover 比例记录的物种（Task 1 标定为 0.999）；
-        `absolute` 保留 n>=5；`hybrid` 保留 n>=max(2, 0.0001*总数)。
-
-        Three strategies selected by `meta.tier1_threshold`: `cumulative:<cover>`
-        keeps species covering that fraction of records (calibrated to 0.999);
-        `absolute` keeps n>=5; `hybrid` keeps n>=max(2, 0.0001*total).
+        省州的上级国家；国家或未知代码返回 None / Parent country of a subnational code.
 
         参数 / Parameters:
-            counts (dict[int, int]): {class_id: 观察记录数} / per-class counts.
+            code (str): 区域代码 / Region code.
 
         返回 / Returns:
-            set[int]: L1 候选 class_id 集合 / L1 candidate class ids.
+            Optional[str]: 国家代码或 None / Country code or None.
         """
-        if not counts:
-            return set()
+        entry = self._regions.get(code)
+        return entry[0] if entry else None
 
-        strategy = self._tier1_strategy
-        if strategy == "absolute":
-            return {c for c, n in counts.items() if n >= 5}
-        if strategy == "hybrid":
-            total = sum(counts.values())
-            thr = max(2, int(total * 0.0001))
-            return {c for c, n in counts.items() if n >= thr}
-
-        cover = 0.999
-        if strategy.startswith("cumulative:"):
-            try:
-                cover = float(strategy.split(":", 1)[1])
-            except ValueError:
-                cover = 0.999
-
-        total = sum(counts.values())
-        kept: Set[int] = set()
-        acc = 0
-        for c, n in sorted(counts.items(), key=lambda kv: kv[1], reverse=True):
-            kept.add(c)
-            acc += n
-            if acc >= total * cover:
-                break
-        return kept
-
-    def _country_species(self, country_code: str) -> Set[int]:
+    def display_name(self, code: str, english: bool) -> str:
         """
-        国家级候选 / Country-level candidates.
+        区域显示名 / Display name of a region.
 
         参数 / Parameters:
-            country_code (str): ISO 3166-1 alpha-2 代码 / ISO country code.
+            code (str): 区域代码 / Region code.
+            english (bool): True 取英文名 / English when True.
 
         返回 / Returns:
-            set[int]: 该国候选 class_id 集合 / Candidate class ids.
+            str: 名称；未知代码返回代码本身 / Name, or the code when unknown.
         """
-        if self._conn is None or not country_code:
+        entry = self._regions.get(code)
+        if not entry:
+            return code
+        return entry[1] if english else (entry[2] or entry[1])
+
+    def species_for(self, code: str) -> Set[int]:
+        """
+        区域候选类别 / Candidate classes of a region.
+
+        参数 / Parameters:
+            code (str): 区域代码 / Region code.
+
+        返回 / Returns:
+            set[int]: 类别集合的副本；失败或未知时为空集 / A copy; empty on failure.
+        """
+        if self._conn is None or code not in self._regions:
             return set()
-        try:
-            rows = self._conn.execute(
-                "SELECT class_id FROM country_species WHERE country=?",
-                (country_code.upper(),),
-            ).fetchall()
-            return {int(r[0]) for r in rows}
-        except sqlite3.Error as e:
-            print(_t("logs.geo_country_failed", e=e))
-            return set()
+        with self._lock:
+            cached = self._species.get(code)
+            if cached is None:
+                try:
+                    rows = self._conn.execute(
+                        "SELECT class_id FROM region_species WHERE region=?", (code,)
+                    ).fetchall()
+                except sqlite3.Error as e:
+                    print(_t("logs.geo_region_failed", e=e))
+                    return set()
+                cached = frozenset(int(r[0]) for r in rows)
+                self._species[code] = cached
+        return set(cached)
 
     def iter_candidates(
         self,
-        lat: Optional[float],
-        lon: Optional[float],
-        country_code: Optional[str] = None,
-    ) -> Iterator[Tuple[Optional[Set[int]], str]]:
+        gps_country: Optional[str],
+        gps_subnational: Optional[str],
+        manual_country: Optional[str],
+        manual_subnational: Optional[str],
+    ) -> Iterator[Tuple[Optional[Set[int]], str, Optional[str]]]:
         """
-        按层产出候选集，调用方逐层放宽直到有结果。
+        按层产出候选集，调用方逐层放宽直到有结果 / Yield tiers until recognition succeeds.
 
-        空层会被跳过，稀疏网格因此不会产出空候选集（那会屏蔽掉所有类别）。
+        规则 / Rules:
+        - 代码不区分大小写，四个入参先去首尾空白并转大写（"au-nsw" 等同 "AU-NSW"）。
+        - 只给省州、没给国家时，由省州推出其所属国家（CLI `--region AU-SA`、服务端只传
+          region_code、迁移后国家为空的老配置都走这条）；GPS 链同理。
+        - GPS 国家存在于库中时只走 GPS 链（照片可能拍于他处，手选不应覆盖实际拍摄地）；
+          否则走手选链。
+        - 省州必须隶属于同链的国家；未知或不一致的省州按「整个国家」处理，落到国家层
+          （老配置里残留的省州代码因此不会让过滤失效，spec §2.5、§6.3）。
+        - 空清单层被跳过。
 
-        Yield candidate sets tier by tier; the caller widens until recognition
-        succeeds. Empty tiers are skipped so a sparse cell never produces an
-        empty candidate set, which would mask every class.
+        - Codes are case-insensitive: all four inputs are stripped and upper-cased
+          ("au-nsw" equals "AU-NSW").
+        - A subnational code alone implies its country (CLI `--region AU-SA`, the
+          server receiving only region_code, migrated configs with a null
+          country); the same applies to the GPS chain.
+        - When the GPS country exists in the database only the GPS chain is used
+          (the photo may be from elsewhere, so the manual choice must not
+          override it); otherwise the manual chain is used.
+        - A subnational code must belong to the chain's country; an unknown or
+          mismatched one falls through to the country tier.
+        - Empty tiers are skipped.
 
         参数 / Parameters:
-            lat (Optional[float]): 纬度，无 GPS 时为 None / Latitude or None.
-            lon (Optional[float]): 经度，无 GPS 时为 None / Longitude or None.
-            country_code (Optional[str]): 国家代码，用于 L4 / Country code for L4.
+            gps_country (Optional[str]): GPS 定位国家 / Country from GPS.
+            gps_subnational (Optional[str]): GPS 定位省州 / Subnational from GPS.
+            manual_country (Optional[str]): 手选国家，"GLOBAL" 视同未选 / Manual country.
+            manual_subnational (Optional[str]): 手选省州 / Manual subnational.
 
         返回 / Returns:
-            Iterator[tuple]: (候选集或 None, 层标签)；最后一项恒为
-                (None, TIER_NONE) 表示不过滤 / (candidates or None, tier label);
-                the last item is always (None, TIER_NONE), meaning unfiltered.
+            Iterator[tuple]: (候选集或 None, 层标签, 区域代码或 None)，最后一项恒为
+                (None, TIER_NONE, None) / Last item is always the unfiltered tier.
         """
         if not self.is_available():
-            yield None, TIER_NONE
+            yield None, TIER_NONE, None
             return
 
-        has_gps = lat is not None and lon is not None
-        if has_gps:
-            counts = self._cell_counts([cell_id_for(float(lat), float(lon))])
-            l1 = self._tier1_filter(counts)
-            if l1:
-                yield l1, TIER_CELL_STRONG
-            l2 = set(counts)
-            if l2 and l2 != l1:
-                yield l2, TIER_CELL_ALL
-            l3 = set(self._cell_counts(_neighbour_cells(float(lat), float(lon))))
-            if l3 and l3 != l2:
-                yield l3, TIER_NEIGHBORHOOD
+        gps_country, gps_subnational, manual_country, manual_subnational = (
+            _normalize_code(code)
+            for code in (gps_country, gps_subnational, manual_country, manual_subnational)
+        )
+        gps_country = self._country_or_implied(gps_country, gps_subnational)
+        manual_country = self._country_or_implied(manual_country, manual_subnational)
 
-        if country_code:
-            l4 = self._country_species(country_code)
-            if l4:
-                yield l4, TIER_COUNTRY
+        if self._is_country(gps_country):
+            country, subnational = gps_country, gps_subnational
+        elif self._is_country(manual_country):
+            country, subnational = manual_country, manual_subnational
+        else:
+            country, subnational = None, None
 
-        yield None, TIER_NONE
+        if country and subnational and self.parent_of(subnational) == country:
+            species = self.species_for(subnational)
+            if species:
+                yield species, TIER_SUBNATIONAL, subnational
+        if country:
+            species = self.species_for(country)
+            if species:
+                yield species, TIER_COUNTRY, country
+        yield None, TIER_NONE, None
+
+    def _country_or_implied(self, country: Optional[str], subnational: Optional[str]) -> Optional[str]:
+        """
+        国家无效时由已知省州推出国家 / Derive the country from a known subnational when the country is invalid.
+
+        参数 / Parameters:
+            country (Optional[str]): 已规范化的国家代码 / Normalized country code.
+            subnational (Optional[str]): 已规范化的省州代码 / Normalized subnational code.
+
+        返回 / Returns:
+            Optional[str]: 有效国家原样返回；否则省州的上级国家；都没有时原样返回 country /
+                The country if valid, else the subnational's parent, else country unchanged.
+        """
+        if self._is_country(country) or not subnational:
+            return country
+        parent = self.parent_of(subnational)
+        return parent if self._is_country(parent) else country
+
+    def _is_country(self, code: Optional[str]) -> bool:
+        """
+        是否为库中的国家代码 / Whether a code is a known country.
+
+        参数 / Parameters:
+            code (Optional[str]): 代码 / Code.
+
+        返回 / Returns:
+            bool: 国家为 True / True for a country.
+        """
+        return self.has_region(code) and self.parent_of(str(code)) is None
 
     def close(self) -> None:
         """关闭连接 / Close the connection."""
@@ -307,7 +282,7 @@ class GeoFilter:
                 pass
             self._conn = None
 
-    def __enter__(self) -> "GeoFilter":
+    def __enter__(self) -> "RegionFilter":
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
@@ -316,9 +291,7 @@ class GeoFilter:
 
 
 _TIER_I18N_KEYS = {
-    TIER_CELL_STRONG: "birdid.geo_tier_cell_strong",
-    TIER_CELL_ALL: "birdid.geo_tier_cell_all",
-    TIER_NEIGHBORHOOD: "birdid.geo_tier_neighborhood",
+    TIER_SUBNATIONAL: "birdid.geo_tier_subnational",
     TIER_COUNTRY: "birdid.geo_tier_country",
     TIER_NONE: "birdid.geo_tier_none",
 }
@@ -326,40 +299,44 @@ _TIER_I18N_KEYS = {
 
 def describe_tier(geo_info: Optional[dict]) -> str:
     """
-    把 geo_info 渲染成一行可读的过滤状态说明。
-
-    Render geo_info into a single human-readable filter-status line.
+    把 geo_info 渲染成一行过滤状态说明 / Render geo_info as one status line.
 
     参数 / Parameters:
-        geo_info (Optional[dict]): identify_bird 返回的 geo_info /
-            The geo_info dict returned by identify_bird.
+        geo_info (Optional[dict]): identify_bird 返回的 geo_info / geo_info from identify_bird.
 
     返回 / Returns:
-        str: 已本地化的说明文本；geo_info 为空时按未过滤处理 /
-            Localized description; treated as unfiltered when geo_info is None.
+        str: 本地化文本；None 按未过滤处理 / Localized text; None means unfiltered.
     """
     info = geo_info or {}
     tier = info.get("tier", TIER_NONE)
     key = _TIER_I18N_KEYS.get(tier, _TIER_I18N_KEYS[TIER_NONE])
-    return _t(
-        key,
-        count=info.get("species_count") or 0,
-        country=info.get("country_code") or "?",
-    )
+    code = info.get("region_code") or ""
+    name = code
+    if code:
+        try:
+            from tools.i18n import get_i18n
+
+            english = str(get_i18n().current_lang or "").startswith("en")
+            geo = get_geo_filter()
+            if geo is not None:
+                name = geo.display_name(code, english)
+        except Exception:  # noqa: BLE001
+            name = code
+    return _t(key, count=info.get("species_count") or 0, region=name)
 
 
-def get_geo_filter() -> Optional["GeoFilter"]:
+def get_geo_filter() -> Optional[RegionFilter]:
     """
     进程级单例 / Process-wide singleton.
 
     返回 / Returns:
-        Optional[GeoFilter]: 可用时返回实例，否则 None / Instance or None.
+        Optional[RegionFilter]: 可用时返回实例，否则 None / Instance or None.
     """
     from config import get_lazy_registry
 
-    def _factory() -> Optional["GeoFilter"]:
+    def _factory() -> Optional[RegionFilter]:
         try:
-            f = GeoFilter()
+            f = RegionFilter()
             if f.is_available():
                 return f
             print(_t("logs.geo_unavailable"))

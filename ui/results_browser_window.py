@@ -791,12 +791,20 @@ def _run_mark_no_bird(
             "has_bird": 0,
             "bird_species_cn": None,
             "bird_species_en": None,
+            # 待确定候选一并清掉，否则卡片仍会显示「鸟名（待确定 N%）」
+            # Clear the unconfirmed candidate too, or the tile keeps showing it
+            "alt_species_cn": None,
+            "alt_species_en": None,
+            "alt_confidence": None,
             "rating": -1,
         })
 
     # 2. 同步内存副本，界面刷新与目录计算都读它
     photo["bird_species_cn"] = ""
     photo["bird_species_en"] = ""
+    photo["alt_species_cn"] = ""
+    photo["alt_species_en"] = ""
+    photo["alt_confidence"] = None
     photo["has_bird"] = 0
     photo["rating"] = -1
 

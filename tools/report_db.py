@@ -21,7 +21,7 @@ from .file_utils import ensure_hidden_directory
 
 
 # Schema 版本，用于未来升级
-SCHEMA_VERSION = "9"
+SCHEMA_VERSION = "10"
 
 # 所有列定义（有序），用于 CREATE TABLE 和数据验证
 PHOTO_COLUMNS = [
@@ -106,6 +106,14 @@ PHOTO_COLUMNS = [
     # V9: iRateBird 鸟种美学(颜值)指数 (0-100，越大越好看，CC-BY 4.0 派生)
     # V9: iRateBird species aesthetic score (0-100, higher = prettier)
     ("aesthetic_index",  "REAL", None),
+
+    # V10: 待确定候选鸟种（识鸟置信度低于阈值时的第一名），仅用于浏览器显示与 EXIF 标题提示，
+    # 不参与分目录、报告鸟种名录与 eBird 导出
+    # V10: unconfirmed candidate species (top result below the Bird ID threshold),
+    # display/EXIF-title hint only; never used for folders, reports or eBird export
+    ("alt_species_cn",   "TEXT", None),
+    ("alt_species_en",   "TEXT", None),
+    ("alt_confidence",   "REAL", None),
 
     ("created_at",    "TEXT", None),
     ("updated_at",    "TEXT", None),
@@ -512,6 +520,28 @@ class ReportDB:
                     self._update_schema_version("9")
                 current_version = "9"
                 print("✅ Database schema upgraded to v9")
+
+            # ----------------------------------------------------------------------
+            #  Upgrade: v9 -> v10 (unconfirmed candidate species)
+            # ----------------------------------------------------------------------
+            if current_version == "9":
+                print("🔄 Upgrading database schema from v9 to v10...")
+                new_columns_v10 = [
+                    ("alt_species_cn", "TEXT"),
+                    ("alt_species_en", "TEXT"),
+                    ("alt_confidence", "REAL"),
+                ]
+                with self._conn:
+                    for col_name, col_type in new_columns_v10:
+                        try:
+                            self._conn.execute(
+                                f"ALTER TABLE photos ADD COLUMN {col_name} {col_type}"
+                            )
+                        except sqlite3.OperationalError:
+                            pass  # 列已存在，跳过
+                    self._update_schema_version("10")
+                current_version = "10"
+                print("✅ Database schema upgraded to v10")
 
     def _update_schema_version(self, version):
         """更新数据库中的版本号（由调用方负责提交事务）"""

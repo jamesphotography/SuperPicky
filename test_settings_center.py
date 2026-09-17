@@ -249,77 +249,64 @@ def test_birdid_region_save(monkeypatch):
         os.unlink(tmp_path)
 
 
-def test_birdid_subnational_region_hidden(monkeypatch):
+def _settings_with_region(monkeypatch, country_code, country_name, region_code, region_name):
     """
-    验证无州级数据时地区下拉整行隐藏，且旧配置里的 region_code 不致报错。
-
-    地理数据源改为 GBIF 1°网格后，本设计不再提供州/省级分区（GPS 已精确到 1°，
-    手选地区只在无 GPS 时作国家级回退，见 spec §3.3）。因此地区下拉恒只有
-    「整个国家」一项，应整行隐藏而非展示一个无意义的空下拉。
-
-    本用例取代原先的 C1 回归测试（该测试断言州级下拉被填充，守护的功能已随
-    数据源变更被有意移除）。旧配置中残留的 AU-ACT 等 region_code 必须能被安全
-    忽略，不得抛异常。
-
-    After switching the geo data source to the GBIF 1-degree grid, this design no
-    longer provides sub-national divisions (GPS already resolves to 1 degree;
-    manual selection is only a country-level fallback for photos without GPS —
-    see spec section 3.3). The region dropdown therefore only ever holds "Entire
-    country" and the whole row is hidden.
-
-    This replaces the former C1 regression test, whose asserted behaviour
-    (sub-national dropdown population) was deliberately removed along with the
-    data source. Leftover region_codes such as AU-ACT in older configs must be
-    ignored safely without raising.
+    用临时配置构造设置中心并打开识鸟页 / Build SettingsCenter on a temp config.
 
     参数 / Parameters:
         monkeypatch: pytest fixture.
+        country_code (str): 国家代码 / Country code.
+        country_name (str): 国家显示名 / Country display name.
+        region_code (Optional[str]): 省州代码 / Subnational code.
+        region_name (str): 省州显示名 / Subnational display name.
+
+    返回 / Returns:
+        tuple: (SettingsCenter, AdvancedConfig)
     """
     import tempfile
+
+    import advanced_config as _ac_mod
     from advanced_config import AdvancedConfig
-    from ui.settings_center import SettingsCenter
     from tools.i18n import get_i18n
+    from ui.settings_center import SettingsCenter
 
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
         tmp_path = f.name
-    try:
-        # 预置：Australia 国家 + AU-ACT 地区
-        # Pre-set: Australia country + AU-ACT region
-        cfg = AdvancedConfig(config_file=tmp_path)
-        cfg.config["birdid_country_code"] = "AU"
-        cfg.config["birdid_selected_country"] = "澳大利亚"
-        cfg.config["birdid_region_code"] = "AU-ACT"
-        cfg.config["birdid_selected_region"] = "澳首都直辖区 (AU-ACT)"
-        cfg.save()
+    cfg = AdvancedConfig(config_file=tmp_path)
+    cfg.config["birdid_country_code"] = country_code
+    cfg.config["birdid_selected_country"] = country_name
+    cfg.config["birdid_region_code"] = region_code
+    cfg.config["birdid_selected_region"] = region_name
+    cfg.save()
+    monkeypatch.setattr(_ac_mod, "get_advanced_config", lambda: cfg)
+    w = SettingsCenter(get_i18n())
+    w.show_page("birdid")
+    return w, cfg
 
-        import advanced_config as _ac_mod
-        monkeypatch.setattr(_ac_mod, "get_advanced_config", lambda: cfg)
 
-        # 打开设置页：此时 _restore_birdid_country 应能正确填充地区并恢复子级地区
-        # Open settings page: _restore_birdid_country should populate and restore sub-region
-        w = SettingsCenter(get_i18n())
-        w.show_page("birdid")
+def test_birdid_subnational_region_restored(monkeypatch):
+    """
+    澳洲显示 8 个州且恢复已保存的 AU-ACT（老配置恢复生效，spec §2.5）。
 
-        # 无州级数据 → 下拉只有「整个国家」一项，且整行隐藏
-        # No sub-national data → only "Entire country", and the row is hidden
-        assert w._bid_region.count() == 1, (
-            f"地区下拉应只有「整个国家」一项，实际 {w._bid_region.count()} 项"
-        )
-        assert not w._bid_region.isVisible(), "无州级数据时地区下拉应隐藏"
-        assert not w._bid_region_label.isVisible(), "无州级数据时地区标签应隐藏"
+    Australia lists its 8 states and restores the saved AU-ACT, so region codes
+    stored by older versions work again.
+    """
+    w, cfg = _settings_with_region(monkeypatch, "AU", "澳大利亚", "AU-ACT", "澳大利亚首都特区")
+    assert w._bid_region.count() == 9, f"应为「整个国家」+ 8 个州，实际 {w._bid_region.count()}"
+    assert not w._bid_region.isHidden() and not w._bid_region_label.isHidden()
+    assert w._bid_region.currentData() == "AU-ACT"
+    assert cfg.birdid_country_code == "AU"
+    w.close()
 
-        # 旧配置里的 AU-ACT 被安全忽略：当前选中项回落到「整个国家」(itemData=None)
-        # The stale AU-ACT is ignored safely: selection falls back to "Entire country"
-        assert w._bid_region.currentData() is None, (
-            f"旧 region_code 应被忽略，实际 currentData={w._bid_region.currentData()!r}"
-        )
 
-        # 国家本身仍必须正确恢复 / The country itself must still restore correctly
-        assert cfg.birdid_country_code == "AU", "国家选择不应被地区行的变更影响"
-
-        w.close()
-    finally:
-        os.unlink(tmp_path)
+def test_birdid_region_row_hidden_without_subnational(monkeypatch):
+    """
+    非中澳美国家没有省州，地区行整行隐藏 / The row hides for countries without subnational data.
+    """
+    w, _cfg = _settings_with_region(monkeypatch, "JP", "日本", None, "整个国家")
+    assert w._bid_region.count() == 1
+    assert w._bid_region.isHidden() and w._bid_region_label.isHidden()
+    w.close()
 
 
 def test_birdid_non_top10_country_roundtrip(monkeypatch):

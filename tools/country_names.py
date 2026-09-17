@@ -2,12 +2,13 @@
 """
 ISO 3166-1 alpha-2 国家/地区代码显示名 / Display names for ISO 3166-1 alpha-2 codes.
 
-内置中英文双语表，覆盖 `geo_distribution.db` 中出现的全部 233 个代码。
+内置中英文双语表，覆盖 eBird 国家列表中的全部代码（由 `scripts_dev/build_ebird_regions.py` 构建卡口保证）。
 刻意不依赖 pycountry/babel：本项目是纯离线软件，为一张静态表引入运行时依赖
 并增大打包体积不划算，而 ISO 3166-1 的国家名极少变动。
 
-A built-in bilingual table covering all 233 codes present in
-`geo_distribution.db`. Deliberately avoids pycountry/babel: this is an offline
+A built-in bilingual table covering every code in the eBird country list
+(enforced by the build gate in `scripts_dev/build_ebird_regions.py`).
+Deliberately avoids pycountry/babel: this is an offline
 application, and pulling in a runtime dependency plus packaging weight for a
 static table is not worth it — ISO 3166-1 names change very rarely.
 
@@ -20,6 +21,7 @@ from typing import Dict, Tuple
 
 # {代码: (英文名, 中文名)} / {code: (English, Chinese)}
 _NAMES: Dict[str, Tuple[str, str]] = {
+    "AC": ("Ashmore and Cartier Islands", "阿什莫尔和卡地亚群岛"),
     "AD": ("Andorra", "安道尔"),
     "AE": ("United Arab Emirates", "阿联酋"),
     "AF": ("Afghanistan", "阿富汗"),
@@ -45,6 +47,7 @@ _NAMES: Dict[str, Tuple[str, str]] = {
     "BH": ("Bahrain", "巴林"),
     "BI": ("Burundi", "布隆迪"),
     "BJ": ("Benin", "贝宁"),
+    "BL": ("Saint Barthélemy", "圣巴泰勒米"),
     "BM": ("Bermuda", "百慕大"),
     "BN": ("Brunei", "文莱"),
     "BO": ("Bolivia", "玻利维亚"),
@@ -52,6 +55,7 @@ _NAMES: Dict[str, Tuple[str, str]] = {
     "BR": ("Brazil", "巴西"),
     "BS": ("Bahamas", "巴哈马"),
     "BT": ("Bhutan", "不丹"),
+    "BV": ("Bouvet Island", "布维岛"),
     "BW": ("Botswana", "博茨瓦纳"),
     "BY": ("Belarus", "白俄罗斯"),
     "BZ": ("Belize", "伯利兹"),
@@ -67,9 +71,12 @@ _NAMES: Dict[str, Tuple[str, str]] = {
     "CM": ("Cameroon", "喀麦隆"),
     "CN": ("China", "中国"),
     "CO": ("Colombia", "哥伦比亚"),
+    "CP": ("Clipperton Island", "克利珀顿岛"),
     "CR": ("Costa Rica", "哥斯达黎加"),
+    "CS": ("Coral Sea Islands", "珊瑚海群岛"),
     "CU": ("Cuba", "古巴"),
     "CV": ("Cabo Verde", "佛得角"),
+    "CW": ("Curaçao", "库拉索"),
     "CX": ("Christmas Island", "圣诞岛"),
     "CY": ("Cyprus", "塞浦路斯"),
     "CZ": ("Czechia", "捷克"),
@@ -99,6 +106,7 @@ _NAMES: Dict[str, Tuple[str, str]] = {
     "GF": ("French Guiana", "法属圭亚那"),
     "GG": ("Guernsey", "根西岛"),
     "GH": ("Ghana", "加纳"),
+    "GI": ("Gibraltar", "直布罗陀"),
     "GL": ("Greenland", "格陵兰"),
     "GM": ("Gambia", "冈比亚"),
     "GN": ("Guinea", "几内亚"),
@@ -111,6 +119,7 @@ _NAMES: Dict[str, Tuple[str, str]] = {
     "GW": ("Guinea-Bissau", "几内亚比绍"),
     "GY": ("Guyana", "圭亚那"),
     "HK": ("Hong Kong", "香港"),
+    "HM": ("Heard Island and McDonald Islands", "赫德岛和麦克唐纳群岛"),
     "HN": ("Honduras", "洪都拉斯"),
     "HR": ("Croatia", "克罗地亚"),
     "HT": ("Haiti", "海地"),
@@ -120,10 +129,12 @@ _NAMES: Dict[str, Tuple[str, str]] = {
     "IL": ("Israel", "以色列"),
     "IM": ("Isle of Man", "马恩岛"),
     "IN": ("India", "印度"),
+    "IO": ("British Indian Ocean Territory", "英属印度洋领地"),
     "IQ": ("Iraq", "伊拉克"),
     "IR": ("Iran", "伊朗"),
     "IS": ("Iceland", "冰岛"),
     "IT": ("Italy", "意大利"),
+    "JE": ("Jersey", "泽西岛"),
     "JM": ("Jamaica", "牙买加"),
     "JO": ("Jordan", "约旦"),
     "JP": ("Japan", "日本"),
@@ -141,21 +152,26 @@ _NAMES: Dict[str, Tuple[str, str]] = {
     "LA": ("Laos", "老挝"),
     "LB": ("Lebanon", "黎巴嫩"),
     "LC": ("Saint Lucia", "圣卢西亚"),
+    "LI": ("Liechtenstein", "列支敦士登"),
     "LK": ("Sri Lanka", "斯里兰卡"),
     "LR": ("Liberia", "利比里亚"),
     "LS": ("Lesotho", "莱索托"),
     "LT": ("Lithuania", "立陶宛"),
+    "LU": ("Luxembourg", "卢森堡"),
     "LV": ("Latvia", "拉脱维亚"),
     "LY": ("Libya", "利比亚"),
     "MA": ("Morocco", "摩洛哥"),
+    "MC": ("Monaco", "摩纳哥"),
     "MD": ("Moldova", "摩尔多瓦"),
     "ME": ("Montenegro", "黑山"),
+    "MF": ("Saint Martin (French part)", "法属圣马丁"),
     "MG": ("Madagascar", "马达加斯加"),
     "MH": ("Marshall Islands", "马绍尔群岛"),
     "MK": ("North Macedonia", "北马其顿"),
     "ML": ("Mali", "马里"),
     "MM": ("Myanmar", "缅甸"),
     "MN": ("Mongolia", "蒙古"),
+    "MO": ("Macau", "澳门"),
     "MP": ("Northern Mariana Islands", "北马里亚纳群岛"),
     "MQ": ("Martinique", "马提尼克"),
     "MR": ("Mauritania", "毛里塔尼亚"),
@@ -205,17 +221,20 @@ _NAMES: Dict[str, Tuple[str, str]] = {
     "SC": ("Seychelles", "塞舌尔"),
     "SD": ("Sudan", "苏丹"),
     "SE": ("Sweden", "瑞典"),
+    "SG": ("Singapore", "新加坡"),
     "SH": ("Saint Helena", "圣赫勒拿"),
     "SI": ("Slovenia", "斯洛文尼亚"),
     "SJ": ("Svalbard and Jan Mayen", "斯瓦尔巴和扬马延"),
     "SK": ("Slovakia", "斯洛伐克"),
     "SL": ("Sierra Leone", "塞拉利昂"),
+    "SM": ("San Marino", "圣马力诺"),
     "SN": ("Senegal", "塞内加尔"),
     "SO": ("Somalia", "索马里"),
     "SR": ("Suriname", "苏里南"),
     "SS": ("South Sudan", "南苏丹"),
     "ST": ("São Tomé and Príncipe", "圣多美和普林西比"),
     "SV": ("El Salvador", "萨尔瓦多"),
+    "SX": ("Sint Maarten", "荷属圣马丁"),
     "SY": ("Syria", "叙利亚"),
     "SZ": ("Eswatini", "斯威士兰"),
     "TC": ("Turks and Caicos Islands", "特克斯和凯科斯群岛"),
@@ -236,9 +255,11 @@ _NAMES: Dict[str, Tuple[str, str]] = {
     "TZ": ("Tanzania", "坦桑尼亚"),
     "UA": ("Ukraine", "乌克兰"),
     "UG": ("Uganda", "乌干达"),
+    "UM": ("United States Minor Outlying Islands", "美国本土外小岛屿"),
     "US": ("United States", "美国"),
     "UY": ("Uruguay", "乌拉圭"),
     "UZ": ("Uzbekistan", "乌兹别克斯坦"),
+    "VA": ("Vatican City (Holy See)", "梵蒂冈"),
     "VC": ("Saint Vincent and the Grenadines", "圣文森特和格林纳丁斯"),
     "VE": ("Venezuela", "委内瑞拉"),
     "VG": ("British Virgin Islands", "英属维尔京群岛"),
@@ -248,6 +269,7 @@ _NAMES: Dict[str, Tuple[str, str]] = {
     "WF": ("Wallis and Futuna", "瓦利斯和富图纳"),
     "WS": ("Samoa", "萨摩亚"),
     "XK": ("Kosovo", "科索沃"),
+    "XX": ("High Seas", "公海"),
     "YE": ("Yemen", "也门"),
     "YT": ("Mayotte", "马约特"),
     "ZA": ("South Africa", "南非"),

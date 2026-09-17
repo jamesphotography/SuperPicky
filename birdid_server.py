@@ -12,6 +12,7 @@ import sys
 import base64
 import tempfile
 from io import BytesIO
+from typing import Optional
 
 # 确保模块路径正确
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -94,24 +95,19 @@ def get_gui_language():
     return None
 
 
-def update_gui_settings_from_gps(country_code: str) -> None:
+def update_gui_settings_from_gps(country_code: str, subnational_code: Optional[str] = None) -> None:
     """
-    把 GPS 反查到的国家同步到设置中心 / Sync the GPS-derived country to settings.
+    把 GPS 定位到的国家/省州同步到设置中心 / Sync the GPS-located region to settings.
 
-    旧实现用 eBirdCountryFilter 的矩形边界重新判定一次区域（含州/省级），再写入
-    已废弃的 birdid_dock_settings.json。现在国家已由 identify_bird 用
-    reverse_geocoder 反查好并放在 gps_info['country_code'] 里，无需重复判定；
-    州/省级随 GBIF 网格数据源一并移除（网格已按 GPS 精确到 1°）。
+    国家与省州由 identify_bird 用 ebird_regions.db 边界离线定位，放在 gps_info 里，
+    此处不再重复判定。省州只对中澳美存在，其他国家传 None。
 
-    The old implementation re-derived the region from eBirdCountryFilter's
-    rectangular bounds (including sub-national codes) and wrote to the
-    deprecated birdid_dock_settings.json. The country is now resolved by
-    identify_bird via reverse_geocoder and carried in gps_info['country_code'],
-    so no second derivation is needed; sub-national codes were removed along
-    with the GBIF grid data source, which already resolves to 1 degree.
+    The country and subnational unit were located offline by identify_bird from
+    the ebird_regions.db boundaries and carried in gps_info; no second lookup.
 
     参数 / Parameters:
-        country_code (str): ISO 3166-1 alpha-2 国家代码 / ISO country code.
+        country_code (str): eBird 国家代码 / eBird country code.
+        subnational_code (Optional[str]): eBird 省州代码 / eBird subnational code.
 
     异常 / Exceptions:
         不抛出异常；失败仅打印日志 / Never raises; failures are logged only.
@@ -120,21 +116,56 @@ def update_gui_settings_from_gps(country_code: str) -> None:
         return
     try:
         from advanced_config import get_advanced_config
+        from birdid.geo_filter import get_geo_filter
         from tools.country_names import country_display_names
 
         cfg = get_advanced_config()
-        english, chinese = country_display_names(country_code)
-        display = english if str(cfg.language or "").startswith("en") else chinese
+        english = str(cfg.language or "").startswith("en")
+        geo = get_geo_filter()
+        if geo is not None:
+            country_display = geo.display_name(country_code, english)
+            region_display = geo.display_name(subnational_code, english) if subnational_code else ""
+        else:
+            en_name, zh_name = country_display_names(country_code)
+            country_display = en_name if english else zh_name
+            region_display = subnational_code or ""
         cfg.set_birdid_region(
             cfg.birdid_use_geo_filter,
             country_code,
-            display,
-            None,
-            "",
+            country_display,
+            subnational_code,
+            region_display,
         )
-        print(t("server.sync_gps_success", country=display, region=""))
+        print(t("server.sync_gps_success", country=country_display, region=region_display))
     except Exception as e:
         print(t("server.sync_gps_failed", error=e))
+
+
+def geo_filter_warning(geo_info: Optional[dict]) -> Optional[str]:
+    """
+    识别结果需要附带的地理过滤告警 / Geo filter warning to attach to a result.
+
+    未过滤一定告警；中澳美照片只落到国家级说明省州层没用上（没有可用省州或候选里
+    没有相近种），也告警；其他国家的国家级本就是最细层级，不告警。
+
+    Unfiltered always warns; a CN/AU/US photo landing on the country tier means
+    the subnational tier was not used, so it warns too; for other countries the
+    country tier is already the finest level.
+
+    参数 / Parameters:
+        geo_info (Optional[dict]): identify_bird 返回的 geo_info / geo_info from identify_bird.
+
+    返回 / Returns:
+        Optional[str]: 告警文本或 None / Warning text or None.
+    """
+    from birdid.geo_filter import TIER_COUNTRY, TIER_NONE, describe_tier
+    from birdid.region_locator import SUBNATIONAL_COUNTRIES
+
+    info = geo_info or {}
+    tier = info.get("tier", TIER_NONE)
+    if tier == TIER_NONE or (tier == TIER_COUNTRY and info.get("region_code") in SUBNATIONAL_COUNTRIES):
+        return describe_tier(info)
+    return None
 
 
 def ensure_models_loaded():
@@ -378,7 +409,7 @@ def recognize_bird():
         if not formatted_results:
             geo_info = result.get('geo_info')
             if geo_info and geo_info.get('enabled'):
-                region = geo_info.get('country_code') or 'Unknown'
+                region = geo_info.get('region_code') or 'Unknown'
                 species_count = geo_info.get('species_count') or 0
                 error_msg = t("server.ebird_filter_error", region=region, species_count=species_count)
                 print(f"[API] ⚠️  {error_msg}")
@@ -401,22 +432,17 @@ def recognize_bird():
             'geo_info': result.get('geo_info')
         }
 
-        # 过滤降级警告：命中 L3/L4/L5 说明候选层被放宽了
-        # Degradation warning: hitting L3/L4/L5 means the tier was widened
-        from birdid.geo_filter import (
-            TIER_COUNTRY, TIER_NEIGHBORHOOD, TIER_NONE, describe_tier,
-        )
-        geo_info = result.get('geo_info') or {}
-        if geo_info.get('tier') in (TIER_NEIGHBORHOOD, TIER_COUNTRY, TIER_NONE):
-            response['warning'] = describe_tier(geo_info)
+        # 过滤降级警告：未过滤，或中澳美照片只用上国家级
+        # Degradation warning: unfiltered, or a CN/AU/US photo only reached the country tier
+        warning = geo_filter_warning(result.get('geo_info'))
+        if warning:
+            response['warning'] = warning
 
-        # 同步 GPS 反查到的国家到设置中心；country_code 已由 identify_bird
-        # 用 reverse_geocoder 解析好，此处不再重复判定。
-        # Sync the GPS-derived country to the Settings Center; country_code was
-        # already resolved by identify_bird via reverse_geocoder.
+        # 同步 GPS 定位到的国家/省州到设置中心（identify_bird 已离线定位，此处不重复判定）
+        # Sync the GPS-located country/subnational to settings (already located by identify_bird)
         gps_info = result.get('gps_info')
         if gps_info and gps_info.get('country_code'):
-            update_gui_settings_from_gps(gps_info['country_code'])
+            update_gui_settings_from_gps(gps_info['country_code'], gps_info.get('subnational_code'))
 
         return jsonify(response)
 
