@@ -2,12 +2,13 @@
 """
 ISO 3166-1 alpha-2 国家/地区代码显示名 / Display names for ISO 3166-1 alpha-2 codes.
 
-内置中英文双语表，覆盖 `geo_distribution.db` 中出现的全部 233 个代码。
+内置中英文双语表，覆盖 eBird 国家列表中的全部代码（由 `scripts_dev/build_ebird_regions.py` 构建卡口保证）。
 刻意不依赖 pycountry/babel：本项目是纯离线软件，为一张静态表引入运行时依赖
 并增大打包体积不划算，而 ISO 3166-1 的国家名极少变动。
 
-A built-in bilingual table covering all 233 codes present in
-`geo_distribution.db`. Deliberately avoids pycountry/babel: this is an offline
+A built-in bilingual table covering every code in the eBird country list
+(enforced by the build gate in `scripts_dev/build_ebird_regions.py`).
+Deliberately avoids pycountry/babel: this is an offline
 application, and pulling in a runtime dependency plus packaging weight for a
 static table is not worth it — ISO 3166-1 names change very rarely.
 
