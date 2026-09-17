@@ -24,16 +24,32 @@ from ui.styles import COLORS, FONTS
 from ui.icon_utils import render_tinted_image, ICON_DANGER
 from tools.i18n import get_i18n
 from tools.file_utils import sibling_jpeg
+from tools.species_display import species_display_text
 
 
 def _display_name(photo: dict) -> str:
-    """卡片底部显示名:优先鸟种(跟随语言),无鸟种则用文件名。"""
-    is_en = get_i18n().current_lang.startswith("en")
-    if is_en:
-        species = photo.get("bird_species_en") or photo.get("bird_species_cn")
-    else:
-        species = photo.get("bird_species_cn") or photo.get("bird_species_en")
-    return species or photo.get("filename", "")
+    """
+    卡片底部显示名：优先确认鸟种（跟随语言）；没有确认鸟种但有待确定候选时显示
+    「鸟名（待确定 N%）」；都没有则用文件名。
+
+    Tile display name: the confirmed species (localized) first; otherwise an
+    unconfirmed candidate as "name (unconfirmed N%)"; otherwise the filename.
+
+    参数 / Parameters:
+        photo (dict): 照片记录 / photo record.
+
+    返回 / Returns:
+        str: 显示名 / display name.
+    """
+    i18n = get_i18n()
+    text = species_display_text(
+        photo,
+        is_en=i18n.current_lang.startswith("en"),
+        format_unconfirmed=lambda name, conf: i18n.t(
+            "birdid.species_unconfirmed", name=name, confidence=conf
+        ),
+    )
+    return text or photo.get("filename", "")
 
 
 def _tile_label_text(photo: dict, burst_suffix: str = "") -> str:

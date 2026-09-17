@@ -983,7 +983,8 @@
     "screenshot_permission_open": "  打开系统设置  ",
     "screenshot_permission_later": "稍后再说",
     "screenshot_hotkey_failed": "截图快捷键发送失败: {error}",
-    "geo_tier_subnational": "🗺️ 按省/州过滤：{region}（{count} 种）"
+    "geo_tier_subnational": "🗺️ 按省/州过滤：{region}（{count} 种）",
+    "species_unconfirmed": "{name}（待确定 {confidence}%）"
   },
   "rating_engine": {
     "reject_no_bird": "未检测到鸟类",

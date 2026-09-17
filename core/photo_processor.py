@@ -43,6 +43,7 @@ from core.flight_detector import FlightDetector, get_flight_detector, FlightResu
 from core.exposure_detector import ExposureDetector, get_exposure_detector, ExposureResult
 from core.focus_point_detector import get_focus_detector, verify_focus_in_bbox, arbitrate_focus_weights
 from core.burst_species import BirdIdOutcome, reconcile_burst_species
+from tools.species_display import UNCONFIRMED_SPECIES_MIN_CONFIDENCE
 
 from constants import RATING_FOLDER_NAMES, RAW_EXTENSIONS, JPG_EXTENSIONS, HEIF_EXTENSIONS, get_rating_folder_names
 
@@ -1267,6 +1268,7 @@ class PhotoProcessor:
         species_title_targets: Dict[str, List[str]] = {} # 前缀 → 标题写入文件 / prefix → title files
         bird_prefixes: Set[str] = set()                  # 检测到鸟的照片 / photos with a detected bird
         species_caption_jobs: List[Tuple[str, str]] = [] # 待写入的鸟种说明前缀 / pending caption prefixes
+        unconfirmed_title_jobs: List[Tuple[str, List[str], str, str]] = []  # 待确定标题 / unconfirmed titles
 
         # V4.5: 统一工作单元进度——照片与识鸟任务同权重计入一个分数，
         # 使循环结束后的 BirdID 收尾阶段进度条持续前进，而非停在 100%。
@@ -1498,6 +1500,11 @@ class PhotoProcessor:
                             'bird_species_cn': cn_name,
                             'bird_species_en': en_name,
                             'birdid_confidence': birdid_confidence,
+                            # 已确认鸟种时清掉待确定候选（重处理时可能残留）
+                            # Clear any stale unconfirmed candidate once confirmed
+                            'alt_species_cn': None,
+                            'alt_species_en': None,
+                            'alt_confidence': None,
                         }
                         # V4.2.7: IUCN + GBIF 独立写入 report.db 列，供 detail_panel 单独展示
                         # V4.2.7: Persist IUCN + GBIF metrics in dedicated columns.
@@ -1560,6 +1567,29 @@ class PhotoProcessor:
                     }
                     # 低置信度：只写 Caption / DB，不写 EXIF Title，不用于分目录
                     # 将候选鸟名追加到 DB caption 最前面（备选鸟种）
+                    # 待确定候选：DB 记下供浏览器显示「鸟名（待确定 N%）」；2 星及以上照片在
+                    # 评星 V2 收尾后把同样文字写入 EXIF 标题（不写关键字，避免混入鸟种检索）。
+                    # Unconfirmed candidate: stored for the browser's "name (unconfirmed N%)";
+                    # photos finally rated 2+ also get it as the EXIF title after the V2
+                    # post-pass (no keywords, so it never pollutes species searches).
+                    # 低于最低显示门槛（30%）的候选视为噪声：不记候选列、不写标题
+                    # Candidates below the display floor (30%) are noise: not stored or titled
+                    show_candidate = birdid_confidence >= UNCONFIRMED_SPECIES_MIN_CONFIDENCE
+                    if show_candidate:
+                        unconfirmed_title_jobs.append(
+                            (file_prefix, list(title_targets), low_conf_name, f"{birdid_confidence:.0f}")
+                        )
+                    if self.report_db:
+                        try:
+                            # 低于门槛时写空，清掉重处理前可能残留的旧候选
+                            # Below the floor, write NULLs to clear a stale candidate from a previous run
+                            self.report_db.update_photo(file_prefix, {
+                                'alt_species_cn': cn_name if show_candidate else None,
+                                'alt_species_en': en_name if show_candidate else None,
+                                'alt_confidence': birdid_confidence if show_candidate else None,
+                            })
+                        except Exception as _e:
+                            self._log(f"  ⚠️ Candidate species DB write failed [{file_prefix}]: {_e}", "warning")
                     if self.report_db:
                         # V4.3.0: 备选鸟种名跟随界面语言（low_conf_name），标签/把握度走 i18n；
                         # 与达阈值分支一样延后到评星 V2 收尾之后写入 caption。
@@ -3248,6 +3278,20 @@ class PhotoProcessor:
                     self.report_db.update_photo(caption_prefix_key, {'caption': new_cap})
                 except Exception as _e:
                     self._log(f"  ⚠️ Bird species caption update failed [{caption_prefix_key}]: {_e}", "warning")
+
+        # 待确定候选写入 EXIF 标题：只对终评 2 星及以上的照片（「其他鸟类」目录里的照片），
+        # 星级在评星 V2 收尾后才确定，所以放在这里。
+        # Unconfirmed candidates go into the EXIF title only for photos finally rated
+        # 2+ (the "Other birds" folder); ratings are final only after the V2 post-pass.
+        for title_prefix, title_files, title_name, title_conf in unconfirmed_title_jobs:
+            if self.file_ratings.get(title_prefix, -1) < 2 or not title_name:
+                continue
+            unconfirmed_title = self.i18n.t(
+                "birdid.species_unconfirmed", name=title_name, confidence=title_conf
+            )
+            for title_file in title_files:
+                if title_file and os.path.exists(title_file):
+                    queue_metadata({'file': title_file, 'title': unconfirmed_title})
 
         # 批量落盘 EXIF 队列（避免每张图一次写入）
         if metadata_batch:

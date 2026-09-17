@@ -1015,7 +1015,8 @@
     "screenshot_permission_open": "  Open Settings  ",
     "screenshot_permission_later": "Later",
     "screenshot_hotkey_failed": "Screenshot hotkey failed: {error}",
-    "geo_tier_subnational": "🗺️ Filtered by state/province: {region} ({count} species)"
+    "geo_tier_subnational": "🗺️ Filtered by state/province: {region} ({count} species)",
+    "species_unconfirmed": "{name} (unconfirmed {confidence}%)"
   },
   "cli": {
     "banner": "  🐦 SuperPicky CLI v{version} - AI Photo Selector (Command Line)",
