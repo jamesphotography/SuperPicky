@@ -7,6 +7,7 @@ DetailPanel: 大图预览 + 元数据展示 + 上一张/下一张导航
 import os
 
 from tools.file_utils import sibling_jpeg
+from tools.species_display import species_display_text
 from typing import Optional
 
 from PySide6.QtWidgets import (
@@ -702,10 +703,15 @@ class DetailPanel(QWidget):
         iso = p.get("iso")
         conf = p.get("confidence")
 
-        if is_zh:
-            species = p.get("bird_species_cn") or p.get("bird_species_en") or "—"
-        else:
-            species = p.get("bird_species_en") or p.get("bird_species_cn") or "—"
+        # 确认鸟种优先；无确认鸟种时显示待确定候选「鸟名（待确定 N%）」
+        # Confirmed species first; otherwise the unconfirmed candidate
+        species = species_display_text(
+            p,
+            is_en=not is_zh,
+            format_unconfirmed=lambda name, conf: self.i18n.t(
+                "birdid.species_unconfirmed", name=name, confidence=conf
+            ),
+        ) or "—"
 
         gbif_r = p.get("gbif_rarity_100")
         iucn_raw = p.get("iucn_category")

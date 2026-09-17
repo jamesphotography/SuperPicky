@@ -1,7 +1,7 @@
 # GBIF 地理分布过滤器设计 / GBIF Geo-Distribution Filter Design
 
 日期 / Date: 2026-07-25
-状态 / Status: 已实施并验收 / Implemented and validated
+状态 / Status: 已被取代（2026-09-16）/ Superseded by `docs/specs/2026-09-16-ebird-region-filter-design.md`
 相关 / Related: `birdid/avonet_filter.py`（被替代）、`birdid/ebird_country_filter.py`（删除）、
 `birdid/bird_identifier.py:1108-1186`（调用方）、`docs/GBIF_RARITY_INDEX.md`（同源管线先例）、
 `birdid/data/bird_reference.sqlite` 的 `gbif_rarity_100`（提供 `specieskey → model_class_id` 映射）

@@ -1,0 +1,7 @@
+{
+  "_comment": "map: eBird speciesCode -> 模型类别列表，人工结论优先于自动映射；allow_multi: 确认可以对应超过 3 个 eBird 物种的模型类别。",
+  "map": {
+    "magshr1": [6439]
+  },
+  "allow_multi": []
+}

@@ -834,11 +834,11 @@ class SettingsCenter(QDialog):
         country_row.addWidget(self._bid_country, 1)
         lay.addLayout(country_row)
 
-        # 生效条件提示：有 GPS 的照片按拍摄位置的 1°网格过滤，手选国家不参与；
+        # 生效条件提示：有 GPS 的照片按拍摄地自动判断省州/国家，手选不参与；
         # 这里明说，避免用户以为选了没生效（旧版本无任何提示，是常见困惑点）。
-        # Scope hint: photos with GPS are filtered by their location's 1-degree
-        # cell and the manual country is not used. Saying so explicitly avoids
-        # the common confusion of "I selected a country but nothing changed".
+        # Scope hint: photos with GPS are matched to their state/country
+        # automatically and the manual choice is not used. Saying so avoids the
+        # common confusion of "I selected a region but nothing changed".
         hint_row = QHBoxLayout()
         hint_spacer = QLabel("")
         hint_spacer.setFixedWidth(160)
@@ -867,12 +867,10 @@ class SettingsCenter(QDialog):
         region_row.addWidget(region_label)
         region_row.addWidget(self._bid_region, 1)
         lay.addLayout(region_row)
-        # 地区行整体受 _populate_bid_regions 控制：当前数据源(GBIF 网格)不提供
-        # 州/省级分区，该行会被隐藏；保留控件是为了兼容旧配置里存过的 region_code。
-        # The whole row is toggled by _populate_bid_regions: the current data
-        # source (GBIF grid) has no sub-national divisions, so it stays hidden.
-        # The widgets remain for compatibility with region_code values stored by
-        # older versions.
+        # 地区行整体受 _populate_bid_regions 控制：只有中澳美有省州清单，
+        # 其他国家隐藏该行。
+        # The whole row is toggled by _populate_bid_regions: only CN/AU/US have
+        # subnational lists; the row hides for every other country.
         self._bid_region_label = region_label
 
         # 国家切换时动态填充地区 / Dynamically populate regions on country change
@@ -1011,12 +1009,9 @@ class SettingsCenter(QDialog):
                             self._bid_region.addItem(region_name, rc)
                     break
 
-        # 无州级数据时隐藏整行，避免展示一个永远只有「整个国家」的空下拉。
-        # GBIF 网格已按 GPS 精确到 1°，手选地区只在无 GPS 时作国家级回退。
-        # Hide the whole row when there is no sub-national data, rather than
-        # showing a dropdown whose only entry is "Entire country". The GBIF grid
-        # already resolves to 1 degree by GPS; manual selection is only a
-        # country-level fallback for photos without GPS.
+        # 无省州数据时隐藏整行，避免展示一个永远只有「整个国家」的空下拉。
+        # Hide the whole row when there is no subnational data, rather than
+        # showing a dropdown whose only entry is "Entire country".
         has_subnational = self._bid_region.count() > 1
         self._bid_region.setVisible(has_subnational)
         if hasattr(self, "_bid_region_label"):
@@ -2507,14 +2502,14 @@ class SettingsCenter(QDialog):
 
     def _geo_attribution_text(self) -> str:
         """
-        读取地理分布库的 meta 生成署名文本。
+        读取区域清单库的 meta 生成署名文本。
 
-        Build the geo-distribution attribution line from the database meta table.
+        Build the region-list attribution line from the database meta table.
 
         返回 / Returns:
-            str: 含快照日期与许可的署名；库不可用时返回空串（调用方据此跳过该行）/
-                Attribution with snapshot date and license; empty string when the
-                database is unavailable, letting the caller skip the row.
+            str: 含获取日期的 eBird 与 Natural Earth 署名；库不可用时返回空串
+                （调用方据此跳过该行）/ Attribution with the retrieval date; empty
+                string when the database is unavailable.
 
         异常 / Exceptions:
             不抛出异常；任何读取失败都返回空串 / Never raises; returns "" on failure.
@@ -2535,10 +2530,10 @@ class SettingsCenter(QDialog):
         except Exception:  # noqa: BLE001
             return ""
 
-        snapshot = meta.get("snapshot_date", "")
-        if not snapshot:
+        fetched_at = meta.get("fetched_at", "")
+        if not fetched_at:
             return ""
-        return self.i18n.t("settings.geo_attribution", snapshot=snapshot)
+        return self.i18n.t("settings.geo_attribution", fetched_at=fetched_at)
 
     def _build_about_page(self) -> QWidget:
         """
@@ -2734,11 +2729,11 @@ class SettingsCenter(QDialog):
         content_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         lay.addWidget(content_label, 1)
 
-        # 地理分布数据署名：快照日期从 geo_distribution.db 的 meta 表动态读取，
-        # 因此不能并入静态的 about.content 文案。CC-BY 要求署名，见 spec §7。
-        # Geo-distribution attribution: the snapshot date is read dynamically from
-        # geo_distribution.db's meta table, so it cannot live in the static
-        # about.content string. CC-BY requires attribution — see spec section 7.
+        # 区域清单署名：获取日期从 ebird_regions.db 的 meta 表动态读取，因此不能并入
+        # 静态的 about.content 文案。eBird 派生数据须附署名与条款说明（spec §2.3、§7.2）。
+        # Region-list attribution: the retrieval date is read from ebird_regions.db's
+        # meta table, so it cannot live in the static about.content string. eBird-
+        # derived data must carry attribution and terms (spec sections 2.3, 7.2).
         geo_attr = self._geo_attribution_text()
         if geo_attr:
             geo_label = QLabel(geo_attr)
