@@ -29,6 +29,7 @@ from ui.styles import COLORS, FONTS
 from ui.combo_popup import style_combo_popup
 from ui.icon_utils import stars_pixmap, tinted_png_path, load_tinted_icon, ICON_IDLE
 from tools.i18n import get_i18n
+from tools.pinyin_names import pinyin_for_ui
 
 ALIGN_CENTER = Qt.AlignmentFlag.AlignCenter
 ALIGN_RIGHT_VCENTER = (
@@ -247,6 +248,22 @@ class ResultCard(QFrame):
         self.name_label.setSizePolicy(SIZE_POLICY_EXPANDING, SIZE_POLICY_PREFERRED)
 
         layout.addWidget(self.name_label, 1)
+
+        # 中文鸟名的汉语拼音，紧跟鸟名之后（仅简体中文界面）。
+        # 独立成一个 label 而不是并进 name_label：后者点击即复制鸟名，
+        # 混入拼音会让复制出来的名字带一串尾巴。查不到读音时不建这个控件。
+        # A separate label; name_label is click-to-copy so the pinyin stays out
+        # of its text. Not created at all on an English UI or a lookup miss.
+        self.pinyin_label = None
+        pinyin = pinyin_for_ui(cn_name, is_zh=not is_en)
+        if pinyin:
+            self.pinyin_label = QLabel(pinyin)
+            self.pinyin_label.setStyleSheet(f"""
+                font-size: 11px;
+                color: {COLORS['text_tertiary']};
+                background: transparent;
+            """)
+            layout.addWidget(self.pinyin_label, 0)
 
         # 置信度
         if confidence >= 70:

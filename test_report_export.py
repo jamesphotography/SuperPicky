@@ -1091,3 +1091,157 @@ def test_no_species_index_when_nothing_was_identified():
                                         bird_species_en="")]), {}, is_zh=True)
 
     assert '<p class="splist">' not in html
+
+
+# ======================================================================
+#  鸟种清单口径：与结果浏览器的鸟种下拉一致（2026-09-19）
+#
+#  此前两处口径不同，同一批照片报告说 22 种、浏览器下拉说 20 种：
+#
+#    报告  —— 收下每一条 has_bird 且有鸟名的记录；
+#    下拉  —— `get_distinct_species(foldered_only=True)`，只列「磁盘上有自己
+#             目录」的鸟种，即至少有一张 2★ 及以上照片的（低星一律归
+#             「其他鸟类」，见 core/folder_layout.py），并排除 -1★。
+#
+#  按用户 2026-09-19 的决定，报告向下拉收紧。
+# ======================================================================
+
+
+def test_species_without_a_foldered_photo_is_left_out():
+    """
+    只有低星照片的鸟种不进鸟种清单——它在磁盘上没有自己的目录。
+
+    这是与浏览器鸟种下拉对齐的那条线：下拉用 foldered_only 把这类鸟种挡在外面，
+    报告此前照收，同一批照片两处数字对不上。
+    """
+    photos = [
+        _photo(filename="eagle.NEF", rating=3, bird_species_cn="白腹海雕",
+               bird_species_en="White-bellied Sea Eagle"),
+        _photo(filename="kite1.NEF", rating=1, bird_species_cn="黑鸢",
+               bird_species_en="Black Kite"),
+        _photo(filename="kite2.NEF", rating=0, bird_species_cn="黑鸢",
+               bird_species_en="Black Kite"),
+    ]
+
+    data = aggregate(photos)
+
+    assert [s.name_cn for s in data.species] == ["白腹海雕"]
+
+
+def test_species_with_one_foldered_photo_keeps_its_low_rated_ones():
+    """
+    鸟种只要有一张 2★ 及以上就进清单，且**张数按该鸟种全部照片计**。
+
+    收紧的是「哪些鸟种上榜」，不是「上榜鸟种算几张」——浏览器里按这个鸟种
+    筛选时，低星照片同样会出现在网格里，张数少算反而又是一处对不上。
+    """
+    photos = [
+        _photo(filename="kite1.NEF", rating=2, bird_species_cn="黑鸢",
+               bird_species_en="Black Kite"),
+        _photo(filename="kite2.NEF", rating=1, bird_species_cn="黑鸢",
+               bird_species_en="Black Kite"),
+        _photo(filename="kite3.NEF", rating=0, bird_species_cn="黑鸢",
+               bird_species_en="Black Kite"),
+    ]
+
+    data = aggregate(photos)
+
+    assert [(s.name_cn, s.count) for s in data.species] == [("黑鸢", 3)]
+
+
+def test_rejected_photos_alone_do_not_put_a_species_on_the_list():
+    """
+    只剩 -1★（淘汰）照片的鸟种不进清单，与下拉的 `rating != -1` 一致。
+
+    -1★ 是淘汰档，用户已经判它出局；让它单独撑起一个鸟种块，报告会把一次
+    「拍糊了」记成一笔观察记录。
+    """
+    photos = [
+        _photo(filename="eagle.NEF", rating=3, bird_species_cn="白腹海雕",
+               bird_species_en="White-bellied Sea Eagle"),
+        _photo(filename="blur.NEF", rating=-1, bird_species_cn="棕夜鹭",
+               bird_species_en="Nankeen Night Heron"),
+    ]
+
+    data = aggregate(photos)
+
+    assert [s.name_cn for s in data.species] == ["白腹海雕"]
+
+
+def test_cover_comes_from_a_listed_species():
+    """
+    封面必须取自上榜鸟种的照片。
+
+    封面是全库 adj_topiq 最高的一张；若它属于一个没上榜的鸟种，报告最醒目的
+    位置会是一只清单里根本找不到的鸟。
+    """
+    photos = [
+        _photo(filename="eagle.NEF", rating=3, adj_topiq=50.0,
+               bird_species_cn="白腹海雕", bird_species_en="White-bellied Sea Eagle"),
+        _photo(filename="kite.NEF", rating=1, adj_topiq=99.0,
+               bird_species_cn="黑鸢", bird_species_en="Black Kite"),
+    ]
+
+    data = aggregate(photos)
+
+    assert data.cover is not None
+    assert data.cover.species_cn == "白腹海雕"
+
+
+def test_bird_total_still_counts_every_bird_photo():
+    """
+    「有鸟张数」不跟着收紧：它回答的是「这批里有多少张拍到鸟」，
+    与「哪些鸟种值得单独成块」是两个问题。收紧它会让总数对不上。
+    """
+    photos = [
+        _photo(filename="eagle.NEF", rating=3, bird_species_cn="白腹海雕",
+               bird_species_en="White-bellied Sea Eagle"),
+        _photo(filename="kite.NEF", rating=1, bird_species_cn="黑鸢",
+               bird_species_en="Black Kite"),
+    ]
+
+    data = aggregate(photos)
+
+    assert data.bird_total == 2
+    assert [s.name_cn for s in data.species] == ["白腹海雕"]
+
+
+def test_cover_falls_back_when_no_species_makes_the_list():
+    """
+    一个鸟种都没上榜时，封面退回全部有鸟照片里最好的那张。
+
+    这是「整批都没拍到 2★」的新手批次：清单为空没关系（浏览器的鸟种下拉此时
+    同样是空的），但报告不该连封面都没有——那会变成一张纯数字的空报告。
+    没有清单可矛盾，封面就不受清单约束。
+    """
+    photos = [
+        _photo(filename="kite1.NEF", rating=1, adj_topiq=30.0,
+               bird_species_cn="黑鸢", bird_species_en="Black Kite"),
+        _photo(filename="kite2.NEF", rating=1, adj_topiq=80.0,
+               bird_species_cn="黑鸢", bird_species_en="Black Kite"),
+    ]
+
+    data = aggregate(photos)
+
+    assert data.species == []
+    assert data.cover is not None
+    assert data.cover.filename == "kite2.NEF"
+
+
+def test_pinyin_never_leaks_into_the_shared_report():
+    """
+    拼音不得出现在 HTML 报告里（2026-09-19）。
+
+    报告是发给别人看的产物，拼音是自己认字用的辅助信息——用户明确只要它出现在
+    软件内的四个位置。这条是反向断言：将来谁把拼音接进 `_esc` 或鸟名渲染，
+    这里会立刻红。
+    """
+    photos = [_photo(filename="a.NEF", rating=3, bird_species_cn="家燕",
+                     bird_species_en="Barn Swallow")]
+
+    html = build_html(aggregate(photos), {}, is_zh=True, app_version="x",
+                      generated_at="2026-09-19 10:00")
+
+    assert "家燕" in html
+    assert "jiā yàn" not in html
+    assert "jia yan" not in html

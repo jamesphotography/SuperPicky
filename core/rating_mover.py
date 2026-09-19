@@ -207,6 +207,7 @@ def change_bird_species(
     db_key,
     failures: Optional[list] = None,
     changed_files: Optional[list] = None,
+    species_extras: Optional[dict] = None,
 ) -> bool:
     """
     因鸟种变化，将照片（含连拍组整体）移动到新鸟种目录，并更新 DB 的双语鸟名字段。
@@ -227,6 +228,13 @@ def change_bird_species(
                      Optional list collecting post-move absolute paths of user
                      files whose species changed, so the caller can update
                      their XMP metadata; this module stays IO/DB-only.
+        species_extras: 可选的鸟种级属性（`core.species_extras.lookup_species_extras`
+                     的返回值：罕见度 / IUCN / 颜值）。这三个值属于**鸟种**而非
+                     照片，鸟种一变就必须整条跟着换；传 None 表示调用方不改它们
+                     （老调用方与只改目录的场景），传字典则整体写入——包括值为
+                     None 的键，用于清掉上一个鸟种的残值。
+                     Optional species-level attributes written alongside the
+                     names; None values are written too, clearing stale ones.
 
     返回 / Returns:
         True 表示执行了更新（含仅 DB 更新），False 表示完全跳过或移动失败
@@ -238,11 +246,11 @@ def change_bird_species(
     if burst_id:
         return _change_bird_species_burst(
             dir_path, photo, new_bird_cn, new_bird_en, layout, report_db, failures,
-            changed_files,
+            changed_files, species_extras,
         )
     return _change_bird_species_single(
         dir_path, photo, new_bird_cn, new_bird_en, layout, report_db, db_key, failures,
-        changed_files,
+        changed_files, species_extras,
     )
 
 
@@ -389,6 +397,56 @@ def _folder_bird_name(new_bird_cn: str, new_bird_en: str) -> str:
     return (new_bird_en if use_en else new_bird_cn) or ""
 
 
+def _species_update_fields(
+    new_bird_cn: str, new_bird_en: str, species_extras: Optional[dict]
+) -> dict:
+    """
+    组装一次鸟种变更要写进 DB 的字段：双语鸟名 + 可选的鸟种级属性。
+
+    参数 / Parameters:
+    new_bird_cn (str): 新中文鸟名，空串写 None。
+    new_bird_en (str): 新英文鸟名，空串写 None。
+    species_extras (Optional[dict]): 罕见度 / IUCN / 颜值；None 表示不动这三项。
+
+    返回 / Returns:
+    dict: 可直接交给 `report_db.update_photo` 的更新字典。
+
+    Build the DB update for one species change: the two names plus, when
+    provided, the species-level attributes (written verbatim, None included).
+    """
+    update = {
+        "bird_species_cn": new_bird_cn or None,
+        "bird_species_en": new_bird_en or None,
+    }
+    if species_extras:
+        update.update(species_extras)
+    return update
+
+
+def _apply_species_to_photo(
+    photo: dict, new_bird_cn: str, new_bird_en: str,
+    species_extras: Optional[dict],
+) -> None:
+    """
+    把鸟种变更就地写进内存里的 photo 字典（DB 之外的那一份）。
+
+    参数 / Parameters:
+    photo (dict): 会被就地修改的照片记录。
+    new_bird_cn (str): 新中文鸟名。
+    new_bird_en (str): 新英文鸟名。
+    species_extras (Optional[dict]): 鸟种级属性；None 表示不动。
+
+    返回 / Return:
+    None: 就地修改。
+
+    Mirror the species change onto the in-memory photo dict.
+    """
+    photo["bird_species_cn"] = new_bird_cn
+    photo["bird_species_en"] = new_bird_en
+    if species_extras:
+        photo.update(species_extras)
+
+
 def _change_bird_species_single(
     dir_path: str,
     photo: dict,
@@ -399,6 +457,7 @@ def _change_bird_species_single(
     db_key,
     failures: Optional[list] = None,
     changed_files: Optional[list] = None,
+    species_extras: Optional[dict] = None,
 ) -> bool:
     """
     非连拍照片的鸟名变更：更新 DB 双语字段 + 按需移动文件。
@@ -417,17 +476,14 @@ def _change_bird_species_single(
         return False
 
     # DB 更新内容（无论是否移动都写入）
-    species_update: dict = {
-        "bird_species_cn": new_bird_cn or None,
-        "bird_species_en": new_bird_en or None,
-    }
+    species_update: dict = _species_update_fields(
+        new_bird_cn, new_bird_en, species_extras)
 
     # 根目录文件（未整理）：仅更新 DB 不移动
     if _is_in_root(current_rel):
         if report_db is not None:
             report_db.update_photo(db_key, species_update)
-        photo["bird_species_cn"] = new_bird_cn
-        photo["bird_species_en"] = new_bird_en
+        _apply_species_to_photo(photo, new_bird_cn, new_bird_en, species_extras)
         # 没移动不等于不用改元数据：鸟名变了，Title/关键字照样要更新
         # Not moving does not mean not retagging: the species still changed.
         _collect_changed(changed_files, current_abs)
@@ -512,8 +568,7 @@ def _change_bird_species_single(
     if report_db is not None:
         report_db.update_photo(db_key, all_updates)
 
-    photo["bird_species_cn"] = new_bird_cn
-    photo["bird_species_en"] = new_bird_en
+    _apply_species_to_photo(photo, new_bird_cn, new_bird_en, species_extras)
     return True
 
 
@@ -526,9 +581,15 @@ def _change_bird_species_burst(
     report_db,
     failures: Optional[list] = None,
     changed_files: Optional[list] = None,
+    species_extras: Optional[dict] = None,
 ) -> bool:
     """
     连拍组的鸟名变更：整组文件夹整体移动，批量更新组内所有照片的 DB 记录。
+
+    鸟种级属性（罕见度/IUCN/颜值）同样整组写：报告的鸟种块是从组内**锐度最高**
+    的那张取这些值的，只写代表图的话，取到的很可能仍是旧鸟种的数据。
+    The species-level attributes are written to every member, because the
+    report picks a block's badges from the sharpest frame, not the leader.
 
     changed_files 收集组内每一张的新路径——整组都改成了新鸟种，元数据也得
     整组更新，只写代表图会让组内其余照片留着错误鸟名。
@@ -594,10 +655,8 @@ def _change_bird_species_burst(
         else report_db.get_photos_by_burst_id(burst_id)
     ) if report_db is not None else []
 
-    species_update = {
-        "bird_species_cn": new_bird_cn or None,
-        "bird_species_en": new_bird_en or None,
-    }
+    species_update = _species_update_fields(
+        new_bird_cn, new_bird_en, species_extras)
 
     for bp in burst_photos:
         bp_filename = bp["filename"]
@@ -639,8 +698,7 @@ def _change_bird_species_burst(
             report_db.update_photo(bp_key, update)
 
         if bp_filename == photo.get("filename"):
-            photo["bird_species_cn"] = new_bird_cn
-            photo["bird_species_en"] = new_bird_en
+            _apply_species_to_photo(photo, new_bird_cn, new_bird_en, species_extras)
 
     return True
 
@@ -680,6 +738,7 @@ def merge_bird_species(
     db_key_of,
     progress_cb=None,
     changed_files: Optional[list] = None,
+    species_extras: Optional[dict] = None,
 ) -> dict:
     """
     整种合并：把一批照片（通常是同一个被识别错的鸟种的全部照片）统一改为新鸟种。
@@ -698,6 +757,9 @@ def merge_bird_species(
                      change_bird_species 整组登记，组内每张都会进来。
                      Optional list collecting post-move paths for the caller's
                      metadata write; burst members are included as a group.
+        species_extras: 可选的鸟种级属性（罕见度/IUCN/颜值），整批统一写入——
+                     合并的目标是同一个鸟种，这三个值对全批完全相同。
+                     Optional species-level attributes, identical for the batch.
 
     返回 / Returns:
         {
@@ -722,6 +784,7 @@ def merge_bird_species(
         ok = change_bird_species(
             dir_path, leader, new_bird_cn, new_bird_en, layout,
             report_db, db_key_of(leader), group_failures, changed_files,
+            species_extras,
         )
         failed.extend(group_failures)
         if ok:
@@ -732,8 +795,8 @@ def merge_bird_species(
                 # 连拍组由 change_bird_species 整组处理，组内每张都算搬成功
                 moved += len(members)
             for member in members[1:]:
-                member["bird_species_cn"] = new_bird_cn
-                member["bird_species_en"] = new_bird_en
+                _apply_species_to_photo(
+                    member, new_bird_cn, new_bird_en, species_extras)
         done += len(members)
         if progress_cb is not None:
             if progress_cb(done, total, leader.get("filename", "")) is False:

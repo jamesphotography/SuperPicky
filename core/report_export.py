@@ -28,6 +28,18 @@ from PIL import Image, ImageOps
 from core.rarity_tier import gbif_score_to_tier
 from tools.file_utils import sibling_jpeg
 
+# 「磁盘上有自己目录」的星级门槛：低于它的照片一律归「其他鸟类」，该鸟种
+# 因而从不建目录（见 core/folder_layout.py）。结果浏览器的鸟种下拉用同一个
+# 门槛过滤（tools/report_db.py 的 `_FOLDERED_MIN_RATING`），报告与它对齐。
+# Rating at which a species gets its own folder on disk; the browser's species
+# dropdown filters by the same threshold, and the report now matches it.
+FOLDERED_MIN_RATING = 2
+
+# 淘汰档：用户已经判它出局，不参与「上榜与否」的判断，与下拉的
+# `rating != -1` 一致。
+# The rejected bucket, excluded from the listing decision like the dropdown.
+REJECTED_RATING = -1
+
 # IUCN 徽标只对「易危及以上」显示，避免 LC 满屏噪音（spec 5.1 ②）。
 # Only render an IUCN badge for Vulnerable-and-worse categories.
 IUCN_BADGE_SHOWN = frozenset({"VU", "EN", "CR", "CR(PE)", "CR(PEW)", "EW", "EX"})
@@ -334,6 +346,13 @@ def aggregate(photos: List[dict], *, include_gps: bool = False,
     返回:
         ReportData: 完整报告数据模型。
 
+    鸟种清单的口径 / Species listing scope:
+        只收「磁盘上有自己目录」的鸟种，即至少有一张 `FOLDERED_MIN_RATING`
+        及以上照片的鸟种——与结果浏览器鸟种下拉（`get_distinct_species(
+        foldered_only=True)`）同一条线。上榜鸟种的张数仍按它的全部照片计。
+        Only species that own a folder on disk are listed, matching the
+        browser's dropdown; listed species still count all of their photos.
+
     Aggregate report.db rows into the report data model. Paths must already be
     absolute (resolved upstream). When include_gps is False the coordinates are
     dropped here, not merely hidden at render time.
@@ -358,6 +377,23 @@ def aggregate(photos: List[dict], *, include_gps: bool = False,
         if key:
             groups.setdefault(key, []).append(row)
 
+    # 口径对齐结果浏览器的鸟种下拉（2026-09-19 用户决定）：只有「磁盘上有自己
+    # 目录」的鸟种才上榜，即该鸟种至少有一张 FOLDERED_MIN_RATING 及以上、且不
+    # 在淘汰档的照片。此前报告照收每一条有鸟记录，同一批照片报告说 22 种、
+    # 下拉说 20 种，多出来的正是只有 0/1★ 照片、从没建过目录的鸟种。
+    #
+    # 收紧的只是「哪些鸟种上榜」——上榜鸟种的 count 仍按它的全部照片计，因为
+    # 在浏览器里按这个鸟种筛选时，低星照片同样会出现在网格里。
+    # Match the browser's species dropdown: a species is listed only when it
+    # owns a folder on disk. Listed species still count all their photos.
+    # 淘汰档（REJECTED_RATING）天然落在门槛之下，无需单独排除。
+    # The rejected bucket sits below the threshold, so no extra clause is needed.
+    groups = {
+        key: rows for key, rows in groups.items()
+        if any(int(r.get("rating") or 0) >= FOLDERED_MIN_RATING for r in rows)
+    }
+    listed_rows = [r for rows in groups.values() for r in rows]
+
     blocks: List[SpeciesBlock] = []
     for rows in groups.values():
         ordered = sorted(rows, key=_pick_key, reverse=True)
@@ -375,8 +411,16 @@ def aggregate(photos: List[dict], *, include_gps: bool = False,
     blocks.sort(key=lambda b: (b.tier if b.tier is not None else -1, b.count),
                 reverse=True)
 
-    # 封面：全库 adj_topiq 最高的一张（spec 5.1 ①，非第一张）。
-    cover_rows = sorted(bird_rows, key=lambda r: float(r.get("adj_topiq") or 0.0),
+    # 封面：上榜鸟种里 adj_topiq 最高的一张（spec 5.1 ①，非第一张）。
+    # 取值范围跟着鸟种清单收紧：封面若来自一个没上榜的鸟种，报告最醒目的位置
+    # 会是一只清单里根本找不到的鸟。
+    #
+    # 一个鸟种都没上榜时（整批都没拍到 2★）退回全部有鸟照片：此时没有清单可
+    # 矛盾，而一张连封面都没有的纯数字报告更没用。
+    # Drawn from listed species so the cover always has a matching block; with
+    # no listed species there is no list to contradict, so fall back.
+    cover_pool = listed_rows or bird_rows
+    cover_rows = sorted(cover_pool, key=lambda r: float(r.get("adj_topiq") or 0.0),
                         reverse=True)
     cover = _to_ref(cover_rows[0]) if cover_rows else None
 

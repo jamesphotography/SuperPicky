@@ -8,6 +8,7 @@ import os
 
 from tools.file_utils import sibling_jpeg
 from tools.species_display import species_display_text
+from tools.pinyin_names import pinyin_for_ui
 from typing import Optional
 
 from PySide6.QtWidgets import (
@@ -452,6 +453,15 @@ class DetailPanel(QWidget):
         self._val_species.setCursor(Qt.PointingHandCursor)
         self._val_species.clicked.connect(self._on_species_clicked)
         self._species_revert_text: Optional[str] = None
+        # 中文鸟名的汉语拼音，紧跟鸟名之后、铅笔按钮之前。
+        # 独立成一个 label 而不是并进 _val_species：那个 label 点击即复制鸟名
+        # （_on_species_clicked 取的就是它的 text()），混入拼音会让用户复制到
+        # 「家燕 jiā yàn」。英文界面下本标签恒为空串。
+        # A separate label: _val_species is click-to-copy, so the pinyin must
+        # not live inside its text. Always empty on an English UI.
+        self._val_species_pinyin = QLabel("")
+        self._val_species_pinyin.setStyleSheet(
+            f"color: {COLORS['text_muted']}; font-size: 11px; background: transparent;")
         # V4.2.7: IUCN 红色名录等级，紧贴鸟种之下显示
         # V4.2.7: IUCN Red List category, pinned directly under Species
         self._val_iucn = _make_value_label()
@@ -499,6 +509,7 @@ class DetailPanel(QWidget):
         species_row_lay.setContentsMargins(0, 0, 0, 0)
         species_row_lay.setSpacing(4)
         species_row_lay.addWidget(self._val_species)
+        species_row_lay.addWidget(self._val_species_pinyin)
         species_row_lay.addWidget(self._species_edit_btn)
         species_row_lay.addStretch(1)
 
@@ -1058,6 +1069,16 @@ class DetailPanel(QWidget):
             species = p.get("bird_species_cn") or p.get("bird_species_en") or _unknown
         self._val_species.setText(species)
         self._val_species.setToolTip(species)
+
+        # 拼音跟着鸟种一起刷新，且**必须无条件 setText**：这个标签是复用的，
+        # 只在查到时赋值的话，切到一张查不到拼音的照片时会留着上一只鸟的拼音，
+        # 挂在一个完全不相干的鸟名旁边。
+        # Always setText: the label is reused across photos, so a miss must
+        # clear it rather than leave the previous bird's reading behind.
+        self._val_species_pinyin.setText(
+            pinyin_for_ui(p.get("bird_species_cn"),
+                          is_zh=not self.i18n.current_lang.startswith('en'))
+        )
 
         # IUCN 红色名录（中英全名 + 缩写，按官方色着色）
         # IUCN Red List (full name + abbreviation, official color)

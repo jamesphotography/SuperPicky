@@ -267,6 +267,21 @@ OPTIONAL_LOCAL_RESOURCES = [
         "sha256": None,
         "copy_only": True,
     },
+    {
+        # 中文鸟名的带声调拼音表（由 scripts_dev/build_pinyin_toned.py 生成）。
+        # 与 birdname.db 同目录、同 feature_tag：两者都只服务鸟名显示。
+        # 漏装的后果是静音的——tools/pinyin_names.py 按设计降级为不显示拼音，
+        # 不报错，所以由 test_pinyin_names.py 盯住这一条。
+        # Toned pinyin for Chinese bird names; a missing install degrades
+        # silently, hence the test that pins this entry.
+        "resource_id": "pinyin_toned_json",
+        "filename": "pinyin_toned.json",
+        "dest_dir": "ioc",
+        "feature_tags": ["birdid"],
+        "required": False,
+        "sha256": None,
+        "copy_only": True,
+    },
 ]
 
 

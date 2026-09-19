@@ -65,16 +65,23 @@ def _photo_db_key(photo: dict):
     return filename
 
 
-def _patch_cached_photos(photo: dict, updates: dict, *caches) -> None:
+def _patch_cached_photos(photo: dict, updates: dict, *caches,
+                          include_burst: bool = True) -> None:
     """
     把一批字段改动同步到照片本身与所有内存缓存列表。
 
-    浏览器持有**两份**缓存，读它们的人各不相同，漏掉任何一份都会让界面与
+    浏览器持有**三份**缓存，读它们的人各不相同，漏掉任何一份都会让界面与
     产物对不上：
 
       - ``_filtered_photos`` —— 当前筛选下的可见列表，缩略图网格与详情面板读它；
       - ``_all_photos``      —— 全量列表，HTML 报告、eBird 导出、「本次拍到的
-        鸟种」、整种合并的取样池读它。
+        鸟种」、整种合并的取样池读它；
+      - ``_raw_filtered_photos`` —— 筛选查询的原始结果，``_filtered_photos``
+        是从它**逐条 dict() 拷贝**出来的（连拍折叠/展开在拷贝时成形）。只补
+        拷贝不补源，用户点一下连拍组的展开/收起就会触发
+        ``_update_display_list`` 重建，刚改好的值被旧值盖回去；全屏翻页用的
+        导航列表（``_build_collapsed_navigation_list`` /
+        ``_build_burst_sequence``）也直接读它。
 
     匹配范围是「这张照片 + 它所在的连拍组全部成员」：改鸟种会把整组一起改掉
     （``core.rating_mover._change_bird_species_burst`` 更新组内每条记录），只补
@@ -97,17 +104,24 @@ def _patch_cached_photos(photo: dict, updates: dict, *caches) -> None:
     参数 / Parameters:
     photo (dict): 被改动的照片记录，会就地更新。
     updates (dict): 要写入的字段，如 ``{"bird_species_cn": "家燕"}``。
-    *caches: 若干缓存列表（``_filtered_photos`` / ``_all_photos``），可为 None。
+    *caches: 若干缓存列表（``_filtered_photos`` / ``_all_photos`` /
+        ``_raw_filtered_photos``），可为 None。
+    include_burst (bool): 是否连同连拍组其他成员一起改。默认 True，对应改鸟种
+        ——core 会整组写库，只补被点的那张会让组里其余成员在报告里停在旧鸟名。
+        改**星级**必须传 False：星级是逐张的（组内挑一张给 3★、其余留 1★ 正是
+        选片日常），库里也只改那一条，跟着整组改会让界面与库当场分叉。
 
     返回 / Return:
     None: 全部就地修改。
 
     Apply one set of field updates to the photo and to every in-memory cache.
-    The browser keeps two caches with different consumers — the grid reads
-    `_filtered_photos` while the report, eBird export, session-species list and
-    species-merge pool read `_all_photos` — so patching only one makes the UI
-    and the exported artifacts disagree. Burst group members are matched too,
-    because a species change rewrites the whole group in the DB.
+    The browser keeps three caches with different consumers — the grid reads
+    `_filtered_photos`, the report / eBird export / session-species list /
+    species-merge pool read `_all_photos`, and `_filtered_photos` itself is
+    rebuilt by copying from `_raw_filtered_photos` on every burst toggle — so
+    patching only some of them makes the UI and the exported artifacts
+    disagree. Burst group members are matched too, because a species change
+    rewrites the whole group in the DB.
     """
     burst_id = photo.get("burst_id")
     target_identity = _photo_identity(photo)
@@ -116,6 +130,8 @@ def _patch_cached_photos(photo: dict, updates: dict, *caches) -> None:
     def _matches(candidate: dict) -> bool:
         if _photo_identity(candidate) == target_identity:
             return True
+        if not include_burst:
+            return False
         if not burst_id or candidate.get("burst_id") != burst_id:
             return False
         # 同号还不够，必须同一批次——合并浏览时 burst_id 跨目录撞号
@@ -588,6 +604,7 @@ def _run_species_change(
     old_bird_cn: str = "",
     old_bird_en: str = "",
     metadata_writer=None,
+    species_extras: Optional[dict] = None,
 ) -> bool:
     """
     同步执行因改鸟种引发的 DB 更新与文件移动，并把失败原因回报给调用方。
@@ -614,6 +631,9 @@ def _run_species_change(
                      The pre-edit names, used to drop the stale keyword.
         metadata_writer: 元数据写入器，默认取常驻 ExifToolManager；测试可注入。
                      Metadata writer; defaults to the resident ExifToolManager.
+        species_extras: 新鸟种的鸟种级属性（罕见度/IUCN/颜值），透传给 core 一并
+                     写库；连拍组由 core 整组写。None 表示不动这三个字段。
+                     The new species' rarity/IUCN/beauty, written by core.
 
     返回 / Returns:
         bool: core 的返回值，True 表示执行了更新
@@ -628,7 +648,7 @@ def _run_species_change(
     try:
         result = change_bird_species(
             dir_path, photo, new_bird_cn, new_bird_en, layout,
-            report_db, db_key, failures, changed_files,
+            report_db, db_key, failures, changed_files, species_extras,
         )
     except Exception as e:
         from tools.utils import log_message
@@ -850,6 +870,7 @@ def _trigger_species_change(
     on_failures=None,
     old_bird_cn: str = "",
     old_bird_en: str = "",
+    species_extras: Optional[dict] = None,
 ) -> None:
     """
     在后台线程中执行因改鸟种引发的 DB 更新与文件移动。
@@ -867,7 +888,7 @@ def _trigger_species_change(
     threading.Thread(
         target=_run_species_change,
         args=(dir_path, photo, new_bird_cn, new_bird_en, report_db, db_key,
-              on_failures, old_bird_cn, old_bird_en),
+              on_failures, old_bird_cn, old_bird_en, None, species_extras),
         daemon=True,
     ).start()
 
@@ -2473,12 +2494,28 @@ class ResultsBrowserWindow(QMainWindow):
         db_key = _photo_db_key(current_photo) if current_photo else filename
         if self._db:
             self._db.update_photo(db_key, {"rating": new_rating})
-        for p in self._filtered_photos:
-            if _photo_identity(p) == _photo_identity(current_photo) or (
-                not current_photo and p.get("filename") == filename
-            ):
-                p["rating"] = new_rating
-                break
+        # 三份缓存一起补：报告的星级分布读 _all_photos，显示列表每次重建又从
+        # _raw_filtered_photos 拷贝——此前只补了 _filtered_photos，于是界面上
+        # 是新星级、导出的报告却按旧星级计数，而点一下连拍组展开/收起，界面
+        # 也退回旧星级。include_burst=False：星级是逐张的，不能扩散到整组。
+        # Patch all three caches; the report counts ratings from _all_photos and
+        # the display list is rebuilt from _raw_filtered_photos. Ratings are
+        # per-photo, so they must not spread across the burst group.
+        if current_photo:
+            _patch_cached_photos(
+                current_photo, {"rating": new_rating},
+                self._filtered_photos, self._all_photos,
+                self._raw_filtered_photos, include_burst=False,
+            )
+        else:
+            # 只拿到文件名（老调用方）时按文件名匹配，行为与此前一致
+            # Filename-only callers keep the previous matching behaviour.
+            for cache in (self._filtered_photos, self._all_photos,
+                          self._raw_filtered_photos):
+                for p in cache or []:
+                    if p.get("filename") == filename:
+                        p["rating"] = new_rating
+                        break
         self._thumb_grid.refresh_photo(current_photo or filename, new_rating)
         # 异步写 EXIF（遵守 metadata_write_mode 设置，mode=none 时内部自动跳过）
         file_path = self._get_photo_file_path(current_photo or filename)
@@ -2573,17 +2610,28 @@ class ResultsBrowserWindow(QMainWindow):
         old_cn = photo.get("bird_species_cn") or ""
         old_en = photo.get("bird_species_en") or ""
 
-        # 1. 同步更新 photo 副本 + 两份缓存列表
+        # 鸟种级属性（罕见度/IUCN/颜值）按新鸟种的学名重查：这三个值属于**鸟种**
+        # 而不是照片，只改鸟名不改它们，报告里这一块就会顶着上一个鸟种的罕见度
+        # 与濒危徽标，还按旧罕见度排在清单前列。查不到时返回的三个 None 会把
+        # 旧值清空——显示错的徽标比不显示更糟。
+        # Re-resolve the species-level attributes; a miss clears the stale ones.
+        from core.species_extras import lookup_species_extras
+        extras = lookup_species_extras(getattr(dialog, "selected_latin", ""))
+
+        # 1. 同步更新 photo 副本 + 三份缓存列表
         #    必须连 _all_photos 一起补：报告、eBird 导出、「本次拍到的鸟种」和
         #    整种合并的取样池都读它。此前只补了 _filtered_photos，于是鸟种下拉
         #    （直接查库）是新鸟名、导出的报告却还是旧鸟名。
-        # Patch _all_photos too: the report, eBird export, session-species list
-        # and species-merge pool all read it. Patching only _filtered_photos
-        # left the dropdown (which queries the DB) right and the report wrong.
+        #    _raw_filtered_photos 同样要补：_filtered_photos 是从它逐条拷贝出来
+        #    的，只补拷贝不补源，用户点一下连拍组展开/收起（会重建显示列表）
+        #    鸟名就变回去了，全屏翻页的导航列表也直接读它。
+        # Patch all three: the report reads _all_photos, the grid reads
+        # _filtered_photos, and _filtered_photos is rebuilt by copying from
+        # _raw_filtered_photos on every burst toggle.
         _patch_cached_photos(
             photo,
-            {"bird_species_cn": new_cn, "bird_species_en": new_en},
-            self._filtered_photos, self._all_photos,
+            {"bird_species_cn": new_cn, "bird_species_en": new_en, **extras},
+            self._filtered_photos, self._all_photos, self._raw_filtered_photos,
         )
 
         # 2. 同步写入 DB 鸟种字段（使下拉刷新立即生效；文件移动仍在后台执行）
@@ -2596,6 +2644,7 @@ class ResultsBrowserWindow(QMainWindow):
                 "bird_species_cn": new_cn or None,
                 "bird_species_en": new_en or None,
                 "has_bird": 1,
+                **extras,
             })
             # has_bird 同样要进两份缓存：报告的鸟种名录按它过滤
             # （report_export.aggregate 的 bird_rows），只补鸟名不补 has_bird，
@@ -2603,7 +2652,8 @@ class ResultsBrowserWindow(QMainWindow):
             # has_bird must reach both caches: the report filters its species
             # list by it, so a re-named photo would still be missing.
             _patch_cached_photos(photo, {"has_bird": 1},
-                                 self._filtered_photos, self._all_photos)
+                                 self._filtered_photos, self._all_photos,
+                                 self._raw_filtered_photos)
 
         # 3. 刷新详情面板 + 全屏鸟名标签
         #    全屏视图有自己的 _species_label，不刷它的话在全屏里改完鸟种
@@ -2639,7 +2689,7 @@ class ResultsBrowserWindow(QMainWindow):
 
         _trigger_species_change(
             base_dir, photo, new_cn, new_en, self._db, db_key, on_failures=_report,
-            old_bird_cn=old_cn, old_bird_en=old_en,
+            old_bird_cn=old_cn, old_bird_en=old_en, species_extras=extras,
         )
 
     def _show_species_change_failures(self, failures: list) -> None:
@@ -2754,7 +2804,9 @@ class ResultsBrowserWindow(QMainWindow):
             return
 
         # 4-6. 执行 + 刷新 + 结果报告（与多选批量共用同一套）
-        self._execute_batch_species_change(targets, new_cn, new_en, layout)
+        self._execute_batch_species_change(
+            targets, new_cn, new_en, layout,
+            getattr(dialog, "selected_latin", "") or "")
 
     def _mark_photos_no_bird(self, targets: list) -> None:
         """
@@ -2930,10 +2982,13 @@ class ResultsBrowserWindow(QMainWindow):
         for p in targets:
             self._record_correction(p, new_cn, new_en, dialog.selected_latin)
 
-        self._execute_batch_species_change(targets, new_cn, new_en, layout)
+        self._execute_batch_species_change(
+            targets, new_cn, new_en, layout,
+            getattr(dialog, "selected_latin", "") or "")
 
     def _execute_batch_species_change(self, targets: list, new_cn: str,
-                                      new_en: str, layout: str) -> None:
+                                      new_en: str, layout: str,
+                                      new_latin: str = "") -> None:
         """
         批量改鸟种的执行体：带进度跑完 → 写元数据 → 刷新界面 → 结果报告。
 
@@ -2952,11 +3007,21 @@ class ResultsBrowserWindow(QMainWindow):
             new_cn:   新中文鸟名
             new_en:   新英文鸟名
             layout:   目录布局（species-first / rating-first / flat）
+            new_latin: 新鸟种学名，用于重查鸟种级属性（罕见度/IUCN/颜值）。
+                      取不到学名时按查不到处理，即把这三个字段清空——留着
+                      旧鸟种的值会让整批照片顶着错误徽标进报告。
+                      Used to re-resolve the species-level attributes; an empty
+                      name clears them rather than keeping the previous ones.
         """
         from ui.custom_dialogs import StyledMessageBox
         from core.rating_mover import merge_bird_species
+        from core.species_extras import lookup_species_extras
 
         i18n = self.i18n
+
+        # 鸟种级属性整批只查一次：全批改成同一个鸟种，这三个值完全相同。
+        # Resolved once; the whole batch becomes the same species.
+        extras = lookup_species_extras(new_latin)
 
         # 合并库的照片分属不同批次目录，按 _base_dir 分组各调一次
         # Photos of a merged library live under different batch dirs.
@@ -2992,7 +3057,7 @@ class ResultsBrowserWindow(QMainWindow):
         for base_dir, group in by_base.items():
             result = merge_bird_species(
                 base_dir, group, new_cn, new_en, layout,
-                self._db, _photo_db_key, _on_progress, changed_files,
+                self._db, _photo_db_key, _on_progress, changed_files, extras,
             )
             total_moved += result["moved"]
             total_db_only += result["db_only"]
@@ -3008,8 +3073,15 @@ class ResultsBrowserWindow(QMainWindow):
             # bird, and this is the batch undo for a wrong "no bird" mark.
             if self._db:
                 for p in group:
-                    self._db.update_photo(_photo_db_key(p), {"has_bird": 1})
+                    # 与 has_bird 一同收口：core 只在真正执行了更新的分支里写
+                    # 鸟种级属性，移动失败或跳过的照片不会被写到；这里兜底，
+                    # 保证「鸟名换了但罕见度没换」的半截状态不会留在库里。
+                    # Backstop: core writes the extras only on the paths it
+                    # actually updated, leaving skipped photos half-changed.
+                    self._db.update_photo(
+                        _photo_db_key(p), {"has_bird": 1, **extras})
                     p["has_bird"] = 1
+                    p.update(extras)
 
         progress.close()
 
