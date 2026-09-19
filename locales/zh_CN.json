@@ -359,7 +359,11 @@
     "geo_init_failed": "[GeoFilter] 初始化失败: {e}",
     "geo_region_failed": "[GeoFilter] 区域查询失败: {e}",
     "burst_species_unified": "🔗 连拍 #{group}：{count} 张统一为 {name}（依据 {source}，{confidence}%）",
-    "caption_burst_unified": "连拍统一鸟种（依据 {source}）"
+    "caption_burst_unified": "连拍统一鸟种（依据 {source}）",
+    "replay_header": "━━━━━━ 已恢复上次处理日志：{file} ━━━━━━",
+    "replay_omitted": "…… 中间省略 {count} 行，完整内容见 {file} ……",
+    "replay_footer": "━━━━━━ 历史日志回放结束（共 {total} 行）━━━━━━",
+    "replay_failed": "⚠️ 读取历史日志失败: {error}"
   },
   "server": {
     "server_already_running": "✅ 服务器已在端口 {port} 运行",
@@ -970,6 +974,13 @@
     "btn_screenshot": "截图识别",
     "screenshot_hint": "请截图，完成后自动识别...",
     "click_to_copy": "点击复制鸟名",
+    "recorded_source": "历史结果 · {directory}",
+    "recorded_badge": "历史结果（未重新识别）",
+    "recorded_flight": "飞版",
+    "recorded_picked": "精选",
+    "recorded_no_species": "上次处理未识别出鸟种",
+    "recorded_log_title": "当时的处理日志",
+    "btn_reidentify": "重新识别这张",
     "stats_focus_precise": "精焦: {count}",
     "stats_species": "{count} 种: {names}",
     "screen_record_title": "需要屏幕录制权限",

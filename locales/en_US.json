@@ -359,7 +359,11 @@
     "geo_init_failed": "[GeoFilter] Init failed: {e}",
     "geo_region_failed": "[GeoFilter] Region query failed: {e}",
     "burst_species_unified": "🔗 Burst #{group}: {count} photo(s) unified to {name} (from {source}, {confidence}%)",
-    "caption_burst_unified": "Burst-unified species (from {source})"
+    "caption_burst_unified": "Burst-unified species (from {source})",
+    "replay_header": "━━━━━━ Restored previous processing log: {file} ━━━━━━",
+    "replay_omitted": "…… {count} line(s) omitted here, see {file} for the full log ……",
+    "replay_footer": "━━━━━━ End of restored log ({total} lines) ━━━━━━",
+    "replay_failed": "⚠️ Failed to read the previous log: {error}"
   },
   "server": {
     "server_already_running": "✅ Server already running on port {port}",
@@ -1003,6 +1007,13 @@
     "btn_screenshot": "Screenshot",
     "screenshot_hint": "Take a screenshot to identify...",
     "click_to_copy": "Click to copy name",
+    "recorded_source": "Recorded result · {directory}",
+    "recorded_badge": "Recorded result (not re-identified)",
+    "recorded_flight": "In flight",
+    "recorded_picked": "Picked",
+    "recorded_no_species": "No species identified in the previous run",
+    "recorded_log_title": "Log from that run",
+    "btn_reidentify": "Re-identify this photo",
     "stats_species": "{count} species: {names}",
     "screen_record_title": "Screen Recording Access Needed",
     "win_shortcut_unsupported": "Windows screenshot shortcut not supported in this environment",
