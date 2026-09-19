@@ -1,3 +1,81 @@
+# SuperPicky 4.6.3 RC7
+
+**What's new since RC6:**
+
+1. **Correcting a species now also corrects its rarity, conservation status
+   and beauty score.** Those three belong to the species, not to the photo,
+   and were only ever written when Bird ID first identified it. So a photo you
+   retagged kept the previous species' data: the shareable report reads them
+   from each species' representative photo *and* orders the whole species list
+   by rarity, which meant a photo corrected to, say, a Barn Swallow could
+   appear at the very top of the report carrying the old species' "very rare"
+   and "endangered" badges. All three are now looked up again from the new
+   species' scientific name — offline, from the bundled reference database —
+   and cleared when there is no data, because showing the wrong badge is worse
+   than showing none. This applies to single-photo edits, multi-selection
+   edits and whole-species merges alike, and to every frame of a burst.
+
+2. **A species or star rating you changed no longer springs back to its old
+   value.** The browser keeps three internal copies of the photo list, and the
+   visible grid is rebuilt from one of them every time you expand or collapse
+   a burst group. Only two copies were being updated, so after correcting a
+   species, one click on a burst group brought the old name back on screen —
+   and paging through the full-screen view showed the old name too. Star
+   ratings had the same fault one layer deeper: the exported report counted
+   ratings from a copy that was never updated, so a photo you moved from 3
+   stars to 1 was still counted as 3 stars in the report's star breakdown.
+
+3. **The report's species list now matches the browser's species dropdown.**
+   The report used to list every species with a photo of a bird in it, while
+   the dropdown only lists species that have a folder on disk — that is, at
+   least one 2-star photo. On one real batch that read 22 species in the
+   report and 20 in the dropdown, with no way to tell which number was true.
+   The report now applies the same 2-star line, which is also what the eBird
+   export has always used, so all three agree. Species that do make the list
+   still count all of their photos, low-starred ones included.
+
+4. **Chinese bird names now show their pinyin** (Simplified Chinese interface
+   only) in four places: the bird-name lookup panel, the species picker used
+   when correcting a species, the browser's detail panel, and the Bird ID
+   result cards. Readings are tone-marked and hand-checked: bird names are
+   dense with characters that have more than one reading, and the two
+   available data sources disagreed on 655 names — so those were adjudicated
+   against standard ornithological references rather than taken from either
+   source on trust.
+
+---
+
+# SuperPicky 4.6.3 RC7（中文）
+
+**RC6 以来的变化：**
+
+1. **改鸟种时，罕见度、IUCN 等级和鸟种颜值会跟着一起改了。** 这三项是**鸟种**的
+   属性而不是照片的属性，此前只有识鸟第一次认出它时写过一次。于是改过鸟种的照片
+   仍带着上一个鸟种的数据：可分享报告正是从每个鸟种的代表照片上读这三项，还**按
+   罕见度给整个鸟种清单排序**——一张被改成「家燕」的照片，会顶着旧鸟种的「极罕见
+   + 濒危」标记排在报告最前面。现在会按新鸟种的学名重新查（离线，用随包的参考库），
+   查不到就清空——显示错的徽标比不显示更糟。单张改、多选批量改、整种合并三条路径
+   都一样，连拍组则整组跟着改。
+
+2. **改过的鸟种或星级不会再变回旧值了。** 浏览器内部有三份照片列表副本，而你每次
+   展开或收起连拍组时，界面上的网格都会从其中一份重建。此前只更新了两份，于是改完
+   鸟种后点一下连拍组，旧鸟名就回来了；全屏翻页看到的也是旧鸟名。改星级的问题更深
+   一层：导出报告时统计星级用的正是那份从未更新的副本，所以你把一张照片从 3 星改成
+   1 星后，报告的星级分布里它仍然算作 3 星。
+
+3. **报告的鸟种清单与浏览器的鸟种下拉一致了。** 报告过去列出每一个拍到鸟的鸟种，
+   而下拉只列磁盘上有目录的鸟种——也就是至少有一张 2 星照片的。实测同一批照片，
+   报告说 22 种、下拉说 20 种，而你无从判断哪个数字是真的。现在报告采用同一条 2 星
+   线，这也是 eBird 导出一直在用的口径，三处就此一致。上榜的鸟种张数照旧按它的全部
+   照片计，低星的也算在内。
+
+4. **中文鸟名会显示汉语拼音了**（仅简体中文界面），在四个地方：鸟名查询面板、改鸟种
+   时的鸟种选择弹窗、浏览器的详情面板、识鸟结果卡片。拼音带声调且经过人工核对——
+   鸟名里多音字密集，两份可用的数据源在 655 个鸟名上读音不一致，这些都按主流鸟类
+   文献逐条裁定，没有盲信其中任何一份。
+
+---
+
 # SuperPicky 4.6.3 RC6
 
 **What's new since RC5:**
