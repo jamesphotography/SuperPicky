@@ -151,6 +151,45 @@ def test_find_log_entries_walks_up_to_batch_root(tmp_path):
     assert "青脚鹬" in lines[1]
 
 
+def test_collect_species_tiers_scans_subdirectories(tmp_path):
+    """批量模式下 report.db 在各子目录里，罕见度档位汇总必须扫到它们。
+    In batch mode the databases live in subdirectories; tiers must include them."""
+    from core.processed_lookup import collect_species_tiers
+    from tools.report_db import ReportDB
+
+    sub = tmp_path / "10160919"
+    sub.mkdir()
+    db = ReportDB(str(sub))
+    db.insert_photo({"filename": "DSC1", "bird_species_cn": "勺嘴鹬",
+                     "bird_species_en": "Spoon-billed Sandpiper",
+                     "gbif_rarity_100": 99.0})
+    db.insert_photo({"filename": "DSC2", "bird_species_cn": "环颈鸻",
+                     "bird_species_en": "Kentish Plover", "gbif_rarity_100": 1.0})
+    db.close()
+
+    tiers = collect_species_tiers(str(tmp_path))
+    assert tiers["勺嘴鹬"] == 4
+    assert tiers["Spoon-billed Sandpiper"] == 4    # 中英双索引 / both languages
+    assert tiers["环颈鸻"] == 0
+
+
+def test_collect_species_tiers_tolerates_legacy_db(tmp_path):
+    """老库没有 gbif_rarity_100 列时安静跳过，不抛异常、不改库。
+    A legacy database without the column is skipped silently, unchanged."""
+    from core.processed_lookup import collect_species_tiers
+
+    db_dir = tmp_path / ".superpicky"
+    db_dir.mkdir(parents=True)
+    conn = sqlite3.connect(str(db_dir / "report.db"))
+    conn.execute("CREATE TABLE photos (id INTEGER PRIMARY KEY, filename TEXT)")
+    conn.commit()
+    conn.close()
+
+    before = _column_names(str(db_dir / "report.db"))
+    assert collect_species_tiers(str(tmp_path)) == {}
+    assert _column_names(str(db_dir / "report.db")) == before
+
+
 def test_lookup_does_not_migrate_legacy_schema(tmp_path):
     """只读约定：查一次老库不得补列、不得改 schema（用户只是想看一眼）。
     Read-only guarantee: peeking at a legacy report.db must not add columns."""

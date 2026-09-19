@@ -154,6 +154,158 @@ def test_main_window_restore_returns_false_without_log(tmp_path):
         window.close()
 
 
+def _write_log_with_summary(tmp_path, *, total=5481, trailing_restart=False):
+    """
+    造一份带会话结束摘要的日志 / Build a log containing a session-end summary.
+
+    参数 / Parameters:
+        tmp_path (Path): 目录 / Directory to write into.
+        total (int): 摘要里的总张数 / Total photo count in the summary.
+        trailing_restart (bool): True 时在摘要之后再补一个未完成的会话头 /
+            Append an unfinished session header after the summary.
+
+    返回 / Returns:
+        str: 日志文件路径 / Path to the log file.
+    """
+    lines = [
+        "[2026-09-19 19:43:38] ",
+        "============================================================",
+        "  [Session Start]  2026-09-19 19:43:38",
+        "============================================================",
+        "[2026-09-19 19:44:50] [001/2] DSC06158.jpg | 3★ (优选) | 1.2s",
+        "[2026-09-19 20:28:26] ",
+        "============================================================",
+        "  [Session End]  2026-09-19 20:28:26",
+        "============================================================",
+        "[Selection Results]",
+        f"  Total Photos       : {total}",
+        "  ⭐⭐⭐ 3-Star       : 649 (11.8%)",
+        "    └─ 🏆 Picked     : 26 (4% of 3★)",
+        "  ⭐⭐   2-Star       : 1363 (24.9%)",
+        "  ⭐     1-Star       : 1873 (34.2%)",
+        "  0⭐    0-Star       : 1484 (27.1%)",
+        "  ❌    No Bird       : 112 (2.0%)",
+        "",
+        "[Flags]",
+        "  🦅 Flying          : 1621",
+        "  🎯 Precise Focus   : 1",
+        "  💡 Exposure Issue  : 0",
+        "  📦 Burst Groups    : 540  (moved 2554)",
+        "",
+        "[BirdID Identified]",
+        "  勺嘴鹬/Spoon-billed Sandpiper, 环颈鸻/Kentish Plover",
+        "",
+        "[Performance]",
+        "  Total Time         : 2687.2s  (44.8 min)",
+        "  Avg per Photo      : 0.5s",
+        "============================================================",
+    ]
+    if trailing_restart:
+        lines += [
+            "[2026-09-19 21:00:00] ",
+            "============================================================",
+            "  [Session Start]  2026-09-19 21:00:00",
+            "============================================================",
+            "[2026-09-19 21:00:05] [001/9] DSC07000.jpg | 0★ (锐度太低) | 300ms",
+        ]
+
+    log = tmp_path / "superpicky.log"
+    log.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return str(log)
+
+
+def test_parse_session_summary_reads_last_completed_run(tmp_path):
+    """会话结束摘要应还原成可直接喂给完成面板的 stats。
+    The session-end summary becomes a stats dict for the completion panel."""
+    from core.log_restore import parse_session_summary
+
+    stats = parse_session_summary(_write_log_with_summary(tmp_path))
+
+    assert stats["total"] == 5481
+    assert (stats["star_3"], stats["star_2"], stats["star_1"], stats["star_0"]) == (
+        649, 1363, 1873, 1484)
+    assert stats["no_bird"] == 112
+    assert stats["picked"] == 26
+    assert stats["flying"] == 1621 and stats["focus_precise"] == 1
+    assert stats["burst_groups"] == 540
+    assert stats["total_time"] == 2687.2          # 总耗时只有日志里有 / log-only
+    assert [s["cn_name"] for s in stats["bird_species"]] == ["勺嘴鹬", "环颈鸻"]
+    assert stats["bird_species"][0]["en_name"] == "Spoon-billed Sandpiper"
+
+
+def test_parse_session_summary_ignores_stale_summary_after_restart(tmp_path):
+    """摘要之后又开了一轮没跑完的处理时，不能把旧摘要当成当前结果端出来。
+    A summary followed by an unfinished run must not be reported as current."""
+    from core.log_restore import parse_session_summary
+
+    assert parse_session_summary(
+        _write_log_with_summary(tmp_path, trailing_restart=True)) is None
+
+
+def test_parse_session_summary_none_without_end_block(tmp_path):
+    """只有处理过程、没有结束摘要（中途退出）时返回 None。
+    A log with no session-end block (interrupted run) yields None."""
+    from core.log_restore import parse_session_summary
+
+    log = tmp_path / "superpicky.log"
+    log.write_text(
+        "[2026-09-19 19:43:38]   [Session Start]  2026-09-19 19:43:38\n"
+        "[2026-09-19 19:44:50] [001/2] DSC06158.jpg | 3★ (优选) | 1.2s\n",
+        encoding="utf-8",
+    )
+    assert parse_session_summary(str(log)) is None
+
+
+def test_main_window_restores_completion_panel(tmp_path):
+    """选中已处理目录时，右侧识鸟面板应显示上次的完成统计。
+    Selecting a processed directory restores the completion panel on the right."""
+    from ui.main_window import SuperPickyMainWindow
+
+    _write_log_with_summary(tmp_path)
+
+    window = SuperPickyMainWindow()
+    try:
+        assert window._restore_completion_panel(str(tmp_path)) is True
+        texts = [
+            window.birdid_dock.results_layout.itemAt(i).widget().text()
+            for i in range(window.birdid_dock.results_layout.count())
+            if hasattr(window.birdid_dock.results_layout.itemAt(i).widget(), "text")
+        ]
+        panel = "".join(texts)
+        assert "5481" in panel                     # 总张数 / total
+        assert "44.8" in panel                     # 总耗时(分钟) / total time
+        assert "勺嘴鹬" in panel and "1621" in panel  # 鸟种名录与飞版计数
+    finally:
+        window.close()
+
+
+def test_completion_panel_keeps_common_tier_zero(tmp_path):
+    """罕见度档位 0（常见）是合法值，不能因为它是假值而被丢掉。
+    Tier 0 (common) is a valid value and must not be dropped for being falsy."""
+    from tools.report_db import ReportDB
+    from ui.main_window import SuperPickyMainWindow
+
+    _write_log_with_summary(tmp_path)
+    db = ReportDB(str(tmp_path))
+    db.insert_photo({"filename": "DSC1", "bird_species_cn": "环颈鸻",
+                     "bird_species_en": "Kentish Plover", "gbif_rarity_100": 1.0})
+    db.insert_photo({"filename": "DSC2", "bird_species_cn": "勺嘴鹬",
+                     "bird_species_en": "Spoon-billed Sandpiper",
+                     "gbif_rarity_100": 99.0})
+    db.close()
+
+    captured = {}
+    window = SuperPickyMainWindow()
+    try:
+        window.birdid_dock.show_completion_message = lambda stats: captured.update(stats)
+        assert window._restore_completion_panel(str(tmp_path)) is True
+        tiers = {s["cn_name"]: s.get("gbif_tier") for s in captured["bird_species"]}
+        assert tiers["环颈鸻"] == 0, "常见档(0)被当成「没查到」丢掉了"
+        assert tiers["勺嘴鹬"] == 4
+    finally:
+        window.close()
+
+
 def test_log_line_html_shared_by_live_and_replay():
     """同一条消息，实时日志与回放必须得到同样的着色片段（共用 _log_line_html）。
     A message must render identically live and replayed (shared renderer)."""

@@ -1829,9 +1829,11 @@ class SuperPickyMainWindow(QMainWindow):
 
         # 已处理过的目录：把上次那一屏控制台内容从 superpicky.log 回放回来，
         # 否则用户重新浏览时只能看到一个空控制台（逐张结果与统计报告都只在文件里）。
-        # Replay the previous run's console output for an already-processed
-        # directory; otherwise re-browsing shows an empty console.
+        # 右侧识鸟面板同步恢复处理结束时的完成统计，两边合起来才是完整的上次现场。
+        # Replay the previous run's console output and restore the completion
+        # summary to the BirdID dock; together they rebuild the full last scene.
         self._restore_console_from_log(directory)
+        self._restore_completion_panel(directory)
 
         # 写入最近目录历史并刷新菜单
         self.config.add_recent_directory(directory)
@@ -3474,6 +3476,63 @@ class SuperPickyMainWindow(QMainWindow):
         cursor.insertHtml("".join(fragments))
         self.log_text.setTextCursor(cursor)
         self.log_text.ensureCursorVisible()
+        return True
+
+    def _restore_completion_panel(self, directory: str) -> bool:
+        """
+        把上次处理结束时的完成统计恢复到右侧识鸟面板。
+
+        与控制台回放配套：控制台恢复的是「过程」，这里恢复的是「结果」——星级
+        分布、飞版/精焦计数、识别到的鸟种名录，也就是处理跑完那一刻面板上显示的
+        那一屏（``BirdIDDockWidget.show_completion_message``）。
+
+        鸟种的罕见度着色需要 ``gbif_rarity_100``，而日志摘要里只有鸟名，所以额外
+        跑一趟 report.db 把档位补回来（只读）。补不到就按普通鸟种显示，不影响数字。
+
+        参数 / Parameters:
+            directory (str): 被选中的目录 / The directory just selected.
+
+        返回 / Returns:
+            bool: 是否恢复了完成统计（无日志/无已完成会话/无面板时为 False）/
+                Whether the completion panel was restored.
+
+        Restore the completion summary to the BirdID dock, the counterpart of the
+        console replay: the console restores the *process*, this restores the
+        *result*. Species rarity colours need ``gbif_rarity_100``, which the log
+        summary lacks, so tiers are read back from report.db (read-only); missing
+        tiers only cost the colour, never the numbers.
+        """
+        dock = getattr(self, "birdid_dock", None)
+        if dock is None:
+            return False
+
+        from core.log_restore import find_log_file, parse_session_summary
+
+        log_path = find_log_file(directory)
+        if not log_path:
+            return False
+
+        stats = parse_session_summary(log_path)
+        if not stats:
+            return False
+
+        try:
+            from core.processed_lookup import collect_species_tiers
+            tiers = collect_species_tiers(directory)
+        except Exception as err:                      # noqa: BLE001 - 见 docstring
+            print(f"[MainWindow] 罕见度档位读取失败 / rarity tier lookup failed: {err}")
+            tiers = {}
+
+        for species in stats.get("bird_species", []):
+            # 不能写成 `a or b`：档位 0（常见）是合法值但为假值，会被误判成没查到
+            # Not `a or b`: tier 0 (common) is a valid but falsy value.
+            tier = tiers.get(species.get("cn_name"))
+            if tier is None:
+                tier = tiers.get(species.get("en_name"))
+            if tier is not None:
+                species["gbif_tier"] = tier
+
+        dock.show_completion_message(stats)
         return True
 
     def _show_initial_help(self):

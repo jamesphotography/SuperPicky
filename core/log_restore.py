@@ -64,6 +64,25 @@ _PHOTO_LINE_RE = re.compile(r"^\[\d+/\d+\]\s")
 _SECTION_RE = re.compile(r"^\[[A-Za-z][A-Za-z ]*\]$")
 _KEY_VALUE_RE = re.compile(r"^\s{2,}\S.*\s:\s")
 
+# 会话起止标记（由 ui/main_window.py 的会话头/会话结束摘要写入，恒为英文，不随界面语言变）
+# Session markers written by ui/main_window.py; always English, never localised.
+_SESSION_START_MARK = "[Session Start]"
+_SESSION_END_MARK = "[Session End]"
+
+# 会话结束摘要各行的取值规则 / Field patterns inside the session-end summary.
+_SUMMARY_PATTERNS = {
+    "total":          re.compile(r"Total Photos\s*:\s*(\d+)"),
+    "picked":         re.compile(r"Picked\s*:\s*(\d+)"),
+    "no_bird":        re.compile(r"No Bird\s*:\s*(\d+)"),
+    "flying":         re.compile(r"Flying\s*:\s*(\d+)"),
+    "focus_precise":  re.compile(r"Precise Focus\s*:\s*(\d+)"),
+    "exposure_issue": re.compile(r"Exposure Issue\s*:\s*(\d+)"),
+    "burst_groups":   re.compile(r"Burst Groups\s*:\s*(\d+)"),
+}
+_STAR_RE = re.compile(r"(\d)-Star\s*:\s*(\d+)")
+_TOTAL_TIME_RE = re.compile(r"Total Time\s*:\s*([\d.]+)s")
+_AVG_TIME_RE = re.compile(r"Avg per Photo\s*:\s*([\d.]+)s")
+
 
 class LogLine(NamedTuple):
     """
@@ -235,3 +254,121 @@ def read_log_lines(
         skipped=skipped,
         total=total,
     )
+
+
+def _parse_species_line(text: str) -> List[dict]:
+    """
+    解析 ``[BirdID Identified]`` 下面那行 "中文名/English, 中文名/English, …"。
+
+    参数 / Parameters:
+        text (str): 鸟种行正文 / The species line.
+
+    返回 / Returns:
+        List[dict]: ``{"cn_name": ..., "en_name": ...}`` 列表；"None" 或空行返回
+            空列表 / Species dicts; empty for "None" or a blank line.
+
+    Parse the species line written under ``[BirdID Identified]``.
+    """
+    text = text.strip()
+    if not text or text == "None":
+        return []
+
+    species = []
+    for chunk in text.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        cn_name, _, en_name = chunk.partition("/")
+        species.append({"cn_name": cn_name.strip(), "en_name": en_name.strip()})
+    return species
+
+
+def parse_session_summary(path: str) -> Optional[dict]:
+    """
+    取出日志里最后一次**已完成**处理的结束摘要，还原成 stats 字典。
+
+    数据取自 ui/main_window.py 在会话结束时写进日志的 ``[Session End]`` 块
+    （星级分布、精选、飞版、精焦、连拍、鸟种名录、总耗时）。用日志而不是重新
+    统计 report.db，有两个理由：一是这些数字就是用户当时看到的那一份，逐字一致；
+    二是总耗时根本没进库，只有日志里有。摘要块的标签恒为英文，不随界面语言变。
+
+    只认最后一个 ``[Session End]``，且要求它出现在最后一个 ``[Session Start]``
+    之后。否则说明最近一次处理没跑完（中途退出/崩溃），把上一轮的完成统计端出来
+    会谎报当前目录的状态，宁可不显示。
+
+    参数 / Parameters:
+        path (str): 日志文件路径 / Path to the log file.
+
+    返回 / Returns:
+        Optional[dict]: 可直接喂给 ``BirdIDDockWidget.show_completion_message``
+            的 stats；没有已完成的会话时返回 None /
+            A stats dict ready for the dock's completion panel, or None.
+
+    Recover the last *completed* run's summary from the ``[Session End]`` block.
+    The log is used rather than a fresh report.db tally because these are the
+    exact numbers the user saw, and because total time is never stored in the
+    database. A ``[Session Start]`` after the last ``[Session End]`` means the
+    most recent run never finished, and a stale summary would misreport the
+    directory's state — so nothing is returned in that case.
+    """
+    last_start = -1
+    last_end = -1
+    block: List[str] = []
+
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            for index, raw in enumerate(handle):
+                message = parse_log_line(raw.rstrip("\n").rstrip("\r")).message
+                if _SESSION_START_MARK in message:
+                    last_start = index
+                if _SESSION_END_MARK in message:
+                    last_end = index
+                    block = []                 # 新的结束块，丢掉上一轮 / restart
+                elif last_end >= 0:
+                    block.append(message)
+    except OSError:
+        return None
+
+    if last_end < 0 or last_start > last_end:
+        return None
+
+    stats: dict = {}
+    species: List[dict] = []
+    in_species = False
+
+    for line in block:
+        stripped = line.strip()
+        if stripped.startswith("[BirdID Identified]"):
+            in_species = True
+            continue
+        if in_species:
+            # 鸟种名录紧跟标题的一行；遇到下一个段落标题即结束
+            # The species list is the single line after the title.
+            if stripped and not stripped.startswith("["):
+                species = _parse_species_line(stripped)
+            in_species = False
+            continue
+
+        for key, pattern in _SUMMARY_PATTERNS.items():
+            if key not in stats:
+                match = pattern.search(line)
+                if match:
+                    stats[key] = int(match.group(1))
+
+        star_match = _STAR_RE.search(line)
+        if star_match:
+            stats[f"star_{star_match.group(1)}"] = int(star_match.group(2))
+
+        time_match = _TOTAL_TIME_RE.search(line)
+        if time_match:
+            stats["total_time"] = float(time_match.group(1))
+        avg_match = _AVG_TIME_RE.search(line)
+        if avg_match:
+            stats["avg_time"] = float(avg_match.group(1))
+
+    if "total" not in stats:
+        # 摘要块残缺（写到一半被打断）→ 当作没有摘要 / Truncated block, ignore.
+        return None
+
+    stats["bird_species"] = species
+    return stats

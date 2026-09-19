@@ -112,10 +112,6 @@ def _fetch_photo_row(db_path: str, stem: str) -> Optional[Dict[str, Any]]:
     """
     连接 report.db 并取出一张照片的整行记录。
 
-    先用 SQLite 的 ``mode=ro`` URI 只读打开；WAL 模式的库若无法建立 ``-shm``
-    （只读卷、网络盘等）会在首次查询时失败，因此失败后退回普通连接重试一次
-    ——本函数只发 SELECT，不会改动数据。
-
     用 ``SELECT *`` 而不是列清单：老目录的 report.db 可能缺少新版本才加的列
     （如 alt_species_cn），写死列名会直接抛 ``no such column``，而「看一眼」
     不该顺手去补列。
@@ -125,13 +121,55 @@ def _fetch_photo_row(db_path: str, stem: str) -> Optional[Dict[str, Any]]:
         stem (str): 不含扩展名的文件名 / Extension-less file name.
 
     返回 / Returns:
-        Optional[Dict[str, Any]]: 该照片的记录；无记录或两种方式都读不到时为 None /
+        Optional[Dict[str, Any]]: 该照片的记录；无记录或读不到时为 None /
             The photo row, or None when absent/unreadable.
 
-    Open read-only first, retrying with a normal connection when a WAL database
-    cannot create its ``-shm`` file. ``SELECT *`` is deliberate: legacy
-    databases may lack columns added by later schema versions, and a read-only
-    peek must not migrate them.
+    ``SELECT *`` is deliberate: legacy databases may lack columns added by later
+    schema versions, and a read-only peek must not migrate them.
+    """
+
+    def _query(conn: sqlite3.Connection) -> Optional[Dict[str, Any]]:
+        row = conn.execute(
+            "SELECT * FROM photos WHERE filename = ? LIMIT 1", (stem,)
+        ).fetchone()
+        if row is None:
+            # 大小写不敏感兜底：部分相机/文件系统会改写文件名大小写
+            # Case-insensitive fallback: some cameras/filesystems change case.
+            row = conn.execute(
+                "SELECT * FROM photos WHERE filename = ? COLLATE NOCASE LIMIT 1",
+                (stem,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    return _with_read_connection(db_path, _query)
+
+
+def _with_read_connection(db_path: str, query):
+    """
+    以只读方式连上 report.db，把连接交给 ``query`` 执行。
+
+    先用 SQLite 的 ``mode=ro`` URI；WAL 模式的库若无法建立 ``-shm``（只读卷、
+    网络盘等）会在首次读取时失败，这种**连接层面**的失败才退回普通连接重试。
+
+    为什么要先探一把再执行 query：只读连接的失败要到第一次读表时才暴露，如果
+    直接拿 query 去试，一个「缺列」之类的业务异常也会被当成连接失败，进而用
+    读写连接再跑一遍——而读写连接一开一关会 checkpoint 并删掉 WAL 文件，那就
+    等于动了用户的目录。所以这里用一句无害的 sqlite_master 查询单独探连通性，
+    query 自身的异常一律不重试。
+
+    参数 / Parameters:
+        db_path (str): report.db 路径 / Path to report.db.
+        query (Callable[[sqlite3.Connection], Any]): 只读查询 / A read-only query.
+
+    返回 / Returns:
+        Any: ``query`` 的返回值；连不上或查询失败时返回 None /
+            The query's result, or None when the database cannot be read.
+
+    Probe connectivity with a harmless sqlite_master query before running the
+    real one: a read-only connection only fails on first read, so running the
+    real query as the probe would treat a business error (e.g. a missing column)
+    as a connection failure and retry read-write — and opening a WAL database
+    read-write checkpoints and removes its WAL, i.e. touches the user's folder.
     """
     attempts = (
         {"database": f"{Path(db_path).as_uri()}?mode=ro", "uri": True},
@@ -142,25 +180,24 @@ def _fetch_photo_row(db_path: str, stem: str) -> Optional[Dict[str, Any]]:
         try:
             conn = sqlite3.connect(timeout=5.0, **kwargs)
             conn.row_factory = sqlite3.Row
-            row = conn.execute(
-                "SELECT * FROM photos WHERE filename = ? LIMIT 1", (stem,)
-            ).fetchone()
-            if row is None:
-                # 大小写不敏感兜底：部分相机/文件系统会改写文件名大小写
-                # Case-insensitive fallback: some cameras/filesystems change case.
-                row = conn.execute(
-                    "SELECT * FROM photos WHERE filename = ? COLLATE NOCASE LIMIT 1",
-                    (stem,),
-                ).fetchone()
-            return dict(row) if row is not None else None
+            conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
         except sqlite3.Error:
-            continue
-        finally:
             if conn is not None:
                 try:
                     conn.close()
                 except sqlite3.Error:
                     pass
+            continue
+
+        try:
+            return query(conn)
+        except sqlite3.Error:
+            return None
+        finally:
+            try:
+                conn.close()
+            except sqlite3.Error:
+                pass
     return None
 
 
@@ -182,6 +219,63 @@ def load_photo_record(root: str, stem: str) -> Optional[Dict[str, Any]]:
     if not os.path.isfile(db_path):
         return None
     return _fetch_photo_row(db_path, stem)
+
+
+def collect_species_tiers(directory: str) -> Dict[str, int]:
+    """
+    汇总目录里各鸟种的 GBIF 罕见度档位，供回放的完成统计给鸟名上色。
+
+    为什么要单独跑一趟库：会话结束摘要里的鸟种名录只有「中文名/English」，没有
+    罕见度；而完成面板是按罕见度给鸟名着色的（常见灰 / 能见橙 / 少见以上红）。
+    档位由每张照片的 ``gbif_rarity_100`` 换算而来，只有库里有。
+
+    同时扫本目录与其直接子目录：批量模式下用户选的是父目录，report.db 在各子
+    目录里。全程只读，老库没有 ``gbif_rarity_100`` 列时安静跳过。
+
+    参数 / Parameters:
+        directory (str): 被选中的目录 / The selected directory.
+
+    返回 / Returns:
+        Dict[str, int]: 鸟名（中文与英文都建索引）→ 档位编号 /
+            Species name (both languages) to tier index.
+
+    Collect each species' GBIF rarity tier so the replayed completion panel can
+    colour the names as the live one does. The session summary carries names
+    only; tiers are derived from per-photo ``gbif_rarity_100`` in report.db. The
+    directory itself and its immediate children are scanned, because batch mode
+    keeps one database per subdirectory. Read-only; legacy databases without the
+    column are skipped silently.
+    """
+    from core.rarity_tier import gbif_score_to_tier
+
+    candidates = [directory]
+    try:
+        with os.scandir(directory) as entries:
+            candidates.extend(e.path for e in entries if e.is_dir())
+    except OSError:
+        pass
+
+    def _query(conn: sqlite3.Connection):
+        return conn.execute(
+            "SELECT bird_species_cn, bird_species_en, MAX(gbif_rarity_100) AS score "
+            "FROM photos WHERE gbif_rarity_100 IS NOT NULL "
+            "GROUP BY bird_species_cn, bird_species_en"
+        ).fetchall()
+
+    tiers: Dict[str, int] = {}
+    for candidate in candidates:
+        db_path = os.path.join(candidate, ".superpicky", "report.db")
+        if not os.path.isfile(db_path):
+            continue
+        rows = _with_read_connection(db_path, _query)
+        for row in rows or []:
+            tier = gbif_score_to_tier(row["score"])
+            if tier is None:
+                continue
+            for name in (row["bird_species_cn"], row["bird_species_en"]):
+                if name:
+                    tiers[name] = tier
+    return tiers
 
 
 def resolve_crop_path(root: str, record: Optional[Dict[str, Any]], stem: str) -> Optional[str]:
