@@ -29,6 +29,7 @@ from ui.styles import COLORS, FONTS
 from ui.combo_popup import style_combo_popup
 from ui.icon_utils import tinted_png_path, glyph_pixmap
 from tools.i18n import get_i18n
+from tools.pinyin_names import pinyin_for_ui
 from config import get_birdname_settings_path, get_install_scoped_resource_path
 
 # 罕见度分级 / IUCN 展示复用既有组件（与识别详情面板保持一致的视觉与配色）
@@ -150,6 +151,9 @@ class BirdResultCard(QFrame):
         self.bird_data = bird_data
         self._badge = (badge or "").strip()
         self._is_selected = False
+        #: 中文鸟名的汉语拼音标签；英文界面或查不到读音时保持 None。
+        #: The pinyin label; stays None on an English UI or a lookup miss.
+        self.pinyin_label = None
 
         self.setFixedHeight(self.CARD_HEIGHT)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -189,7 +193,29 @@ class BirdResultCard(QFrame):
                 f"background: transparent;"
             )
             self.primary_label.clicked.connect(lambda: self._copy_text(primary))
-            text_col.addWidget(self.primary_label)
+
+            # 拼音挂在主名右边而不是并进 primary_label：那个 label 点击即复制
+            # 鸟名，混入拼音后用户复制到的是「家燕 jiā yàn」，贴到别处不能用。
+            # 也因此不加高卡片（仍是固定两行 52px），搜索结果一屏的可见条数不变。
+            # The pinyin sits beside the name rather than inside it: that label
+            # is click-to-copy, and the card height stays fixed at two rows.
+            pinyin = pinyin_for_ui(bird_data.get("chinese_name"),
+                                   is_zh=not is_en_ui)
+            if pinyin:
+                self.pinyin_label = QLabel(pinyin)
+                self.pinyin_label.setStyleSheet(
+                    f"color: {COLORS['text_muted']}; font-size: 11px; "
+                    f"background: transparent;"
+                )
+
+            primary_row = QHBoxLayout()
+            primary_row.setContentsMargins(0, 0, 0, 0)
+            primary_row.setSpacing(6)
+            primary_row.addWidget(self.primary_label)
+            if self.pinyin_label is not None:
+                primary_row.addWidget(self.pinyin_label)
+            primary_row.addStretch(1)
+            text_col.addLayout(primary_row)
 
         if secondary:
             secondary_color = COLORS["text_secondary"]
@@ -789,10 +815,17 @@ class BirdNameSearchWidget(QWidget):
         en = bird_data.get("english_name") or ""
         latin = (bird_data.get("latin_name") or "").strip()
 
-        # 标题：「中文名  学名」，无中文名时退回英文名
+        # 标题：「中文名　拼音　学名」，无中文名时退回英文名。
+        # 拼音只在简体中文界面出现（用户 2026-09-19 要求），夹在中文名与学名
+        # 之间——它注解的是中文名，离得越近越好读。
+        # Title: name, pinyin (Simplified-Chinese UI only), then the Latin name.
         title = cn or en or latin or "—"
+        muted = COLORS['text_muted']
+        pinyin = pinyin_for_ui(cn, is_zh=not get_i18n().current_lang.startswith("en"))
+        if pinyin:
+            title = f"{title}　<span style='color:{muted};'>{pinyin}</span>"
         if latin:
-            title = f"{title}　<span style='color:{COLORS['text_muted']};'>{latin}</span>"
+            title = f"{title}　<span style='color:{muted};'>{latin}</span>"
         self.detail_header.setText(title)
 
         info = None

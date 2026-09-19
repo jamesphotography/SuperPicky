@@ -237,3 +237,126 @@ def test_has_bird_restored_in_all_photos_after_naming_a_species(tmp_path, monkey
     finally:
         _join_worker_threads()
         win.close()
+
+
+# ======================================================================
+#  第三份缓存 `_raw_filtered_photos`（2026-09-19 发现）
+#
+#  浏览器其实有**三**份缓存，不是两份：
+#
+#    _all_photos           —— 全量列表，报告 / eBird / 整种合并读它；
+#    _raw_filtered_photos  —— 当前筛选的原始查询结果（_apply_filters 存下）；
+#    _filtered_photos      —— 由 _raw_filtered_photos **逐条 dict() 拷贝**出来的
+#                             显示列表（连拍折叠/展开在这一步成形），网格与详情读它。
+#
+#  改鸟种只补了后两份。而 `_update_display_list()` 每次都从
+#  `_raw_filtered_photos` 重建 `_filtered_photos`——用户点一下连拍组的展开/收起
+#  （`_toggle_burst`），刚改好的鸟名就被旧值覆盖回去；全屏翻页用的导航列表
+#  （`_build_collapsed_navigation_list` / `_build_burst_sequence`）也直接读它，
+#  于是全屏里看到的还是旧鸟名。
+#
+#  The browser keeps three caches, not two; the display list is rebuilt from
+#  the raw one, so a burst toggle or a fullscreen page turn resurrected the
+#  pre-edit species.
+# ======================================================================
+
+
+def test_raw_filtered_cache_follows_a_species_change(tmp_path, monkeypatch):
+    """改完鸟种，第三份缓存 `_raw_filtered_photos` 同样必须是新鸟名。"""
+    _stub_species_dialog(monkeypatch, "家燕", "Barn Swallow", "Hirundo rustica")
+    win, photo = _browser_with_one_photo(str(tmp_path))
+    try:
+        win._on_species_edit_requested(photo)
+
+        assert [p["bird_species_cn"] for p in win._raw_filtered_photos] == ["家燕"], (
+            "_raw_filtered_photos 没跟着改——显示列表每次重建都从它拷贝"
+        )
+        _join_worker_threads()
+    finally:
+        _join_worker_threads()
+        win.close()
+
+
+def test_display_list_rebuild_keeps_the_new_species(tmp_path, monkeypatch):
+    """
+    重建显示列表后，网格里仍须是新鸟名。
+
+    这是用户可见的症状：改完鸟种，点一下连拍组的展开/收起，鸟名就变回去了，
+    看起来像「改了没生效」。`_update_display_list` 是那条路径的必经之处。
+    """
+    _stub_species_dialog(monkeypatch, "家燕", "Barn Swallow", "Hirundo rustica")
+    win, photo = _browser_with_one_photo(str(tmp_path))
+    try:
+        win._on_species_edit_requested(photo)
+
+        win._update_display_list()
+
+        assert [p["bird_species_cn"] for p in win._filtered_photos] == ["家燕"], (
+            "重建显示列表后退回了旧鸟名"
+        )
+        _join_worker_threads()
+    finally:
+        _join_worker_threads()
+        win.close()
+
+
+# ======================================================================
+#  连拍组路径（2026-09-19 补）
+#
+#  单张改鸟种会把**整个连拍组**一起改掉（core 的 _change_bird_species_burst
+#  更新组内每条记录）。原有测试只覆盖了非连拍的单张，而连拍恰恰是选鸟的常态。
+#
+#  这条是**回归护栏**，不是在修缺陷：2026-09-19 排查时实测这条路径当时就是对的
+#  （_patch_cached_photos 按 burst_id 匹配整组）。留下它是因为组内成员一旦漏补，
+#  报告里会同时出现新旧两个鸟种、凭空多一行名录，而界面上完全看不出异常。
+# ======================================================================
+
+
+def _browser_with_a_burst(root: str):
+    """建一个浏览器，库里是一个三张的连拍组（burst_ 目录，浏览器据此分组）。"""
+    import ui.results_browser_window as rbw
+    from tools.report_db import ReportDB
+
+    db = ReportDB(root)
+    for i in range(3):
+        rel = f"白喉抚蜜鸟/2星_良好/burst_001/DSC_200{i}.NEF"
+        _touch(os.path.join(root, rel))
+        db.insert_photo({
+            "filename": f"DSC_200{i}", "current_path": rel, "original_path": rel,
+            "bird_species_cn": "白喉抚蜜鸟",
+            "bird_species_en": "White-throated Honeyeater",
+            "rating": 2, "has_bird": 1,
+            "adj_sharpness": 300 + i,
+        })
+    db.close()
+
+    win = rbw.ResultsBrowserWindow()
+    win.open_directory(root)
+    return win
+
+
+def test_report_lists_one_species_after_changing_a_burst(tmp_path, monkeypatch):
+    """
+    改一张连拍组的照片 = 整组改鸟种，报告的鸟种名录必须只剩新鸟名。
+
+    组内成员漏补的话，报告会同时列出旧鸟种和新鸟种，凭空多一行名录。
+    """
+    from core.report_export import aggregate
+
+    _stub_species_dialog(monkeypatch, "家燕", "Barn Swallow", "Hirundo rustica")
+    win = _browser_with_a_burst(str(tmp_path))
+    try:
+        photo = win._filtered_photos[0]
+        assert photo.get("burst_id") is not None, "测试前提：这是一个连拍组"
+
+        win._on_species_edit_requested(photo)
+        _join_worker_threads()
+
+        rows = [win._resolve_photo_paths(p) for p in win._all_photos]
+        blocks = aggregate(rows, include_gps=False).species
+        assert [(b.name_cn, b.count) for b in blocks] == [("家燕", 3)], (
+            "报告名录里混着旧鸟名"
+        )
+    finally:
+        _join_worker_threads()
+        win.close()
