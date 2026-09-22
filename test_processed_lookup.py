@@ -225,3 +225,136 @@ def _column_names(db_path):
         return [row[1] for row in conn.execute("PRAGMA table_info(photos)")]
     finally:
         conn.close()
+
+
+# ======================================================================
+#  Follow-up to #109：记录必须真的属于被拖入的那个文件
+#
+#  查询原本只按文件名（stem）在 report.db 里取一行，不校验这条记录指向的
+#  是不是同一个文件。相机文件名（DSC00014 这类）在不同存储卡、不同机身上
+#  高度重复，而往一个处理过的目录里补放新照片是常规操作——于是拖入一张全新
+#  的照片，会拿到另一张照片的鸟种、星级、置信度，连 crop 预览图都是别人的，
+#  且全程静默。
+#
+#  A record is now required to actually refer to the dropped file: matching by
+#  file name alone returned another photo's species, rating and crop preview
+#  for a brand-new file that merely shared its name.
+# ======================================================================
+
+
+def test_a_same_named_new_photo_elsewhere_gets_no_record(tmp_path):
+    """
+    同名但位于别处的新照片不得取到旧记录。
+
+    这是缺陷的最小复现：用户把另一次外拍的 DSC00014 放进已处理目录树，
+    面板会报出上一张 DSC00014 的鸟种与星级。
+    """
+    from core.processed_lookup import lookup_processed_photo
+
+    _make_processed_dir(tmp_path)
+    intruder = tmp_path / "新照片" / "DSC00014.ARW"
+    intruder.parent.mkdir(parents=True, exist_ok=True)
+    intruder.write_bytes(b"another shoot entirely")
+
+    assert lookup_processed_photo(str(intruder)) is None
+
+
+def test_the_recorded_photo_itself_still_resolves(tmp_path):
+    """记录指向的那张照片本身照常查得到——校验不能把正常情况一起挡掉。"""
+    from core.processed_lookup import lookup_processed_photo
+
+    photo = _make_processed_dir(tmp_path)
+
+    result = lookup_processed_photo(photo)
+    assert result is not None
+    assert result.record["bird_species_cn"] == "青脚鹬"
+
+
+def test_sibling_jpeg_of_the_recorded_raw_still_resolves(tmp_path):
+    """
+    同目录下的配套 JPEG 仍要查得到 RAW 的记录。
+
+    PR #109 明确支持「RAW 或 JPEG 均可」：RAW+JPEG 成对拍摄时两个文件同名同
+    目录，用户拖哪个都该看到同一条记录。校验按**目录**而不是按完整路径，正是
+    为了保住这个场景。
+    """
+    from core.processed_lookup import lookup_processed_photo
+
+    photo = _make_processed_dir(tmp_path)
+    sidecar = os.path.splitext(photo)[0] + ".JPG"
+    with open(sidecar, "wb") as handle:
+        handle.write(b"jpeg")
+
+    result = lookup_processed_photo(sidecar)
+    assert result is not None
+    assert result.record["bird_species_cn"] == "青脚鹬"
+
+
+def test_record_pointing_somewhere_else_is_not_trusted(tmp_path):
+    """
+    记录里的路径与被拖入文件对不上时宁可不显示。
+
+    用户手工搬动过照片就会这样。此时退回实时识别只是少一个便利，
+    而端出一条可能张冠李戴的记录是给错信息——两害相权取其轻。
+    """
+    from core.processed_lookup import lookup_processed_photo
+
+    photo = _make_processed_dir(tmp_path)
+    moved = tmp_path / "我自己整理的" / "DSC00014.ARW"
+    moved.parent.mkdir(parents=True, exist_ok=True)
+    os.replace(photo, moved)
+
+    assert lookup_processed_photo(str(moved)) is None
+
+
+# ======================================================================
+#  Follow-up to #109：只读承诺必须在**回退路径**上也成立
+#
+#  _with_read_connection 在只读 URI 失败时会退回一个普通读写连接，而它自己的
+#  注释写得很清楚：「读写连接一开一关会 checkpoint 并删掉 WAL 文件，那就等于
+#  动了用户的目录」。回退路径做的正是这件事。
+#
+#  The read-only guarantee must hold on the fallback path too: the module's own
+#  comment explains that opening the database read-write checkpoints and removes
+#  its WAL, i.e. touches the user's folder.
+# ======================================================================
+
+
+def test_a_failed_read_only_open_never_falls_back_to_read_write(tmp_path, monkeypatch):
+    """
+    只读连接失败时，查询放弃，且绝不碰用户目录。
+
+    用「WAL 文件是否还在」来断言，而不是去看用了哪种连接：这才是用户能观察到
+    的后果——读写连接关闭时会 checkpoint 并删掉 -wal/-shm。
+    """
+    import core.processed_lookup as mod
+
+    photo = _make_processed_dir(tmp_path)
+    db_path = tmp_path / ".superpicky" / "report.db"
+
+    # 造一个「有未 checkpoint 的 WAL」的库：两个连接同时开着时 WAL 不会被清掉
+    keeper = sqlite3.connect(str(db_path))
+    keeper.execute("PRAGMA journal_mode=WAL")
+    keeper.execute("UPDATE photos SET rating = rating")
+    keeper.commit()
+    holder = sqlite3.connect(str(db_path))
+    holder.execute("SELECT count(*) FROM photos").fetchone()
+    assert (tmp_path / ".superpicky" / "report.db-wal").exists(), "测试前提：WAL 存在"
+
+    # 强制只读 URI 连接失败（只读卷 / 网络盘上建不出 -shm 的情形）
+    real_connect = sqlite3.connect
+
+    def only_readonly_fails(*args, **kwargs):
+        if kwargs.get("uri"):
+            raise sqlite3.OperationalError("unable to open database file")
+        return real_connect(*args, **kwargs)
+
+    monkeypatch.setattr(mod.sqlite3, "connect", only_readonly_fails)
+
+    assert mod.lookup_processed_photo(photo) is None
+    assert (tmp_path / ".superpicky" / "report.db-wal").exists(), (
+        "退回读写连接把用户目录的 WAL 文件 checkpoint 掉了"
+    )
+
+    holder.close()
+    keeper.close()

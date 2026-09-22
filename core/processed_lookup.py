@@ -148,14 +148,14 @@ def _with_read_connection(db_path: str, query):
     """
     以只读方式连上 report.db，把连接交给 ``query`` 执行。
 
-    先用 SQLite 的 ``mode=ro`` URI；WAL 模式的库若无法建立 ``-shm``（只读卷、
-    网络盘等）会在首次读取时失败，这种**连接层面**的失败才退回普通连接重试。
+    只用 SQLite 的 ``mode=ro`` URI，**没有退回读写连接的路径**：读写连接一开
+    一关会 checkpoint 并删掉 WAL 文件，那就等于动了用户的目录，而本模块的全部
+    意义是「只是看一眼」。只读连不上时（只读卷、网络盘上建不出 ``-shm`` 等）
+    直接放弃，调用方会退回实时识别——少一个便利，好过悄悄改用户的数据。
 
-    为什么要先探一把再执行 query：只读连接的失败要到第一次读表时才暴露，如果
-    直接拿 query 去试，一个「缺列」之类的业务异常也会被当成连接失败，进而用
-    读写连接再跑一遍——而读写连接一开一关会 checkpoint 并删掉 WAL 文件，那就
-    等于动了用户的目录。所以这里用一句无害的 sqlite_master 查询单独探连通性，
-    query 自身的异常一律不重试。
+    连上之后先用一句无害的 ``sqlite_master`` 查询探连通性再跑真正的 query：
+    只读连接的失败要到第一次读表时才暴露，不先探一把的话，「缺列」这类业务
+    异常会与连接失败混为一谈。query 自身的异常一律不重试。
 
     参数 / Parameters:
         db_path (str): report.db 路径 / Path to report.db.
@@ -165,40 +165,35 @@ def _with_read_connection(db_path: str, query):
         Any: ``query`` 的返回值；连不上或查询失败时返回 None /
             The query's result, or None when the database cannot be read.
 
-    Probe connectivity with a harmless sqlite_master query before running the
-    real one: a read-only connection only fails on first read, so running the
-    real query as the probe would treat a business error (e.g. a missing column)
-    as a connection failure and retry read-write — and opening a WAL database
-    read-write checkpoints and removes its WAL, i.e. touches the user's folder.
+    Read-only URI with no read-write fallback: opening a WAL database
+    read-write checkpoints and removes its WAL, i.e. touches the user's folder,
+    which defeats the point of a look-only lookup. Connectivity is probed with a
+    harmless sqlite_master query first, so a business error (e.g. a missing
+    column) is not mistaken for a connection failure.
     """
-    attempts = (
-        {"database": f"{Path(db_path).as_uri()}?mode=ro", "uri": True},
-        {"database": db_path, "uri": False},
-    )
-    for kwargs in attempts:
-        conn = None
-        try:
-            conn = sqlite3.connect(timeout=5.0, **kwargs)
-            conn.row_factory = sqlite3.Row
-            conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
-        except sqlite3.Error:
-            if conn is not None:
-                try:
-                    conn.close()
-                except sqlite3.Error:
-                    pass
-            continue
-
-        try:
-            return query(conn)
-        except sqlite3.Error:
-            return None
-        finally:
+    conn = None
+    try:
+        conn = sqlite3.connect(
+            database=f"{Path(db_path).as_uri()}?mode=ro", uri=True, timeout=5.0)
+        conn.row_factory = sqlite3.Row
+        conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
+    except sqlite3.Error:
+        if conn is not None:
             try:
                 conn.close()
             except sqlite3.Error:
                 pass
-    return None
+        return None
+
+    try:
+        return query(conn)
+    except sqlite3.Error:
+        return None
+    finally:
+        try:
+            conn.close()
+        except sqlite3.Error:
+            pass
 
 
 def load_photo_record(root: str, stem: str) -> Optional[Dict[str, Any]]:
@@ -387,6 +382,65 @@ def find_log_entries(root: str, stem: str, limit: int = MAX_LOG_ENTRIES) -> List
     return []
 
 
+def _recorded_paths(root: str, record: Dict[str, Any]) -> List[str]:
+    """
+    取出记录里指向照片本体的路径，解析为绝对路径。
+
+    参数 / Parameters:
+        root (str): 已处理目录 / The processed directory.
+        record (Dict[str, Any]): 照片记录 / The photo row.
+
+    返回 / Returns:
+        List[str]: current_path / original_path 解析后的绝对路径（可能为空列表）/
+            Absolute paths recorded for this photo, possibly empty.
+
+    Resolve the photo paths stored in the record; report.db keeps them relative
+    to the processed root (see tools/report_db.py), but absolute values from
+    older databases are tolerated.
+    """
+    paths: List[str] = []
+    for key in ("current_path", "original_path"):
+        value = record.get(key)
+        if isinstance(value, str) and value:
+            paths.append(value if os.path.isabs(value) else os.path.join(root, value))
+    return paths
+
+
+def _record_matches_file(root: str, record: Dict[str, Any], file_path: str) -> bool:
+    """
+    判断这条记录是否真的属于被拖入的那个文件。
+
+    只按文件名取记录是不够的：相机文件名（``DSC00014`` 这类）在不同存储卡、
+    不同机身上高度重复，而往一个处理过的目录里补放新照片是常规操作。没有这道
+    校验时，拖入一张全新的同名照片会拿到另一张照片的鸟种、星级与 crop 预览图，
+    而且毫无提示——给错信息比不给信息更糟。
+
+    比的是**所在目录**而不是完整路径：RAW+JPEG 成对拍摄时两个文件同名同目录，
+    PR #109 明确支持「拖 JPEG 查 RAW 的记录」，按完整路径比会把这个场景误杀。
+
+    记录里没有任何可用路径时返回 False：宁可退回实时识别，也不拿一条无法验证
+    归属的记录去冒充这张照片的历史结果。
+
+    参数 / Parameters:
+        root (str): 已处理目录 / The processed directory.
+        record (Dict[str, Any]): 按文件名取到的记录 / The row matched by name.
+        file_path (str): 被拖入的文件 / The dropped file.
+
+    返回 / Returns:
+        bool: 记录确实属于该文件时为 True / Whether the record is really this file's.
+
+    Verify the record belongs to the dropped file. Directories are compared
+    rather than full paths so that dropping the sibling JPEG of a recorded RAW
+    still resolves, while a same-named file living elsewhere in the tree does
+    not. An unverifiable record is rejected.
+    """
+    dropped_dir = os.path.normcase(os.path.abspath(os.path.dirname(file_path)))
+    for recorded in _recorded_paths(root, record):
+        if os.path.normcase(os.path.abspath(os.path.dirname(recorded))) == dropped_dir:
+            return True
+    return False
+
+
 def lookup_processed_photo(file_path: str) -> Optional[ProcessedPhoto]:
     """
     查询一张照片的历史处理结果。
@@ -413,6 +467,11 @@ def lookup_processed_photo(file_path: str) -> Optional[ProcessedPhoto]:
     stem = os.path.splitext(os.path.basename(file_path))[0]
     record = load_photo_record(root, stem)
     if record is None:
+        return None
+
+    # 文件名相同还不够，必须确认这条记录就是这个文件的（见 _record_matches_file）
+    # Matching by name alone would hand another photo's result to a new file.
+    if not _record_matches_file(root, record, file_path):
         return None
 
     return ProcessedPhoto(
