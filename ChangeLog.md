@@ -1,6 +1,6 @@
-# SuperPicky 未发布 / Unreleased
+# SuperPicky 4.6.3 RC8
 
-**Since RC7:**
+**What's new since RC7:**
 
 1. **Reopening a processed folder brings back what you saw last time.** The
    console replays that folder's own `superpicky.log`, the Bird ID panel shows
@@ -12,7 +12,16 @@
    is always there if you do want a fresh run. Contributed by @OscarKing888
    (#109).
 
-2. **Chinese bird names updated to the current ChinaBirds checklist** (60
+2. **Fixed: about a thousand species showed no pinyin.** RC7 built its pinyin
+   table from the name catalog only, but the species name shown in the detail
+   panel and on the Bird ID result cards comes from the identification
+   database, and 1,037 species live in the latter and not the former — so
+   those (`东方鹗`, `中华鹪鹛`, `七彩唐加拉雀` and others) simply showed
+   nothing where the pinyin should be. The table is now built from both
+   databases, and a test now fails if either database ever changes without the
+   table being rebuilt.
+
+3. **Chinese bird names updated to the current ChinaBirds checklist** (60
    names). Contributed by @lhy1024 (#110).
 
    **Four of those names now belong to a different species.** Folders, the
@@ -36,7 +45,7 @@
 
 ---
 
-# SuperPicky 未发布（中文）
+# SuperPicky 4.6.3 RC8（中文）
 
 **RC7 以来的变化：**
 
@@ -47,7 +56,13 @@
    RAW、重跑模型。结果区始终留着「重新识别」按钮，想现跑随时可以。
    由 @OscarKing888 贡献（#109）。
 
-2. **中文鸟名同步到现行 ChinaBirds 名录**（60 个）。由 @lhy1024 贡献（#110）。
+2. **修复：约一千个鸟种不显示拼音。** RC7 的拼音表只从名录库生成，而详情面板与
+   识鸟结果卡片上显示的鸟名来自识鸟库，有 1037 个鸟种只存在于后者——于是
+   `东方鹗`、`中华鹪鹛`、`七彩唐加拉雀` 这些鸟种该显示拼音的位置是空的。现在
+   拼音表取两个库的并集；并新增一条测试，任一个库变动后忘了重新生成拼音表就会
+   报错。
+
+3. **中文鸟名同步到现行 ChinaBirds 名录**（60 个）。由 @lhy1024 贡献（#110）。
 
    **其中 4 个名字现在指的是另一个鸟种了。** 分目录、报告的鸟种清单、eBird
    导出都以中文鸟名为准，所以如果你有旧批次，这条值得看一眼：
