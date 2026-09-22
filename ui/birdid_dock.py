@@ -1466,28 +1466,272 @@ class BirdIDDockWidget(QDockWidget):
             self.preview_label.show()
             QTimer.singleShot(50, self._scale_preview)
 
-    def on_file_dropped(self, file_path: str):
+    def on_file_dropped(self, file_path: str, force_identify: bool = False):
+        """
+        处理拖入/选中的图片。
+
+        已处理过的照片（能在某个 ``.superpicky/report.db`` 里按文件名查到）直接
+        回显上次的处理结果，不重跑模型：RAW 解码 + YOLO + 识鸟要好几秒，而结果
+        早就落库了。找不到记录时才走实时识别。
+
+        参数 / Parameters:
+            file_path (str): 图片路径 / Path to the image.
+            force_identify (bool): True 时跳过历史记录直接实时识别，供结果区的
+                「重新识别」按钮使用 / Skip the recorded result and run a live
+                identification (used by the "re-identify" button).
+
+        返回 / Returns:
+            None
+
+        A photo that a previous run already recorded (found by file name in some
+        ``.superpicky/report.db``) is replayed from that record instead of being
+        re-analysed, since decoding the RAW and re-running the models costs
+        seconds for a result that is already stored. Live identification runs
+        only when no record exists, or when the caller forces it.
+        """
         if not os.path.exists(file_path):
             self.status_label.setText(self.i18n.t("birdid.file_not_found_short"))
             self.status_label.setStyleSheet(f"font-size: 11px; color: {COLORS['error']};")
             return
 
         self.current_image_path = file_path
-        self.status_label.setText(self.i18n.t("birdid.analyzing"))
-        self.status_label.setStyleSheet(f"font-size: 11px; color: {COLORS['accent']};")
 
         filename = os.path.basename(file_path)
         self.filename_label.setText(filename)
         self.filename_label.show()
 
-        self.show_preview(file_path)
-
         self.clear_results()
+
+        if not force_identify:
+            recorded = self._load_recorded_result(file_path)
+            if recorded is not None:
+                self.progress.hide()
+                self._show_recorded_result(recorded, file_path)
+                return
+
+        self.status_label.setText(self.i18n.t("birdid.analyzing"))
+        self.status_label.setStyleSheet(f"font-size: 11px; color: {COLORS['accent']};")
+
+        self.show_preview(file_path)
 
         self.progress.show()
         self.results_frame.hide()
 
         self._start_identify(file_path)
+
+    def _load_recorded_result(self, file_path: str):
+        """
+        查询该照片上次处理留下的结果。
+
+        查询完全只读（见 core.processed_lookup 的只读约定），任何异常都吞掉并
+        回退到实时识别——历史回显是锦上添花，不该让面板的主功能失效。
+
+        参数 / Parameters:
+            file_path (str): 图片路径 / Path to the image.
+
+        返回 / Returns:
+            Optional[ProcessedPhoto]: 历史记录，没有则 None /
+                The recorded result, or None.
+
+        Look up the recorded result; failures fall back to live identification
+        because the replay is a convenience, not the panel's core function.
+        """
+        try:
+            from core.processed_lookup import lookup_processed_photo
+            return lookup_processed_photo(file_path)
+        except Exception as err:                      # noqa: BLE001 - 见 docstring
+            print(f"[BirdIDDock] 历史结果查询失败 / recorded lookup failed: {err}")
+            return None
+
+    def _show_recorded_result(self, photo, file_path: str) -> None:
+        """
+        把上次处理留下的结果显示到结果区，并在图片区显示 crop_debug 预览图。
+
+        显示内容按「一眼能回忆起当时判断」组织：来源目录 → 星级 → 鸟种卡片 →
+        对焦/锐度/美学等度量 → 当时控制台原文。末尾始终留一个「重新识别」按钮，
+        否则已处理过的照片就再也无法在本面板做实时识别了。
+
+        参数 / Parameters:
+            photo (ProcessedPhoto): core.processed_lookup 查到的历史记录 /
+                The record found by core.processed_lookup.
+            file_path (str): 被拖入的原文件路径，供「重新识别」与预览兜底使用 /
+                The dropped file, used by the re-identify button and as a
+                preview fallback.
+
+        返回 / Returns:
+            None
+
+        Render a previously recorded result, with the stored crop_debug image in
+        the preview area. A "re-identify" button is always appended so a
+        processed photo can still be analysed live from this panel.
+        """
+        record = photo.record
+        t = self.i18n.t
+
+        # ── 图片区：优先 crop_debug 裁切图；缺图或读不出时退回原图 ────────────
+        # Preview: the stored crop_debug image, falling back to the original.
+        shown = False
+        if photo.crop_path:
+            pixmap = QPixmap(photo.crop_path)
+            if not pixmap.isNull():
+                self._current_pixmap = pixmap
+                self._result_crop_pixmap = pixmap
+                self.drop_area.hide()
+                self.preview_label.show()
+                QTimer.singleShot(50, self._scale_preview)
+                shown = True
+        if not shown:
+            self._result_crop_pixmap = None
+            self.show_preview(file_path)
+
+        self.placeholder_frame.hide()
+        self.results_frame.show()
+        self.result_cards = []
+        self.selected_index = 0
+        self.identify_results = []
+
+        # ── 来源与度量 / Source and metrics ──────────────────────────────────
+        info_lines = [t("birdid.recorded_source", directory=os.path.basename(photo.root))]
+
+        sharp, topiq = record.get("adj_sharpness"), record.get("adj_topiq")
+        if sharp is not None and topiq is not None:
+            info_lines.append(
+                t("logs.pending_metrics", sharp=f"{sharp:.0f}", nima=f"{topiq:.1f}")
+            )
+
+        focus_status = record.get("focus_status")
+        if focus_status in self._FOCUS_STATUS_I18N:
+            info_lines.append(
+                t(self._FOCUS_STATUS_I18N[focus_status]).lstrip("，, ").strip()
+            )
+        if record.get("is_flying"):
+            info_lines.append(t("birdid.recorded_flight"))
+        if record.get("picked"):
+            info_lines.append(t("birdid.recorded_picked"))
+
+        info_label = QLabel(" · ".join(info_lines))
+        info_label.setWordWrap(True)
+        info_label.setStyleSheet(f"""
+            color: {COLORS['text_secondary']};
+            font-size: 11px;
+            padding: 8px 10px;
+            background-color: {COLORS['bg_elevated']};
+            border-radius: 6px;
+            line-height: 1.4;
+        """)
+        self.results_layout.addWidget(info_label)
+
+        # ── 星级 / Rating ────────────────────────────────────────────────────
+        rating = record.get("rating")
+        if rating is not None:
+            rating_label = QLabel()
+            rating_label.setAlignment(ALIGN_CENTER)
+            if rating >= 1:
+                rating_label.setPixmap(
+                    stars_pixmap(int(rating), COLORS.get('star_gold', '#d4a800'), size=20)
+                )
+            else:
+                rating_label.setText(t("browser.focus_no_bird") if rating < 0 else "0★")
+                rating_label.setStyleSheet(
+                    f"color: {COLORS['text_muted']}; font-size: 15px; "
+                    f"font-weight: 600; padding: 6px;"
+                )
+            self.results_layout.addWidget(rating_label)
+
+        # ── 鸟种卡片 / Species card ──────────────────────────────────────────
+        cn_name = (record.get("bird_species_cn") or "").strip()
+        en_name = (record.get("bird_species_en") or "").strip()
+        confidence = record.get("birdid_confidence")
+        unconfirmed = False
+
+        if not (cn_name or en_name):
+            # 确认鸟种为空时退回「待确定候选」（V10 起入库；老库没有这几列）
+            # Fall back to the unconfirmed candidate (schema V10; absent in old DBs).
+            from tools.species_display import UNCONFIRMED_SPECIES_MIN_CONFIDENCE
+            alt_conf = record.get("alt_confidence")
+            if alt_conf is not None and alt_conf >= UNCONFIRMED_SPECIES_MIN_CONFIDENCE:
+                cn_name = (record.get("alt_species_cn") or "").strip()
+                en_name = (record.get("alt_species_en") or "").strip()
+                confidence = alt_conf
+                unconfirmed = True
+
+        if cn_name or en_name:
+            conf_value = float(confidence) if confidence is not None else 0.0
+            display_cn, display_en = cn_name or en_name, en_name or cn_name
+            if unconfirmed:
+                display_cn = t("birdid.species_unconfirmed",
+                               name=display_cn, confidence=f"{conf_value:.0f}")
+                display_en = t("birdid.species_unconfirmed",
+                               name=display_en, confidence=f"{conf_value:.0f}")
+            card = ResultCard(rank=1, cn_name=display_cn, en_name=display_en,
+                              confidence=conf_value)
+            card.clicked.connect(self.on_result_card_clicked)
+            card.set_selected(True)
+            self.result_cards.append(card)
+            self.results_layout.addWidget(card)
+            self.identify_results = [{
+                "cn_name": display_cn,
+                "en_name": display_en,
+                "confidence": conf_value,
+            }]
+            self._update_status_label()
+        else:
+            no_species = QLabel(t("birdid.recorded_no_species"))
+            no_species.setAlignment(ALIGN_CENTER)
+            no_species.setStyleSheet(
+                f"color: {COLORS['text_muted']}; font-size: 12px; padding: 8px;"
+            )
+            self.results_layout.addWidget(no_species)
+            self.status_label.setText(t("birdid.recorded_badge"))
+            self.status_label.setStyleSheet(
+                f"font-size: 11px; color: {COLORS['text_muted']};"
+            )
+
+        # ── 当时的控制台原文 / The console lines logged back then ────────────
+        if photo.log_lines:
+            log_title = QLabel(t("birdid.recorded_log_title"))
+            log_title.setStyleSheet(
+                f"color: {COLORS['text_tertiary']}; font-size: 10px; "
+                f"letter-spacing: 1px; padding-top: 4px;"
+            )
+            self.results_layout.addWidget(log_title)
+
+            log_label = QLabel("\n".join(photo.log_lines))
+            log_label.setWordWrap(True)
+            log_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            log_label.setStyleSheet(f"""
+                color: {COLORS['text_tertiary']};
+                font-size: 10px;
+                font-family: {FONTS['mono']};
+                padding: 8px 10px;
+                background-color: {COLORS['bg_elevated']};
+                border-radius: 6px;
+            """)
+            self.results_layout.addWidget(log_label)
+
+        # ── 重新识别 / Re-identify ───────────────────────────────────────────
+        reidentify_btn = QPushButton(t("birdid.btn_reidentify"))
+        reidentify_btn.setCursor(POINTING_HAND_CURSOR)
+        reidentify_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {COLORS['bg_card']};
+                border: 1px solid {COLORS['border']};
+                color: {COLORS['text_secondary']};
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-size: 12px;
+            }}
+            QPushButton:hover {{
+                border-color: {COLORS['accent']};
+                color: {COLORS['accent']};
+            }}
+        """)
+        reidentify_btn.clicked.connect(
+            lambda _checked=False, p=file_path: self.on_file_dropped(p, force_identify=True)
+        )
+        self.results_layout.addWidget(reidentify_btn)
+
+        self.results_layout.addStretch()
 
     def _start_identify(self, file_path: str):
         if hasattr(self, 'worker') and self.worker is not None:
