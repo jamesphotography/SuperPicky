@@ -1827,6 +1827,14 @@ class SuperPickyMainWindow(QMainWindow):
         self._log(self.i18n.t("messages.dir_selected", directory=directory))
         self._check_directory_health(directory)
 
+        # 已处理过的目录：把上次那一屏控制台内容从 superpicky.log 回放回来，
+        # 否则用户重新浏览时只能看到一个空控制台（逐张结果与统计报告都只在文件里）。
+        # 右侧识鸟面板同步恢复处理结束时的完成统计，两边合起来才是完整的上次现场。
+        # Replay the previous run's console output and restore the completion
+        # summary to the BirdID dock; together they rebuild the full last scene.
+        self._restore_console_from_log(directory)
+        self._restore_completion_panel(directory)
+
         # 写入最近目录历史并刷新菜单
         self.config.add_recent_directory(directory)
         self._refresh_recent_menu()
@@ -3304,23 +3312,30 @@ class SuperPickyMainWindow(QMainWindow):
 
     # ========== 辅助方法 ==========
 
-    def _log(self, message, tag=None):
-        """输出日志"""
-        from datetime import datetime
-        
-        # 线程安全检查：如果在非主线程中调用，通过信号发送（修复 preloading_models 导致的 Crash）
-        # tag 可能是 None，但 Signal(str, str) 不接受 None，所以转为空字符串
-        if QThread.currentThread() != self.thread():
-            self.log_signal.emit(message, tag if tag else "")
-            return
+    def _log_line_html(self, message: str, tag: Optional[str], timestamp: str) -> str:
+        """
+        把一条日志渲染成控制台用的 HTML 片段（含结尾 ``<br>``）。
 
-        print(message)
+        从 ``_log`` 抽出，供实时日志与「历史日志回放」
+        （``_restore_console_from_log``）共用，保证同一条消息不论现跑还是回放，
+        颜色与排版完全一致。
 
+        参数 / Parameters:
+            message (str): 日志正文（未去 emoji，本方法内部统一处理）/
+                Message text; emoji are stripped here.
+            tag (Optional[str]): 日志级别标签（error/warning/success/
+                success_check/info/muted/photo_good/species/None）/ Level tag.
+            timestamp (str): 时间列文字 "HH:MM:SS"；传空串则不显示时间列 /
+                Clock text; pass "" to omit the time column.
+
+        返回 / Returns:
+            str: 可直接 ``insertHtml`` 的片段 / An insertHtml-ready fragment.
+
+        Render one log message as console HTML. Extracted from ``_log`` so live
+        logging and log replay share exactly the same colours and layout.
+        """
         # 运行日志统一去除 emoji(横幅与「预加载完成」绿勾另行用 SVG 图标)
         message = _LOG_EMOJI_RE.sub("", message)
-
-        cursor = self.log_text.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
 
         # 根据标签选择颜色
         if tag == "error":
@@ -3331,11 +3346,13 @@ class SuperPickyMainWindow(QMainWindow):
             color = LOG_COLORS['success']
         elif tag == "info":
             color = LOG_COLORS['info']
+        elif tag == "muted":
+            # 回放会话头/统计块用弱化色，避免只写文件的结构化信息喧宾夺主
+            # Replayed file-only header/summary blocks render muted.
+            color = LOG_COLORS['muted']
         else:
             color = LOG_COLORS['default']
 
-        # 时间戳
-        timestamp = datetime.now().strftime("%H:%M:%S")
         time_color = LOG_COLORS['time']
 
         # success_check:仅「所有模型预加载完成」用绿勾 SVG(唯一保留的状态标记)
@@ -3371,16 +3388,152 @@ class SuperPickyMainWindow(QMainWindow):
             body_html = f'<span style="color: {color};">{_m}</span>'
 
         # 对于简短消息添加时间戳
-        if len(message) < 100 and '\n' not in message:
-            cursor.insertHtml(
-                f'<span style="color: {time_color};">{timestamp}</span> '
-                f'{icon_html}{body_html}<br>'
-            )
-        else:
-            cursor.insertHtml(f'{icon_html}{body_html}<br>')
+        if timestamp and len(message) < 100 and '\n' not in message:
+            return (f'<span style="color: {time_color};">{timestamp}</span> '
+                    f'{icon_html}{body_html}<br>')
+        return f'{icon_html}{body_html}<br>'
 
+    def _log(self, message, tag=None):
+        """输出日志"""
+        from datetime import datetime
+
+        # 线程安全检查：如果在非主线程中调用，通过信号发送（修复 preloading_models 导致的 Crash）
+        # tag 可能是 None，但 Signal(str, str) 不接受 None，所以转为空字符串
+        if QThread.currentThread() != self.thread():
+            self.log_signal.emit(message, tag if tag else "")
+            return
+
+        print(message)
+
+        cursor = self.log_text.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.insertHtml(
+            self._log_line_html(message, tag, datetime.now().strftime("%H:%M:%S"))
+        )
         self.log_text.setTextCursor(cursor)
         self.log_text.ensureCursorVisible()
+
+    def _restore_console_from_log(self, directory: str) -> bool:
+        """
+        把已处理目录的 ``superpicky.log`` 回放到控制台。
+
+        重新浏览一个处理过的目录时，控制台原本是空的——上次那一屏逐张结果、
+        识鸟记录和统计报告只存在于日志文件里。这里把它读回来，让用户不重跑
+        也能看到上次处理过程。
+
+        行级别没有落盘，颜色由 ``core.log_restore.infer_tag`` 按内容反推；
+        超长日志只取首尾两段（见 ``core.log_restore`` 的行数上限说明），
+        中间省略多少行会在控制台明写出来，不做无声截断。
+
+        参数 / Parameters:
+            directory (str): 被选中的目录 / The directory just selected.
+
+        返回 / Returns:
+            bool: 是否确实回放了日志（无日志文件/空文件时为 False）/
+                Whether a log was actually replayed.
+
+        Replay a processed directory's console log. Levels are not persisted, so
+        colours are inferred from the text; very long logs keep only their head
+        and tail, and the number of omitted lines is stated in the console
+        rather than silently dropped.
+        """
+        from core.log_restore import find_log_file, read_log_lines
+
+        log_path = find_log_file(directory)
+        if not log_path:
+            return False
+
+        try:
+            result = read_log_lines(log_path)
+        except OSError as err:
+            self._log(self.i18n.t("logs.replay_failed", error=str(err)), "warning")
+            return False
+
+        if result.total == 0:
+            return False
+
+        fragments = [
+            self._log_line_html(self.i18n.t("logs.replay_header", file=log_path), "muted", "")
+        ]
+        for line in result.head:
+            fragments.append(self._log_line_html(line.message, line.tag, line.time_text))
+        if result.skipped:
+            fragments.append(
+                self._log_line_html(
+                    self.i18n.t("logs.replay_omitted", count=result.skipped, file=log_path),
+                    "muted",
+                    "",
+                )
+            )
+        for line in result.tail:
+            fragments.append(self._log_line_html(line.message, line.tag, line.time_text))
+        fragments.append(
+            self._log_line_html(self.i18n.t("logs.replay_footer", total=result.total), "muted", "")
+        )
+
+        cursor = self.log_text.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.insertHtml("".join(fragments))
+        self.log_text.setTextCursor(cursor)
+        self.log_text.ensureCursorVisible()
+        return True
+
+    def _restore_completion_panel(self, directory: str) -> bool:
+        """
+        把上次处理结束时的完成统计恢复到右侧识鸟面板。
+
+        与控制台回放配套：控制台恢复的是「过程」，这里恢复的是「结果」——星级
+        分布、飞版/精焦计数、识别到的鸟种名录，也就是处理跑完那一刻面板上显示的
+        那一屏（``BirdIDDockWidget.show_completion_message``）。
+
+        鸟种的罕见度着色需要 ``gbif_rarity_100``，而日志摘要里只有鸟名，所以额外
+        跑一趟 report.db 把档位补回来（只读）。补不到就按普通鸟种显示，不影响数字。
+
+        参数 / Parameters:
+            directory (str): 被选中的目录 / The directory just selected.
+
+        返回 / Returns:
+            bool: 是否恢复了完成统计（无日志/无已完成会话/无面板时为 False）/
+                Whether the completion panel was restored.
+
+        Restore the completion summary to the BirdID dock, the counterpart of the
+        console replay: the console restores the *process*, this restores the
+        *result*. Species rarity colours need ``gbif_rarity_100``, which the log
+        summary lacks, so tiers are read back from report.db (read-only); missing
+        tiers only cost the colour, never the numbers.
+        """
+        dock = getattr(self, "birdid_dock", None)
+        if dock is None:
+            return False
+
+        from core.log_restore import find_log_file, parse_session_summary
+
+        log_path = find_log_file(directory)
+        if not log_path:
+            return False
+
+        stats = parse_session_summary(log_path)
+        if not stats:
+            return False
+
+        try:
+            from core.processed_lookup import collect_species_tiers
+            tiers = collect_species_tiers(directory)
+        except Exception as err:                      # noqa: BLE001 - 见 docstring
+            print(f"[MainWindow] 罕见度档位读取失败 / rarity tier lookup failed: {err}")
+            tiers = {}
+
+        for species in stats.get("bird_species", []):
+            # 不能写成 `a or b`：档位 0（常见）是合法值但为假值，会被误判成没查到
+            # Not `a or b`: tier 0 (common) is a valid but falsy value.
+            tier = tiers.get(species.get("cn_name"))
+            if tier is None:
+                tier = tiers.get(species.get("en_name"))
+            if tier is not None:
+                species["gbif_tier"] = tier
+
+        dock.show_completion_message(stats)
+        return True
 
     def _show_initial_help(self):
         """显示初始帮助信息(HTML:图标左对齐、同行图标与文字垂直居中)"""
