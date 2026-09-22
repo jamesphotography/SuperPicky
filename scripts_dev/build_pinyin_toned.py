@@ -37,6 +37,26 @@ from typing import Dict, List, Tuple
 # Toned vowels, used to verify the output actually carries tone marks.
 TONE_MARKS = "āáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜ"
 
+# 鸟名的两个来源，(相对仓库的路径, 表名, 中文名列)。
+#
+# 必须两个都收：界面上的鸟名来自不同的库——鸟名查询面板与改鸟种弹窗读名录库，
+# 详情面板与识鸟结果卡片显示的是识鸟结果（经 report.db，名字来自识鸟库）。
+# 只从名录库生成时，识鸟库独有的一千多个鸟种在详情面板里拼音是空的，而且
+# 不报错，没人会发现。
+# Both sources are required: the two databases feed different parts of the UI,
+# and building from only one left ~1000 species silently without pinyin.
+NAME_SOURCES = (
+    (os.path.join("ioc", "birdname.db"), "birds", "chinese_name"),
+    (os.path.join("birdid", "data", "bird_reference.sqlite"),
+     "BirdCountInfo", "chinese_simplified"),
+)
+
+# 识鸟库里有 19 条鸟名以 ``*`` 开头（存疑名的标记）。标记不是名字的一部分，
+# 不剥掉的话界面上会显示「* běi měi wū yā」。半角全角都处理。
+# Leading asterisks mark uncertain names in the reference database; they are
+# not part of the name and must not reach the pinyin.
+_UNCERTAIN_MARKS = "*＊"
+
 # ----------------------------------------------------------------------
 #  人工裁定表 / Hand-adjudicated overrides
 #
@@ -122,6 +142,22 @@ def _ensure_overrides_loaded() -> None:
     _loaded = True
 
 
+def normalize_name(raw: Optional[str]) -> str:
+    """
+    把库里读到的鸟名归一化：去首尾空白、剥掉存疑名的 ``*`` 标记。
+
+    参数 / Parameters:
+    raw (Optional[str]): 库里的原始值 / The raw value from a database.
+
+    返回 / Returns:
+    str: 归一化后的鸟名，无内容时为空串 / The normalised name, or "".
+
+    Normalise a name read from a database: trim, then strip the leading
+    uncertainty marker so it never reaches the pinyin.
+    """
+    return (raw or "").strip().lstrip(_UNCERTAIN_MARKS).strip()
+
+
 def toned_pinyin(chinese_name: str) -> str:
     """
     把一个中文鸟名转成空格分隔的带声调拼音。
@@ -134,7 +170,7 @@ def toned_pinyin(chinese_name: str) -> str:
 
     Convert one Chinese bird name into space-separated toned pinyin.
     """
-    name = (chinese_name or "").strip()
+    name = normalize_name(chinese_name)
     if not name:
         return ""
     _ensure_overrides_loaded()
@@ -164,18 +200,46 @@ def _strip_tone(syllable: str) -> str:
     return base
 
 
-def _read_names(db_path: str) -> Dict[str, set]:
+def _read_names(db_path: str, table: str, column: str) -> List[str]:
     """
-    读出库里全部中文名及其（可能多条的）无声调拼音。
+    读出一个源库里全部（归一化后的）中文鸟名。
 
     参数 / Parameters:
-    db_path (str): `ioc/birdname.db` 的路径。
+    db_path (str): 源库路径 / Path to the source database.
+    table (str): 表名 / Table holding the names.
+    column (str): 中文名所在列 / Column holding the Chinese name.
+
+    返回 / Returns:
+    List[str]: 归一化后的鸟名，保持库内顺序、可能重复 / Normalised names.
+
+    表名与列名来自模块内的 NAME_SOURCES 常量而非外部输入，故直接内插；
+    值一律走参数化以外的只读查询，不接受调用方传入的过滤条件。
+    Table and column names come from the module-level NAME_SOURCES constant,
+    never from user input.
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute(
+            f'SELECT DISTINCT "{column}" FROM "{table}" '
+            f'WHERE "{column}" IS NOT NULL AND TRIM("{column}") != \'\''
+        ).fetchall()
+    finally:
+        conn.close()
+    return [normalize_name(row[0]) for row in rows]
+
+
+def _read_shipped_pinyin(db_path: str) -> Dict[str, set]:
+    """
+    读出名录库自带的无声调拼音，供 ``--check`` 对账。
+
+    参数 / Parameters:
+    db_path (str): `ioc/birdname.db` 的路径 / Path to the catalog database.
 
     返回 / Returns:
     Dict[str, set]: {中文名: {无声调拼音, ...}}。同一个名字在多个鸟名版本里
         重复出现是常态，故按名字去重。
 
-    Read every Chinese name and its shipped toneless pinyin(s).
+    Read the catalog's own toneless pinyin column for the --check diff.
     """
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -188,7 +252,7 @@ def _read_names(db_path: str) -> Dict[str, set]:
         conn.close()
     names: Dict[str, set] = {}
     for row in rows:
-        names.setdefault(row["chinese_name"], set()).add(
+        names.setdefault(normalize_name(row["chinese_name"]), set()).add(
             (row["pinyin_name"] or "").strip())
     return names
 
@@ -209,7 +273,7 @@ def compare_with_shipped(db_path: str) -> List[Tuple[str, str, str]]:
     override table deliberately decided against the shipped data.
     """
     diffs: List[Tuple[str, str, str]] = []
-    for name, shipped in _read_names(db_path).items():
+    for name, shipped in _read_shipped_pinyin(db_path).items():
         toned = toned_pinyin(name)
         stripped = [_strip_tone(s) for s in toned.split()]
         if any(p.split() == stripped for p in shipped):
@@ -218,26 +282,34 @@ def compare_with_shipped(db_path: str) -> List[Tuple[str, str, str]]:
     return diffs
 
 
-def build_pinyin_file(db_path: str, out_path: str) -> int:
+def build_pinyin_file(sources, out_path: str) -> int:
     """
-    生成 `pinyin_toned.json`。
+    生成 `pinyin_toned.json`，取所有源库鸟名的并集。
 
     参数 / Parameters:
-    db_path (str): `ioc/birdname.db` 的路径。
+    sources (Iterable[Tuple[str, str, str]]): 源库清单，每项为
+        (库路径, 表名, 中文名列)，通常直接传 ``NAME_SOURCES``。
     out_path (str): 产物路径。
 
     返回 / Returns:
-    int: 写入的鸟名条数。
+    int: 写入的鸟名条数（并集去重后）。
 
     异常 / Raises:
     ValueError: 有中文名无法转写（转写结果为空，或没有任何调号）。
         这种情况必须整个构建失败，不能静默写一条空值——那条鸟名的拼音会就此
         永远缺失，而界面上只是少显示一行，没有人会发现。
 
-    Build the JSON artifact; refuses to emit a silently empty entry.
+    Build the JSON artifact from the union of every source's names; refuses to
+    emit a silently empty entry.
     """
+    names: List[str] = []
+    for db_path, source_table, column in sources:
+        names.extend(_read_names(db_path, source_table, column))
+
     table: Dict[str, str] = {}
-    for name in _read_names(db_path):
+    for name in names:
+        if not name or name in table:
+            continue
         toned = toned_pinyin(name)
         if not toned or not any(ch in TONE_MARKS for ch in toned):
             raise ValueError(
@@ -256,15 +328,18 @@ def build_pinyin_file(db_path: str, out_path: str) -> int:
 def main(argv: List[str]) -> int:
     """命令行入口 / CLI entry point."""
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    db_path = os.path.join(repo, "ioc", "birdname.db")
+    catalog_path = os.path.join(repo, "ioc", "birdname.db")
     out_path = os.path.join(repo, "ioc", "pinyin_toned.json")
+    sources = [(os.path.join(repo, rel), tbl, col)
+               for rel, tbl, col in NAME_SOURCES]
 
-    if not os.path.exists(db_path):
-        print(f"[ERROR] missing {db_path}")
-        return 1
+    for path, _tbl, _col in sources:
+        if not os.path.exists(path):
+            print(f"[ERROR] missing {path}")
+            return 1
 
     if "--check" in argv:
-        diffs = compare_with_shipped(db_path)
+        diffs = compare_with_shipped(catalog_path)
         print(f"[check] names with a reading different from the shipped "
               f"toneless column: {len(diffs)}")
         for name, shipped, toned in diffs[:40]:
@@ -273,7 +348,7 @@ def main(argv: List[str]) -> int:
             print(f"  ... and {len(diffs) - 40} more")
         return 0
 
-    count = build_pinyin_file(db_path, out_path)
+    count = build_pinyin_file(sources, out_path)
     size_kb = os.path.getsize(out_path) / 1024
     print(f"[ok] wrote {count} names -> {out_path} ({size_kb:.0f} KB)")
     return 0
