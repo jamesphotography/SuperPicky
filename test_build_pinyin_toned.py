@@ -137,7 +137,7 @@ def test_build_writes_every_name_with_tone_marks(tmp_path):
     conn.close()
 
     out = str(tmp_path / "pinyin_toned.json")
-    count = build_pinyin_file(db, out)
+    count = build_pinyin_file([(db, "birds", "chinese_name")], out)
 
     data = json.loads(open(out, encoding="utf-8").read())
     assert count == 2
@@ -164,4 +164,99 @@ def test_build_rejects_a_name_it_cannot_romanize(tmp_path):
     conn.close()
 
     with pytest.raises(ValueError, match="无法转写|cannot romanize"):
-        build_pinyin_file(db, str(tmp_path / "out.json"))
+        build_pinyin_file([(db, "birds", "chinese_name")], str(tmp_path / "out.json"))
+
+
+# ======================================================================
+#  多源：拼音表必须覆盖**两个**库里的鸟名
+#
+#  界面上的鸟名来自两个不同的库：
+#    ioc/birdname.db（名录）        —— 鸟名查询面板、改鸟种弹窗
+#    bird_reference.sqlite（识鸟库）—— 详情面板、识鸟结果卡片（经 report.db）
+#
+#  拼音表最初只从名录库生成，于是识鸟库独有的 1000 多个鸟种在详情面板里拼音
+#  是空的——静默缺失，不报错。表必须取两个库的并集。
+#
+#  The displayed names come from two databases; building the table from only
+#  one left ~1000 species silently without pinyin.
+# ======================================================================
+
+
+def test_build_merges_names_from_every_source(tmp_path):
+    """两个源库各自独有的鸟名都要进产物，重复的只留一条。"""
+    import json as _json
+    import sqlite3 as _sqlite3
+    from scripts_dev.build_pinyin_toned import build_pinyin_file
+
+    catalog = str(tmp_path / "birdname.db")
+    conn = _sqlite3.connect(catalog)
+    conn.execute("CREATE TABLE birds (chinese_name TEXT)")
+    conn.executemany("INSERT INTO birds VALUES (?)", [("家燕",), ("中杓鹬",)])
+    conn.commit(); conn.close()
+
+    reference = str(tmp_path / "bird_reference.sqlite")
+    conn = _sqlite3.connect(reference)
+    conn.execute("CREATE TABLE BirdCountInfo (chinese_simplified TEXT)")
+    conn.executemany("INSERT INTO BirdCountInfo VALUES (?)",
+                     [("家燕",), ("东方鹗",)])          # 家燕重复，东方鹗是识鸟库独有
+    conn.commit(); conn.close()
+
+    out = str(tmp_path / "pinyin_toned.json")
+    count = build_pinyin_file(
+        [(catalog, "birds", "chinese_name"),
+         (reference, "BirdCountInfo", "chinese_simplified")], out)
+
+    data = _json.loads(open(out, encoding="utf-8").read())
+    assert count == 3
+    assert set(data) == {"家燕", "中杓鹬", "东方鹗"}
+
+
+def test_uncertain_name_marker_is_stripped():
+    """
+    识鸟库里 19 条鸟名带 ``*`` 前缀（存疑名标记），星号不得进拼音。
+
+    不剥的话界面上会显示「* běi měi wū yā」。
+    """
+    from scripts_dev.build_pinyin_toned import toned_pinyin
+
+    assert toned_pinyin("*北美乌鸦") == "běi měi wū yā"
+    assert toned_pinyin("＊北美乌鸦") == "běi měi wū yā"
+
+
+def test_shipped_table_covers_every_name_in_both_databases():
+    """
+    防脱节守卫：两个源库里的每一个中文名都必须能查到拼音。
+
+    拼音表是**派生数据**。任何一个源库变动（例如 #110 那次 60 个改名）之后忘了
+    重跑构建脚本，界面上就会有鸟种悄悄没有拼音——不报错、没人发现。靠这条测试
+    盯住，比靠记性可靠。
+
+    Drift guard: the table is derived data, so a source database changing
+    without a rebuild would silently drop pinyin for some species.
+    """
+    import sqlite3 as _sqlite3
+    from tools.pinyin_names import pinyin_for
+    from scripts_dev.build_pinyin_toned import NAME_SOURCES, normalize_name
+
+    repo = os.path.dirname(os.path.abspath(__file__))
+    missing = []
+    for rel_path, table, column in NAME_SOURCES:
+        # 按仓库根解析，不依赖 pytest 的当前工作目录
+        # Resolve against the repo root rather than the process CWD.
+        conn = _sqlite3.connect(os.path.join(repo, rel_path))
+        try:
+            rows = conn.execute(
+                f'SELECT DISTINCT "{column}" FROM "{table}" '
+                f'WHERE "{column}" IS NOT NULL AND TRIM("{column}") != ""'
+            ).fetchall()
+        finally:
+            conn.close()
+        for (raw,) in rows:
+            name = normalize_name(raw)
+            if name and not pinyin_for(name):
+                missing.append((rel_path, name))
+
+    assert not missing, (
+        f"{len(missing)} 个鸟名查不到拼音，源库变动后需重跑 "
+        f"scripts_dev/build_pinyin_toned.py；例：{missing[:5]}"
+    )
