@@ -1,3 +1,72 @@
+# SuperPicky 未发布 / Unreleased
+
+**Since RC7:**
+
+1. **Reopening a processed folder brings back what you saw last time.** The
+   console replays that folder's own `superpicky.log`, the Bird ID panel shows
+   the completion summary again (star breakdown, picked, in-flight, precise
+   focus, species list, total time), and dropping an already-processed photo
+   into the panel shows what the previous run recorded — species, confidence,
+   star rating, focus status and the stored crop preview — instead of spending
+   seconds decoding the RAW and re-running the models. A "re-identify" button
+   is always there if you do want a fresh run. Contributed by @OscarKing888
+   (#109).
+
+2. **Chinese bird names updated to the current ChinaBirds checklist** (60
+   names). Contributed by @lhy1024 (#110).
+
+   **Four of those names now belong to a different species.** Folders, the
+   report's species list and the eBird export all key on the Chinese name, so
+   this matters if you have older batches:
+
+   | Name | Used to mean | Now means |
+   |---|---|---|
+   | 大山雀 | Parus major (Great Tit) | Parus cinereus (Cinereous Tit) |
+   | 灰眉岩鹀 | Emberiza cia (Rock Bunting) | Emberiza godlewskii |
+   | 虎斑地鸫 | Zoothera dauma (Scaly Thrush) | Zoothera aurea |
+   | 红眉朱雀 | Carpodacus davidianus | Carpodacus pulcherrimus |
+
+   Batches processed before this update keep the names they were filed under,
+   so a `大山雀` folder from an older run still holds Great Tits. Nothing is
+   renamed on disk and no photo is moved. Two things to know: browsing several
+   batches together groups by name, so old and new batches using the same name
+   would be shown as one species; and the eBird export cross-checks the Chinese
+   and English names, so affected records land in its "needs verification" list
+   rather than being exported silently under the new meaning.
+
+---
+
+# SuperPicky 未发布（中文）
+
+**RC7 以来的变化：**
+
+1. **重新打开处理过的目录，会恢复上次那一屏。** 控制台回放该目录自己的
+   `superpicky.log`，识鸟面板重新显示完成统计（星级分布、精选、飞版、精焦、
+   鸟种名录、总耗时）；把已处理过的照片拖进面板，直接显示上次处理留下的结果
+   ——鸟种、置信度、星级、对焦状态和当时的裁切预览图——不再花好几秒重新解码
+   RAW、重跑模型。结果区始终留着「重新识别」按钮，想现跑随时可以。
+   由 @OscarKing888 贡献（#109）。
+
+2. **中文鸟名同步到现行 ChinaBirds 名录**（60 个）。由 @lhy1024 贡献（#110）。
+
+   **其中 4 个名字现在指的是另一个鸟种了。** 分目录、报告的鸟种清单、eBird
+   导出都以中文鸟名为准，所以如果你有旧批次，这条值得看一眼：
+
+   | 名字 | 原来指 | 现在指 |
+   |---|---|---|
+   | 大山雀 | Parus major（欧亚大山雀） | Parus cinereus（苍背山雀） |
+   | 灰眉岩鹀 | Emberiza cia（淡灰眉岩鹀） | Emberiza godlewskii（戈氏岩鹀） |
+   | 虎斑地鸫 | Zoothera dauma（小虎斑地鸫） | Zoothera aurea（怀氏虎鸫） |
+   | 红眉朱雀 | Carpodacus davidianus（中华朱雀） | Carpodacus pulcherrimus |
+
+   本次更新之前处理的批次，仍沿用当时归档的名字——旧批次里的 `大山雀` 目录装
+   的还是 Parus major。磁盘上不会有任何目录被改名，也不会有照片被移动。两点
+   需要知道：合并浏览多个批次时按名字分组，旧批次与新批次用同一个名字会被显示
+   成同一个鸟种；eBird 导出会交叉核对中英文名，受影响的记录会进「待核对」清单，
+   不会按新含义静默导出。
+
+---
+
 # SuperPicky 4.6.3 RC7
 
 **What's new since RC6:**
