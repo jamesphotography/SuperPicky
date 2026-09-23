@@ -64,6 +64,37 @@ def _get_latest_version_id(db_path: str) -> Optional[int]:
         return None
 
 
+def identify_result_to_bird_data(item: Dict) -> Dict:
+    """
+    把 identify_bird 的一条结果翻译成候选卡片/确认逻辑用的形状。
+
+    两边只差一层命名：识别结果用 ``cn_name / en_name / scientific_name``，
+    卡片与 ``_on_confirm`` 读 ``chinese_name / english_name / latin_name``。
+    识别结果自带这三个名字，所以重新识别这条路径**不经过名录库**——
+    「识别出的鸟种不在名录里」的问题在这里不会发生。
+
+    参数 / Parameters:
+        item (Dict): identify_bird 返回的 ``results`` 中的一项。
+
+    返回 / Returns:
+        Dict: 候选数据；缺失的名字一律补空串，不让整条候选失效——用户明确
+            要求候选全部列出由他自己判断（2026-09-23）。
+
+    Translate one identify_bird result into the shape the candidate cards and
+    the confirm logic already use; missing names become empty strings rather
+    than dropping the candidate.
+    """
+    return {
+        "bird_id": item.get("class_id"),
+        "chinese_name": (item.get("cn_name") or "").strip(),
+        "english_name": (item.get("en_name") or "").strip(),
+        "latin_name": (item.get("scientific_name") or "").strip(),
+        "pinyin_name": "",
+        "abbreviation": "",
+        "confidence": item.get("confidence"),
+    }
+
+
 class BirdSpeciesEditDialog(QDialog):
     """
     鸟种编辑弹窗。
@@ -86,10 +117,17 @@ class BirdSpeciesEditDialog(QDialog):
     _WIDTH = 420
     _HEIGHT = 520
 
-    def __init__(self, parent=None, session_species=None, exclude_species=None):
+    def __init__(self, parent=None, session_species=None, exclude_species=None,
+                 photo_path: Optional[str] = None):
         """
         参数 / Args:
             parent:          父窗口
+            photo_path:      「这一张」照片的绝对路径。给了且文件存在时，弹窗会
+                             提供「重新识别这张」——让模型重跑一次并把候选列出来。
+                             主处理流程复用的是选片阶段 YOLO 裁好的框
+                             （preloaded_crop），而这里会全图重跑 YOLO 并读对焦点
+                             在多只鸟里挑，所以「框错了鸟」这类错误有机会被纠正。
+                             不传则不显示该按钮（整种合并/多选批量没有单一照片）。
             session_species: 本次拍到的鸟种 [(中文名, 张数)]，按张数降序。
                              搜索框还空着时先列出它们——改鸟种最常见的情形是
                              「认成了隔壁那种」，而那种当天多半也拍到了。
@@ -125,6 +163,16 @@ class BirdSpeciesEditDialog(QDialog):
         self._db_path = _get_birdname_db_path()
         self._version_id: Optional[int] = _get_latest_version_id(self._db_path)
         self._cards: list = []
+
+        # 重新识别：只有调用方给了「这一张」的路径、且文件还在时才提供。
+        # 整种合并与多选批量也复用本弹窗，那些场景没有单一照片可识别。
+        # Re-identification needs one existing photo; the merge and batch entry
+        # points reuse this dialog and have no single photo to work on.
+        self._photo_path: Optional[str] = (
+            photo_path if photo_path and os.path.exists(photo_path) else None
+        )
+        self._identify_worker = None
+        self.reidentify_button: Optional[QPushButton] = None
 
         self.setWindowTitle(self.i18n.t("bird_species_edit.title"))
         self.setFixedSize(self._WIDTH, self._HEIGHT)
@@ -219,6 +267,31 @@ class BirdSpeciesEditDialog(QDialog):
 
         list_frame_layout.addWidget(self._scroll)
         root.addWidget(list_frame, 1)
+
+        # 重新识别按钮：紧贴搜索框下方，与「搜索」并列为两种产生候选的方式。
+        # Sits under the search box: re-identification is simply another way to
+        # produce candidates, alongside searching.
+        if self._photo_path:
+            self.reidentify_button = QPushButton(
+                self.i18n.t("bird_species_edit.reidentify"))
+            self.reidentify_button.setFixedHeight(32)
+            self.reidentify_button.setCursor(Qt.PointingHandCursor)
+            self.reidentify_button.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: transparent;
+                    border: 1px solid {COLORS['border']};
+                    border-radius: 6px;
+                    color: {COLORS['text_secondary']};
+                    font-size: 12px;
+                }}
+                QPushButton:hover {{
+                    border-color: {COLORS['accent']};
+                    color: {COLORS['accent']};
+                }}
+                QPushButton:disabled {{ color: {COLORS['text_muted']}; }}
+            """)
+            self.reidentify_button.clicked.connect(self._on_reidentify_clicked)
+            root.addWidget(self.reidentify_button)
 
         # 确认 / 取消按钮行
         btn_row = QHBoxLayout()
@@ -495,6 +568,96 @@ class BirdSpeciesEditDialog(QDialog):
             return {r["chinese_name"]: r for r in rows}
         except Exception:
             return {}
+
+    def _on_reidentify_clicked(self) -> None:
+        """
+        点「重新识别这张」：起后台线程跑模型，期间禁用按钮并提示进行中。
+
+        复用识鸟面板的 IdentifyWorker（自包含的 QThread，路径+参数进、dict 出），
+        地理过滤等参数同样取自 advanced_config，与面板保持一致。
+
+        Start the shared IdentifyWorker; parameters come from advanced_config so
+        this behaves exactly like the Bird ID panel.
+        """
+        if not self._photo_path or self._identify_worker is not None:
+            return
+        from advanced_config import get_advanced_config
+        from ui.birdid_dock import IdentifyWorker
+
+        cfg = get_advanced_config()
+        self._clear_results()
+        self._scroll.hide()
+        self._empty_label.setText(self.i18n.t("bird_species_edit.reidentifying"))
+        self._empty_label.show()
+        if self.reidentify_button is not None:
+            self.reidentify_button.setEnabled(False)
+
+        worker = IdentifyWorker(
+            self._photo_path,
+            top_k=5,
+            use_gps=True,
+            use_geo_filter=bool(getattr(cfg, "birdid_use_geo_filter", True)),
+            country_code=getattr(cfg, "birdid_country_code", None),
+            region_code=getattr(cfg, "birdid_region_code", None),
+            name_format=cfg.name_format,
+        )
+        worker.finished.connect(self._show_identify_results)
+        worker.error.connect(self._show_identify_error)
+        self._identify_worker = worker
+        worker.start()
+
+    def _finish_identify(self) -> None:
+        """识别结束（成功或失败）后的收尾：放开按钮、松开线程引用。"""
+        self._identify_worker = None
+        if self.reidentify_button is not None:
+            self.reidentify_button.setEnabled(True)
+
+    def _show_identify_results(self, result: Dict) -> None:
+        """
+        把识别结果渲染成候选卡片。
+
+        **低置信度的候选也一并列出**（用户 2026-09-23 拍板）：「其他鸟类」里的
+        照片本来就是低置信度，按阈值过滤的话用户点一次重新识别只会得到空列表，
+        而那正是他要解决的处境。全部给出、卡片上标明置信度，由他判断。
+
+        参数 / Parameters:
+            result (Dict): identify_bird 的返回值。
+
+        Render every candidate, including low-confidence ones: filtering by the
+        threshold would hand an empty list to exactly the photos this feature
+        exists for.
+        """
+        self._finish_identify()
+        self._clear_results()
+
+        items = (result or {}).get("results") or []
+        if not items:
+            self._scroll.hide()
+            self._empty_label.setText(self.i18n.t("bird_species_edit.reidentify_none"))
+            self._empty_label.show()
+            return
+
+        self._empty_label.hide()
+        self._scroll.show()
+        for item in items:
+            bird_data = identify_result_to_bird_data(item)
+            confidence = item.get("confidence")
+            badge = f"{float(confidence):.0f}%" if confidence is not None else None
+            card = BirdResultCard(bird_data, tier_index=None, badge=badge)
+            card.selected.connect(self._on_card_selected)
+            card.mouseDoubleClickEvent = (
+                lambda _evt, d=bird_data: self._confirm_with(d))
+            self._list_layout.addWidget(card)
+            self._cards.append(card)
+
+    def _show_identify_error(self, message: str) -> None:
+        """识别失败时给出可读提示，而不是留一个空列表让人以为卡住了。"""
+        self._finish_identify()
+        self._clear_results()
+        self._scroll.hide()
+        self._empty_label.setText(
+            self.i18n.t("bird_species_edit.reidentify_failed").format(error=message))
+        self._empty_label.show()
 
     def _on_card_selected(self, bird_data: Dict):
         """单击卡片：选中高亮，激活确认按钮。"""

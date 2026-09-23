@@ -1448,7 +1448,11 @@
     "cancel": "Cancel",
     "this_shoot": "this shoot",
     "not_a_bird": "Not a bird",
-    "not_a_bird_tip": "Mark as no bird: clear the species, drop to 0 stars and move to the reject pile"
+    "not_a_bird_tip": "Mark as no bird: clear the species, drop to 0 stars and move to the reject pile",
+    "reidentify": "Re-identify this photo",
+    "reidentifying": "Re-identifying…",
+    "reidentify_none": "No species came back this time",
+    "reidentify_failed": "Re-identification failed: {error}"
   },
   "crop_advisor": {
     "title": "Crop Advice",
