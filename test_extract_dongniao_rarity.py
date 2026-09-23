@@ -147,3 +147,45 @@ def test_real_app_yields_known_values():
     assert len(data) > 10000, f"只解析出 {len(data)} 条，格式可能变了"
     assert data["Struthio camelus"]["rarity"] == pytest.approx(7.36)
     assert data["Struthio camelus"]["cn"] == "非洲鸵鸟"
+
+
+def test_species_absent_from_our_model_still_get_a_row(tmp_path, monkeypatch):
+    """
+    懂鸟有、但我们模型没有的鸟种，也必须写进 CSV。
+
+    运行时查罕见度只用 chinese_simplified / english_name（见 core/custom_rarity.py
+    的 `_load`），`model_class_id` 从不参与查询——把行限制在模型类别内是纯损失。
+
+    这正是用户 2026-09-23 撞上的：模型只有拆分前的 `Falcunculus frontatus`，
+    而他手工把照片改成了拆分后的「北鵙雀鹟」(`F. whitei`)，懂鸟明明给了 9.8，
+    详情页却什么都不显示。
+
+    Species our model lacks must still be emitted: the runtime looks rarity up
+    by name, never by class id, so restricting rows to model classes loses data
+    for exactly the species a user had to correct by hand.
+    """
+    import scripts_dev.extract_dongniao_rarity as mod
+
+    dongniao = {
+        "Falcunculus frontatus": {"cn": "东鵙雀鹟", "en": "Eastern Shriketit", "rarity": 9.09},
+        "Falcunculus whitei": {"cn": "北鵙雀鹟", "en": "Northern Shriketit", "rarity": 9.8},
+    }
+    rows, _ = mod.build_rows(dongniao, {})
+    by_cn = {r["chinese_simplified"]: r for r in rows}
+
+    assert "北鵙雀鹟" in by_cn, "模型没有的鸟种被丢掉了"
+    assert by_cn["北鵙雀鹟"]["rarity_index"] == 9.8
+    assert "东鵙雀鹟" in by_cn
+
+
+def test_model_species_without_dongniao_data_are_not_dropped(tmp_path):
+    """
+    反向边界：模型有、懂鸟没有的鸟种仍要留一行（罕见度为空）。
+
+    否则 CSV 就不再是模型类别的全集，将来谁拿它做别的用途会踩空。
+    """
+    import scripts_dev.extract_dongniao_rarity as mod
+
+    rows, _ = mod.build_rows({}, {})
+
+    assert len(rows) > 10000, f"只产出 {len(rows)} 行，模型类别被丢掉了"
