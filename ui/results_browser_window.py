@@ -2578,9 +2578,17 @@ class ResultsBrowserWindow(QMainWindow):
             self._batch_species_edit(targets)
             return
 
+        # 传入这一张的路径，弹窗据此提供「重新识别这张」：主流程复用的是选片阶段
+        # YOLO 裁好的框，而重新识别会全图重跑 YOLO 并读对焦点在多只鸟里挑，
+        # 「框错了鸟」这类错误因此有机会被纠正。整种合并与多选批量不传——那些
+        # 场景作用于多张，没有「这一张」。
+        # Pass this photo's path so the dialog can offer re-identification; the
+        # main pipeline reuses the crop made during culling, while a re-run
+        # detects afresh on the full image.
         dialog = BirdSpeciesEditDialog(
             parent=self, session_species=self._session_species(),
-            exclude_species=[photo.get("bird_species_cn") or ""])
+            exclude_species=[photo.get("bird_species_cn") or ""],
+            photo_path=photo.get("current_path") or photo.get("original_path"))
         if dialog.exec() != QDialog.Accepted:
             return
 
