@@ -70,6 +70,17 @@ class AdvancedConfig:
         #   sidecar:  所有文件统一写 .xmp 侧车，不修改原文件
         #   none:     跳过所有元数据写入，仅按评分整理目录
         "metadata_write_mode": "embedded",
+
+        # 专有 RAW（NEF/CR2/CR3/ARW/RAF/ORF/RW2/PEF/3FR/IIQ，DNG 除外）是否也把
+        # 元数据写进文件本体。**默认关闭**：这些格式默认只写 XMP 边车，不重写本体，
+        # 快得多（~190ms/张 → ~10ms/张）也更安全。
+        # 打开它是给「自家软件不读 XMP 边车」的用户留的出口（如尼康 NX Studio），
+        # 代价是每张多约 0.2 秒，且写入前会整份复制一次做结构校验——存储卡与
+        # ExFAT 外置盘上这次复制是真实全量拷贝，会更慢。
+        # Opt-in: also write metadata into proprietary RAW bodies. Off by default
+        # because sidecars are much faster and never touch the original; turn it
+        # on when your camera maker's software does not read XMP sidecars.
+        "raw_embed_metadata": False,
         
         # 临时文件管理 V4.1
         "keep_temp_files": True,        # 保留临时预览图片（统一控制 tmp JPG + debug crops）
@@ -487,25 +498,69 @@ class AdvancedConfig:
 
     def get_arw_write_mode_for_file(self, file_path: Optional[str] = None) -> str:
         """
-        获取针对当前文件的 RAW 写入策略。
-        若 file_path 为专有 RAW 格式（SIDECAR_RAW_EXTENSIONS，DNG 除外），
-        强制返回 "sidecar"（只写 XMP 侧车，不修改 RAW 本体）。
-        原先仅 ARW 强制侧车，现扩展到全部专有 RAW（快 ~33% 且不动本体更安全）。
+        获取针对当前文件的 RAW 写入策略，跟随用户的「元数据写入方式」设置。
 
-        Get the RAW write mode for this file. Proprietary RAW formats
-        (SIDECAR_RAW_EXTENSIONS, DNG excluded) are forced to "sidecar" —
-        XMP sidecar only, never rewriting the RAW body. Previously only ARW
-        was forced; now all proprietary RAW are (~33% faster, safer).
+        专有 RAW（SIDECAR_RAW_EXTENSIONS，DNG 除外）：
+        - 默认 → "sidecar"（只写 XMP 侧车，不动 RAW 本体）；
+        - 勾选 `raw_embed_metadata` 后 → "auto"（写本体，但先复制、写副本、比对
+          RAW 关键结构，一致才原子替换；结构变了回退侧车，原文件永不被写坏）；
+        - 主设置选「写入边车」时，即便勾了开关也仍走侧车——那是更强的意思表示。
+
+        2026-07 的性能优化让这里对专有 RAW **无条件**返回 "sidecar"，理由是不重写
+        本体快得多（~190ms/张 → ~10ms/张）也更安全。取舍有数据支撑，问题是它没给
+        用户留任何出口：尼康等厂商的软件并不读 XMP 侧车，对这些用户等于功能不存在
+        （2026-09-23 用户反馈）。
+
+        出口做成**独立开关**而不是复用 `metadata_write_mode`：后者的默认值就是
+        "embedded"，直接让它对 RAW 生效等于把从未动过设置的用户全部改成写本体，
+        静默撤销上述优化；而把默认值迁成 "sidecar" 又会误伤 JPEG 用户——embedded
+        对 JPEG 一直是有效的。新开关默认关闭，升级后行为一字不变。
+
+        走 "auto" 而不是直写 "embedded"/"inplace"：后两者没有结构校验，exiftool
+        一旦写坏 RAW 结构，损伤直接落在原始文件上。
+
+        Follow the user's metadata write mode. Proprietary RAW still defaults to
+        the sidecar, but "embedded" now routes to the structure-verifying "auto"
+        path (copy, write the copy, compare the RAW's key structure, replace
+        only on a match) instead of being silently overridden.
         """
         from constants import SIDECAR_RAW_EXTENSIONS
         if file_path and Path(file_path).suffix.lower() in SIDECAR_RAW_EXTENSIONS:
-            return "sidecar"
+            if self.get_metadata_write_mode() == "sidecar":
+                return "sidecar"
+            return "auto" if self.raw_embed_metadata else "sidecar"
         return self.config.get("arw_write_mode", "sidecar")
 
     def set_arw_write_mode(self, value: str) -> None:
         """设置 ARW 写入策略: sidecar | embedded | inplace | auto"""
         if value in ("sidecar", "embedded", "inplace", "auto"):
             self.config["arw_write_mode"] = value
+
+    @property
+    def raw_embed_metadata(self) -> bool:
+        """
+        专有 RAW 是否也写入文件本体（默认 False，只写 XMP 边车）。
+
+        返回 / Returns:
+        bool: True 表示把元数据写进 RAW 本体（经复制+结构校验+替换）。
+
+        Whether proprietary RAW bodies also get the metadata written into them.
+        """
+        return bool(self.config.get("raw_embed_metadata", False))
+
+    def set_raw_embed_metadata(self, value: bool) -> None:
+        """
+        设置「专有 RAW 也写入文件本体」。
+
+        参数 / Parameters:
+        value (bool): 是否开启 / Whether to enable body writes for RAW.
+
+        返回 / Return:
+        None
+
+        Set the proprietary-RAW body-write opt-in.
+        """
+        self.config["raw_embed_metadata"] = bool(value)
 
     def get_metadata_write_mode(self) -> str:
         """获取全局元数据写入模式: embedded | sidecar | none"""

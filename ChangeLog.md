@@ -1,3 +1,53 @@
+# SuperPicky 4.6.3 RC9
+
+**What's new since RC8:**
+
+1. **Fixed: XMP sidecars kept appearing even with metadata writing switched
+   off.** Changing a star rating, or marking a photo as having no bird, was the
+   one path that never checked the metadata setting, so every such action wrote
+   an `.xmp` next to the RAW no matter what the setting said. If you had turned
+   metadata writing off to keep your folders clean, it was not being honoured.
+
+2. **"Write into the file" can now apply to proprietary RAW as well.** NEF,
+   CR2, CR3, ARW, RAF, ORF, RW2, PEF, 3FR and IIQ files have always received an
+   `.xmp` sidecar instead, because rewriting the RAW itself is far slower and
+   riskier — but the interface never said so, and software that does not read
+   sidecars (Nikon's NX Studio, for example) therefore never saw any of it.
+
+   Settings → Output now has **"Also write into proprietary RAW files"**, off by
+   default, so nothing changes unless you ask for it. With it on, each photo
+   takes roughly 0.2s longer and is copied once beforehand so its structure can
+   be verified: the copy is written and compared against the original's key
+   structure, and only replaces it when they match — if anything looks off the
+   sidecar is written instead, so the original is never left damaged. That copy
+   is nearly free on an internal Mac SSD but is a real full-file copy on memory
+   cards and external drives, where it is noticeably slower. DNG is unaffected;
+   it was never forced to a sidecar.
+
+---
+
+# SuperPicky 4.6.3 RC9（中文）
+
+**RC8 以来的变化：**
+
+1. **修复：关掉元数据写入后，仍然不断生成 XMP 边车。** 改星级和「标记为无鸟」
+   是唯一一条没有检查元数据设置的路径，于是不管设置选的是什么，每操作一次就在
+   RAW 旁边写一个 `.xmp`。如果你是为了保持目录干净才关掉写入的，那个开关此前
+   并没有被遵守。
+
+2. **「写入文件」现在可以对专有 RAW 生效了。** NEF、CR2、CR3、ARW、RAF、ORF、
+   RW2、PEF、3FR、IIQ 一直都是只写 `.xmp` 边车——重写 RAW 本体慢得多也更冒险
+   ——但界面从未说明这一点，于是不读边车的软件（例如尼康 NX Studio）永远看不到
+   这些信息。
+
+   设置 → 输出新增 **「专有 RAW 也写入文件本体」**，**默认关闭**，不主动打开就
+   什么都不会变。打开后每张约多 0.2 秒，并且写入前会整份复制一次做结构校验：
+   先写副本，再比对原文件的关键结构，一致才替换；一旦发现异常就改写边车，原文件
+   不会被留在损坏状态。这次复制在 Mac 内置固态盘上几乎不花时间，但在存储卡和
+   外置盘上是真实的全量拷贝，会明显更慢。DNG 不受影响——它本来就不在强制边车之列。
+
+---
+
 # SuperPicky 4.6.3 RC8
 
 **What's new since RC7:**
