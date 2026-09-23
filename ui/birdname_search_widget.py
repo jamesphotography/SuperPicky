@@ -632,13 +632,14 @@ class BirdNameSearchWidget(QWidget):
         try:
             self._loading_versions = True
 
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT version_id, version_name FROM versions ORDER BY created_at DESC"
-            )
-            versions = cursor.fetchall()
-            conn.close()
+            # 排序规则与改鸟种弹窗共用（tools.birdname_versions）：先挑覆盖面、
+            # 再挑版本号。此前按 created_at 排，IOC 14.2 因导入更晚排在了
+            # IOC 15.1 前面，于是下拉默认项用的是更旧的分类（2026-09-23 修）。
+            # Shared ordering with the species dialog; sorting by import time
+            # put an older taxonomy first.
+            from tools.birdname_versions import load_versions, order_versions
+            versions = [(v["version_id"], v["version_name"])
+                        for v in order_versions(load_versions(self.db_path))]
 
             if not versions:
                 self.version_combo.addItem(self.i18n.t("birdname_search.no_data"))
