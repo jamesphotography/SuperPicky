@@ -41,27 +41,23 @@ def _get_birdname_db_path() -> str:
 
 def _get_latest_version_id(db_path: str) -> Optional[int]:
     """
-    查询 birdname.db 中最新的 IOC 版本 ID（按 created_at 降序取第一条）。
+    选出该用的鸟名名录版本 ID。
+
+    规则见 `tools.birdname_versions`：先挑覆盖面、再挑版本号。此前这里按
+    `created_at DESC` 取第一条，而 IOC 14.2 恰好比 IOC 15.1 晚导入 3 小时，
+    于是更旧的分类一直被当成最新的在用（2026-09-23 修）。
 
     Args:
         db_path: birdname.db 绝对路径
 
     Returns:
-        最新版本 ID，数据库不存在或查询失败时返回 None
+        版本 ID，数据库不存在或查询失败时返回 None
+
+    Pick the catalog version; see tools.birdname_versions for the rule.
+    Ordering by import time had been selecting an older taxonomy.
     """
-    if not os.path.exists(db_path):
-        return None
-    try:
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT version_id FROM versions ORDER BY created_at DESC LIMIT 1"
-        )
-        row = cursor.fetchone()
-        conn.close()
-        return row[0] if row else None
-    except Exception:
-        return None
+    from tools.birdname_versions import pick_version_from_db
+    return pick_version_from_db(db_path)
 
 
 def identify_result_to_bird_data(item: Dict) -> Dict:
