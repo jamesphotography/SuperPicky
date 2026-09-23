@@ -292,8 +292,28 @@ def test_search_panel_gbif_only_for_species_missing_from_dataset(search_panel, c
     assert "-" not in text.split("(")[-1], f"不该出现悬空分隔符: {text!r}"
 
 
-def test_detail_panel_unaffected_when_gbif_missing(panel, custom_db):
-    """GBIF 没值时整行仍是占位符——自定义指数不能反客为主。"""
+def test_detail_panel_shows_custom_index_when_gbif_missing(panel, custom_db):
+    """
+    GBIF 没值时单独显示自定义指数（2026-09-23 有意推翻原决定）。
+
+    本测试原本断言相反的行为——「自定义指数不能反客为主」。当初的设计是
+    「GBIF 那一行 + 可选注解」：档位、图标、颜色全部来自 GBIF，自定义指数只是
+    括号里追加的参照，没有 GBIF 时整行留占位符是自洽的。
+
+    那个设计隐含一个假设：**内置库覆盖我们会遇到的所有鸟种**。自定义数据集开始
+    包含内置库没有的物种后，这个假设就破了——而那些物种恰恰是自定义指数最该
+    补位的地方：它们多是新拆分出的种（如北鵙雀鹟 Falcunculus whitei），模型与
+    内置库都还没跟上，用户只能手工改鸟名，改完却什么参照都看不到。
+
+    用户 2026-09-23 拍板改为显示，格式为「— - 9.80」：占位符保住
+    「GBIF - 自定义」的位置语义，否则读者会把 0-10 尺度的 9.80 误读成 0-100
+    尺度的 GBIF 分数（那会是「常见」，实际是「极罕见」）。
+
+    Deliberately reverses this test's original assertion: the custom index was
+    conceived as an annotation on the GBIF row, which assumed the bundled
+    reference covers every species — untrue once the custom dataset started
+    covering species it lacks, i.e. exactly the ones it exists to cover.
+    """
     panel.show_photo({
         "filename": "DSC_1", "bird_species_cn": "牛背鹭",
         "bird_species_en": "Eastern Cattle Egret",
@@ -301,7 +321,8 @@ def test_detail_panel_unaffected_when_gbif_missing(panel, custom_db):
     })
 
     text = _rarity_text(panel)
-    assert "5.29" not in text, f"GBIF 缺失时不该单独显示自定义指数: {text!r}"
+    assert "5.29" in text, f"GBIF 缺失时仍应显示自定义指数: {text!r}"
+    assert "—" in text, f"应保留 GBIF 位置的占位符: {text!r}"
 
 
 # ── 分发安全 / Distribution safety ──────────────────────────────────────────

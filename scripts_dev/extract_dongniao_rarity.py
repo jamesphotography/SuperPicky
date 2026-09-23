@@ -156,7 +156,27 @@ def load_manual(old_csv: str) -> Dict[str, dict]:
 
 
 def build_rows(dongniao: Dict[str, dict], manual: Dict[str, dict]) -> list:
-    """把模型的每个类别匹配到一个罕见度 / Match every model class to a rarity."""
+    """
+    产出 CSV 行：**模型类别 ∪ 懂鸟全集**。
+
+    不能只产出模型的类别。运行时查罕见度只用中/英文名（见
+    `core/custom_rarity.py` 的 `_load`），`model_class_id` 从不参与查询，所以
+    模型没有的鸟种照样查得到——把行限制在模型类别内是纯损失。而恰恰是这些
+    鸟种最需要：模型不认识它们，用户只能手工改鸟名，改完却看不到罕见度。
+    例：模型只有拆分前的 `Falcunculus frontatus`，用户改成拆分后的「北鵙雀鹟」
+    (`F. whitei`)，懂鸟给了 9.8，详情页却空着（2026-09-23 用户反馈）。
+
+    参数 / Parameters:
+    dongniao (Dict[str, dict]): 学名 → {cn, en, rarity}。
+    manual (Dict[str, dict]): 上一版 CSV 里的手工条目，按 model_class_id 索引。
+
+    返回 / Returns:
+    tuple: (行列表, 匹配方式统计)。
+
+    Emit the union of our model's classes and the full source dataset: the
+    runtime looks rarity up by name, so species our model lacks are still
+    useful — and they are precisely the ones a user had to rename by hand.
+    """
     ref = sqlite3.connect(os.path.join(REPO, "birdid", "data", "bird_reference.sqlite"))
     ref.row_factory = sqlite3.Row
 
@@ -171,6 +191,7 @@ def build_rows(dongniao: Dict[str, dict], manual: Dict[str, dict]) -> list:
                   "FROM avilist_map WHERE scientific_name_avilist IS NOT NULL")}
 
     rows, stats = [], {}
+    used_sci = set()          # 已被模型类别用掉的懂鸟学名 / source names already consumed
     for r in ref.execute(
             "SELECT model_class_id, scientific_name, english_name, chinese_simplified "
             "FROM BirdCountInfo ORDER BY model_class_id"):
@@ -192,6 +213,9 @@ def build_rows(dongniao: Dict[str, dict], manual: Dict[str, dict]) -> list:
             continue
 
         stats[how] = stats.get(how, 0) + 1
+        if hit is not None:
+            used_sci.add(sci if sci in dongniao else
+                         (by_en[en][0] if how == "英文名" else bridge.get(sci, "")))
         rows.append({
             "model_class_id": r["model_class_id"],
             "scientific_name": sci,
@@ -200,6 +224,21 @@ def build_rows(dongniao: Dict[str, dict], manual: Dict[str, dict]) -> list:
             "chinese_simplified": (hit["cn"] if hit else (r["chinese_simplified"] or "")),
             "rarity_index": (hit["rarity"] if hit else ""),
             "matched_by": how,
+        })
+
+    # 补上懂鸟有、模型没有的鸟种（拆分出的新种多在此列），model_class_id 留空。
+    # Add source species our model lacks; they still resolve by name at runtime.
+    for sci, rec in dongniao.items():
+        if sci in used_sci:
+            continue
+        stats["模型无此类别"] = stats.get("模型无此类别", 0) + 1
+        rows.append({
+            "model_class_id": "",
+            "scientific_name": sci,
+            "english_name": rec["en"],
+            "chinese_simplified": rec["cn"],
+            "rarity_index": rec["rarity"],
+            "matched_by": "模型无此类别",
         })
     return rows, stats
 

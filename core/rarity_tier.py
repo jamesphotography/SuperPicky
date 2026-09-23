@@ -194,3 +194,42 @@ def tier_name_color(tier_index: Optional[int], default: Optional[str] = None) ->
     if tier_index == 1:
         return "#FC7F3F"   # 橙 — 能见
     return "#D81E05"       # 红 — 少见 / 罕见 / 传奇
+
+
+def format_rarity_values(gbif: Optional[float], custom: Optional[float]) -> str:
+    """
+    把两个罕见度数据源拼成括号里的那段文字。
+
+    两者是**互相独立的可选数据源**，任一缺席都不该让另一个消失：
+    - 内置的 GBIF 全球罕见度（0-100）来自随包的 bird_reference.sqlite；
+    - 自定义指数（0-10）来自用户自备的 custom_rarity.db。
+
+    内置库没有的鸟种（多是新拆分出的物种）恰恰是自定义指数最该补位的地方，
+    而此前两处显示代码都把自定义指数嵌在 GBIF 的 if 分支里，GBIF 一缺席整行
+    就成了「—」（2026-09-23 用户反馈：北鵙雀鹟/西鵙雀鹟什么都不显示，而同属的
+    东鵙雀鹟因为内置库有它就正常）。
+
+    参数 / Parameters:
+    gbif (Optional[float]): GBIF 全球罕见度 0-100，无数据传 None。
+    custom (Optional[float]): 自定义指数 0-10，无数据传 None。
+
+    返回 / Returns:
+    str: 括号内文字。两者都有 "18.4 - 9.80"；只有 GBIF "18.4"；只有自定义
+        "— - 9.80"（用占位符保住「GBIF - 自定义」的位置语义，否则 9.80 会被
+        误读成 GBIF 分数——两者尺度不同）；都没有则空串。
+
+    自定义指数保留两位小数：这类 0-10 的评分取值高度集中，截成一位会把大部分
+    区分度抹掉（实测万余种数据 572 个取值压成 87 档）。GBIF 是 0-100 尺度，
+    一位足够。
+
+    Join the two independent rarity sources; either may be absent. A placeholder
+    keeps the "GBIF - custom" positions readable when only the custom index
+    exists, since the two use different scales.
+    """
+    if gbif is None and custom is None:
+        return ""
+    if custom is None:
+        return f"{gbif:.1f}"
+    if gbif is None:
+        return f"— - {custom:.2f}"
+    return f"{gbif:.1f} - {custom:.2f}"

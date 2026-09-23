@@ -35,7 +35,8 @@ from config import get_birdname_settings_path, get_install_scoped_resource_path
 # 罕见度分级 / IUCN 展示复用既有组件（与识别详情面板保持一致的视觉与配色）
 # Reuse the existing rarity-tier and IUCN formatting helpers so this panel
 # matches the recognition detail panel visually.
-from core.rarity_tier import gbif_score_to_tier, tier_name, tier_icon, tier_color
+from core.rarity_tier import (gbif_score_to_tier, tier_name, tier_icon,
+                              tier_color, format_rarity_values)
 from ui.detail_panel import _format_iucn
 
 # 可选的自定义罕见指数（用户自备的 0-10 数据源）。文件缺席是常态，
@@ -836,27 +837,32 @@ class BirdNameSearchWidget(QWidget):
             except Exception:
                 info = None
 
-        # 罕见度
+        # 罕见度。自定义指数独立于 GBIF 取值——**不能嵌在 GBIF 的分支里**：
+        # 内置库没有的鸟种（多是新拆分出的物种）正是自定义指数最该补位的地方。
+        # 此前嵌在里面，GBIF 一缺席整行就成了「—」（2026-09-23 用户反馈：
+        # 搜北鵙雀鹟什么都不显示，而同属的东鵙雀鹟因为内置库有它就正常）。
+        # 与选片详情页同一口径（见 ui/detail_panel.py 罕见度行），纯展示。
+        # The custom index is looked up independently; it exists precisely for
+        # species the bundled reference lacks.
         score = info.get("gbif_rarity_100") if info else None
+        dn_idx = lookup_custom_rarity(cn, en)
+        score_text = format_rarity_values(score, dn_idx)
         if score is not None:
             tier = gbif_score_to_tier(score)
             color = tier_color(tier) or COLORS["text_primary"]
-            # 用户若装了自定义罕见指数，并排显示作参照，与选片详情页同一口径
-            # （见 ui/detail_panel.py 罕见度行）。纯展示，不参与任何排序。
-            # 保留两位小数：这类 0-10 的评分取值高度集中，截成一位会把大部分
-            # 区分度抹掉（实测万余种数据 572 个取值压成 87 档）。
-            # Mirror the photo detail panel: show the optional custom index
-            # alongside, two decimals, display-only.
-            dn_idx = lookup_custom_rarity(cn, en)
-            score_text = (
-                f"{score:.1f} - {dn_idx:.2f}" if dn_idx is not None
-                else f"{score:.1f}"
-            )
             self.detail_rarity_label.setText(
                 f"{tier_icon(tier)} {tier_name(tier)} ({score_text})"
             )
             self.detail_rarity_label.setStyleSheet(
                 f"color: {color}; font-size: 12px; font-weight: 600; "
+                f"background: transparent; border: none;"
+            )
+        elif score_text:
+            # 只有自定义指数：没有 GBIF 就没有档位图标与颜色
+            # Custom index only: no GBIF means no tier glyph or colour.
+            self.detail_rarity_label.setText(score_text)
+            self.detail_rarity_label.setStyleSheet(
+                f"color: {COLORS['text_muted']}; font-size: 12px; "
                 f"background: transparent; border: none;"
             )
         else:
