@@ -21,7 +21,8 @@ from PySide6.QtGui import QPixmap, QFont, QGuiApplication, QImage, QImageReader
 
 from ui.styles import COLORS, FONTS
 from ui.icon_utils import load_tinted_icon, stars_pixmap, tinted_png_path, glyph_png_path, ICON_IDLE, ICON_ACTIVE
-from core.rarity_tier import gbif_score_to_tier, tier_name, tier_icon, tier_color
+from core.rarity_tier import (gbif_score_to_tier, tier_name, tier_icon,
+                              tier_color, format_rarity_values)
 from core.custom_rarity import lookup_index as lookup_custom_rarity
 
 
@@ -970,6 +971,17 @@ class DetailPanel(QWidget):
         # GBIF 全球罕见度 → 5-tier 圆形充填图标 + tier 名 + 小字分数
         # GBIF rarity → 5-tier circle glyph + tier label + small score
         gbif_r = p.get("gbif_rarity_100")
+        # 自定义罕见指数（可选外部数据）先取，**不能嵌在 GBIF 的分支里**：
+        # 两者是互相独立的数据源，而内置库没有的鸟种（多是新拆分出的物种）
+        # 恰恰是自定义指数最该补位的地方。此前嵌在里面，GBIF 一缺席整行就成了
+        # 「—」（2026-09-23 用户反馈：北鵙雀鹟什么都不显示）。
+        # 排序与评星一律仍按 GBIF，此处纯展示。
+        # Looked up independently: the custom index exists precisely for species
+        # the bundled reference lacks, so it must not hang off the GBIF branch.
+        dn_idx = lookup_custom_rarity(
+            p.get("bird_species_cn"), p.get("bird_species_en")
+        )
+        score_text = format_rarity_values(gbif_r, dn_idx)
         if gbif_r is not None:
             tidx = gbif_score_to_tier(gbif_r)
             is_zh = not self.i18n.current_lang.startswith('en')
@@ -977,29 +989,19 @@ class DetailPanel(QWidget):
             color = tier_color(tidx) or COLORS['text_primary']
             # 罕见度图标用归一化 glyph(富文本内联),统一 ○◔◑◕● 大小;染 tier 颜色
             icon_png = glyph_png_path(tier_icon(tidx), color, 14)
-            # 用户若装了自定义罕见指数（可选外部数据），并排显示作参照。
-            # 数据缺席是常态，此时保持原样只显示 GBIF；排序与评星一律仍按
-            # GBIF，此处纯展示。
-            # Show the optional custom index alongside when present; display
-            # only — ranking and stars still use GBIF.
-            dn_idx = lookup_custom_rarity(
-                p.get("bird_species_cn"), p.get("bird_species_en")
-            )
-            # 自定义指数保留两位小数：这类 0-10 的评分取值往往高度集中
-            # （实测一份万余种的数据，截成一位会把 572 个不同取值压成 87 档），
-            # 少一位就丢掉大部分区分度。GBIF 是 0-100 尺度，一位足够。
-            # Keep two decimals: 0-10 scores tend to cluster, and one decimal
-            # would collapse most of the distinguishing detail.
-            score_text = (
-                f"{gbif_r:.1f} - {dn_idx:.2f}" if dn_idx is not None
-                else f"{gbif_r:.1f}"
-            )
             self._val_gbif_rarity.setText(
                 f'<img src="{icon_png}" width="14" height="14" style="vertical-align:middle;">'
                 f'  {name}  ({score_text})'
             )
             self._val_gbif_rarity.setStyleSheet(
                 f"color: {color}; font-size: 13px; font-weight: 600; background: transparent;"
+            )
+        elif score_text:
+            # 只有自定义指数：没有 GBIF 就没有档位图标与颜色，平铺显示数值
+            # Custom index only: no GBIF means no tier glyph or colour.
+            self._val_gbif_rarity.setText(score_text)
+            self._val_gbif_rarity.setStyleSheet(
+                f"color: {COLORS['text_primary']}; font-size: 12px; background: transparent;"
             )
         else:
             self._val_gbif_rarity.setText(_unknown)
