@@ -1,3 +1,39 @@
+# SuperPicky 4.6.3 RC10
+
+**What's new since RC9:**
+
+- **Re-identify a photo from the species dialog.** When a photo landed in
+  "other birds", or the identification simply looks wrong, the dialog now has
+  a **Re-identify this photo** button next to the search box. It re-runs the
+  models on the full image — detecting the bird afresh rather than reusing the
+  crop made during culling — and lists every candidate with its confidence,
+  including low ones, so you can pick from what the model actually considered.
+- **Bird names updated to IOC 15.1.** The newer taxonomy was already bundled
+  but was never selected; the app was using IOC 14.2. Some names you could
+  search for before have been superseded by their current forms.
+- **Fixed: the optional custom rarity index stayed hidden for some species.**
+  It only appeared alongside the built-in global rarity, so species absent from
+  the bundled reference — mostly recent taxonomic splits — showed nothing at
+  all. It now shows on its own.
+
+---
+
+# SuperPicky 4.6.3 RC10（中文）
+
+**RC9 以来的变化：**
+
+- **可以在改鸟种弹窗里重新识别这张照片。** 照片被归进「其他鸟类」、或识别结果
+  不对劲时，弹窗的搜索框旁边多了一个**重新识别这张**按钮。它会对整张图重跑
+  模型——重新检测鸟的位置，而不是沿用选片时裁好的框——并列出全部候选及其
+  置信度（低置信度的也列），由你自己挑。
+- **鸟名更新到 IOC 15.1。** 这份更新的分类其实一直随包发着，只是从未被选中，
+  程序用的一直是 IOC 14.2。此前能搜到的个别旧名，现已由现行名称取代。
+- **修复：自定义罕见指数在部分鸟种上不显示。** 它此前只在内置的全球罕见度旁边
+  出现，于是内置库没有收录的鸟种——多是近年新拆分出的物种——什么都看不到。
+  现在它可以单独显示。
+
+---
+
 # SuperPicky 4.6.3 RC9
 
 **What's new since RC8:**
