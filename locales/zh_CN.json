@@ -1448,7 +1448,11 @@
     "cancel": "取消",
     "this_shoot": "本次",
     "not_a_bird": "这不是鸟",
-    "not_a_bird_tip": "标记为无鸟：清除鸟种、降为 0 星并移入「其他鸟类/0星_放弃」"
+    "not_a_bird_tip": "标记为无鸟：清除鸟种、降为 0 星并移入「其他鸟类/0星_放弃」",
+    "reidentify": "重新识别这张",
+    "reidentifying": "正在重新识别…",
+    "reidentify_none": "这次没有识别出任何鸟种",
+    "reidentify_failed": "重新识别失败：{error}"
   },
   "crop_advisor": {
     "title": "裁剪建议",
