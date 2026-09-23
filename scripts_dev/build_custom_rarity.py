@@ -23,9 +23,17 @@ CSV 需含列 / Required CSV columns:
     rarity_index        0-10，越大越罕见
     （model_class_id / scientific_name / matched_by 可选，有则一并存入）
 
+CSV 从哪来：由使用者决定。若数据源是本机安装的懂鸟 app，
+`scripts_dev/extract_dongniao_rarity.py` 可以直接产出本脚本要的 CSV
+（它把从 app bundle 逆向出的 protobuf 结构写在了 docstring 与测试里）。
+
 用法 / Usage:
     python scripts_dev/build_custom_rarity.py            # 用默认路径
     python scripts_dev/build_custom_rarity.py --csv <路径> --out <路径>
+
+    # 数据源是懂鸟时的完整流程 / Full pipeline when the source is the 懂鸟 app:
+    python scripts_dev/extract_dongniao_rarity.py --out <配置目录>/rarity_source/rarity_match_report.csv
+    python scripts_dev/build_custom_rarity.py
 """
 from __future__ import annotations
 
