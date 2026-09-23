@@ -663,7 +663,9 @@
     "clear_cache_confirm_msg": "确定要清理「{directory}」的所有预览缓存吗？此操作不可撤销，不会影响原始照片。",
     "clear_cache_no_dir": "请先在主界面打开一个已处理的目录",
     "clear_cache_none": "该目录暂无缓存可清理",
-    "clear_cache_done": "预览缓存已清理"
+    "clear_cache_done": "预览缓存已清理",
+    "raw_embed_metadata": "专有 RAW 也写入文件本体",
+    "raw_embed_metadata_hint": "默认只为 NEF/CR3/ARW 等专有 RAW 写 .xmp 边车，不改动原文件。若你的厂商软件（如尼康 NX Studio）不读边车，可打开此项——每张约多 0.2 秒，且写入前会整份复制一次做结构校验，在存储卡与外置盘上更慢。DNG 不受影响。"
   },
   "normalization_modes": {
     "log_compression": "对数压缩(V3.1)",

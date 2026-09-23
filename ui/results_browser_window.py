@@ -2517,7 +2517,7 @@ class ResultsBrowserWindow(QMainWindow):
                         p["rating"] = new_rating
                         break
         self._thumb_grid.refresh_photo(current_photo or filename, new_rating)
-        # 异步写 EXIF（遵守 metadata_write_mode 设置，mode=none 时内部自动跳过）
+        # 异步写 EXIF（set_rating_and_pick 内部遵守 metadata_write_mode，none 时跳过）
         file_path = self._get_photo_file_path(current_photo or filename)
         if file_path:
             import threading

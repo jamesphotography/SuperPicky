@@ -1798,6 +1798,30 @@ class SettingsCenter(QDialog):
         # Any button's toggled(True) corresponds to one actual switch.
         self._xmp_button_group.buttonToggled.connect(self._on_xmp_mode_changed)
 
+        # 专有 RAW 写本体开关。**默认关闭**，且必须留在这里说清楚例外：
+        # 上面的「写入文件」对 NEF/CR3/ARW 这些专有 RAW 一直不生效（只写边车，
+        # 快 ~190ms/张且不动原文件），界面此前只字不提，用户以为选了就写进文件。
+        # 打开它是给自家软件不读 XMP 边车的用户留的出口（如尼康 NX Studio）。
+        # Opt-in for writing into proprietary RAW bodies; off by default. The
+        # radio above never applied to NEF/CR3/ARW and the UI used to hide that.
+        self._raw_embed = QCheckBox(
+            self.i18n.t("advanced_settings.raw_embed_metadata"))
+        self._raw_embed.setStyleSheet(checkbox_indicator_qss())
+        try:
+            self._raw_embed.setChecked(bool(cfg.raw_embed_metadata))
+        except Exception:
+            self._raw_embed.setChecked(False)
+        self._raw_embed.toggled.connect(self._on_raw_embed_changed)
+        lay.addWidget(self._raw_embed)
+
+        raw_embed_hint = QLabel(
+            self.i18n.t("advanced_settings.raw_embed_metadata_hint"))
+        raw_embed_hint.setWordWrap(True)
+        raw_embed_hint.setStyleSheet(
+            f"color:{COLORS['text_muted']};font-size:11px;"
+        )
+        lay.addWidget(raw_embed_hint)
+
         # ── 分隔线 / Divider ──────────────────────────────────────────────────
         lay.addWidget(self._divider())
 
@@ -1942,6 +1966,7 @@ class SettingsCenter(QDialog):
         btn_id = self._xmp_button_group.checkedId()
         mode_map = {0: "embedded", 1: "sidecar", 2: "none"}
         cfg.set_metadata_write_mode(mode_map.get(btn_id, "embedded"))
+        cfg.set_raw_embed_metadata(self._raw_embed.isChecked())
 
         # 通用 / General
         cfg.set_keep_temp_files(self._keep_temp_files.isChecked())
@@ -1981,6 +2006,13 @@ class SettingsCenter(QDialog):
         btn_id = self._xmp_button_group.checkedId()
         mode_map = {0: "embedded", 1: "sidecar", 2: "none"}
         cfg.set_metadata_write_mode(mode_map.get(btn_id, "embedded"))
+        cfg.save()
+
+    def _on_raw_embed_changed(self, _checked: bool) -> None:
+        """「专有 RAW 也写入文件本体」开关变化 → 立即持久化。/ Persist on toggle."""
+        from advanced_config import get_advanced_config
+        cfg = get_advanced_config()
+        cfg.set_raw_embed_metadata(self._raw_embed.isChecked())
         cfg.save()
 
     def _on_keep_temp_files_changed(self, _state: int) -> None:

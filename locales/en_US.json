@@ -663,7 +663,9 @@
     "clear_cache_confirm_msg": "Clear all preview caches for \"{directory}\"? This cannot be undone and does not affect the original photos.",
     "clear_cache_no_dir": "Open a processed directory in the main window first",
     "clear_cache_none": "This directory has no cache to clear",
-    "clear_cache_done": "Preview cache cleared"
+    "clear_cache_done": "Preview cache cleared",
+    "raw_embed_metadata": "Also write into proprietary RAW files",
+    "raw_embed_metadata_hint": "Proprietary RAW (NEF, CR3, ARW…) gets an .xmp sidecar by default and the file itself is never rewritten. Turn this on when your camera maker's software (Nikon NX Studio, for example) does not read sidecars — it costs roughly 0.2s more per photo and copies each file once to verify its structure, which is slower on cards and external drives. DNG is unaffected."
   },
   "normalization_modes": {
     "log_compression": "Log Compression(V3.1)",
