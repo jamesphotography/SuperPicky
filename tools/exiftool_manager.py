@@ -591,6 +591,24 @@ class ExifToolManager:
             mode = "embedded"
         return mode
 
+    def _raw_embed_enabled(self) -> bool:
+        """
+        读「专有 RAW 也写入文件本体」开关（默认 False）。
+
+        返回 / Returns:
+        bool: 用户是否要求把元数据写进 RAW 本体 / Whether RAW bodies get written.
+
+        取不到配置时按 False 处理：默认只写边车，不动用户的 RAW 本体——
+        配置读失败不该导致我们去改写原始文件。
+        Falls back to False: a config read failure must never escalate into
+        rewriting the user's original RAW files.
+        """
+        try:
+            from advanced_config import get_advanced_config
+            return bool(get_advanced_config().raw_embed_metadata)
+        except Exception:
+            return False
+
     def _read_arw_structure(self, file_path: str) -> Optional[Dict[str, any]]:
         """读取 ARW 关键结构标签，用于检测文件布局变化 (V4.0.6: 使用常驻进程)"""
         tags = [
@@ -1026,6 +1044,21 @@ class ExifToolManager:
             print(f"❌ File not found: {file_path}")
             return False
 
+        # 用户把元数据写入设为「不写」时一律跳过，返回 True 表示「按配置跳过」
+        # 而非失败——与 set_metadata / batch_set_metadata 的约定一致。
+        #
+        # 这里原本没有这道检查，是唯一一条绕过该设置的写入路径：浏览器里改星级
+        # （_on_rating_changed）和标记为无鸟（_run_mark_no_bird）都走它，于是用户
+        # 明明关掉了元数据写入，专有 RAW 旁边仍不断冒出 .xmp 边车（2026-09-23 用户
+        # 反馈；尼康自家软件并不读 XMP 边车，这些文件对他既无用又碍眼）。
+        #
+        # Honor the "none" write mode here too. This was the one write path that
+        # ignored the setting, so changing a star rating or marking a photo as
+        # having no bird kept emitting XMP sidecars for proprietary RAW even
+        # after the user had switched metadata writing off.
+        if self._get_metadata_write_mode() == "none":
+            return True
+
         # 专有 RAW 强制走 XMP 侧车路由 / proprietary RAW routes to XMP sidecar
         if self._is_sidecar_raw(file_path):
             item = {
@@ -1098,8 +1131,13 @@ class ExifToolManager:
         Pick the file to read existing keywords from: the sidecar when this
         file is written via sidecar, otherwise the file itself.
         """
-        use_sidecar = self._is_sidecar_raw(file_path) or \
-            self._get_metadata_write_mode() == "sidecar"
+        # 与写入端同一条判定：写进本体却仍去侧车读旧关键字，merge-add 会基于一份
+        # 过期清单计算，结果是关键字丢失或重复。
+        # Mirrors the write-side decision; reading keywords from the wrong file
+        # would make the merge-add work off a stale list.
+        write_mode = self._get_metadata_write_mode()
+        use_sidecar = write_mode == "sidecar" or (
+            self._is_sidecar_raw(file_path) and not self._raw_embed_enabled())
         if not use_sidecar:
             return file_path
         sidecar = os.path.splitext(file_path)[0] + '.xmp'
@@ -1273,9 +1311,13 @@ class ExifToolManager:
             print(f"[ExifTool] metadata_write_mode=none, 跳过 set_metadata: {os.path.basename(file_path)}")
             return True
 
-        # 专有 RAW 一律只写 XMP 侧车；全局 sidecar 模式下所有格式也走侧车
-        # Proprietary RAW always goes to the XMP sidecar; global sidecar mode does too
-        use_sidecar = self._is_sidecar_raw(file_path) or global_mode == "sidecar"
+        # 专有 RAW 默认只写 XMP 侧车；用户勾了「专有 RAW 也写入文件本体」才写本体
+        # （2026-09-23，给尼康这类不读边车的软件留的出口）。全局 sidecar 模式下
+        # 所有格式都走侧车。
+        # Proprietary RAW defaults to the sidecar and only writes into the body
+        # when the user opted in; global sidecar mode routes everything to one.
+        use_sidecar = global_mode == "sidecar" or (
+            self._is_sidecar_raw(file_path) and not self._raw_embed_enabled())
 
         # 侧车只支持 XMP 组：IPTC 题注映射到 XMP:Description，无组前缀的标签补 XMP:
         # Sidecars are XMP-only: map the IPTC caption tag to XMP:Description
