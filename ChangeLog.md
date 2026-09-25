@@ -1,3 +1,39 @@
+# SuperPicky 4.6.3 RC11
+
+**What's new since RC10:**
+
+- **Fixed (unverified — needs your test): the Windows installer could fail
+  instantly with "Out of memory" while extracting the very first file.**
+  Root cause: Setup.exe is always a 32-bit process — an Inno Setup limitation
+  that applies no matter how the app itself is packaged — and the LZMA
+  dictionary size was set to 1 GB, right at the documented ceiling for what a
+  32-bit process can reliably allocate. On some Windows 11 builds the
+  available contiguous address space fell short of that, so the allocation
+  failed deterministically and Inno reported it generically as "Out of
+  memory." Lowered the dictionary size to 128 MB across all three installer
+  scripts (Full / CUDA / CUDA patch), well inside the documented safe range;
+  installers grow slightly in size in exchange. I have no Windows machine to
+  verify this myself — if you ever hit that error, please test this RC and
+  report back whether install now succeeds. (issue #112)
+
+---
+
+# SuperPicky 4.6.3 RC11（中文）
+
+**RC10 以来的变化：**
+
+- **修复（未经验证，需要你实测确认）：Windows 安装包解压第一个文件时可能立刻
+  报 "Out of memory" 失败。** 根因是 Setup.exe 本体永远是 32-bit 进程——这是
+  Inno Setup 自身的限制，与被安装的应用怎么打包无关——而 LZMA 字典大小之前设成
+  了 1GB，正好卡在官方文档给出的 32-bit 进程理论上限上。部分 Windows 11 版本上
+  可用的连续地址空间不够，导致这次分配确定性失败，被 Inno 笼统报成
+  "Out of memory."。这次把三个安装脚本（Full / CUDA / CUDA 补丁包）里的字典
+  大小都降到 128MB，在文档给出的安全范围内留了余量，代价是安装包体积略增。
+  我这边没有 Windows 机器，没法自己验证这个修复是否真的解决问题——如果你之前
+  遇到过这个报错，请在这个 RC 上重新测试安装，并回报结果。（issue #112）
+
+---
+
 # SuperPicky 4.6.3 RC10
 
 **What's new since RC9:**
