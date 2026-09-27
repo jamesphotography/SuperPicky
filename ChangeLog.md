@@ -1,3 +1,18 @@
+# SuperPicky 4.6.3 RC12
+
+**What's new since RC11:**
+
+- **Singapore is now in the country dropdown's top-10 quick list**, in both
+  the Bird-ID panel and Settings Center — no more digging through "More
+  countries" to find it.
+- **Fixed:** the "More countries" search box only matched the display name
+  in your current UI language plus the English name, so searching a Chinese
+  name while in English UI, or typing an ISO code (e.g. "SG") directly,
+  could come up empty. It now matches the display name, English name,
+  Chinese name, and country code together.
+
+---
+
 # SuperPicky 4.6.3 RC11
 
 **What's new since RC10:**
@@ -15,6 +30,18 @@
   installers grow slightly in size in exchange. I have no Windows machine to
   verify this myself — if you ever hit that error, please test this RC and
   report back whether install now succeeds. (issue #112)
+
+---
+
+# SuperPicky 4.6.3 RC12（中文）
+
+**RC11 以来的变化：**
+
+- **国家下拉的首页 Top10 快捷列表加入新加坡**（识鸟面板与设置中心两处同步），
+  不用再点开「更多国家」才能找到。
+- **修复：**「更多国家」对话框的搜索框此前只匹配当前界面语言下的显示名和
+  英文名，导致英文界面下搜中文名、或直接输入国家代码（如 "SG"）都可能搜不
+  到。现在显示名、英文名、中文名、国家代码四个维度都会参与匹配。
 
 ---
 
