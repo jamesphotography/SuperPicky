@@ -766,7 +766,7 @@ class SettingsCenter(QDialog):
         country_list[self.i18n.t("birdid.country_global")] = "GLOBAL"
         country_list["─" * 15] = "SEP1"
 
-        top10_codes = ["AU", "BR", "CN", "GB", "HK", "ID", "JP", "MY", "TW", "US"]
+        top10_codes = ["AU", "BR", "CN", "GB", "HK", "ID", "JP", "MY", "SG", "TW", "US"]
         top10_i18n = {
             "AU": "birdid.country_au",
             "BR": "birdid.country_br",
@@ -776,6 +776,7 @@ class SettingsCenter(QDialog):
             "ID": "birdid.country_id",
             "JP": "birdid.country_jp",
             "MY": "birdid.country_my",
+            "SG": "birdid.country_sg",
             "TW": "birdid.country_tw",
             "US": "birdid.country_us",
         }
@@ -1113,7 +1114,7 @@ class SettingsCenter(QDialog):
             from ui.birdid_dock import show_country_picker_dialog
 
             top10_and_global = {
-                "AU", "BR", "CN", "GB", "HK", "ID", "JP", "MY", "TW", "US", "GLOBAL",
+                "AU", "BR", "CN", "GB", "HK", "ID", "JP", "MY", "SG", "TW", "US", "GLOBAL",
             }
             # 取消时恢复用户上次保存的选项(而非当前下拉文本——此刻它已是
             # "更多国家"本身),与 birdid_dock 的既有行为一致。

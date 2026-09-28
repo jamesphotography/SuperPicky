@@ -454,7 +454,7 @@ def show_country_picker_dialog(
         "PE": "birdid.country_pe", "PH": "birdid.country_ph",
         "PL": "birdid.country_pl", "PT": "birdid.country_pt",
         "RU": "birdid.country_ru", "SE": "birdid.country_se",
-        "SG": "birdid.country_sg", "TH": "birdid.country_th",
+        "TH": "birdid.country_th",
         "TZ": "birdid.country_tz", "UA": "birdid.country_ua",
         "VN": "birdid.country_vn", "ZA": "birdid.country_za",
     }
@@ -526,16 +526,22 @@ def show_country_picker_dialog(
                 display = t(i18n_key)
             else:
                 display = name_cn if not is_english and name_cn else name_en
-        other_regions.append((name_en.lower(), display, code, name_en))
+        other_regions.append((name_en.lower(), display, code, name_en, name_cn))
 
     other_regions.sort(key=lambda x: x[0])
 
-    for _, display, code, name_en in other_regions:
+    for _, display, code, name_en, name_cn in other_regions:
         item = QListWidgetItem(display)
         if code in continent_codes:   # 大洲项加 globe.svg 图标(替代旧 🌍 emoji)
             item.setIcon(load_tinted_icon("globe.svg", ICON_IDLE, 16))
         item.setData(USER_ROLE, code)
-        item.setData(USER_ROLE + 1, name_en)  # 用于搜索 / For search
+        # 搜索需覆盖英文名/中文名/国家代码三个维度，避免"英文界面搜中文名"
+        # 或"直接搜代码(如 SG)"落空。 Store English name / Chinese name /
+        # country code so search matches regardless of current UI language
+        # or whether the user typed the ISO code directly.
+        item.setData(USER_ROLE + 1, name_en)
+        item.setData(USER_ROLE + 2, name_cn)
+        item.setData(USER_ROLE + 3, code)
         list_widget.addItem(item)
 
     dlg_layout.addWidget(list_widget)
@@ -547,6 +553,8 @@ def show_country_picker_dialog(
             visible = (
                 text in it.text().lower()
                 or text in (it.data(USER_ROLE + 1) or "").lower()
+                or text in (it.data(USER_ROLE + 2) or "").lower()
+                or text in (it.data(USER_ROLE + 3) or "").lower()
             )
             it.setHidden(not visible)
 
@@ -798,7 +806,7 @@ class BirdIDDockWidget(QDockWidget):
         country_list[t("birdid.country_global")] = "GLOBAL"
         country_list["─" * 15] = "SEP1"
 
-        top10_codes = ['AU', 'BR', 'CN', 'GB', 'HK', 'ID', 'JP', 'MY', 'TW', 'US']
+        top10_codes = ['AU', 'BR', 'CN', 'GB', 'HK', 'ID', 'JP', 'MY', 'SG', 'TW', 'US']
         top10_i18n = {
             'AU': 'birdid.country_au',
             'BR': 'birdid.country_br',
@@ -808,6 +816,7 @@ class BirdIDDockWidget(QDockWidget):
             'ID': 'birdid.country_id',
             'JP': 'birdid.country_jp',
             'MY': 'birdid.country_my',
+            'SG': 'birdid.country_sg',
             'TW': 'birdid.country_tw',
             'US': 'birdid.country_us',
         }
@@ -1442,7 +1451,7 @@ class BirdIDDockWidget(QDockWidget):
         返回 / Returns: None
         """
         t = self.i18n.t
-        top10_and_global = {"AU", "BR", "CN", "GB", "HK", "ID", "JP", "MY", "TW", "US", "GLOBAL"}
+        top10_and_global = {"AU", "BR", "CN", "GB", "HK", "ID", "JP", "MY", "SG", "TW", "US", "GLOBAL"}
         show_country_picker_dialog(
             parent=self,
             i18n=self.i18n,

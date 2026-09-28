@@ -1,3 +1,100 @@
+# SuperPicky 4.6.3 RC13
+
+**What's new since RC12:**
+
+- **Chinese bird names in Bird-ID results now follow IOC 15.1** (897 names).
+  The name search and the species-edit dialog had already switched to IOC 15.1
+  in RC10, but Bird-ID results, the detail panel and grid cards read a separate
+  database that was never updated, so the same bird could show two different
+  Chinese names. Only names where our English name matches IOC 15.1 were
+  synced; species that IOC has split (e.g. Olive-backed Sunbird, Spotted
+  Nutcracker) keep their current names for now, since the model still treats
+  them as one species. Species occurring in China keep the ChinaBirds name.
+  Photos processed before this update keep the old name in their results.
+- **Fixed:** Kalkadoon Grasswren (*Amytornis ballarae*) showed the Chinese name
+  「巴拉瑞特鹩莺」, a mistransliteration of the epithet (Ballara, a mining town
+  in Queensland, not Ballarat). It is now 「灰胸草鹩莺」.
+
+---
+
+# SuperPicky 4.6.3 RC12
+
+**What's new since RC11:**
+
+- **Singapore is now in the country dropdown's top-10 quick list**, in both
+  the Bird-ID panel and Settings Center — no more digging through "More
+  countries" to find it.
+- **Fixed:** the "More countries" search box only matched the display name
+  in your current UI language plus the English name, so searching a Chinese
+  name while in English UI, or typing an ISO code (e.g. "SG") directly,
+  could come up empty. It now matches the display name, English name,
+  Chinese name, and country code together.
+
+---
+
+# SuperPicky 4.6.3 RC11
+
+**What's new since RC10:**
+
+- **Fixed (unverified — needs your test): the Windows installer could fail
+  instantly with "Out of memory" while extracting the very first file.**
+  Root cause: Setup.exe is always a 32-bit process — an Inno Setup limitation
+  that applies no matter how the app itself is packaged — and the LZMA
+  dictionary size was set to 1 GB, right at the documented ceiling for what a
+  32-bit process can reliably allocate. On some Windows 11 builds the
+  available contiguous address space fell short of that, so the allocation
+  failed deterministically and Inno reported it generically as "Out of
+  memory." Lowered the dictionary size to 128 MB across all three installer
+  scripts (Full / CUDA / CUDA patch), well inside the documented safe range;
+  installers grow slightly in size in exchange. I have no Windows machine to
+  verify this myself — if you ever hit that error, please test this RC and
+  report back whether install now succeeds. (issue #112)
+
+---
+
+# SuperPicky 4.6.3 RC13（中文）
+
+**RC12 以来的变化：**
+
+- **识鸟结果的中文鸟名同步到 IOC 15.1**（897 个）。鸟名查询面板与改鸟种弹窗
+  在 RC10 已改用 IOC 15.1，但识鸟结果、详情面板、网格卡片读的是另一个库，一直
+  没更新，于是同一种鸟两处叫法不同。只同步了英文名与 IOC 15.1 一致的鸟种；IOC
+  已拆分的种（如黄腹花蜜鸟、星鸦）因模型仍把它们当作一个种，暂保留现名。中国
+  有分布的鸟种仍以 ChinaBirds 名录为准。更新前已处理的照片，结果里仍是旧名。
+- **修复：**卡尔卡东草鹩莺（*Amytornis ballarae*）的中文名显示为「巴拉瑞特鹩莺」，
+  是把种加词误作维州 Ballarat 音译（实为昆士兰矿镇 Ballara），现改为
+  「灰胸草鹩莺」。
+
+---
+
+# SuperPicky 4.6.3 RC12（中文）
+
+**RC11 以来的变化：**
+
+- **国家下拉的首页 Top10 快捷列表加入新加坡**（识鸟面板与设置中心两处同步），
+  不用再点开「更多国家」才能找到。
+- **修复：**「更多国家」对话框的搜索框此前只匹配当前界面语言下的显示名和
+  英文名，导致英文界面下搜中文名、或直接输入国家代码（如 "SG"）都可能搜不
+  到。现在显示名、英文名、中文名、国家代码四个维度都会参与匹配。
+
+---
+
+# SuperPicky 4.6.3 RC11（中文）
+
+**RC10 以来的变化：**
+
+- **修复（未经验证，需要你实测确认）：Windows 安装包解压第一个文件时可能立刻
+  报 "Out of memory" 失败。** 根因是 Setup.exe 本体永远是 32-bit 进程——这是
+  Inno Setup 自身的限制，与被安装的应用怎么打包无关——而 LZMA 字典大小之前设成
+  了 1GB，正好卡在官方文档给出的 32-bit 进程理论上限上。部分 Windows 11 版本上
+  可用的连续地址空间不够，导致这次分配确定性失败，被 Inno 笼统报成
+  "Out of memory."。这次把三个安装脚本（Full / CUDA / CUDA 补丁包）里的字典
+  大小都降到 128MB，在文档给出的安全范围内留了余量，代价是安装包体积略增。
+  我这边没有 Windows 机器，没法自己验证这个修复是否真的解决问题——如果你之前
+  遇到过这个报错，请在这个 RC 上重新测试安装，并回报结果。（issue #112）
+
+---
+
 # SuperPicky 4.6.3 RC10
 
 **What's new since RC9:**

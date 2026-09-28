@@ -301,11 +301,12 @@ def _stub_species_dialog(monkeypatch, cn: str, en: str, latin: str):
 
     class _Stub:
         def __init__(self, parent=None, session_species=None,
-                     exclude_species=None):
+                     exclude_species=None, photo_path=None):
             # 签名跟随真实弹窗：它现在还接收「本次拍到的鸟种」与要排除的鸟种
             # Mirrors the real dialog's signature.
             self.session_species = list(session_species or [])
             self.exclude_species = list(exclude_species or [])
+            self.photo_path = photo_path
             self.selected_cn, self.selected_en, self.selected_latin = cn, en, latin
 
         def exec(self):
