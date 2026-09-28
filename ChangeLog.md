@@ -1,3 +1,22 @@
+# SuperPicky 4.6.3 RC13
+
+**What's new since RC12:**
+
+- **Chinese bird names in Bird-ID results now follow IOC 15.1** (897 names).
+  The name search and the species-edit dialog had already switched to IOC 15.1
+  in RC10, but Bird-ID results, the detail panel and grid cards read a separate
+  database that was never updated, so the same bird could show two different
+  Chinese names. Only names where our English name matches IOC 15.1 were
+  synced; species that IOC has split (e.g. Olive-backed Sunbird, Spotted
+  Nutcracker) keep their current names for now, since the model still treats
+  them as one species. Species occurring in China keep the ChinaBirds name.
+  Photos processed before this update keep the old name in their results.
+- **Fixed:** Kalkadoon Grasswren (*Amytornis ballarae*) showed the Chinese name
+  「巴拉瑞特鹩莺」, a mistransliteration of the epithet (Ballara, a mining town
+  in Queensland, not Ballarat). It is now 「灰胸草鹩莺」.
+
+---
+
 # SuperPicky 4.6.3 RC12
 
 **What's new since RC11:**
@@ -30,6 +49,21 @@
   installers grow slightly in size in exchange. I have no Windows machine to
   verify this myself — if you ever hit that error, please test this RC and
   report back whether install now succeeds. (issue #112)
+
+---
+
+# SuperPicky 4.6.3 RC13（中文）
+
+**RC12 以来的变化：**
+
+- **识鸟结果的中文鸟名同步到 IOC 15.1**（897 个）。鸟名查询面板与改鸟种弹窗
+  在 RC10 已改用 IOC 15.1，但识鸟结果、详情面板、网格卡片读的是另一个库，一直
+  没更新，于是同一种鸟两处叫法不同。只同步了英文名与 IOC 15.1 一致的鸟种；IOC
+  已拆分的种（如黄腹花蜜鸟、星鸦）因模型仍把它们当作一个种，暂保留现名。中国
+  有分布的鸟种仍以 ChinaBirds 名录为准。更新前已处理的照片，结果里仍是旧名。
+- **修复：**卡尔卡东草鹩莺（*Amytornis ballarae*）的中文名显示为「巴拉瑞特鹩莺」，
+  是把种加词误作维州 Ballarat 音译（实为昆士兰矿镇 Ballara），现改为
+  「灰胸草鹩莺」。
 
 ---
 
