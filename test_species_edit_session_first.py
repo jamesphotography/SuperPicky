@@ -48,10 +48,12 @@ def birdname_db(tmp_path, monkeypatch):
     """造一份最小 birdname.db 并让弹窗用它。"""
     path = str(tmp_path / "birdname.db")
     con = sqlite3.connect(path)
-    # created_at 是真库里就有的列，_get_latest_version_id 按它排序取最新版本
+    # versions 的列与真库一致：_get_latest_version_id 经 tools.birdname_versions
+    # 按 version_name 选版本，缺这一列查询会失败、弹窗列表整个是空的。
+    # Columns mirror the real DB; version selection reads version_name.
     con.execute("CREATE TABLE versions (version_id INTEGER PRIMARY KEY,"
-                " created_at TEXT)")
-    con.execute("INSERT INTO versions VALUES (1, '2026-01-01')")
+                " version_name TEXT, is_active INTEGER, created_at TEXT)")
+    con.execute("INSERT INTO versions VALUES (1, 'IOC 15.1', 1, '2026-01-01')")
     con.execute(
         "CREATE TABLE birds (bird_id INTEGER PRIMARY KEY, chinese_name TEXT,"
         " english_name TEXT, latin_name TEXT, pinyin_name TEXT,"
@@ -265,8 +267,8 @@ def test_session_species_survive_the_result_limit(tmp_path, monkeypatch):
     path = str(tmp_path / "many.db")
     con = sqlite3.connect(path)
     con.execute("CREATE TABLE versions (version_id INTEGER PRIMARY KEY,"
-                " created_at TEXT)")
-    con.execute("INSERT INTO versions VALUES (1, '2026-01-01')")
+                " version_name TEXT, is_active INTEGER, created_at TEXT)")
+    con.execute("INSERT INTO versions VALUES (1, 'IOC 15.1', 1, '2026-01-01')")
     con.execute(
         "CREATE TABLE birds (bird_id INTEGER PRIMARY KEY, chinese_name TEXT,"
         " english_name TEXT, latin_name TEXT, pinyin_name TEXT,"
