@@ -287,10 +287,13 @@ def test_completion_panel_keeps_common_tier_zero(tmp_path):
 
     _write_log_with_summary(tmp_path)
     db = ReportDB(str(tmp_path))
-    db.insert_photo({"filename": "DSC1", "bird_species_cn": "环颈鸻",
-                     "bird_species_en": "Kentish Plover", "gbif_rarity_100": 1.0})
-    db.insert_photo({"filename": "DSC2", "bird_species_cn": "勺嘴鹬",
-                     "bird_species_en": "Spoon-billed Sandpiper",
+    # 面板鸟种名录按 D10 口径只收有 2★ 的鸟种，所以造库时给 2★
+    # The panel lists only species with a 2-star photo (D10), hence rating 2.
+    db.insert_photo({"filename": "DSC1", "bird_species_cn": "环颈鸻", "has_bird": 1,
+                     "rating": 2, "bird_species_en": "Kentish Plover",
+                     "gbif_rarity_100": 1.0})
+    db.insert_photo({"filename": "DSC2", "bird_species_cn": "勺嘴鹬", "has_bird": 1,
+                     "rating": 2, "bird_species_en": "Spoon-billed Sandpiper",
                      "gbif_rarity_100": 99.0})
     db.close()
 

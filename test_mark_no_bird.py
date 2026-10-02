@@ -68,7 +68,9 @@ def _stub_dialog_marks_no_bird(monkeypatch):
 
     class _Stub:
         def __init__(self, parent=None, session_species=None,
-                     exclude_species=None):
+                     exclude_species=None, photo_path=None):
+            # photo_path：单张改鸟种时传入，供弹窗的「重新识别这张」使用
+            # photo_path: passed for single-photo edits (re-identify option).
             self.selected_cn = ""
             self.selected_en = ""
             self.selected_latin = ""

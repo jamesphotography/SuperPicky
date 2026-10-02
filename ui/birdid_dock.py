@@ -2010,8 +2010,29 @@ class BirdIDDockWidget(QDockWidget):
         info_label.setWordWrap(True)
         self.results_layout.addWidget(info_label)
         self.results_layout.addStretch()
+        # 必须放在最后：上面的 clear_results() 会把标志清掉
+        # Must come last: clear_results() above resets the flag.
+        self._showing_completion = True
+
+    def is_showing_completion(self) -> bool:
+        """
+        面板此刻显示的是否为处理完成统计（而不是某张照片的识别结果/提示）。
+
+        主窗口在结果浏览器关闭后据此决定要不要按库的现状重绘完成统计，避免冲掉
+        用户正在看的识别结果。
+
+        返回 / Returns:
+            bool: 正在显示完成统计时为 True / True while the summary is shown.
+
+        Whether the panel currently shows the completion summary, so the main
+        window can refresh it without clobbering an identification result.
+        """
+        return getattr(self, "_showing_completion", False)
 
     def clear_results(self):
+        # 任何新内容上屏前都会先清空结果区，在这里复位标志即可覆盖全部入口
+        # Every content switch clears the results first, so reset the flag here.
+        self._showing_completion = False
         while self.results_layout.count():
             item = self.results_layout.takeAt(0)
             widget = item.widget() # pyright: ignore[reportOptionalMemberAccess]
