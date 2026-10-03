@@ -1950,6 +1950,9 @@ class SuperPickyMainWindow(QMainWindow):
             self._results_browser = ResultsBrowserWindow(parent=None)
             # 浏览器关闭时恢复主窗口（避免无可见窗口的"幽灵"状态）
             self._results_browser.closed.connect(self._show_main_window)
+            # 浏览器里改过鸟种/星级后，回到主窗口时面板要跟上库的现状
+            # Edits made in the browser must show up on the panel when it closes.
+            self._results_browser.closed.connect(self._refresh_completion_after_browse)
         self._results_browser.open_directory(self.directory_path)
         # 最大化打开：14 寸小屏或放大字体时，1280x780 的默认窗口会挤压三栏布局
         # Open maximized: on 14" screens or with enlarged text the 1280x780
@@ -2488,8 +2491,15 @@ class SuperPickyMainWindow(QMainWindow):
         # Lightroom 指南已停用（用户群体太少）：保留 _show_lightroom_guide 方法备用
 
         # V4.2: 通知 BirdIDDock 显示完成信息（传入 stats 替代 debug_dir）
+        # 面板的结果部分与「重开目录 / 关闭浏览器」后一样从 report.db 现算，否则
+        # 刚跑完与重开后两次看到的鸟种名录口径不同（D10 只收有 2★ 的鸟种）。
+        # 拷一份再覆盖：原 stats 是这次运行的历史快照，控制台报告仍用它。
+        # The panel's results come from report.db, as after reopening the folder
+        # or closing the browser; copy first so the console keeps the snapshot.
         if hasattr(self, 'birdid_dock') and self.birdid_dock:
-            self.birdid_dock.show_completion_message(stats)
+            panel_stats = dict(stats)
+            self._apply_current_results(self.directory_path, panel_stats)
+            self.birdid_dock.show_completion_message(panel_stats)
 
         # 播放完成音效
         self._play_completion_sound()
@@ -3516,14 +3526,50 @@ class SuperPickyMainWindow(QMainWindow):
         if not stats:
             return False
 
+        self._apply_current_results(directory, stats)
+        dock.show_completion_message(stats)
+        return True
+
+    def _apply_current_results(self, directory: str, stats: dict) -> None:
+        """
+        用 report.db 的现状覆盖完成统计里的结果部分（原地修改 ``stats``）。
+
+        日志摘要 / 处理线程给的 stats 是处理结束那一刻的快照；用户之后在结果浏览器
+        里改鸟种、改星级、标记无鸟只写 report.db。面板要反映现状，所以星级分布、
+        飞版/精焦、鸟种名录一律以库为准（``collect_completion_stats``，口径与 HTML
+        报告一致）；总耗时、平均耗时库里没有，保留 ``stats`` 原值。
+
+        库读不出来（无库、老库缺列、只读打不开）时退回快照，只给鸟名补罕见度档位
+        ——日志摘要里没有档位，面板按档位着色。
+
+        参数 / Parameters:
+            directory (str): 已处理目录 / The processed directory.
+            stats (dict): 待覆盖的完成统计（原地修改）/ Stats to update in place.
+
+        Overlay the result part of the completion stats with report.db's current
+        state, keeping timing fields from the snapshot. Falls back to the snapshot
+        (with rarity tiers added for colouring) when no database is readable.
+        """
+        from core.processed_lookup import collect_completion_stats, collect_species_tiers
+
         try:
-            from core.processed_lookup import collect_species_tiers
-            tiers = collect_species_tiers(directory)
-        except Exception as err:                      # noqa: BLE001 - 见 docstring
+            current = collect_completion_stats(directory) if directory else None
+        except Exception as err:                      # noqa: BLE001 - 面板是附加信息，不能拖垮主流程
+            print(f"[MainWindow] 完成统计现算失败 / completion stats failed: {err}")
+            current = None
+        if current is not None:
+            stats.update(current)
+            return
+
+        try:
+            tiers = collect_species_tiers(directory) if directory else {}
+        except Exception as err:                      # noqa: BLE001 - 见上 / see above
             print(f"[MainWindow] 罕见度档位读取失败 / rarity tier lookup failed: {err}")
             tiers = {}
 
         for species in stats.get("bird_species", []):
+            if not isinstance(species, dict):
+                continue
             # 不能写成 `a or b`：档位 0（常见）是合法值但为假值，会被误判成没查到
             # Not `a or b`: tier 0 (common) is a valid but falsy value.
             tier = tiers.get(species.get("cn_name"))
@@ -3532,8 +3578,30 @@ class SuperPickyMainWindow(QMainWindow):
             if tier is not None:
                 species["gbif_tier"] = tier
 
-        dock.show_completion_message(stats)
-        return True
+    def _refresh_completion_after_browse(self) -> None:
+        """
+        结果浏览器关闭后，按 report.db 现状刷新识鸟面板的完成统计与顶部状态条。
+
+        只在面板此刻显示的正是完成统计时刷新——用户若在面板里看着某张照片的识别
+        结果，不能被关浏览器这个动作冲掉。处理进行中不刷新（库还在写，状态条也
+        属于进度显示）。
+
+        Refresh the BirdID completion panel and status banner from report.db when
+        the results browser closes. Skipped while processing, and when the dock
+        is showing something other than the completion summary.
+        """
+        if not self.directory_path:
+            return
+        if self.worker and self.worker.is_alive():
+            return
+
+        dock = getattr(self, "birdid_dock", None)
+        if dock is not None and dock.is_showing_completion():
+            self._restore_completion_panel(self.directory_path)
+
+        report_path = os.path.join(self.directory_path, ".superpicky", "report.db")
+        if os.path.exists(report_path):
+            self._update_status_banner("has_results", self._load_result_counts())
 
     def _show_initial_help(self):
         """显示初始帮助信息(HTML:图标左对齐、同行图标与文字垂直居中)"""

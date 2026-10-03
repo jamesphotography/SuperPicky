@@ -416,6 +416,10 @@ class BirdSpeciesEditDialog(QDialog):
             # LIMIT below, sorting after the fetch would come too late.
             session = sorted(self._session_names)
             session_ph = ",".join("?" * len(session)) if session else "NULL"
+            # 「SuperPicky 名录」的别名搜索与模型种优先排序（老库没有对应列时为空）
+            # Alias search + model-first ordering for the master catalog.
+            from tools.birdname_versions import catalog_search_extras
+            alias_where, model_order = catalog_search_extras(conn)
             sql = f"""
                 SELECT * FROM birds
                 WHERE version_id = ? AND (
@@ -425,7 +429,7 @@ class BirdSpeciesEditDialog(QDialog):
                     pinyin_name  LIKE ? OR
                     abbreviation LIKE ? OR
                     LOWER(pinyin_name)  LIKE ? OR
-                    LOWER(abbreviation) LIKE ?
+                    LOWER(abbreviation) LIKE ?{alias_where}
                 )
                 ORDER BY
                     CASE
@@ -438,7 +442,7 @@ class BirdSpeciesEditDialog(QDialog):
                         WHEN english_name LIKE ?       THEN 6
                         ELSE 7
                     END,
-                    chinese_name
+                    {model_order}chinese_name
                 LIMIT 50
             """
             params = (
@@ -446,6 +450,7 @@ class BirdSpeciesEditDialog(QDialog):
                 f"%{query}%", f"%{query}%", f"%{query}%",
                 f"%{query}%", f"%{query}%",
                 f"%{q_lower}%", f"%{q_lower}%",
+                *((f"%{query}%",) if alias_where else ()),
                 *session,
                 query, query, query, q_lower,
                 f"{query}%", f"{query}%",
@@ -491,6 +496,10 @@ class BirdSpeciesEditDialog(QDialog):
             }
             badge = (self.i18n.t("bird_species_edit.this_shoot")
                      if row["chinese_name"] in self._session_names else None)
+            # IOC 补漏的种（识鸟模型未收录）标出来：选它可以，但识鸟不会给出这个名字
+            # Flag IOC-only species: selectable, but the ID model never outputs them.
+            if badge is None and "in_model" in row.keys() and row["in_model"] == 0:
+                badge = self.i18n.t("bird_species_edit.not_in_model")
             card = BirdResultCard(bird_data, tier_index=None, badge=badge)
             card.selected.connect(self._on_card_selected)
             # 双击直接确认

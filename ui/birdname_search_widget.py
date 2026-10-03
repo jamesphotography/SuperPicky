@@ -704,7 +704,11 @@ class BirdNameSearchWidget(QWidget):
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             query_lower = query.lower()
-            sql = """
+            # 与改鸟种弹窗同一套附加条件：别名搜索 + 模型种优先（老库为空串）
+            # Same extras as the edit dialog: alias search + model-first order.
+            from tools.birdname_versions import catalog_search_extras
+            alias_where, model_order = catalog_search_extras(conn)
+            sql = f"""
                 SELECT * FROM birds
                 WHERE version_id = ? AND (
                     chinese_name LIKE ? OR
@@ -713,7 +717,7 @@ class BirdNameSearchWidget(QWidget):
                     pinyin_name LIKE ? OR
                     abbreviation LIKE ? OR
                     LOWER(pinyin_name) LIKE ? OR
-                    LOWER(abbreviation) LIKE ?
+                    LOWER(abbreviation) LIKE ?{alias_where}
                 )
                 ORDER BY
                     CASE
@@ -725,7 +729,7 @@ class BirdNameSearchWidget(QWidget):
                         WHEN english_name LIKE ? THEN 6
                         ELSE 7
                     END,
-                    chinese_name
+                    {model_order}chinese_name
                 LIMIT 50
             """
             params = (
@@ -737,6 +741,7 @@ class BirdNameSearchWidget(QWidget):
                 f"%{query}%",
                 f"%{query_lower}%",
                 f"%{query_lower}%",
+                *((f"%{query}%",) if alias_where else ()),
                 query,
                 query,
                 query,
@@ -771,6 +776,9 @@ class BirdNameSearchWidget(QWidget):
                 "latin_name": row["latin_name"],
                 "pinyin_name": row["pinyin_name"],
                 "abbreviation": row["abbreviation"],
+                # 只有「SuperPicky 名录」有这列：0 = IOC 补漏、识鸟模型未收录
+                # Only the master catalog has it: 0 = IOC-only species.
+                "in_model": row["in_model"] if "in_model" in row.keys() else None,
             }
             for row in results
         ]
@@ -792,7 +800,12 @@ class BirdNameSearchWidget(QWidget):
             latin = (bird_data["latin_name"] or "").strip()
             score = score_map.get(latin)
             tier = gbif_score_to_tier(score) if score is not None else None
-            card = BirdResultCard(bird_data, tier_index=tier)
+            # IOC 补漏的种（识鸟模型未收录）在「SuperPicky 名录」里标出来
+            # Flag IOC-only species of the master catalog.
+            badge = None
+            if bird_data.get("in_model") == 0:
+                badge = self.i18n.t("bird_species_edit.not_in_model")
+            card = BirdResultCard(bird_data, tier_index=tier, badge=badge)
             card.selected.connect(self._on_card_selected)
             self.results_layout.addWidget(card)
             self._cards.append(card)

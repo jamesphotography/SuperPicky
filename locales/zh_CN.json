@@ -1452,7 +1452,8 @@
     "reidentify": "重新识别这张",
     "reidentifying": "正在重新识别…",
     "reidentify_none": "这次没有识别出任何鸟种",
-    "reidentify_failed": "重新识别失败：{error}"
+    "reidentify_failed": "重新识别失败：{error}",
+    "not_in_model": "识鸟模型未收录"
   },
   "crop_advisor": {
     "title": "裁剪建议",
