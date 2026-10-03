@@ -35,6 +35,11 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 #: Versions within this fraction of the largest count count as equally broad.
 BREADTH_RATIO = 0.9
 
+#: 鸟名主库导出的版本名（scripts_dev/sync_from_master.py 写入）。它与识鸟结果同名同源，
+#: 永远排在最前：改鸟种弹窗选它，手动改出的名字才与识鸟给出的名字一致。
+#: The bird-names master catalog; always preferred so manual edits match ID results.
+MASTER_VERSION_NAME = "SuperPicky 名录"
+
 #: 从版本名里抓版本号，如 "IOC 15.1" → (15, 1)、"ChinaBirds.12.0.2024" → (12, 0, 2024)
 _NUMBERS_RE = re.compile(r"\d+")
 
@@ -76,8 +81,9 @@ def order_versions(versions: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     threshold = largest * BREADTH_RATIO
 
     def key(v: Dict[str, Any]):
+        is_master = 1 if v.get("version_name") == MASTER_VERSION_NAME else 0
         broad = 1 if int(v.get("species_count") or 0) >= threshold else 0
-        return (broad, parse_edition(v.get("version_name")),
+        return (is_master, broad, parse_edition(v.get("version_name")),
                 int(v.get("species_count") or 0))
 
     return sorted(versions, key=key, reverse=True)
@@ -148,3 +154,32 @@ def pick_version_from_db(db_path: str) -> Optional[int]:
     Convenience wrapper over load_versions + pick_version.
     """
     return pick_version(load_versions(db_path))
+
+
+def catalog_search_extras(conn: sqlite3.Connection) -> Tuple[str, str]:
+    """
+    鸟名搜索 SQL 的附加片段：别名搜索与「识鸟模型收录的种优先」排序。
+
+    「SuperPicky 名录」版本多两列：`search_aliases`（主库旧名 + IOC 中文名，用 | 分隔，
+    搜「理氏鹨」也能找到现用名「田鹨」）与 `in_model`（0 = IOC 补漏、识鸟模型未收录）。
+    其它版本与老库没有这两列，这时返回空片段，查询照旧。改鸟种弹窗与鸟名查询面板
+    共用本函数，两处的搜索行为保持一致。
+
+    参数 / Parameters:
+    conn (sqlite3.Connection): 已打开的 birdname.db 连接。
+
+    返回 / Returns:
+    Tuple[str, str]: (追加在 WHERE 的 OR 条件，含一个 `?` 占位，参数为 `%词%`；
+        追加在 ORDER BY 末尾、chinese_name 之前的排序项)。没有对应列时为空串。
+
+    Extra SQL for name search: alias matching and model-first ordering, or empty
+    strings when the database lacks the master-catalog columns.
+    """
+    try:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(birds)")}
+    except sqlite3.Error:
+        return "", ""
+    where = " OR search_aliases LIKE ?" if "search_aliases" in cols else ""
+    order = "COALESCE(in_model, 1) DESC, " if "in_model" in cols else ""
+    return where, order
+

@@ -273,6 +273,166 @@ def collect_species_tiers(directory: str) -> Dict[str, int]:
     return tiers
 
 
+def find_report_dbs(directory: str) -> List[str]:
+    """
+    找出目录树里属于一次处理的全部 report.db（本目录 + 批量模式处理过的子目录）。
+
+    批量模式用 ``core.recursive_scanner.scan_directories`` 递归找照片目录，最深
+    ``DEFAULT_SCAN_MAX_DEPTH`` 层，每个照片目录各建一个 ``.superpicky/report.db``。
+    这里用同样的深度上限与同样的排除规则（``is_excluded``：隐藏目录、星级目录、
+    burst_ 目录等）往下走，不进这些目录既省时间，也避免把整理产物当成处理目录。
+    结果按路径排序，保证汇总顺序稳定。
+
+    参数 / Parameters:
+        directory (str): 被选中的目录 / The selected directory.
+
+    返回 / Returns:
+        List[str]: report.db 绝对路径列表，没有时为空 /
+            Sorted report.db paths, empty when none exist.
+
+    Find every report.db a run may have produced under ``directory``: batch
+    mode processes each photo directory found by the recursive scanner, so the
+    same depth limit and exclusion rules are applied here.
+    """
+    from core.recursive_scanner import DEFAULT_SCAN_MAX_DEPTH, is_excluded
+
+    found: List[str] = []
+    stack = [(directory, 0)]
+    while stack:
+        current, depth = stack.pop()
+        db_path = os.path.join(current, ".superpicky", "report.db")
+        if os.path.isfile(db_path):
+            found.append(db_path)
+        if depth >= DEFAULT_SCAN_MAX_DEPTH:
+            continue
+        try:
+            with os.scandir(current) as entries:
+                for entry in entries:
+                    if entry.is_dir(follow_symlinks=False) and not is_excluded(entry.name):
+                        stack.append((entry.path, depth + 1))
+        except OSError:
+            continue
+    return sorted(found)
+
+
+def collect_completion_stats(directory: str) -> Optional[Dict[str, Any]]:
+    """
+    从 report.db 现算识鸟面板「完成统计」里的结果部分（星级分布、飞版/精焦、鸟种名录）。
+
+    为什么不用日志摘要：日志里的 ``[Session End]`` 是处理结束那一刻的快照，用户随后
+    在结果浏览器里改鸟种、改星级、标记无鸟都只写 report.db，面板若照搬日志就一直
+    显示改之前的结果。控制台日志保留历史原样（记录 AI 当时的判断），面板反映现状，
+    所以只有这里改读库；总耗时库里没有，仍由调用方从日志取。
+
+    口径（与 HTML 分享报告 ``core.report_export.aggregate`` 一致）：
+    - 星级：-1 计「无鸟」；3 及以上计 3★——4/5★ 只能由用户在浏览器里手动升出来，
+      面板没有这两档，并进 3★ 才能让各档之和等于总张数；
+    - 精焦：``focus_status == "BEST"``（处理流程里与锐度权重 > 1.0 一一对应）；
+    - 鸟种名录：只收至少有一张 ``FOLDERED_MIN_RATING``（2★）的鸟种，与浏览器鸟种
+      下拉、HTML 报告、eBird 导出同一条线（spec D10）；按罕见度档位降序、同档张数多者
+      在前，档位取该鸟种所有照片里 ``gbif_rarity_100`` 的最大值。
+
+    库的选取：汇总 ``find_report_dbs`` 找到的全部 report.db。批量模式按递归扫描
+    逐目录处理（父目录自己有照片时也算一个），每个库只记它所在目录的照片，所以
+    累加不会重复计数。全程只读。
+
+    参数 / Parameters:
+        directory (str): 被选中的目录 / The selected directory.
+
+    返回 / Returns:
+        Optional[Dict[str, Any]]: 可并进 ``show_completion_message`` 的 stats
+            （total/star_3/star_2/star_1/star_0/no_bird/flying/focus_precise/
+            bird_species）；找不到可读的库或老库缺列时返回 None，调用方应退回
+            日志摘要 / Stats to merge into the completion panel, or None when no
+            database is readable, in which case callers fall back to the log.
+
+    Recompute the result part of the completion panel from report.db, because
+    edits made in the results browser (species, rating, no-bird) only reach the
+    database while the log summary is a snapshot of the finished run. The console
+    keeps that historical snapshot; the panel shows the current state. Scope
+    matches the HTML share report: 4/5 stars fold into 3, focus = BEST, and the
+    species list only includes species with at least one 2-star photo, ordered by
+    rarity tier then photo count. Every database found by ``find_report_dbs`` is
+    summed; each one covers only its own directory's photos, so batch runs do not
+    double count. Read-only.
+    """
+    from core.rarity_tier import gbif_score_to_tier
+    from core.report_export import FOLDERED_MIN_RATING
+
+    db_paths = find_report_dbs(directory)
+    if not db_paths:
+        return None
+
+    def _query(conn: sqlite3.Connection):
+        return conn.execute(
+            "SELECT rating, has_bird, is_flying, focus_status, "
+            "bird_species_cn, bird_species_en, gbif_rarity_100 FROM photos"
+        ).fetchall()
+
+    rows: List[sqlite3.Row] = []
+    for db_path in db_paths:
+        fetched = _with_read_connection(db_path, _query)
+        if fetched is None:
+            # 任何一个库读不出来，现算的数字就是残缺的；宁可整体退回日志摘要
+            # One unreadable database makes the totals partial; fall back wholesale.
+            return None
+        rows.extend(fetched)
+
+    stats: Dict[str, Any] = {
+        "total": len(rows), "star_3": 0, "star_2": 0, "star_1": 0, "star_0": 0,
+        "no_bird": 0, "flying": 0, "focus_precise": 0,
+    }
+    # 鸟种分组键与 aggregate 一致：中文名优先，空名（未识别）不成组
+    # Group key matches aggregate: Chinese name first, unnamed rows skipped.
+    groups: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        rating = int(row["rating"] if row["rating"] is not None else 0)
+        if rating >= 3:
+            stats["star_3"] += 1
+        elif rating in (0, 1, 2):
+            stats[f"star_{rating}"] += 1
+        else:
+            stats["no_bird"] += 1
+        if row["is_flying"]:
+            stats["flying"] += 1
+        if row["focus_status"] == "BEST":
+            stats["focus_precise"] += 1
+
+        if not row["has_bird"]:
+            continue
+        key = row["bird_species_cn"] or row["bird_species_en"] or ""
+        if not key:
+            continue
+        group = groups.setdefault(key, {
+            "cn_name": row["bird_species_cn"] or "",
+            "en_name": row["bird_species_en"] or "",
+            "count": 0, "max_rating": rating, "score": None,
+        })
+        group["count"] += 1
+        group["max_rating"] = max(group["max_rating"], rating)
+        if not group["en_name"] and row["bird_species_en"]:
+            group["en_name"] = row["bird_species_en"]
+        score = row["gbif_rarity_100"]
+        if score is not None and (group["score"] is None or score > group["score"]):
+            group["score"] = score
+
+    species: List[Dict[str, Any]] = []
+    for group in groups.values():
+        if group["max_rating"] < FOLDERED_MIN_RATING:
+            continue
+        entry: Dict[str, Any] = {"cn_name": group["cn_name"], "en_name": group["en_name"],
+                                 "count": group["count"]}
+        tier = gbif_score_to_tier(group["score"])
+        if tier is not None:
+            entry["gbif_tier"] = tier
+        species.append(entry)
+    # 与 HTML 报告同序：档位降序（无档位视为最低），同档张数多者在前
+    # Same order as the HTML report: tier desc (None lowest), then count desc.
+    species.sort(key=lambda s: (s.get("gbif_tier", -1), s["count"]), reverse=True)
+    stats["bird_species"] = species
+    return stats
+
+
 def resolve_crop_path(root: str, record: Optional[Dict[str, Any]], stem: str) -> Optional[str]:
     """
     定位 crop_debug 预览图。

@@ -137,26 +137,56 @@ def test_ordering_puts_the_chosen_version_first():
     assert len(ordered) == len(_REAL)
 
 
-def test_the_shipped_database_resolves_to_ioc_15_1():
+def test_the_shipped_database_resolves_to_master_catalog():
     """
-    端到端：真实的 ioc/birdname.db 必须解析到 IOC 15.1。
+    端到端：真实的 ioc/birdname.db 必须默认选中鸟名主库导出的「SuperPicky 名录」，
+    其余名录里 IOC 15.1 仍排在 IOC 14.2 之前（覆盖面 + 版本号规则不变）。
 
     上面几条用的是硬编码夹具；这条读真库，防止库本身变动后规则悄悄失配。
+    End to end: the shipped database defaults to the master catalog, and among
+    the rest IOC 15.1 still outranks IOC 14.2.
     """
-    import sqlite3
-    from tools.birdname_versions import pick_version_from_db
+    from tools.birdname_versions import (MASTER_VERSION_NAME, load_versions,
+                                         order_versions)
 
     db = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                       "ioc", "birdname.db")
-    version_id = pick_version_from_db(db)
+    names = [v["version_name"] for v in order_versions(load_versions(db))]
+    assert names[0] == MASTER_VERSION_NAME, f"选中的是 {names[0]}"
+    assert names.index("IOC 15.1") < names.index("IOC 14.2")
 
-    conn = sqlite3.connect(db)
-    try:
-        name = conn.execute("SELECT version_name FROM versions WHERE version_id = ?",
-                            (version_id,)).fetchone()[0]
-    finally:
-        conn.close()
-    assert name == "IOC 15.1", f"选中的是 {name}"
+
+def test_master_catalog_always_ranks_first():
+    """主库版本无论种数、版本号如何都排第一 / The master catalog always wins."""
+    from tools.birdname_versions import MASTER_VERSION_NAME, pick_version
+
+    versions = [
+        {"version_id": 1, "version_name": "IOC 99.9", "species_count": 20000},
+        {"version_id": 2, "version_name": MASTER_VERSION_NAME, "species_count": 11000},
+    ]
+    assert pick_version(versions) == 2
+
+
+def test_catalog_search_extras_depend_on_columns():
+    """有主库列时给出别名条件与排序项；老库没有这两列时返回空串，查询照旧。
+    Extras appear only when the master-catalog columns exist."""
+    import sqlite3
+    from tools.birdname_versions import catalog_search_extras
+
+    old = sqlite3.connect(":memory:")
+    old.execute("CREATE TABLE birds (chinese_name TEXT)")
+    assert catalog_search_extras(old) == ("", "")
+
+    new = sqlite3.connect(":memory:")
+    new.execute("CREATE TABLE birds (chinese_name TEXT, in_model INTEGER, search_aliases TEXT)")
+    new.executemany("INSERT INTO birds VALUES (?, ?, ?)",
+                    [("塔岛鹰鸮", 0, None), ("田鹨", 1, "理氏鹨"), ("东方田鹨", 1, None)])
+    where, order = catalog_search_extras(new)
+    rows = new.execute(f"SELECT chinese_name FROM birds WHERE chinese_name LIKE ?{where} "
+                       f"ORDER BY {order}chinese_name", ("%理氏鹨%", "%理氏鹨%")).fetchall()
+    assert rows == [("田鹨",)], "搜 IOC 旧名应找到现用名"
+    ordered = [r[0] for r in new.execute(f"SELECT chinese_name FROM birds ORDER BY {order}chinese_name")]
+    assert ordered[-1] == "塔岛鹰鸮", "识鸟模型未收录的种排在最后"
 
 
 def test_missing_database_yields_none():

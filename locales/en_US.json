@@ -1452,7 +1452,8 @@
     "reidentify": "Re-identify this photo",
     "reidentifying": "Re-identifying…",
     "reidentify_none": "No species came back this time",
-    "reidentify_failed": "Re-identification failed: {error}"
+    "reidentify_failed": "Re-identification failed: {error}",
+    "not_in_model": "Not in ID model"
   },
   "crop_advisor": {
     "title": "Crop Advice",
