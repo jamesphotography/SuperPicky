@@ -655,6 +655,13 @@ class PhotoProcessor:
                 burst_stats = self._consolidate_burst_groups(raw_dict)
                 self.stats['burst_groups'] = burst_stats.get('groups', 0)
                 self.stats['burst_moved'] = burst_stats.get('moved', 0)
+
+            # 阶段 6.5: 收尾修剪——整理、连拍合并、评星配额都可能把目录搬空。只从
+            # 星级目录与 burst_ 目录出发，用户自己建的空文件夹不受影响。
+            # Stage 6.5: prune folders emptied by organizing; starts only from
+            # rating / burst_ folders, so user-made empty folders are untouched.
+            if organize_files:
+                self._prune_empty_folders()
             
             # 阶段7: 临时文件处理
             if cleanup_temp:
@@ -825,7 +832,8 @@ class PhotoProcessor:
         from tools.exiftool_manager import get_exiftool_manager
 
         stats = {'groups': 0, 'moved': 0}
-        
+        source_dirs = set()
+
         if not self.burst_map:
             return stats
         
@@ -957,6 +965,10 @@ class PhotoProcessor:
             )
             burst_dir = os.path.join(self.dir_path, target, f"burst_{group_id:03d}")
             os.makedirs(burst_dir, exist_ok=True)
+            # 照片先按单张星级归档，再整组搬进 burst 目录；搬出的星级目录可能就此空了
+            # Shots were filed by their own rating first; note where they came from.
+            for f in current_files:
+                source_dirs.add(os.path.dirname(f['path']))
 
             
             # V4.0.4: 移动所有连拍照片到 burst 目录（包括最佳照片）
@@ -991,6 +1003,16 @@ class PhotoProcessor:
             
             stats['groups'] += 1
         
+        # 搬空的源目录（如「鸟种/2星_良好」）连同搬空的上级一起删掉
+        # Remove rating folders the consolidation emptied, and emptied parents.
+        if source_dirs:
+            from core.folder_cleanup import prune_upwards
+            for src in sorted(source_dirs, key=lambda p: p.count(os.sep), reverse=True):
+                try:
+                    prune_upwards(self.dir_path, src)
+                except Exception as e:
+                    self._log(f"    ⚠️ Empty folder cleanup failed: {e}", "warning")
+
         if stats['groups'] > 0:
             self._log(self.i18n.t("logs.burst_consolidate_complete", groups=stats['groups'], moved=stats['moved']))
         
@@ -3743,6 +3765,25 @@ class PhotoProcessor:
             self._log(self.i18n.t("logs.picked_no_intersection"))
             self.stats['picked'] = 0
     
+    def _prune_empty_folders(self) -> None:
+        """
+        处理收尾时删掉被搬空的整理目录（鸟种 / 星级 / burst_），失败只记日志不中断。
+
+        Remove organizer folders left empty at the end of a run; failures are
+        logged, never fatal.
+        """
+        from constants import RATING_FOLDER_NAMES, RATING_FOLDER_NAMES_EN
+        from core.folder_cleanup import prune_organized_folders
+        try:
+            removed = prune_organized_folders(
+                self.dir_path,
+                set(RATING_FOLDER_NAMES.values()) | set(RATING_FOLDER_NAMES_EN.values()))
+        except Exception as e:
+            self._log(f"    ⚠️ Empty folder cleanup failed: {e}", "warning")
+            return
+        if removed:
+            self._log(self.i18n.t("logs.empty_folders_pruned", count=removed))
+
     def _move_files_to_rating_folders(self, raw_dict):
         """移动文件到分类文件夹（V4.2.7: layout 由 folder_layout 决定）"""
         from core.folder_layout import compute_target_folder
