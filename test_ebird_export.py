@@ -166,13 +166,15 @@ def test_low_rated_photos_are_excluded():
 
     photos = [
         _photo("A", "家燕", "Barn Swallow", "2026-09-04 07:30:00", rating=1),
-        _photo("B", "大山雀", "Great Tit", "2026-09-04 08:00:00", rating=2),
+        # 主库命名（ChinaBirds）：Parus major 叫「欧亚大山雀」，「大山雀」是 P. minor
+        # Master naming: Parus major is 欧亚大山雀; 大山雀 is P. minor.
+        _photo("B", "欧亚大山雀", "Great Tit", "2026-09-04 08:00:00", rating=2),
     ]
 
     lists = build_checklists(photos, "X")
 
     species = [(e.species.genus, e.species.species) for e in lists[0].entries]
-    assert ("Parus", "major") in species, "2★ 的大山雀应计入"
+    assert ("Parus", "major") in species, "2★ 的欧亚大山雀应计入"
     assert ("Hirundo", "rustica") not in species, "1★ 的家燕不该计入"
 
 
