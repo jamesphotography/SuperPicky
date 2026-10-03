@@ -1,3 +1,33 @@
+# SuperPicky 4.6.3 RC14
+
+**What's new since RC13:**
+
+- **One set of Chinese bird names everywhere.** SuperPicky, the 慧眼观鸟 app,
+  OZBirds and the eBird Chinese-name extension now all take their names from a
+  single shared name database, so the same bird is no longer called different
+  things in different places.
+- **The species-edit dialog now matches Bird-ID results.** It used to search the
+  raw IOC 15.1 list, so correcting a photo could write a different name from the
+  one Bird-ID gives (e.g. Zebra Finch became 「巽他斑胸草雀」). It now searches the
+  same names Bird-ID uses. Searching an old or IOC name still finds the bird
+  (「理氏鹨」 finds 「田鹨」), and recently split species the ID model does not know
+  yet (e.g. Tasmanian Boobook) can still be picked, labelled "Not in ID model".
+- **163 Chinese names in Bird-ID results updated** to the shared database.
+  Species occurring in China use the ChinaBirds names (Richard's Pipit
+  「理氏鹨」→「田鹨」, Whiskered Tern 「须浮鸥」→「灰翅浮鸥」, Orange-bellied Leafbird
+  「黄冠橙腹叶鹎」→「橙腹叶鹎」); Green Heron is now 「北美绿鹭」. Where IOC gave a
+  name only to one part of a recent split, the whole-species name is kept,
+  because the ID model still treats it as one species. Two species that were
+  both called 「歌百灵」 now have distinct names.
+- **The Bird-ID completion summary now follows your edits.** After changing a
+  species, a rating or marking a photo as no-bird in the results browser, the
+  summary on the right (star counts, species list) updates when you close the
+  browser and when you reopen the folder. The console log still shows the
+  original run as it happened.
+- Photos processed before this update keep their old names in their results.
+
+---
+
 # SuperPicky 4.6.3 RC13
 
 **What's new since RC12:**
@@ -49,6 +79,27 @@
   installers grow slightly in size in exchange. I have no Windows machine to
   verify this myself — if you ever hit that error, please test this RC and
   report back whether install now succeeds. (issue #112)
+
+---
+
+# SuperPicky 4.6.3 RC14（中文）
+
+**RC13 以来的变化：**
+
+- **各处中文鸟名统一为同一套。** SuperPicky、慧眼观鸟、OZBirds 与 eBird 中文
+  鸟名插件现在共用同一个鸟名库，同一种鸟不再在不同地方叫不同的名字。
+- **改鸟种弹窗与识鸟结果同名。** 弹窗以前搜的是 IOC 15.1 原始名录，手动改出的
+  名字可能和识鸟给出的不一样（如斑胸草雀会被改成「巽他斑胸草雀」）。现在搜的就是
+  识鸟用的那套名字；搜旧名或 IOC 名照样能找到（搜「理氏鹨」得到「田鹨」）；识鸟
+  模型还不认识的新拆分种（如塔岛鹰鸮）仍可选，并标注「识鸟模型未收录」。
+- **识鸟结果的中文鸟名更新 163 处**，与共用鸟名库一致。中国有分布的鸟种用
+  ChinaBirds 名（理氏鹨→田鹨、须浮鸥→灰翅浮鸥、黄冠橙腹叶鹎→橙腹叶鹎）；美洲绿鹭
+  改为北美绿鹭。IOC 把名字只给了拆分后一支的，模型仍把它当一个种，保留整种名。
+  原来两种都叫「歌百灵」的现已分开命名。
+- **识鸟面板的完成统计跟上你的修改。** 在结果浏览器里改鸟种、改星级或标记无鸟
+  后，关闭浏览器或重新打开目录时，右侧的星级统计与鸟种名录会按最新结果更新；
+  控制台日志仍保留当次处理的原始记录。
+- 更新前已处理的照片，结果里仍是旧名。
 
 ---
 
