@@ -452,6 +452,23 @@ def _build_superpicky_folder_set():
     return names
 
 
+def _count_subdirs(path: str) -> int:
+    """
+    数 path 下的子目录总数（递归，含隐藏目录）；path 不存在时为 0。
+
+    参数:
+    path (str): 目录路径
+
+    返回:
+    int: 子目录数
+
+    Count all subfolders under ``path`` recursively (0 when it is gone).
+    """
+    if not os.path.isdir(path):
+        return 0
+    return sum(len(dirs) for _root, dirs, _files in os.walk(path))
+
+
 def _is_superpicky_folder(name: str) -> bool:
     """目录名是否为 SuperPicky 生成（鸟名/评分/其他鸟类/burst_）。"""
     if name.startswith("burst_"):
@@ -597,14 +614,19 @@ def force_flatten_directory(directory, log_callback=None, i18n=None) -> dict:
                     else:
                         log(f"  ❌ 移动失败 {fname}: {e}")
 
-        # 删除清空的子目录（最深优先），再删顶层匹配目录
-        for root, dirs, files in os.walk(top_dir, topdown=False):
-            try:
-                if not os.listdir(root):
-                    os.rmdir(root)
-                    stats["dirs_removed"] += 1
-            except Exception:
-                pass
+        # 删除清空的子目录与顶层匹配目录。上面移文件时刻意跳过了 ._* / .DS_Store，
+        # 原先「目录里一样东西都没有才删」会被它们挡住——exFAT 盘上每个目录都有
+        # ._ 伴生文件，摊平后鸟种目录全都留着。改用 core.folder_cleanup.prune_tree：
+        # 只删系统垃圾、孤儿 ._ 与空子目录，任何其它文件都不碰。
+        # Prune with core.folder_cleanup: the ._* / .DS_Store files skipped above
+        # used to keep every emptied folder alive on exFAT volumes.
+        from core.folder_cleanup import prune_tree
+        before = _count_subdirs(top_dir)
+        try:
+            removed_top = prune_tree(top_dir)
+        except Exception:
+            removed_top = False
+        stats["dirs_removed"] += (before + 1) if removed_top else max(before - _count_subdirs(top_dir), 0)
 
     if i18n:
         log(i18n.t("logs.adv_flatten_done",

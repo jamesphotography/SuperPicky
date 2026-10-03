@@ -363,7 +363,8 @@
     "replay_header": "━━━━━━ Restored previous processing log: {file} ━━━━━━",
     "replay_omitted": "…… {count} line(s) omitted here, see {file} for the full log ……",
     "replay_footer": "━━━━━━ End of restored log ({total} lines) ━━━━━━",
-    "replay_failed": "⚠️ Failed to read the previous log: {error}"
+    "replay_failed": "⚠️ Failed to read the previous log: {error}",
+    "empty_folders_pruned": "  🧹 Removed {count} emptied folders"
   },
   "server": {
     "server_already_running": "✅ Server already running on port {port}",

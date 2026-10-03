@@ -162,3 +162,18 @@ def test_dry_run_and_id_drift_write_nothing(tmp_path):
     before = (ref.read_bytes(), names.read_bytes())
     assert _run(tmp_path, root, master, ref, names, py) == 1
     assert (ref.read_bytes(), names.read_bytes()) == before
+
+
+def test_unchanged_run_writes_nothing(tmp_path):
+    """主库没变时重跑：三个文件逐字节不变，也不产生备份（避免 git 里的假改动）。
+    A no-op rerun leaves every file byte-identical and makes no backup."""
+    root, master = _master(tmp_path)
+    ref, names, py = _targets(tmp_path)
+    _run(tmp_path, root, master, ref, names, py)
+    before = (ref.read_bytes(), names.read_bytes(), py.read_bytes())
+    backups = len(os.listdir(tmp_path / "bak"))
+
+    assert _run(tmp_path, root, master, ref, names, py) == 0
+    assert (ref.read_bytes(), names.read_bytes(), py.read_bytes()) == before
+    assert len(os.listdir(tmp_path / "bak")) == backups
+

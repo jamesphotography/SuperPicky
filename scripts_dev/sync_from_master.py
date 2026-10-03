@@ -231,6 +231,39 @@ _CATALOG_COLUMNS = ("chinese_name", "english_name", "latin_name", "pinyin_name",
                     "genus_zh", "in_model", "search_aliases")
 
 
+def catalog_unchanged(name_db: str, rows: List[tuple]) -> bool:
+    """
+    「SuperPicky 名录」现有内容是否已与将写入的行一致（不计自增主键 bird_id）。
+
+    整版替换会给每行换一个新的 bird_id，即使内容一字不差，birdname.db 也会变——
+    git 里看着像改了，其实没有。内容一致时就不写。
+
+    参数:
+    name_db (str): birdname.db 路径
+    rows (List[tuple]): build_catalog 的行
+
+    返回:
+    bool: 一致（含列已存在）时为 True
+
+    Whether the master catalog already holds exactly these rows (ignoring bird_id).
+    """
+    con = sqlite3.connect(f"file:{name_db}?mode=ro", uri=True)
+    try:
+        cols = {r[1] for r in con.execute("PRAGMA table_info(birds)")}
+        if not {"in_model", "search_aliases"} <= cols:
+            return False
+        row = con.execute("SELECT version_id FROM versions WHERE version_name = ?",
+                          (MASTER_VERSION_NAME,)).fetchone()
+        if row is None:
+            return False
+        current = con.execute(f"SELECT {', '.join(_CATALOG_COLUMNS)} FROM birds WHERE version_id = ?",
+                              (row[0],)).fetchall()
+    finally:
+        con.close()
+    key = lambda r: tuple("" if v is None else str(v) for v in r)
+    return sorted(map(key, current)) == sorted(map(key, rows))
+
+
 def write_catalog(name_db: str, rows: List[tuple]) -> None:
     """
     把「SuperPicky 名录」写进 birdname.db：必要时加列，版本 id 保持不变，整版替换内容。
@@ -317,33 +350,46 @@ def main(argv: List[str]) -> int:
             print("  " + f)
         return 1
     catalog, stats = build_catalog(args.name_db, master)
+    catalog_same = catalog_unchanged(args.name_db, catalog)
     table, py_changed = merge_pinyin(args.pinyin_json, master)
 
     print(f"主库 names_version={master['version']}")
     print(f"  bird_reference：BirdCountInfo 更新 {len(updates)} 行")
-    print(f"  birdname.db「{MASTER_VERSION_NAME}」：主库种 {stats['master']}，IOC 补漏 {stats['ioc_gap']}")
+    print(f"  birdname.db「{MASTER_VERSION_NAME}」：主库种 {stats['master']}，IOC 补漏 {stats['ioc_gap']}"
+          f"{'（与现有内容一致）' if catalog_same else '（有变化）'}")
     print(f"  pinyin_toned.json：增改 {py_changed} 条")
     if args.dry_run:
         print("--dry-run：未写入")
         return 0
+    # 只写有变化的文件：内容没变还重写，git 里会出现「看着改了其实没改」的二进制差异
+    # Only rewrite files whose content changes, so git shows no phantom diffs.
+    targets = [path for path, changed in ((args.ref_db, bool(updates)),
+                                          (args.name_db, not catalog_same),
+                                          (args.pinyin_json, py_changed > 0)) if changed]
+    if not targets:
+        print("与主库一致，无需写入")
+        return 0
 
     os.makedirs(args.backup_dir, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    for path in (args.ref_db, args.name_db, args.pinyin_json):
+    for path in targets:
         shutil.copy2(path, os.path.join(args.backup_dir, f"{stamp}.{os.path.basename(path)}"))
 
-    con = sqlite3.connect(args.ref_db)
-    try:
-        with con:
-            con.executemany("UPDATE BirdCountInfo SET chinese_simplified = ?, chinese_traditional = ?, "
-                            "ebird_code = ? WHERE id = ?", updates)
-    finally:
-        con.close()
-    write_catalog(args.name_db, catalog)
-    with open(args.pinyin_json, "w", encoding="utf-8") as fh:
-        json.dump(table, fh, ensure_ascii=False, indent=0, sort_keys=True)
-        fh.write("\n")
-    print(f"已写入；备份目录 {args.backup_dir}（前缀 {stamp}）")
+    if updates:
+        con = sqlite3.connect(args.ref_db)
+        try:
+            with con:
+                con.executemany("UPDATE BirdCountInfo SET chinese_simplified = ?, chinese_traditional = ?, "
+                                "ebird_code = ? WHERE id = ?", updates)
+        finally:
+            con.close()
+    if not catalog_same:
+        write_catalog(args.name_db, catalog)
+    if py_changed:
+        with open(args.pinyin_json, "w", encoding="utf-8") as fh:
+            json.dump(table, fh, ensure_ascii=False, indent=0, sort_keys=True)
+            fh.write("\n")
+    print(f"已写入 {len(targets)} 个文件；备份目录 {args.backup_dir}（前缀 {stamp}）")
     return 0
 
 
