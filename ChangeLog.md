@@ -1,3 +1,24 @@
+# SuperPicky 4.6.3 RC15
+
+**What's new since RC14:**
+
+- **Emptied folders are now removed.** After changing a species (one photo,
+  several photos or the whole species) or a rating in the results browser, the
+  species and rating folders that end up empty are deleted. Previously they were
+  often left behind: an empty sibling folder, a Finder `.DS_Store`, or the hidden
+  `._` files macOS creates on exFAT drives was enough to keep them.
+- **Processing no longer leaves empty rating folders.** When burst shots are
+  gathered into a `burst_` folder, the rating folder they came from could stay
+  behind empty; these are now cleaned up at the end of the run.
+- **Reset on exFAT drives no longer leaves empty species folders** (species-first
+  folder layout).
+- Only empty folders and system files (`.DS_Store`, `Thumbs.db`, `desktop.ini`,
+  orphaned `._` files) are ever removed; photos, sidecars and your own files are
+  never touched. Empty folders left by earlier versions are not cleaned up
+  automatically.
+
+---
+
 # SuperPicky 4.6.3 RC14
 
 **What's new since RC13:**
@@ -79,6 +100,21 @@
   installers grow slightly in size in exchange. I have no Windows machine to
   verify this myself — if you ever hit that error, please test this RC and
   report back whether install now succeeds. (issue #112)
+
+---
+
+# SuperPicky 4.6.3 RC15（中文）
+
+**RC14 以来的变化：**
+
+- **搬空的文件夹会被删掉。** 在结果浏览器里改鸟种（单张、多张或整种）或改星级后，
+  搬空的鸟种目录与星级目录会删除。此前它们常常留着：同级还有一个空目录、Finder 的
+  `.DS_Store`、或 macOS 在 exFAT 硬盘上生成的 `._` 隐藏文件，都会让它删不掉。
+- **处理时不再留下空的星级目录。** 连拍整组归入 `burst_` 目录后，原来的星级目录可能
+  空着留下，现在处理结束时会清理。
+- **在 exFAT 硬盘上重置，不再留下空的鸟种目录**（「鸟种在外」的目录布局）。
+- 只删空目录与系统文件（`.DS_Store`、`Thumbs.db`、`desktop.ini`、孤立的 `._` 文件），
+  照片、边车文件和你自己的文件一概不碰。之前版本已留下的空目录不会自动清理。
 
 ---
 

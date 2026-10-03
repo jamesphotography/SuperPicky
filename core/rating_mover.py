@@ -28,18 +28,15 @@ def _cleanup_empty_dirs(dir_path: str, old_folder_abs: str) -> None:
         dir_path:       批处理根目录（绝对路径），不会被删除
         old_folder_abs: 刚才移走文件的那个目录（绝对路径）
     """
-    root = os.path.normpath(dir_path)
-    current = os.path.normpath(old_folder_abs)
-    while current != root:
-        try:
-            if not os.path.isdir(current):
-                break
-            if os.listdir(current):  # 非空，停止
-                break
-            os.rmdir(current)
-            current = os.path.dirname(current)
-        except Exception:
-            break
+    # 委托 core.folder_cleanup：同级的空目录、.DS_Store、exFAT 上的 ._ 伴生文件
+    # 不再把清理链挡住（此前只认「一样东西都没有」，整种合并后会留下空鸟种目录）。
+    # Delegate to core.folder_cleanup so empty siblings and OS junk no longer
+    # stop the walk (it used to require a completely empty folder).
+    from core.folder_cleanup import prune_upwards
+    try:
+        prune_upwards(dir_path, old_folder_abs)
+    except Exception:
+        pass
 
 
 def _is_in_burst(rel_path: str) -> bool:

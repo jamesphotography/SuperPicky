@@ -363,7 +363,8 @@
     "replay_header": "━━━━━━ 已恢复上次处理日志：{file} ━━━━━━",
     "replay_omitted": "…… 中间省略 {count} 行，完整内容见 {file} ……",
     "replay_footer": "━━━━━━ 历史日志回放结束（共 {total} 行）━━━━━━",
-    "replay_failed": "⚠️ 读取历史日志失败: {error}"
+    "replay_failed": "⚠️ 读取历史日志失败: {error}",
+    "empty_folders_pruned": "  🧹 已清理 {count} 个搬空的整理目录"
   },
   "server": {
     "server_already_running": "✅ 服务器已在端口 {port} 运行",
