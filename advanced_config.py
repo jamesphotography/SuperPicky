@@ -706,12 +706,17 @@ class AdvancedConfig:
         self.config["external_apps"] = list(apps)
 
     def get_browser_sort(self) -> str:
-        """返回浏览器排序偏好: rarity_desc | filename | sharpness_desc | aesthetic_desc"""
+        """返回浏览器排序偏好: rarity_desc | filename | sharpness_desc | aesthetic_desc |
+        species_beauty_desc"""
         return self.config.get("browser_sort", "rarity_desc")
 
     def set_browser_sort(self, value: str) -> None:
         """保存浏览器排序偏好。"""
-        if value in ("rarity_desc", "filename", "sharpness_desc", "aesthetic_desc"):
+        # 须与 ui/filter_panel.py 排序下拉的选项一致，否则选了不会被记住
+        # （test_browser_sort_persist.py 会逐项核对）
+        # Must match the sort combo's options, or the choice is silently not saved
+        if value in ("rarity_desc", "filename", "sharpness_desc", "aesthetic_desc",
+                     "species_beauty_desc"):
             self.config["browser_sort"] = value
 
     def get_detail_metadata_for_rejected(self) -> bool:
