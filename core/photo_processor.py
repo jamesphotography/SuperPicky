@@ -39,6 +39,8 @@ from tools.resume_state import ResumeStateManager
 from advanced_config import get_advanced_config
 from core.rating_engine import RatingEngine, create_rating_engine_from_config
 from core.keypoint_detector import KeypointDetector, get_keypoint_detector
+from core.rating_caption import CaptionFacts, build_caption, outcome_from_reason_key
+from core.iso_sharpness import ISO_BASE, ISO_MIN_FACTOR, ISO_PENALTY_FACTOR, iso_sharpness_factor
 from core.flight_detector import FlightDetector, get_flight_detector, FlightResult
 from core.exposure_detector import ExposureDetector, get_exposure_detector, ExposureResult
 from core.focus_point_detector import get_focus_detector, verify_focus_in_bbox, arbitrate_focus_weights
@@ -250,6 +252,9 @@ class PhotoProcessor:
         # 内部状态
         self.file_ratings = {}
         self.star_3_photos = []
+        # 每张照片的评分说明事实（original_prefix → CaptionFacts），精选阶段据此重写题注
+        # Per-photo caption facts; the picked stage rebuilds captions from them
+        self._caption_facts: Dict[str, CaptionFacts] = {}
         # V4.5: 处理异常被跳过的照片文件名，供最终汇总提示（这些照片未评分/未整理）
         # V4.5: Filenames skipped by per-photo error handling, surfaced in the
         # end-of-run summary (these photos were neither rated nor organized).
@@ -410,9 +415,11 @@ class PhotoProcessor:
     
     # ============ V4.3: ISO 锐度归一化 ============
     # 高 ISO 噪点会虚高 Tenengrad 锐度值，需要根据 ISO 进行归一化补偿
-    ISO_BASE = 800          # 基准 ISO（此值及以下不惩罚）
-    ISO_PENALTY_FACTOR = 0.05   # 每翻一倍 ISO 扣 5%
-    ISO_MIN_FACTOR = 0.5        # 最低系数（最多扣 50%）
+    # 折算公式在 core/iso_sharpness.py，界面显示也用它，保证各处数字一致
+    # The formula lives in core/iso_sharpness.py, shared with the UI displays
+    ISO_BASE = ISO_BASE              # 基准 ISO（此值及以下不惩罚）
+    ISO_PENALTY_FACTOR = ISO_PENALTY_FACTOR   # 每翻一倍 ISO 扣 5%
+    ISO_MIN_FACTOR = ISO_MIN_FACTOR      # 最低系数（最多扣 50%）
     
     def _read_iso(self, filepath: str) -> int:
         """
@@ -560,13 +567,7 @@ class PhotoProcessor:
         Returns:
             归一化系数 (0.5 - 1.0)
         """
-        if iso_value is None or iso_value <= self.ISO_BASE:
-            return 1.0
-        
-        # penalty = 0.05 * log₂(ISO / 800)
-        penalty = self.ISO_PENALTY_FACTOR * math.log2(iso_value / self.ISO_BASE)
-        factor = max(self.ISO_MIN_FACTOR, 1.0 - penalty)
-        return factor
+        return iso_sharpness_factor(iso_value)
 
     @staticmethod
     def _resume_prefix(filename: str) -> str:
@@ -1342,6 +1343,10 @@ class PhotoProcessor:
             gate_photo as gate_photo_v2,
             get_quota3_for_skill,
             get_quota2_for_skill,
+            MIN_SHARPNESS as V2_MIN_SHARPNESS,
+            MIN_TOPIQ as V2_MIN_TOPIQ,
+            W_SHARP as V2_W_SHARP,
+            W_TOPIQ as V2_W_TOPIQ,
         )
         v2_enabled = self.config.rating_algorithm == "v2"
         v2_pending: Dict[str, Dict] = {}
@@ -1512,7 +1517,9 @@ class PhotoProcessor:
                 if cn_name:
                     self.file_bird_species[file_prefix] = {
                         'cn_name': cn_name,
-                        'en_name': en_name
+                        'en_name': en_name,
+                        # 识别置信度（%），题注里显示 / ID confidence (%), shown in the caption
+                        'confidence': birdid_confidence,
                     }
 
                 # 写入数据库，供结果浏览器筛选面板和详情面板使用
@@ -1542,17 +1549,16 @@ class PhotoProcessor:
                         # V4.3.0: 鸟种名跟随界面语言（bird_title 已按语言选名），标签走 i18n
                         # V4.3.0: Species name follows UI language (bird_title already
                         # picks en/cn by locale); labels via i18n.
-                        prefix_lines = [self.i18n.t("logs.caption_species", name=bird_title)]
-                        if iucn_category:
-                            prefix_lines.append(self.i18n.t("logs.caption_iucn", category=iucn_category))
-                        # 连拍统一改写的帧注明依据，便于用户在浏览器里核对
-                        # Frames rewritten by burst unification note their source
+                        # 鸟种、IUCN 不再写进选片备注：浏览器详情有单独的鸟种/IUCN 行，
+                        # Lightroom 有标题字段；鸟种可在浏览器里修改，写进备注会过时。
+                        # 只保留「连拍统一鸟种」的依据说明，便于用户核对鸟种为何被改。
+                        # Species/IUCN stay out of the note (dedicated rows / LR Title;
+                        # the species can be edited later). Only the burst-unification
+                        # source is noted. Applied after the V2 post-pass, which
+                        # rewrites the whole DB caption.
                         if burst_source:
-                            prefix_lines.append(self.i18n.t("logs.caption_burst_unified", source=burst_source))
-                        prefix_block = "\n".join(prefix_lines)
-                        # 说明文字前缀延后到评星 V2 收尾之后再写：V2 会整段重写 DB caption
-                        # Caption prefix is applied after the V2 post-pass, which rewrites the whole DB caption
-                        species_caption_jobs.append((file_prefix, prefix_block))
+                            species_caption_jobs.append((file_prefix, self.i18n.t(
+                                "logs.caption_burst_unified", source=burst_source)))
                     except Exception as _e:
                         self._log(f"  ⚠️ Bird species DB write failed [{file_prefix}]: {_e}", "warning")
 
@@ -1612,16 +1618,8 @@ class PhotoProcessor:
                             })
                         except Exception as _e:
                             self._log(f"  ⚠️ Candidate species DB write failed [{file_prefix}]: {_e}", "warning")
-                    if self.report_db:
-                        # V4.3.0: 备选鸟种名跟随界面语言（low_conf_name），标签/把握度走 i18n；
-                        # 与达阈值分支一样延后到评星 V2 收尾之后写入 caption。
-                        # V4.3.0: Alt-species name follows UI language; like the confident
-                        # branch, the caption line is applied after the V2 post-pass.
-                        species_caption_jobs.append((file_prefix, self.i18n.t(
-                            "logs.caption_alt_species",
-                            name=low_conf_name,
-                            confidence=f"{birdid_confidence:.0f}",
-                        )))
+                    # 备选鸟种不写进选片备注：浏览器鸟种行已显示「鸟名（待确定 N%）」
+                    # The alt species is shown in the browser's species row, not the note
 
         def collect_birdid_tasks(wait: bool = False):
             """Collect completed BirdID tasks.
@@ -2205,6 +2203,17 @@ class PhotoProcessor:
                         rating_value = 0
                         # V4.2: Show actual confidence and threshold
                         reason = self.i18n.t("logs.quality_low_confidence", confidence=confidence, threshold=confidence_threshold)
+                    # 评分说明（题注）：无鸟 / 不确定是鸟。此前硬编码「{n}星 | 原因」，
+                    # 英文界面也写中文「星」，无鸟照片还写成「-1星」。
+                    # Rating caption for the early exit; the old hard-coded
+                    # "{n}星 | reason" leaked Chinese into English UIs.
+                    early_caption = build_caption(CaptionFacts(
+                        rating=rating_value,
+                        outcome="no_bird" if not detected else "low_confidence",
+                        confidence=confidence if detected else None,
+                        confidence_threshold=confidence_threshold,
+                        iso=prefetched_iso_value,
+                    ), self.i18n.t)
                 
                     # 简化日志
                     self._log_photo_result_simple(i, total_files, filename, rating_value, reason, photo_time_ms, False, False, None)
@@ -2215,8 +2224,11 @@ class PhotoProcessor:
                     # 记录评分（用于文件移动）- V4.0.4: 使用 original_prefix 确保匹配 NEF
                     self.file_ratings[original_prefix] = rating_value
 
-                    if path_update_data and self.report_db:
-                        self.report_db.update_photo(original_prefix, path_update_data)
+                    # 路径字段与评分说明一并写库，浏览器「选片备注」与 Lightroom 题注一致
+                    # Store the caption with the path fields so the browser note matches LR
+                    if self.report_db:
+                        self.report_db.update_photo(
+                            original_prefix, {**(path_update_data or {}), 'caption': early_caption})
 
                     if detail_metadata_for_rejected and self.report_db:
                         rejected_detail = {
@@ -2224,7 +2236,6 @@ class PhotoProcessor:
                             'has_bird': 1 if detected else 0,
                             'confidence': confidence,
                             'rating': rating_value,
-                            'caption': f"{rating_value}星 | {reason}",
                         }
                         rejected_detail.update(
                             read_detail_exif_safe(yolo_item, prefetched_exif)
@@ -2233,6 +2244,11 @@ class PhotoProcessor:
                             calculate_rejected_quality_detail(
                                 filepath, yolo_item.get('decoded_image'))
                         )
+                        # 评分说明最后写：EXIF 读回的 caption（照片原有题注，通常为空）
+                        # 会把它覆盖成 None——此前无鸟照片的选片备注因此一直是空的。
+                        # Set the caption last: the EXIF read returns the photo's own
+                        # (usually empty) caption, which used to overwrite it with None.
+                        rejected_detail['caption'] = early_caption
                         self.report_db.insert_photo(rejected_detail)
                 
                     # 写入简化 EXIF
@@ -2248,7 +2264,7 @@ class PhotoProcessor:
                                 'nima_score': None,
                                 'label': None,
                                 'focus_status': None,
-                                'caption': f"{rating_value}星 | {reason}",
+                                'caption': early_caption,
                             })
                 
                     mark_resume_completed(original_prefix)
@@ -2557,6 +2573,7 @@ class PhotoProcessor:
                 # 4 层检测返回两个权重: 锐度权重 + 美学权重
                 focus_start = time.time()
                 focus_sharpness_weight = 1.0  # 默认无影响
+                _focus_arbitrated = False  # 是否经鸟头锐度仲裁升为合焦（题注要说明）
                 focus_topiq_weight = 1.0      # 默认无影响
                 focus_x, focus_y = None, None
                 focus_result = preloaded_focus_result  # 复用预读结果
@@ -2724,6 +2741,7 @@ class PhotoProcessor:
                 # preview/log — pool photos get stars in the post-pass, so the
                 # live preview/log show metrics/flight/focus instead of stars.
                 v2_in_pool = False
+                _v2_gate = None  # V2 硬门槛结果（None = 进入排序池或未启用 V2）
                 if v2_enabled and detected:
                     _v2_exposure = is_overexposed or is_underexposed
                     _v2_metrics = PhotoMetricsV2(
@@ -2739,7 +2757,8 @@ class PhotoProcessor:
                         has_exposure_issue=_v2_exposure,
                         burst_id=self.burst_map.get(filepath) if self.burst_map else None,
                     )
-                    if gate_photo_v2(_v2_metrics, min_confidence=confidence_threshold) is None:
+                    _v2_gate = gate_photo_v2(_v2_metrics, min_confidence=confidence_threshold)
+                    if _v2_gate is None:
                         v2_in_pool = True
                         v2_pending[original_prefix] = {
                             'metrics': _v2_metrics,
@@ -2752,6 +2771,13 @@ class PhotoProcessor:
                             'adj_sharpness': None,
                             'adj_topiq': None,
                         }
+                    else:
+                        # V2 硬门槛淘汰：星级与原因以 V2 门槛为准。此前沿用 V1 引擎的
+                        # 原因和阈值（如「锐度太低(99<520)」），而 V2 实际下限是 100。
+                        # Gated by V2: use V2's rating and reason; the V1 engine's
+                        # reason quoted V1 thresholds that V2 does not use.
+                        rating_value = _v2_gate.rating
+                        reason = self.i18n.t(_v2_gate.reason_key, **_v2_gate.reason_args)
 
                 should_build_debug = bool(self.callbacks.crop_preview or self.settings.save_crop)
                 if detected and should_build_debug and bird_crop_bgr is not None:
@@ -2844,18 +2870,10 @@ class PhotoProcessor:
                 # GOOD gets no label.
                 label = compute_xmp_label(is_flying, focus_status, self.i18n.t)
             
-                caption_lines = []
-                caption_lines.append(self.i18n.t("logs.caption_final", rating=rating_value, reason=reason))
-                sharpness_str = f"{head_sharpness:.2f}" if head_sharpness else "N/A"
-                topiq_str = f"{topiq:.2f}" if topiq else "N/A"
-                caption_lines.append(self.i18n.t("logs.caption_data", conf=confidence, sharp=sharpness_str, nima=topiq_str, vis=best_eye_visibility))
-                flying_str = self.i18n.t("logs.flying_yes") if is_flying else self.i18n.t("logs.flying_no")
-                caption_lines.append(self.i18n.t("logs.caption_factors", sharp_w=focus_sharpness_weight, aes_w=focus_topiq_weight, flying=flying_str))
-                # V4.6(rating-v2/T5): adj 值统一用 ISO 归一化后的锐度(评星实际
-                # 输入口径),修复 DB/EXIF 存的 adj 与评分依据不一致的旧漂移。
-                # V4.6 (rating-v2/T5): adjusted values use the ISO-normalized
-                # sharpness (the actual rating input), fixing the old drift
-                # between stored adj_* and what the rating actually saw.
+                # V4.6: adj 值统一用 ISO 归一化后的锐度(评星实际输入口径)，写入
+                # Lightroom 的城市/省份字段供排序。
+                # V4.6: adjusted values use the ISO-normalized sharpness (the
+                # actual rating input); written to LR City/State for sorting.
                 adj_sharpness = normalized_sharpness * focus_sharpness_weight if normalized_sharpness else 0
                 if is_flying and head_sharpness:
                     adj_sharpness = adj_sharpness * 1.2
@@ -2864,11 +2882,36 @@ class PhotoProcessor:
                     adj_topiq_val = topiq * focus_topiq_weight
                     if is_flying:
                         adj_topiq_val = adj_topiq_val * 1.1
-                caption_lines.append(self.i18n.t("logs.caption_adjusted", sharp=adj_sharpness, nima=adj_topiq_val))
-                visibility_weight = max(0.5, min(1.0, best_eye_visibility * 2))
-                if visibility_weight < 1.0:
-                    caption_lines.append(self.i18n.t("logs.caption_vis_weight", weight=visibility_weight))
-                caption = "\n".join(caption_lines)
+
+                # 评分说明（题注，同时存 DB 供浏览器「选片备注」显示），见 core/rating_caption.py。
+                # 排序池照片的名次此刻未知，先生成临时版本，V2 收尾定星后用同一份事实重写。
+                # Rating caption (also the browser's culling note). Pool photos are
+                # rewritten after the V2 post-pass, when their rank is known.
+                caption_facts = CaptionFacts(
+                    rating=rating_value,
+                    outcome=(outcome_from_reason_key(_v2_gate.reason_key) if _v2_gate is not None
+                             else ("v1" if detected else "no_bird")),
+                    v1_reason=reason,
+                    confidence=confidence if detected else None,
+                    confidence_threshold=confidence_threshold,
+                    head_sharp=head_sharpness if detected else None,
+                    norm_sharpness=normalized_sharpness if detected else None,
+                    sharp_gate=V2_MIN_SHARPNESS,
+                    topiq=topiq,
+                    topiq_gate=V2_MIN_TOPIQ,
+                    best_eye=best_eye_visibility if detected else None,
+                    focus_status=focus_status,
+                    focus_weight=focus_sharpness_weight,
+                    focus_arbitrated=_focus_arbitrated,
+                    is_flying=is_flying,
+                    over_exposed=is_overexposed,
+                    under_exposed=is_underexposed,
+                    iso=iso_value,
+                )
+                caption = build_caption(caption_facts, self.i18n.t)
+                self._caption_facts[original_prefix] = caption_facts
+                if v2_in_pool:
+                    v2_pending[original_prefix]['caption_facts'] = caption_facts
             
                 if original_prefix in raw_dict:
                     # 有对应的 RAW 文件
@@ -3212,18 +3255,47 @@ class PhotoProcessor:
                 final_rating = res.rating
                 if final_rating != pend['v1_rating']:
                     v2_changed += 1
-                reason_final = self.i18n.t(res.reason_key, **res.reason_args)
-                final_caption = None   # V2 终评重写后的 caption,用于同步回 DB
+                # 按终评重写整段题注：补上星级、组内名次/张数、本批百分位与评星方式
+                # Rewrite the whole caption with the final rating, in-group rank,
+                # pool percentiles and the quota rule.
+                final_caption = None   # V2 终评后的 caption,用于同步回 DB
+                facts = pend.get('caption_facts')
+                if facts is not None:
+                    ra = res.reason_args or {}
+                    facts.rating = final_rating
+                    facts.outcome = outcome_from_reason_key(res.reason_key)
+                    facts.v1_reason = self.i18n.t(res.reason_key, **ra)
+                    facts.rank = ra.get('rank')
+                    facts.group_size = ra.get('group_size')
+                    facts.species_known = pend['metrics'].species is not None
+                    facts.pct_sharp = ra.get('pct_sharp')
+                    facts.pct_topiq = ra.get('pct_topiq')
+                    facts.pool_size = ra.get('pool_size')
+                    facts.quota3 = ra.get('quota3')
+                    facts.quota2 = ra.get('quota2')
+                    facts.sharp_floor3 = ra.get('sharp_floor3')
+                    facts.burst_cap = ra.get('burst_cap')
+                    facts.weight_sharp = V2_W_SHARP
+                    facts.weight_topiq = V2_W_TOPIQ
+                    # 鸟种识别信息：识鸟结果此刻已全部就绪。低置信度候选不写入鸟种、
+                    # 不分目录，但上面分组时仍按候选鸟种排名——题注如实说明。
+                    # Bird ID facts. A low-confidence candidate is not stored as the
+                    # species, yet the grouping above still ranks it with that species.
+                    facts.birdid_enabled = bool(self.settings.auto_identify)
+                    facts.species_threshold = float(self.settings.birdid_confidence_threshold)
+                    bird_info = self.file_bird_species.get(prefix) or {}
+                    facts.species_confidence = bird_info.get('confidence')
+                    facts.species_low_confidence = bool(bird_info.get('low_confidence'))
+                    if facts.species_low_confidence:
+                        is_en = self.i18n.current_lang.startswith('en')
+                        facts.species_candidate = (
+                            (bird_info.get('en_name') or bird_info.get('cn_name')) if is_en
+                            else (bird_info.get('cn_name') or bird_info.get('en_name')))
+                    final_caption = build_caption(facts, self.i18n.t)
+                    self._caption_facts[prefix] = facts
                 for item in pend['items']:
-                    old_caption = item.get('caption')
-                    if old_caption:
-                        # caption 首行固定为 caption_final(星级+原因),按终评重写
-                        # The caption head line is always caption_final; rewrite it
-                        parts = old_caption.split('\n', 1)
-                        head = self.i18n.t("logs.caption_final",
-                                           rating=final_rating, reason=reason_final)
-                        item['caption'] = head + ('\n' + parts[1] if len(parts) > 1 else '')
-                        final_caption = item['caption']
+                    if final_caption is not None and item.get('caption'):
+                        item['caption'] = final_caption
                     item['rating'] = final_rating
                     queue_metadata(item)
                 self.file_ratings[prefix] = final_rating
@@ -3292,9 +3364,8 @@ class PhotoProcessor:
                 try:
                     existing = self.report_db.get_photo(caption_prefix_key) or {}
                     old_cap = existing.get('caption') or ''
-                    # 去重检查兼容中英双语前缀，避免跨语言重复处理时重复添加
-                    # Dedup check covers both zh/en prefixes for cross-language reprocessing.
-                    if old_cap.startswith(('鸟种：', 'Species: ', '备选鸟种', 'Alt. species')):
+                    # 已带同一说明时不重复添加 / skip when the note is already there
+                    if old_cap.startswith(prefix_block):
                         continue
                     new_cap = prefix_block + ('\n' + old_cap if old_cap else '')
                     self.report_db.update_photo(caption_prefix_key, {'caption': new_cap})
@@ -3735,12 +3806,25 @@ class PhotoProcessor:
             for file_path in picked_files:
                 pass  # picked file confirmed
             
+            # 精选照片的题注结论行补「· 精选」（事实在评星时已保存）
+            # Picked photos get "· Picked" on the caption's verdict line
+            picked_captions: Dict[str, str] = {}
+            unpicked_captions: Dict[str, str] = {}  # 补「精选」前的版本，用于在 DB 备注里定位替换
+            for file_path in picked_files:
+                _prefix = os.path.splitext(os.path.basename(file_path))[0]
+                facts = self._caption_facts.get(_prefix)
+                if facts is not None:
+                    unpicked_captions[file_path] = build_caption(facts, self.i18n.t)
+                    facts.picked = True
+                    picked_captions[file_path] = build_caption(facts, self.i18n.t)
+
             # 批量写入
-            picked_batch = [{
-                'file': file_path,
-                'rating': 3,
-                'pick': 1
-            } for file_path in picked_files]
+            picked_batch = []
+            for file_path in picked_files:
+                picked_item = {'file': file_path, 'rating': 3, 'pick': 1}
+                if file_path in picked_captions:
+                    picked_item['caption'] = picked_captions[file_path]
+                picked_batch.append(picked_item)
             
             exiftool_mgr = get_exiftool_manager()
             picked_stats = exiftool_mgr.batch_set_metadata(picked_batch)
@@ -3757,8 +3841,18 @@ class PhotoProcessor:
             if getattr(self, "report_db", None):
                 for _fp in picked_files:
                     _prefix = os.path.splitext(os.path.basename(_fp))[0]
+                    _update = {"picked": 1}
                     try:
-                        self.report_db.update_photo(_prefix, {"picked": 1})
+                        if _fp in picked_captions:
+                            # DB 备注可能在题注前多一行「连拍统一鸟种」说明：只替换题注那段，保留前缀
+                            # The DB note may carry a burst-unification line before the
+                            # caption; replace only the caption part to keep it.
+                            _old_note = (self.report_db.get_photo(_prefix) or {}).get('caption') or ''
+                            _old_cap = unpicked_captions[_fp]
+                            _update["caption"] = (_old_note.replace(_old_cap, picked_captions[_fp], 1)
+                                                  if _old_cap and _old_cap in _old_note
+                                                  else picked_captions[_fp])
+                        self.report_db.update_photo(_prefix, _update)
                     except Exception:
                         pass
         else:

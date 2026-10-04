@@ -25,6 +25,7 @@ from typing import Dict, List, Optional, Tuple
 
 from PIL import Image, ImageOps
 
+from core.iso_sharpness import display_aesthetic, display_head_sharpness
 from core.rarity_tier import gbif_score_to_tier
 from tools.file_utils import sibling_jpeg
 
@@ -271,8 +272,9 @@ def _to_ref(row: dict) -> PhotoRef:
         path=path,
         rating=int(row.get("rating") or 0),
         picked=bool(row.get("picked")),
-        sharpness=row.get("adj_sharpness"),
-        aesthetic=row.get("adj_topiq"),
+        # 与浏览器详情、题注同口径（ISO 折算后的头部锐度、原始美学分）
+        sharpness=display_head_sharpness(row),
+        aesthetic=display_aesthetic(row),
         iso=row.get("iso"),
         shutter=row.get("shutter_speed"),
         aperture=row.get("aperture"),
@@ -1020,7 +1022,8 @@ def _pick_bits(ref: PhotoRef, beauty: Optional[float], is_zh: bool) -> List[str]
     返回:
         List[str]: 已格式化的短语，缺数据的项不出现。
 
-    锐度与美学是**这张照片**的评分（adj_sharpness / adj_topiq），颜值是
+    锐度与美学是**这张照片**的评分（ISO 折算后的头部锐度 / 原始美学分，与浏览器详情、
+    题注同口径，见 core/iso_sharpness.py），颜值是
     **这个鸟种**的 iRateBird 指数。只挂在代表作上：副图各带一串数字会盖过画面。
 
     小数位数按各自的实际量程定，不能统一：

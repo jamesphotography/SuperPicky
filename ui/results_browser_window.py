@@ -257,15 +257,15 @@ def _extract_burst_group_key(photo: dict) -> Optional[str]:
 
 def _burst_sharpness(photo: dict) -> float:
     """
-    连拍代表照片选取用的锐度值：优先 adj_sharpness，回退 head_sharp，缺失视为最低。
-    与 report.db 排序 COALESCE(adj_sharpness, head_sharp, -1e99) 保持一致。
+    连拍代表照片选取用的锐度值：ISO 折算后的头部锐度，缺失视为最低。
+    与 report.db 的 sharpness_desc 排序、详情面板与题注显示的数字同口径。
 
-    Sharpness used to pick a burst's cover photo: prefer adj_sharpness, fall back to
-    head_sharp, treat missing as lowest — mirrors the DB's sharpness_desc ordering.
+    Sharpness used to pick a burst's cover photo: the ISO-normalized head
+    sharpness (missing = lowest), matching the DB's sharpness_desc sort and the
+    number shown in the detail panel and caption.
     """
-    v = photo.get("adj_sharpness")
-    if v is None:
-        v = photo.get("head_sharp")
+    from core.iso_sharpness import display_head_sharpness
+    v = display_head_sharpness(photo)
     return float(v) if v is not None else float("-inf")
 
 
@@ -805,6 +805,11 @@ def _run_mark_no_bird(
     old_cn = (old_bird_cn or photo.get("bird_species_cn") or "").strip()
     old_en = (old_bird_en or photo.get("bird_species_en") or "").strip()
 
+    # 题注首行插入「手动标记为无鸟」，原评分说明保留在下方
+    # Prepend a manual "no bird" line to the caption; the original stays below
+    from core.rating_caption import mark_manual_change
+    new_caption = mark_manual_change(photo.get("caption"), -1, i18n.t)
+
     # 1. 先写库：即使随后文件移动失败，报告也已经不再把它算成那种鸟。
     if report_db is not None:
         report_db.update_photo(db_key, {
@@ -817,6 +822,7 @@ def _run_mark_no_bird(
             "alt_species_en": None,
             "alt_confidence": None,
             "rating": -1,
+            "caption": new_caption,
         })
 
     # 2. 同步内存副本，界面刷新与目录计算都读它
@@ -827,6 +833,7 @@ def _run_mark_no_bird(
     photo["alt_confidence"] = None
     photo["has_bird"] = 0
     photo["rating"] = -1
+    photo["caption"] = new_caption
 
     # 3. 移文件：鸟名已清空 + rating=-1 → compute_target_folder 落到
     #    「其他鸟类/0星_放弃」。连拍组内与根目录下的文件由 core 自行跳过。
@@ -852,7 +859,7 @@ def _run_mark_no_bird(
                 path, old_title=_species_metadata_title(old_cn, old_en) or None,
                 write_keywords=write_keywords,
             )
-            writer.set_rating_and_pick(path, -1)
+            writer.set_rating_and_pick(path, -1, caption=new_caption)
         except Exception as e:
             from tools.utils import log_message
             log_message(f"[mark_no_bird] metadata write failed for {path}: {e}")
@@ -2492,8 +2499,18 @@ class ResultsBrowserWindow(QMainWindow):
         ) or {}
         filename = current_photo.get("filename") or (photo_or_filename if isinstance(photo_or_filename, str) else "")
         db_key = _photo_db_key(current_photo) if current_photo else filename
+        # 题注首行插入「手动改为 N★」，原评分说明保留在下方——否则题注还写着
+        # 「3★ 优选」，与用户改后的星级自相矛盾（DB、Lightroom 题注同步）。
+        # Prepend a manual-override line to the caption so it no longer
+        # contradicts the new rating; the original explanation stays below.
+        from core.rating_caption import mark_manual_change
+        new_caption = (mark_manual_change(current_photo.get("caption"), new_rating, self.i18n.t)
+                       if current_photo else None)
+        rating_update = {"rating": new_rating}
+        if new_caption is not None:
+            rating_update["caption"] = new_caption
         if self._db:
-            self._db.update_photo(db_key, {"rating": new_rating})
+            self._db.update_photo(db_key, rating_update)
         # 三份缓存一起补：报告的星级分布读 _all_photos，显示列表每次重建又从
         # _raw_filtered_photos 拷贝——此前只补了 _filtered_photos，于是界面上
         # 是新星级、导出的报告却按旧星级计数，而点一下连拍组展开/收起，界面
@@ -2503,10 +2520,18 @@ class ResultsBrowserWindow(QMainWindow):
         # per-photo, so they must not spread across the burst group.
         if current_photo:
             _patch_cached_photos(
-                current_photo, {"rating": new_rating},
+                current_photo, rating_update,
                 self._filtered_photos, self._all_photos,
                 self._raw_filtered_photos, include_burst=False,
             )
+            current_photo.update(rating_update)
+            # 详情面板正显示这张时，刷新元数据让「选片备注」立即反映新题注（不重新解码大图）
+            # Refresh the detail panel's metadata (no image decode) if it shows this photo
+            shown = getattr(self._detail_panel, "_current_photo", None)
+            if shown is current_photo or (shown and shown.get("filename") == filename):
+                if shown is not current_photo:
+                    shown.update(rating_update)
+                self._detail_panel.set_current_photo(shown)
         else:
             # 只拿到文件名（老调用方）时按文件名匹配，行为与此前一致
             # Filename-only callers keep the previous matching behaviour.
@@ -2525,6 +2550,7 @@ class ResultsBrowserWindow(QMainWindow):
             threading.Thread(
                 target=get_exiftool_manager().set_rating_and_pick,
                 args=(file_path, new_rating),
+                kwargs={"caption": new_caption},
                 daemon=True,
             ).start()
         # 后台移动文件（仅已整理的照片；burst / 根目录 / 新旧相同 时内部自动跳过）

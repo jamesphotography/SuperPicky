@@ -1602,7 +1602,10 @@ class BirdIDDockWidget(QDockWidget):
         # ── 来源与度量 / Source and metrics ──────────────────────────────────
         info_lines = [t("birdid.recorded_source", directory=os.path.basename(photo.root))]
 
-        sharp, topiq = record.get("adj_sharpness"), record.get("adj_topiq")
+        # 与详情面板、题注同口径（ISO 折算后的头部锐度、原始美学分）
+        # Same basis as the detail panel and the caption
+        from core.iso_sharpness import display_aesthetic, display_head_sharpness
+        sharp, topiq = display_head_sharpness(record), display_aesthetic(record)
         if sharp is not None and topiq is not None:
             info_lines.append(
                 t("logs.pending_metrics", sharp=f"{sharp:.0f}", nima=f"{topiq:.1f}")

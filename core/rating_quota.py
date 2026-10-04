@@ -228,6 +228,13 @@ def assign_ratings(
             if gidx < c3 and p.norm_sharpness >= QUOTA3_SHARP_FLOOR:
                 star = 3
                 reason_key = "rating_v2.top_quota"
+            elif gidx < c3:
+                # 名次进了 3★ 配额，但锐度没到 3★ 绝对兜底 → 2★。
+                # 单独给原因，题注才能说清「为什么同种第一却只有 2★」。
+                # Ranked into the 3★ quota but below the absolute sharpness
+                # floor; a distinct reason lets the caption explain it.
+                star = 2
+                reason_key = "rating_v2.floor_capped"
             elif gidx < c3 + c2:
                 star = 2
                 reason_key = "rating_v2.mid_quota"
@@ -238,9 +245,23 @@ def assign_ratings(
             if p.best_eye < EYE_CAP_THRESHOLD and star > 2:
                 star = 2
                 reason_key = "rating_v2.eye_capped"
+            # reason_args 供题注使用(core/rating_caption.py):组内名次/张数、
+            # 本批(排序池)百分位与配额;percent 为旧键,保留兼容。
+            # reason_args feed the caption: in-group rank/size, pool
+            # percentiles and quotas; "percent" is the legacy key.
             results[p.key] = RatingV2Result(
                 star, q_score=q, reason_key=reason_key,
-                reason_args={"percent": math.ceil((gidx + 1) * 100 / gn)})
+                reason_args={
+                    "percent": math.ceil((gidx + 1) * 100 / gn),
+                    "rank": gidx + 1,
+                    "group_size": gn,
+                    "pct_sharp": pct_sharp(p.norm_sharpness),
+                    "pct_topiq": (pct_topiq(p.topiq) if p.topiq is not None else None),
+                    "quota3": quota3,
+                    "quota2": quota2,
+                    "sharp_floor3": QUOTA3_SHARP_FLOOR,
+                    "pool_size": len(pool),
+                })
 
     # 连拍组内 3★ 封顶:每组只留 Q 最高的前 N 张,其余降 2★
     # Per-burst 3-star cap: keep the top-N by Q, demote the rest to 2★
@@ -253,6 +274,7 @@ def assign_ratings(
             for key in keys[burst_cap3:]:  # scored 已按 Q 降序,故切片即淘汰尾部
                 results[key].rating = 2
                 results[key].reason_key = "rating_v2.burst_capped"
+                results[key].reason_args["burst_cap"] = burst_cap3
 
     return results
 

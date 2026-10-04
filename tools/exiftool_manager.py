@@ -1024,7 +1024,8 @@ class ExifToolManager:
         rating: int,
         pick: int = 0,
         sharpness: float = None,
-        nima_score: float = None
+        nima_score: float = None,
+        caption: Optional[str] = None,
     ) -> bool:
         """
         设置照片评分和旗标 (Lightroom标准)
@@ -1035,6 +1036,8 @@ class ExifToolManager:
             pick: 旗标 (-1=排除旗标, 0=无旗标, 1=精选旗标)
             sharpness: 锐度值（可选，写入IPTC:City字段，用于Lightroom排序）
             nima_score: NIMA美学评分（可选，写入IPTC:Province-State字段）
+            caption: 评分说明（可选，写入 XMP:Description 即 Lightroom「题注」；
+                经 UTF-8 临时文件传入，避免中文乱码）。浏览器手动改星级时用它同步题注。
             # V3.2: 移除 brisque_score 参数
 
         Returns:
@@ -1068,6 +1071,8 @@ class ExifToolManager:
                 'sharpness': sharpness,
                 'nima_score': nima_score
             }
+            if caption is not None:
+                item['caption'] = caption
             return self._write_metadata_arw(item)
 
         # V4.0.5: 使用常驻进程处理单文件更新
@@ -1086,7 +1091,16 @@ class ExifToolManager:
         # NIMA -> XMP:State
         if nima_score is not None:
             args.append(f'-XMP:State={nima_score:05.2f}')
-        
+
+        # 题注 -> XMP:Description，中文必须经 UTF-8 临时文件传入
+        # Caption via a UTF-8 temp file (never inline, to keep Chinese intact)
+        caption_tmp_path = None
+        if caption is not None:
+            fd, caption_tmp_path = tempfile.mkstemp(suffix='.txt', prefix='sp_caption_')
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                f.write(caption)
+            args.append(f'-XMP:Description<={caption_tmp_path}')
+
         # 文件路径
         args.append(file_path)
         
@@ -1095,7 +1109,14 @@ class ExifToolManager:
 
         try:
             # 发送命令
-            success = self._send_to_process(args)
+            try:
+                success = self._send_to_process(args)
+            finally:
+                if caption_tmp_path:
+                    try:
+                        os.remove(caption_tmp_path)
+                    except OSError:
+                        pass
             
             if success:
                 filename = os.path.basename(file_path)
