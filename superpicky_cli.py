@@ -35,7 +35,9 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 from core.recursive_scanner import DEFAULT_SCAN_MAX_DEPTH
-from tools.i18n import t
+from tools.i18n import apply_saved_language, t
+from constants import APP_VERSION
+
 
 # 确保模块路径正确
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -44,7 +46,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 def print_banner():
     """打印 CLI 横幅"""
     print("\n" + "━" * 60)
-    print(t("cli.banner", version="4.2.0"))
+    print(t("cli.banner", version=APP_VERSION))
     print("━" * 60)
 
 
@@ -81,11 +83,11 @@ def cmd_burst(args):
     
     for dir_name, data in results['groups_by_dir'].items():
         print(f"\n📂 {dir_name}:")
-        print(f"  照片数: {data['photos']}")
-        print(f"  连拍组: {data['groups']}")
+        print(t("cli.burst_photos", photos=data['photos']))
+        print(t("cli.burst_groups", groups=data['groups']))
         
         for g in data['group_details']:
-            print(f"    组 #{g['id']}: {g['count']} 张, 最佳: {g['best']}")
+            print(t("cli.burst_group_line", id=g['id'], count=g['count'], best=g['best']))
     
     # 执行模式
     if args.execute and results['groups_detected'] > 0:
@@ -157,19 +159,19 @@ def cmd_process(args):
     print(t("cli.sharpness", value=settings.sharpness_threshold))
     print(t("cli.aesthetics", value=settings.nima_threshold))
     print(t("cli.detect_flight", value=t("cli.enabled") if settings.detect_flight else t("cli.disabled")))
-    print(f"⚙️  曝光检测: {'是' if settings.detect_exposure else '否'}")
+    print(t("cli.detect_exposure", value=t("cli.yes") if settings.detect_exposure else t("cli.no")))
     print(t("cli.detect_burst", value=t("cli.enabled") if settings.detect_burst else t("cli.disabled")))
     print(t("cli.organize_files", value=t("cli.enabled") if args.organize else t("cli.disabled")))
-    print(f"⚙️  ARW 写入: {adv_config.config.get('arw_write_mode')}")
-    print(f"⚙️  清理临时: {'否' if adv_config.keep_temp_files else '是'}")
+    print(t("cli.arw_write", value=adv_config.config.get('arw_write_mode')))
+    print(t("cli.cleanup_temp", value=t("cli.no") if adv_config.keep_temp_files else t("cli.yes")))
 
     if settings.auto_identify:
-        print(f"⚙️  自动识鸟: 是 (2★+ 照片)")
+        print(t("cli.auto_birdid_on"))
         if settings.birdid_country_code:
-            print(f"  └─ 国家: {settings.birdid_country_code}")
+            print(t("cli.birdid_country", country=settings.birdid_country_code))
         if settings.birdid_region_code:
-            print(f"  └─ 区域: {settings.birdid_region_code}")
-        print(f"  └─ 置信度阈值: {settings.birdid_confidence_threshold}%")
+            print(t("cli.birdid_region", region=settings.birdid_region_code))
+        print(t("cli.birdid_threshold", threshold=settings.birdid_confidence_threshold))
     print()
 
     processor = CLIProcessor(
@@ -184,7 +186,7 @@ def cmd_process(args):
         cleanup_temp=not adv_config.keep_temp_files  # 保留则不清理
     )
 
-    print("\n✅ 处理完成!")
+    print(t("cli.processing_complete"))
     return 0
 
 
@@ -196,17 +198,17 @@ def cmd_reset(args):
     import shutil
     
     print_banner()
-    print(f"\n🔄 重置目录: {args.directory}")
+    print(t("cli.reset_dir", directory=args.directory))
     
     if not args.yes:
-        confirm = input("\n⚠️  这将重置所有评分和文件位置，确定继续? [y/N]: ")
+        confirm = input(t("cli.reset_confirm"))
         if confirm.lower() not in ['y', 'yes']:
-            print("❌ 已取消")
+            print(t("cli.cancelled"))
             return 1
     
     # V4.0.5: 先处理所有子目录（burst_XXX、鸟种 Other_Birds 等）
     # 将文件移回评分目录，然后由步骤1的 manifest 恢复到根目录
-    print("\n📂 步骤0: 清理评分目录中的子目录...")
+    print(t("cli.reset_step0"))
     rating_dirs = ['3star_excellent', '2star_good', '1star_average', '0star_reject',
                    '3星_优选', '2星_良好', '1星_普通', '0星_放弃']  # Support both languages
     subdir_stats = {'dirs_removed': 0, 'files_restored': 0}
@@ -220,10 +222,10 @@ def cmd_reset(args):
         for entry in os.scandir(rating_path):
             entry_path = entry.path
             if entry.is_symlink():
-                print(f"  ⚠️ 跳过符号链接目录: {rating_dir}/{entry.name}")
+                print(t("cli.skip_symlink_dir", rating_dir=rating_dir, name=entry.name))
                 continue
             if entry.is_dir(follow_symlinks=False):
-                print(f"  📁 打平子目录: {rating_dir}/{entry.name}")
+                print(t("cli.flatten_subdir", rating_dir=rating_dir, name=entry.name))
                 # 递归将所有文件移回评分目录
                 for root, dirs, files in os.walk(entry_path):
                     # 防御性处理：不进入任何符号链接子目录
@@ -231,7 +233,7 @@ def cmd_reset(args):
                     for filename in files:
                         src = os.path.join(root, filename)
                         if os.path.islink(src):
-                            print(f"    ⚠️ 跳过符号链接文件: {filename}")
+                            print(t("cli.skip_symlink_file", filename=filename))
                             continue
                         dst = os.path.join(rating_path, filename)
                         if os.path.isfile(src):
@@ -241,7 +243,7 @@ def cmd_reset(args):
                                 shutil.move(src, dst)
                                 subdir_stats['files_restored'] += 1
                             except Exception as e:
-                                print(f"    ⚠️ 移动失败: {filename}: {e}")
+                                print(t("cli.move_failed", filename=filename, e=e))
 
                 # 删除子目录
                 try:
@@ -249,20 +251,20 @@ def cmd_reset(args):
                         shutil.rmtree(entry_path)
                     subdir_stats['dirs_removed'] += 1
                 except Exception as e:
-                    print(f"    ⚠️ 删除目录失败: {entry.name}: {e}")
+                    print(t("cli.remove_subdir_failed", name=entry.name, e=e))
     
     if subdir_stats['dirs_removed'] > 0:
-        print(f"  ✅ 已清理 {subdir_stats['dirs_removed']} 个子目录，恢复 {subdir_stats['files_restored']} 个文件")
+        print(t("cli.subdirs_cleaned", dirs_removed=subdir_stats['dirs_removed'], files_restored=subdir_stats['files_restored']))
     else:
-        print("  ℹ️  无子目录需要清理")
+        print(t("cli.no_subdirs"))
     
-    print("\n📂 步骤1: 恢复文件到主目录...")
+    print(t("cli.reset_step1"))
     exiftool_mgr = get_exiftool_manager()
     restore_stats = exiftool_mgr.restore_files_from_manifest(args.directory)
     
     restored = restore_stats.get('restored', 0)
     if restored > 0:
-        print(f"  ✅ 已通过 Manifest 恢复 {restored} 个文件")
+        print(t("cli.manifest_restored", restored=restored))
     
     # V4.0.5: Manifest 可能不包含所有文件（来自上次运行的残留文件）
     # 扫描评分目录，将所有文件强制移回根目录
@@ -282,10 +284,10 @@ def cmd_reset(args):
                     shutil.move(src, dst)
                     fallback_restored += 1
                 except Exception as e:
-                    print(f"    ⚠️ 回迁失败: {filename}: {e}")
+                    print(t("cli.move_back_failed", filename=filename, e=e))
     
     if fallback_restored > 0:
-        print(f"  ✅ 额外恢复了 {fallback_restored} 个残留文件到根目录")
+        print(t("cli.fallback_restored", fallback_restored=fallback_restored))
     
     # V4.3.1: 按目录名摊平兜底——manifest/根目录评分扫描会漏掉「鸟种优先」布局下
     # 鸟种/星级/burst_ 子目录里的深层文件;与 UI reset 保持一致。force_flatten 幂等安全
@@ -296,54 +298,54 @@ def cmd_reset(args):
         _fstats = force_flatten_directory(args.directory)
         flatten_moved = int(_fstats.get("moved", 0)) if _fstats else 0
     except Exception as _fe:
-        print(f"  ⚠️ 摊平兜底失败 / flatten fallback failed: {_fe}")
+        print(t("cli.flatten_fallback_failed", error=_fe))
 
     total_restored = restored + fallback_restored + flatten_moved
     if total_restored == 0:
-        print("  ℹ️  无需恢复文件")
+        print(t("cli.nothing_to_restore"))
     else:
-        print(f"  ✅ 共恢复 {total_restored} 个文件")
+        print(t("cli.total_restored", total_restored=total_restored))
 
-    print("\n📝 步骤2: 清理并重置 EXIF 元数据...")
-    i18n = get_i18n('zh_CN')
+    print(t("cli.reset_step2"))
+    i18n = get_i18n()
     success = reset(args.directory, i18n=i18n)
     
     # V4.0.5: 删除评分目录（所有文件已移走）
-    print("\n🗑️  步骤3: 清理目录...")
+    print(t("cli.reset_step3"))
     deleted_dirs = 0
     for rating_dir in rating_dirs:
         rating_path = os.path.join(args.directory, rating_dir)
         if os.path.exists(rating_path) and os.path.isdir(rating_path):
             try:
                 shutil.rmtree(rating_path)
-                print(f"  🗑️ 已删除: {rating_dir}")
+                print(t("cli.deleted", name=rating_dir))
                 deleted_dirs += 1
             except Exception as e:
-                print(f"  ⚠️ 删除目录失败: {rating_dir}: {e}")
+                print(t("cli.remove_rating_dir_failed", rating_dir=rating_dir, e=e))
     
     # V4.0.5: 清理 .superpicky 隐藏目录和 manifest 文件
     superpicky_dir = os.path.join(args.directory, ".superpicky")
     if os.path.exists(superpicky_dir):
         try:
             shutil.rmtree(superpicky_dir)
-            print("  🗑️ 已删除: .superpicky/")
+            print(t("cli.deleted", name=".superpicky/"))
             deleted_dirs += 1
         except Exception:
             try:
                 import subprocess
                 subprocess.run(['rm', '-rf', superpicky_dir], check=True, timeout=120)
-                print("  🗑️ 已删除: .superpicky/ (force)")
+                print(t("cli.deleted", name=".superpicky/ (force)"))
                 deleted_dirs += 1
             except Exception as e2:
-                print(f"  ⚠️ .superpicky 删除失败: {e2}")
+                print(t("cli.superpicky_dir_remove_failed", e2=e2))
     
     manifest_file = os.path.join(args.directory, ".superpicky_manifest.json")
     if os.path.exists(manifest_file):
         try:
             os.remove(manifest_file)
-            print("  🗑️ 已删除: .superpicky_manifest.json")
+            print(t("cli.deleted", name=".superpicky_manifest.json"))
         except Exception as e:
-            print(f"  ⚠️ manifest 删除失败: {e}")
+            print(t("cli.manifest_remove_failed", e=e))
     
     # 清理 macOS ._burst_XXX 残留文件
     for filename in os.listdir(args.directory):
@@ -354,15 +356,15 @@ def cmd_reset(args):
                 pass
     
     if deleted_dirs > 0:
-        print(f"  ✅ 已清理 {deleted_dirs} 个目录")
+        print(t("cli.dirs_cleaned", deleted_dirs=deleted_dirs))
     else:
-        print("  ℹ️  无空目录需要清理")
+        print(t("cli.no_empty_dirs"))
     
     if success:
-        print("\n✅ 目录重置完成!")
+        print(t("cli.reset_done"))
         return 0
     else:
-        print("\n❌ 重置失败")
+        print(t("cli.reset_failed"))
         return 1
 
 
@@ -371,40 +373,40 @@ def cmd_info(args):
     from tools.report_db import ReportDB
     
     print_banner()
-    print(f"\n📁 目录: {args.directory}")
+    print(t("cli.info_dir", directory=args.directory))
     
     # 检查各种文件
     db_path = os.path.join(args.directory, '.superpicky', 'report.db')
     manifest_path = os.path.join(args.directory, '.superpicky_manifest.json')
     
-    print("\n📋 文件状态:")
+    print(t("cli.file_status"))
     
     if os.path.exists(db_path):
-        print("  ✅ report.db 存在")
+        print(t("cli.report_db_exists"))
         try:
             db = ReportDB(args.directory)
             stats = db.get_statistics()
             total = stats['total']
-            print(f"     共 {total} 条记录")
+            print(t("cli.report_db_records", total=total))
             
-            print("\n📊 评分分布:")
+            print(t("cli.rating_distribution"))
             for rating, count in sorted(stats['by_rating'].items()):
                 stars = "⭐" * max(0, int(rating)) if rating >= 0 else "❌"
-                print(f"     {stars} {rating}星: {count} 张")
+                print(t("cli.rating_line", stars=stars, rating=rating, count=count))
             
             if stats['flying'] > 0:
-                print(f"\n🦅 飞鸟照片: {stats['flying']} 张")
+                print(t("cli.flying_count", flying=stats['flying']))
             
             db.close()
         except Exception as e:
-            print(f"     读取失败: {e}")
+            print(t("cli.read_failed", e=e))
     else:
-        print("  ❌ report.db 不存在")
+        print(t("cli.report_db_missing"))
     
     if os.path.exists(manifest_path):
-        print("  ✅ manifest 文件存在 (可重置)")
+        print(t("cli.manifest_exists"))
     else:
-        print("  ℹ️  manifest 文件不存在")
+        print(t("cli.manifest_missing"))
     
     # 检查分类文件夹
     folders = ['3star_excellent', '2star_good', '1star_average', '0star_reject',
@@ -418,9 +420,9 @@ def cmd_info(args):
             existing_folders.append((folder, count))
     
     if existing_folders:
-        print("\n📂 分类文件夹:")
+        print(t("cli.sorted_folders"))
         for folder, count in existing_folders:
-            print(f"     {folder}/: {count} 张")
+            print(t("cli.folder_count", folder=folder, count=count))
     
     print()
     return 0
@@ -436,23 +438,22 @@ def cmd_identify(args):
     import birdid_cli
 
     print_banner()
-    print(f"\n🐦 鸟类识别 / Bird Identification")
-    print(f"📸 图片: {args.image}")
-    print(f"🤖 模型: {getattr(args, 'model', 'birdid2024').upper()}"
+    print(t("cli.identify_title"))
+    print(t("cli.identify_image", image=args.image))
+    print(t("cli.identify_model", model=getattr(args, 'model', 'birdid2024').upper())
           + (" + TTA" if getattr(args, 'model', '') == 'osea' and getattr(args, 'tta', False) else ""))
-    print(f"⚙️  YOLO裁剪: {'是' if args.yolo else '否'}  GPS: {'是' if args.gps else '否'}"
-          f"  eBird: {'是' if getattr(args, 'ebird', True) else '否'}")
-    print("🔍 正在识别...")
+    print(t("cli.identify_options", yolo=t("cli.yes") if args.yolo else t("cli.no"), gps=t("cli.yes") if args.gps else t("cli.no"), ebird=t("cli.yes") if getattr(args, 'ebird', True) else t("cli.no")))
+    print(t("cli.identifying"))
 
     result = birdid_cli.identify_single(args, args.image)
     success = birdid_cli.display_result(result, verbose=True)
 
     if getattr(args, 'write_exif', False) and success:
-        print(f"\n📝 写入 EXIF...")
+        print(t("cli.writing_exif"))
         if birdid_cli.write_exif(args.image, result, args.threshold):
-            print(f"  ✅ 已写入: {result['results'][0]['cn_name']}")
+            print(t("cli.written", name=result['results'][0]['cn_name']))
         else:
-            print(f"  ❌ 写入失败")
+            print(t("cli.write_failed"))
 
     print()
     return 0 if success else 1
@@ -466,7 +467,7 @@ def cmd_batch(args):
     from advanced_config import get_advanced_config
 
     print_banner()
-    print(f"\n📂 批量处理: {args.directory}")
+    print(t("cli.batch_dir", directory=args.directory))
 
     is_dangerous, reason = is_dangerous_root(args.directory)
     if is_dangerous:
@@ -483,27 +484,27 @@ def cmd_batch(args):
         return 1
     
     # 预览
-    print(f"\n🔍 找到 {len(scan_results)} 个待处理目录:")
+    print(t("cli.batch_found", count=len(scan_results)))
     total_photos = 0
     for i, scanned_dir in enumerate(scan_results, 1):
         rel = os.path.relpath(scanned_dir.path, args.directory)
         n = scanned_dir.photo_count
         processed = is_processed(scanned_dir.path)
-        status = " (已处理)" if processed else ""
-        print(f"  {i:3d}. {rel}/ ({n} 张){status}")
+        status = t("cli.batch_processed_mark") if processed else ""
+        print(t("cli.batch_dir_line", i=i, rel=rel, n=n, status=status))
         total_photos += n
-    print(f"\n  合计: {total_photos} 张照片")
+    print(t("cli.batch_total", total_photos=total_photos))
     
     # Dry run
     if args.dry_run:
-        print("\n📋 Dry run 模式，不执行处理")
+        print(t("cli.dry_run"))
         return 0
     
     # 确认
     if not args.yes:
-        confirm = input(f"\n确定处理这 {len(scan_results)} 个目录? [y/N]: ")
+        confirm = input(t("cli.batch_confirm", count=len(scan_results)))
         if confirm.lower() not in ['y', 'yes']:
-            print("❌ 已取消")
+            print(t("cli.cancelled"))
             return 1
     
     # 解析设置：CLI 显式 > advanced_config(= GUI) > 默认。仅改内存，不回写。
@@ -527,7 +528,7 @@ def cmd_batch(args):
         cleanup_temp=not adv_config.keep_temp_files,
     )
     
-    print("\n✅ 批量处理完成!")
+    print(t("cli.batch_done"))
     return 0 if result.failed_dirs == 0 else 1
 
 
@@ -538,24 +539,24 @@ def cmd_batch_reset(args):
     import shutil
     
     print_banner()
-    print(f"\n\U0001f504 batch reset: {args.directory}")
+    print(t("cli.batch_reset_dir", directory=args.directory))
     
     # Find all processed directories (including root)
     processed_dirs = find_processed_subdirs(args.directory)
     
     if not processed_dirs:
-        print("\n❌ 未找到已处理的子目录")
+        print(t("cli.no_processed_dirs"))
         return 1
     
-    print(f"\n🔍 找到 {len(processed_dirs)} 个已处理目录:")
+    print(t("cli.processed_found", count=len(processed_dirs)))
     for i, d in enumerate(processed_dirs, 1):
         rel = os.path.relpath(d, args.directory)
         print(f"  {i:3d}. {rel}/")
     
     if not args.yes:
-        confirm = input(f"\n⚠️  确定重置这 {len(processed_dirs)} 个目录? [y/N]: ")
+        confirm = input(t("cli.batch_reset_confirm", count=len(processed_dirs)))
         if confirm.lower() not in ['y', 'yes']:
-            print("❌ 已取消")
+            print(t("cli.cancelled"))
             return 1
     
     # 逐个重置（复用 cmd_reset 的核心逻辑）
@@ -564,7 +565,7 @@ def cmd_batch_reset(args):
     for i, d in enumerate(processed_dirs, 1):
         rel = os.path.relpath(d, args.directory)
         print(f"\n{'━' * 40}")
-        print(f"🔄 [{i}/{len(processed_dirs)}] 重置: {rel}/")
+        print(t("cli.batch_reset_item", i=i, count=len(processed_dirs), rel=rel))
         
         # 创建一个模拟的 args 对象给 cmd_reset
         reset_args = SimpleNamespace(directory=d, yes=True)
@@ -576,7 +577,7 @@ def cmd_batch_reset(args):
             else:
                 fail_count += 1
         except Exception as e:
-            print(f"  ❌ 重置失败: {e}")
+            print(t("cli.reset_failed_error", e=e))
             fail_count += 1
     
     # 清理批量报告
@@ -585,7 +586,7 @@ def cmd_batch_reset(args):
         os.remove(batch_report)
     
     print(f"\n{'═' * 40}")
-    print(f"📊 批量重置完成: {success_count} 成功, {fail_count} 失败")
+    print(t("cli.batch_reset_done", success_count=success_count, fail_count=fail_count))
     return 0 if fail_count == 0 else 1
 
 
@@ -598,86 +599,79 @@ def _add_processing_args(parser):
     默认值与 GUI 完全一致；显式给出则覆盖。每个设置都有 flag → 完全可控（面向 agent）。
     布尔三态用 argparse.BooleanOptionalAction（--x / --no-x，未给为 None）。
     """
-    parser.add_argument('directory', help='照片目录路径')
+    parser.add_argument('directory', help=t("cli.help_directory"))
     # —— 评分阈值 / Scoring thresholds ——
     parser.add_argument('-s', '--sharpness', type=int, default=None,
-                        help='锐度阈值 (默认: 跟随 skill 预设/配置)')
+                        help=t("cli.help_sharpness"))
     parser.add_argument('-n', '--nima-threshold', type=float, default=None,
-                        help='美学阈值 TOPIQ (默认: 跟随 skill 预设/配置)')
+                        help=t("cli.help_nima"))
     parser.add_argument('-c', '--confidence', type=int, default=None,
-                        help='AI置信度阈值 0-100 (默认: 配置 min_confidence×100)')
+                        help=t("cli.help_confidence"))
     parser.add_argument('--skill-level',
                         choices=['beginner', 'intermediate', 'master', 'custom'],
                         default=None,
-                        help='摄影水平预设，驱动锐度/美学默认 (默认: 配置)')
+                        help=t("cli.help_skill"))
     # —— 检测开关（三态）/ Detection toggles ——
     parser.add_argument('--flight', action=argparse.BooleanOptionalAction, default=None,
-                        help='飞鸟检测 (默认: 跟随配置；GUI 默认关)')
+                        help=t("cli.help_flight"))
     parser.add_argument('--burst', action=argparse.BooleanOptionalAction, default=None,
-                        help='连拍检测 (默认: 跟随配置；GUI 默认关)')
+                        help=t("cli.help_burst"))
     parser.add_argument('--exposure', action=argparse.BooleanOptionalAction, default=None,
-                        help='曝光检测 (默认: 跟随配置；GUI 默认关)')
+                        help=t("cli.help_exposure"))
     parser.add_argument('--exposure-threshold', type=float, default=None,
-                        help='曝光阈值 0.05-0.20 (默认: 配置)')
+                        help=t("cli.help_exposure_threshold"))
     # —— 0 星判定阈值（高级）/ Zero-star thresholds ——
     parser.add_argument('--min-sharpness', type=int, default=None,
-                        help='0星锐度下限 (默认: 配置)')
+                        help=t("cli.help_min_sharpness"))
     parser.add_argument('--min-nima', type=float, default=None,
-                        help='0星美学下限 (默认: 配置)')
+                        help=t("cli.help_min_nima"))
     parser.add_argument('--picked-top', type=int, default=None,
-                        help='精选 Top 百分比 (默认: 配置)')
+                        help=t("cli.help_picked_top"))
     # —— 元数据 / 目录布局 / Metadata & layout ——
     parser.add_argument('--xmp', action=argparse.BooleanOptionalAction, default=None,
-                        help='[兼容] 写 XMP 侧车不改 RAW (= --arw-write-mode sidecar)')
+                        help=t("cli.help_xmp"))
     parser.add_argument('--arw-write-mode',
                         choices=['sidecar', 'embedded', 'inplace', 'auto'], default=None,
-                        help='ARW 写入策略 (默认: 配置)')
+                        help=t("cli.help_arw_mode"))
     parser.add_argument('--metadata-mode',
                         choices=['embedded', 'sidecar', 'none'], default=None,
-                        help='元数据写入模式 (默认: 配置)')
+                        help=t("cli.help_metadata_mode"))
     parser.add_argument('--folder-layout',
                         choices=['species-first', 'rating-first'], default=None,
-                        help='分目录布局 (默认: 配置)')
+                        help=t("cli.help_folder_layout"))
     parser.add_argument('--name-format',
                         choices=['default', 'avilist', 'clements', 'birdlife', 'scientific'],
-                        default=None, help='鸟种英文名格式 (默认: 配置)')
+                        default=None, help=t("cli.help_name_format"))
     # —— BirdID 自动识鸟 / Auto bird ID ——
     parser.add_argument('--auto-identify', '-i', action='store_true', default=False,
-                        help='自动识别 2★+ 照片鸟种并按鸟种分目录')
+                        help=t("cli.help_auto_identify"))
     parser.add_argument('--ebird', action=argparse.BooleanOptionalAction, default=None,
-                        help='BirdID eBird 地区过滤 (默认: 开)')
+                        help=t("cli.help_ebird"))
     parser.add_argument('--birdid-country', type=str, default=None,
-                        help='BirdID 国家代码 (如 AU, CN, US)')
+                        help=t("cli.help_country"))
     parser.add_argument('--birdid-region', type=str, default=None,
-                        help='BirdID 区域代码 (如 AU-SA)')
+                        help=t("cli.help_region"))
     parser.add_argument('--birdid-threshold', type=float, default=None,
-                        help='BirdID 置信度阈值 (默认: 配置)')
+                        help=t("cli.help_birdid_threshold"))
     # —— 临时文件 / 裁剪 / Temp & crop ——
     parser.add_argument('--keep-temp-files', action=argparse.BooleanOptionalAction,
                         dest='keep_temp', default=None,
-                        help='保留临时预览图 (默认: 配置)')
+                        help=t("cli.help_keep_temp"))
     parser.add_argument('--save-crop', action='store_true', default=False,
-                        help='保留 bird/debug 裁剪图 (.superpicky/cache/debug)')
+                        help=t("cli.help_save_crop"))
 
 
 def main():
     """主入口"""
+    apply_saved_language()
     parser = argparse.ArgumentParser(
         prog='superpicky_cli',
         description=t("cli.sp_description"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  %(prog)s process ~/Photos/Birds              # 处理照片
-  %(prog)s process ~/Photos/Birds -s 600       # 自定义锐度阈值
-  %(prog)s reset ~/Photos/Birds -y             # 重置目录(无确认)
-  %(prog)s info ~/Photos/Birds                 # 查看目录信息
-  %(prog)s identify ~/Photos/bird.jpg          # 识别鸟类
-  %(prog)s identify bird.NEF --write-exif      # 识别并写入EXIF
-        """
+        epilog=t("cli.examples")
     )
     
-    subparsers = parser.add_subparsers(dest='command', help='可用命令')
+    subparsers = parser.add_subparsers(dest='command', help=t("cli.help_commands"))
     
     # ===== process 命令 =====
     # 设计：可覆盖项一律 default=None（哨兵）。None = 用户未指定 → 由 tools/cli_settings
@@ -685,35 +679,35 @@ Examples:
     p_process = subparsers.add_parser('process', help=t("cli.cmd_process"))
     _add_processing_args(p_process)
     p_process.add_argument('--no-organize', action='store_false', dest='organize',
-                          help='不移动文件到分类文件夹')
+                          help=t("cli.help_no_organize"))
     p_process.add_argument('--no-cleanup', action='store_false', dest='cleanup',
-                          help='不清理临时JPG文件')
-    p_process.add_argument('-q', '--quiet', action='store_true', help='静默模式')
+                          help=t("cli.help_no_cleanup"))
+    p_process.add_argument('-q', '--quiet', action='store_true', help=t("cli.help_quiet"))
     p_process.add_argument('--cleanup-days', type=int, default=30,
-                          help='自动清理周期（天），0=永久 (默认: 30)')
+                          help=t("cli.help_cleanup_days"))
     p_process.set_defaults(organize=True, cleanup=True)
 
     # ===== reset 命令 =====
     p_reset = subparsers.add_parser('reset', help=t("cli.cmd_reset"))
-    p_reset.add_argument('directory', help='照片目录路径')
+    p_reset.add_argument('directory', help=t("cli.help_directory"))
     p_reset.add_argument('-y', '--yes', action='store_true',
-                        help='跳过确认提示')
+                        help=t("cli.help_yes"))
     
     # ===== info 命令 =====
     p_info = subparsers.add_parser('info', help=t("cli.cmd_info"))
-    p_info.add_argument('directory', help='照片目录路径')
+    p_info.add_argument('directory', help=t("cli.help_directory"))
     
     # ===== burst 命令 =====
     p_burst = subparsers.add_parser('burst', help=t("cli.cmd_burst"))
-    p_burst.add_argument('directory', help='照片目录路径')
+    p_burst.add_argument('directory', help=t("cli.help_directory"))
     p_burst.add_argument('-m', '--min-count', type=int, default=4,
-                         help='最小连拍张数 (默认: 4)')
+                         help=t("cli.help_min_count"))
     p_burst.add_argument('-t', '--threshold', type=int, default=250,
-                         help='时间阈值(ms) (默认: 250)')
+                         help=t("cli.help_threshold_ms"))
     p_burst.add_argument('--no-phash', action='store_false', dest='phash',
-                         help='禁用 pHash 验证（默认启用）')
+                         help=t("cli.help_no_phash"))
     p_burst.add_argument('--execute', action='store_true',
-                         help='实际执行处理（默认仅预览）')
+                         help=t("cli.help_execute"))
     p_burst.set_defaults(phash=True)
 
     # ===== identify 命令 =====
@@ -724,27 +718,27 @@ Examples:
     
     # ===== batch 命令 =====
     # 共享处理参数（可覆盖项 default=None，与 process 一致），加 batch 专属选项。
-    p_batch = subparsers.add_parser('batch', help='递归批量处理子目录')
+    p_batch = subparsers.add_parser('batch', help=t("cli.help_batch"))
     _add_processing_args(p_batch)
     p_batch.add_argument('--no-organize', action='store_false', dest='organize')
     p_batch.add_argument('--no-cleanup', action='store_false', dest='cleanup')
     p_batch.add_argument('--skip-existing', action='store_true',
-                        help='跳过已处理的目录')
+                        help=t("cli.help_skip_existing"))
     p_batch.add_argument('--dry-run', action='store_true',
-                        help='仅列出待处理目录，不执行')
+                        help=t("cli.help_dry_run"))
     p_batch.add_argument('--max-depth', type=int, default=DEFAULT_SCAN_MAX_DEPTH,
-                        help=f'最大递归深度 (默认: {DEFAULT_SCAN_MAX_DEPTH})')
+                        help=t("cli.help_max_depth", depth=DEFAULT_SCAN_MAX_DEPTH))
     p_batch.add_argument('-y', '--yes', action='store_true',
-                        help='跳过确认提示')
+                        help=t("cli.help_yes"))
     p_batch.add_argument('-q', '--quiet', action='store_true')
     p_batch.set_defaults(organize=True, cleanup=True,
                         skip_existing=False, dry_run=False)
     
     # ===== batch-reset 命令 =====
-    p_batch_reset = subparsers.add_parser('batch-reset', help='批量重置所有已处理的子目录')
-    p_batch_reset.add_argument('directory', help='根目录路径')
+    p_batch_reset = subparsers.add_parser('batch-reset', help=t("cli.help_batch_reset"))
+    p_batch_reset.add_argument('directory', help=t("cli.help_root"))
     p_batch_reset.add_argument('-y', '--yes', action='store_true',
-                              help='跳过确认提示')
+                              help=t("cli.help_yes"))
 
     # 解析参数
     args = parser.parse_args()

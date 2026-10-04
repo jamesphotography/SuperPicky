@@ -530,6 +530,8 @@ def restore_organized_videos(directory: str, log=None) -> dict:
 
     Restore organized videos to their pre-organize locations using the manifest.
     """
+    from tools.i18n import get_i18n
+
     def _log(msg: str) -> None:
         if log:
             log(msg)
@@ -547,7 +549,7 @@ def restore_organized_videos(directory: str, log=None) -> dict:
             data = json.load(f)
         entries = data.get("entries", []) if isinstance(data, dict) else []
     except Exception as e:
-        _log(f"  ❌ 读取视频归类清单失败 / failed to read video manifest: {e}")
+        _log(get_i18n().t("video.restore_manifest_failed", error=e))
         return stats
 
     target_dirs: set[str] = set()
@@ -565,12 +567,12 @@ def restore_organized_videos(directory: str, log=None) -> dict:
                 os.makedirs(os.path.dirname(original), exist_ok=True)
                 if os.path.exists(original):
                     # 原始路径已被占用，保守跳过不覆盖 / don't overwrite an existing original
-                    _log(f"  ⚠️  原位已存在，跳过 / original exists, skipped: {original}")
+                    _log(get_i18n().t("video.restore_exists_skipped", name=original))
                 else:
                     shutil.move(video, original)
                     stats["restored"] += 1
             except Exception as e:
-                _log(f"  ❌ 复原失败 / restore failed {os.path.basename(video)}: {e}")
+                _log(get_i18n().t("video.restore_failed", name=os.path.basename(video), error=e))
         else:
             stats["missing"] += 1
         # 2. 删 SRT / delete SRT

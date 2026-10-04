@@ -1473,7 +1473,8 @@ class ExifToolManager:
             print("[ExifTool] metadata_write_mode=none, 跳过所有元数据写入")
             return stats
         if global_mode == "sidecar":
-            print(f"[ExifTool] metadata_write_mode=sidecar, 所有文件统一写 XMP 侧车 ({len(files_metadata)} 条)")
+            from tools.i18n import t as _t
+            print(_t("logs.exif_sidecar_mode", count=len(files_metadata)))
             for item in files_metadata:
                 if self._write_metadata_xmp_sidecar(item):
                     stats['success'] += 1
@@ -1926,6 +1927,11 @@ class ExifToolManager:
         Returns:
             统计结果 {'success': 成功数, 'failed': 失败数}
         """
+        # 没传 i18n 时取当前界面语言；此前退回写死的中英文，或把键名原样显示出来
+        # Fall back to the UI language (previously hard-coded text or raw keys)
+        if i18n is None:
+            from tools.i18n import get_i18n
+            i18n = get_i18n()
         def log(msg):
             """统一日志输出"""
             if log_callback:
@@ -1936,11 +1942,7 @@ class ExifToolManager:
         stats = {'success': 0, 'failed': 0}
         total = len(file_paths)
 
-        if i18n:
-            log(i18n.t("logs.batch_reset_start", total=total))
-        else:
-            log(f"📦 Starting EXIF reset for {total} files...")
-            log(f"   Clearing all rating fields\n")
+        log(i18n.t("logs.batch_reset_start", total=total))
 
         # 分批处理
         for batch_start in range(0, total, batch_size):
@@ -2025,26 +2027,17 @@ class ExifToolManager:
                 stats['success'] += batch_success
                 stats['failed'] += error_count
 
-                if i18n:
-                    log(i18n.t("logs.batch_progress", start=batch_start+1, end=batch_end, success=batch_success, skipped=0))
-                else:
-                    log(f"  ✅ 批次 {batch_start+1}-{batch_end}: {batch_success} 个文件已处理")
+                log(i18n.t("logs.batch_progress", start=batch_start+1, end=batch_end, success=batch_success, skipped=0))
 
             except Exception as e:
                 stats['failed'] += len(valid_files)
                 self._write_proc.stop()
-                if i18n:
-                    log(f"  ❌ {i18n.t('logs.batch_error', start=batch_start+1, end=batch_end, error=str(e))}")
-                else:
-                    log(f"  ❌ 批次 {batch_start+1}-{batch_end} 错误: {e}")
+                log(f"  ❌ {i18n.t('logs.batch_error', start=batch_start+1, end=batch_end, error=str(e))}")
 
         # V4.0.3: 清理潜在残留的临时文件
         self.cleanup_temp_files(file_paths)
 
-        if i18n:
-            log(f"\n{i18n.t('logs.batch_complete', success=stats['success'], skipped=0, failed=stats['failed'])}")
-        else:
-            log(f"\n✅ 批量重置完成: {stats['success']} 成功, {stats['failed']} 失败")
+        log(f"\n{i18n.t('logs.batch_complete', success=stats['success'], skipped=0, failed=stats['failed'])}")
         return stats
 
     def restore_files_from_manifest(self, dir_path: str, log_callback=None, i18n=None) -> Dict[str, int]:
@@ -2061,6 +2054,11 @@ class ExifToolManager:
         Returns:
             dict: {'restored': int, 'failed': int, 'not_found': int}
         """
+        # 没传 i18n 时取当前界面语言；此前退回写死的中英文，或把键名原样显示出来
+        # Fall back to the UI language (previously hard-coded text or raw keys)
+        if i18n is None:
+            from tools.i18n import get_i18n
+            i18n = get_i18n()
         import json
         import shutil
         

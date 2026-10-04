@@ -262,6 +262,25 @@ def set_primary_language(lang: str) -> None:
     get_lazy_registry().set('_primary_lang', lang)
 
 
+def apply_saved_language() -> None:
+    """
+    让命令行等非图形入口跟随「设置」里选的界面语言（与图形界面一致）；没选时按系统语言。
+
+    此前命令行只看系统语言，与图形界面可能不一致。读配置失败时静默退回系统语言。
+
+    Make non-GUI entry points (the CLIs) follow the language chosen in Settings,
+    like the GUI does; falls back to the system language when none is set.
+    """
+    try:
+        from advanced_config import get_advanced_config
+        lang = get_advanced_config().language
+    except Exception:
+        lang = None
+    if lang:
+        get_i18n(lang)
+        set_primary_language(lang)
+
+
 def get_i18n(lang: str = None) -> I18n:
     """
     获取国际化实例（单例模式）

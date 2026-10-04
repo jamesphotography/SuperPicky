@@ -174,7 +174,7 @@ class WorkerThread(threading.Thread):
             self.signals.finished.emit(self.stats)
         except Exception as e:
             if e.__class__.__name__ == "ProcessingCancelled":
-                self.signals.log.emit("Processing cancelled.", "warning")
+                self.signals.log.emit(self.i18n.t("logs.processing_cancelled"), "warning")
             else:
                 self.signals.error.emit(str(e))
         finally:
@@ -213,7 +213,7 @@ class WorkerThread(threading.Thread):
             return
         if not cfg.video_auto_process_in_main:
             self.signals.log.emit(
-                f"⏭ 检测到 {len(video_paths)} 个视频，但视频处理未启用（参数设置可开启）",
+                self.i18n.t("logs.video_skipped_disabled", count=len(video_paths)),
                 "info"
             )
             return
@@ -1917,7 +1917,7 @@ class SuperPickyMainWindow(QMainWindow):
                 self._suppress_results_browser_once = True
                 self._quick_restore_directory()
         except Exception as resume_err:
-            self._log(f"⚠️ 恢复状态检查失败: {resume_err}", "warning")
+            self._log(self.i18n.t("logs.resume_check_failed", error=resume_err), "warning")
 
     def _load_result_counts(self) -> dict:
         """从 report.db 读取评分统计，供状态条显示。"""
@@ -1976,7 +1976,7 @@ class SuperPickyMainWindow(QMainWindow):
             else:
                 subprocess.Popen(['xdg-open', self.directory_path])
         except Exception as e:
-            self._log(f"  ⚠️ 打开目录失败: {e}", "warning")
+            self._log(self.i18n.t("logs.open_folder_failed", error=e), "warning")
 
     def _status_folder_icon_html(self, px: int = 14) -> str:
         """
@@ -2344,7 +2344,7 @@ class SuperPickyMainWindow(QMainWindow):
                     self._quick_restore_directory()
                     return
         except Exception as resume_err:
-            self._log(f"⚠️ 恢复状态检查失败: {resume_err}", "warning")
+            self._log(self.i18n.t("logs.resume_check_failed", error=resume_err), "warning")
         finally:
             self._resume_prompt_handled = False
 
@@ -3316,9 +3316,9 @@ class SuperPickyMainWindow(QMainWindow):
             if success:
                 self._log(self.i18n.t("server.api_stopped"), "info")
             else:
-                self._log(f"停止服务器失败: {msg}", "warning")
+                self._log(self.i18n.t("logs.server_stop_failed", error=msg), "warning")
         except Exception as e:
-            self._log(f"停止服务器异常: {e}", "error")
+            self._log(self.i18n.t("logs.server_stop_error", error=e), "error")
 
     # ========== 辅助方法 ==========
 
@@ -3477,6 +3477,13 @@ class SuperPickyMainWindow(QMainWindow):
             )
         for line in result.tail:
             fragments.append(self._log_line_html(line.message, line.tag, line.time_text))
+        # 会话结束汇总块在日志里是固定英文（供解析），回放时不原样显示，改为按界面语言
+        # 写一行结果摘要；完整统计在右侧识鸟面板（_restore_completion_panel）。
+        # The English session-end block is not replayed; a localized one-line
+        # summary stands in for it (full stats live in the Bird ID panel).
+        summary_line = self._replay_summary_line(log_path)
+        if summary_line:
+            fragments.append(self._log_line_html(summary_line, "success", ""))
         fragments.append(
             self._log_line_html(self.i18n.t("logs.replay_footer", total=result.total), "muted", "")
         )
@@ -3487,6 +3494,42 @@ class SuperPickyMainWindow(QMainWindow):
         self.log_text.setTextCursor(cursor)
         self.log_text.ensureCursorVisible()
         return True
+
+    def _replay_summary_line(self, log_path: str) -> str:
+        """
+        按界面语言写一行「处理结束时」的结果摘要，用在日志回放末尾。
+
+        数字取自日志里最后一次已完成会话的结束汇总（parse_session_summary），即处理
+        结束那一刻的快照；用户之后在结果浏览器里的修改以右侧识鸟面板为准。
+
+        参数 / Parameters:
+            log_path (str): 日志文件路径 / Log file path.
+
+        返回 / Returns:
+            str: 摘要文字；没有已完成的会话时为空串 / Summary, or "" when none.
+
+        One localized line summarizing the last completed run, replacing the
+        English session-end block in the replay.
+        """
+        from core.log_restore import parse_session_summary
+
+        try:
+            stats = parse_session_summary(log_path)
+        except Exception:                              # noqa: BLE001 - 摘要是附加信息
+            return ""
+        if not stats:
+            return ""
+        return self.i18n.t(
+            "logs.replay_summary",
+            total=stats.get("total", 0),
+            s3=stats.get("star_3", 0),
+            picked=stats.get("picked", 0),
+            s2=stats.get("star_2", 0),
+            s1=stats.get("star_1", 0),
+            s0=stats.get("star_0", 0),
+            no_bird=stats.get("no_bird", 0),
+            minutes=f"{stats.get('total_time', 0.0) / 60:.1f}",
+        )
 
     def _restore_completion_panel(self, directory: str) -> bool:
         """

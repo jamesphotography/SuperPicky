@@ -702,10 +702,12 @@ class PhotoProcessor:
             # without this the user only sees "done" and never learns some
             # photos were silently missing.
             if self.stats['failed'] > 0:
-                shown = "、".join(self.failed_photos[:10])
-                more = f" …(共{self.stats['failed']}张)" if self.stats['failed'] > 10 else ""
+                shown = self.i18n.t("logs.name_list_sep").join(self.failed_photos[:10])
+                more = (self.i18n.t("logs.photos_failed_more", count=self.stats['failed'])
+                        if self.stats['failed'] > 10 else "")
                 self._log(
-                    f"⚠️ {self.stats['failed']} 张照片处理异常被跳过（未评分/未整理，仍在原目录）: {shown}{more}",
+                    self.i18n.t("logs.photos_failed_summary", count=self.stats['failed'],
+                                names=shown, more=more),
                     "warning"
                 )
 
@@ -723,7 +725,7 @@ class PhotoProcessor:
                 try:
                     exiftool_mgr.close_persistent_session("photo_processor.process")
                 except Exception as e:
-                    self._log(f"⚠️ ExifTool session close failed: {e}", "warning")
+                    self._log(self.i18n.t("logs.exiftool_close_failed", error=e), "warning")
     
     def _scan_files(self) -> Tuple[dict, dict, list]:
         """扫描目录文件"""
@@ -987,7 +989,7 @@ class PhotoProcessor:
                                 rel_dest = os.path.relpath(dest, self.dir_path)
                                 self.report_db.update_photo(f['prefix'], {'current_path': rel_dest})
                             except Exception as db_e:
-                                self._log(f"    ⚠️ DB current_path update failed: {db_e}", "warning")
+                                self._log(self.i18n.t("logs.db_path_update_failed", error=db_e), "warning")
 
                         # 移动 sidecar 文件
                         file_base = os.path.splitext(f['path'])[0]
@@ -999,7 +1001,7 @@ class PhotoProcessor:
                                 except:
                                     pass
                 except Exception as e:
-                    self._log(f"    ⚠️ Move failed: {e}", "warning")
+                    self._log(self.i18n.t("logs.move_failed_simple", error=e), "warning")
 
             
             stats['groups'] += 1
@@ -1012,7 +1014,7 @@ class PhotoProcessor:
                 try:
                     prune_upwards(self.dir_path, src)
                 except Exception as e:
-                    self._log(f"    ⚠️ Empty folder cleanup failed: {e}", "warning")
+                    self._log(self.i18n.t("logs.empty_folder_cleanup_failed", error=e), "warning")
 
         if stats['groups'] > 0:
             self._log(self.i18n.t("logs.burst_consolidate_complete", groups=stats['groups'], moved=stats['moved']))
@@ -1140,7 +1142,7 @@ class PhotoProcessor:
             keypoint_detector.load_model()
             use_keypoints = True
         except FileNotFoundError:
-            self._log("⚠️  Keypoint model not found, using traditional sharpness", "warning")
+            self._log(self.i18n.t("logs.keypoint_model_missing"), "warning")
             use_keypoints = False
         
         # V3.4: 飞版检测模型
@@ -1152,7 +1154,7 @@ class PhotoProcessor:
                 flight_detector.load_model()
                 use_flight = True
             except FileNotFoundError:
-                self._log("⚠️  Flight model not found, skipping flight detection", "warning")
+                self._log(self.i18n.t("logs.flight_model_missing"), "warning")
                 use_flight = False
         
         total_files = display_total if display_total is not None else len(files_tbr)
@@ -1358,7 +1360,7 @@ class PhotoProcessor:
                 from birdid.bird_identifier import identify_bird as identify_bird_fn
             except Exception as e:
                 identify_bird_fn = None
-                self._log(f"  ⚠️ BirdID import failed: {e}", "warning")
+                self._log(self.i18n.t("logs.birdid_import_failed", error=e), "warning")
         
         def submit_birdid_task(
             file_prefix: str,
@@ -1391,7 +1393,7 @@ class PhotoProcessor:
                 birdid_tasks.append((future, file_prefix, list(title_targets), source_display))
                 progress_state['birdid_submitted'] += 1
             except Exception as e:
-                self._log(f"  ⚠️ Bird ID failed [{source_display}]: {e}", "warning")
+                self._log(self.i18n.t("logs.birdid_failed", file=source_display, error=e), "warning")
         
         def birdid_tier(gbif_rarity_100):
             """
@@ -1435,7 +1437,7 @@ class PhotoProcessor:
             if not birdid_result:
                 return
             if birdid_result.get('error'):
-                self._log(f"  ⚠️ BirdID error [{source_filename or file_prefix}]: {birdid_result['error']}", "warning")
+                self._log(self.i18n.t("logs.birdid_failed", file=source_filename or file_prefix, error=birdid_result['error']), "warning")
             if not birdid_result.get('success') or not birdid_result.get('results'):
                 return
             source_display = source_filename or file_prefix or "?"
@@ -1562,7 +1564,7 @@ class PhotoProcessor:
                             species_caption_jobs.append((file_prefix, self.i18n.t(
                                 "logs.caption_burst_unified", source=burst_source)))
                     except Exception as _e:
-                        self._log(f"  ⚠️ Bird species DB write failed [{file_prefix}]: {_e}", "warning")
+                        self._log(self.i18n.t("logs.species_db_write_failed", file=file_prefix, error=_e), "warning")
 
                 for target_file in title_targets:
                     if target_file and os.path.exists(target_file):
@@ -1619,7 +1621,7 @@ class PhotoProcessor:
                                 'alt_confidence': birdid_confidence if show_candidate else None,
                             })
                         except Exception as _e:
-                            self._log(f"  ⚠️ Candidate species DB write failed [{file_prefix}]: {_e}", "warning")
+                            self._log(self.i18n.t("logs.candidate_db_write_failed", file=file_prefix, error=_e), "warning")
                     # 备选鸟种不写进选片备注：浏览器鸟种行已显示「鸟名（待确定 N%）」
                     # The alt species is shown in the browser's species row, not the note
 
@@ -1644,7 +1646,7 @@ class PhotoProcessor:
                     apply_birdid_result(file_prefix, title_targets, birdid_result, source_filename)
                     self._perf_add_stage('birdid_apply', (time.time() - birdid_apply_start) * 1000)
                 except Exception as e:
-                    self._log(f"  ⚠️ Bird ID failed [{source_filename or file_prefix}]: {e}", "warning")
+                    self._log(self.i18n.t("logs.birdid_failed", file=source_filename or file_prefix, error=e), "warning")
                 # 失败任务同样计入已完成单元，避免进度条卡在收尾阶段
                 # Failed tasks also count as done units so the bar never stalls
                 progress_state['birdid_done'] += 1
@@ -1880,7 +1882,7 @@ class PhotoProcessor:
                 except Exception:
                     pass
                 _yolo_model_box[0] = load_yolo_model()
-            self._log(f"  🔄 YOLO 模型已重载（MPS 显存复位）", "info")
+            self._log(self.i18n.t("logs.yolo_reloaded"), "info")
 
         if yolo_prefetch_enabled and yolo_result_queue is not None:
             def yolo_prefetch_worker():
@@ -2110,7 +2112,8 @@ class PhotoProcessor:
                         clear_readonly_attribute(original_file_path)
                     except Exception as e:
                         self._log(
-                            f"  ⚠️ 移除只读属性失败 [{os.path.basename(original_file_path)}]: {e}",
+                            self.i18n.t("logs.readonly_clear_failed",
+                                        file=os.path.basename(original_file_path), error=e),
                             "warning"
                         )
             
@@ -2137,7 +2140,7 @@ class PhotoProcessor:
                             _torch_module.cuda.empty_cache()
                             self._log(self.i18n.t("logs.cuda_cache_cleared", index=i), "info")
                         else:
-                            self._log(f"  🧹 [第{i}张] GC 已执行", "info")
+                            self._log(self.i18n.t("logs.gc_collected", index=i), "info")
                         _gc_module.collect()
                     except Exception:
                         pass
@@ -2435,7 +2438,7 @@ class PhotoProcessor:
                                             head_radius_val = int(max(cw, ch) * 0.15)
                                         head_radius_val = max(20, min(head_radius_val, min(cw, ch) // 2))
                     except Exception as e:
-                        self._log(f"  ⚠️ Keypoint detection error: {e}", "warning")
+                        self._log(self.i18n.t("logs.keypoint_error", error=e), "warning")
                         # import traceback
                         # self._log(traceback.format_exc(), "error")
                         pass
@@ -2499,7 +2502,7 @@ class PhotoProcessor:
                         is_flying = flight_result.is_flying
                         flight_confidence = flight_result.confidence
                     except Exception as e:
-                        self._log(f"  ⚠️ Flight detection error: {e}", "warning")
+                        self._log(self.i18n.t("logs.flight_error", error=e), "warning")
                 elif use_flight and detected and bird_crop_bgr is not None and bird_crop_bgr.size > 0:
                     try:
                         flight_result = flight_detector.detect(bird_crop_bgr)
@@ -2508,7 +2511,7 @@ class PhotoProcessor:
                         # DEBUG: 输出飞版检测结果
                         # self._log(f"  🦅 飞版检测: is_flying={is_flying}, conf={flight_confidence:.2f}")
                     except Exception as e:
-                        self._log(f"  ⚠️ Flight detection error: {e}", "warning")
+                        self._log(self.i18n.t("logs.flight_error", error=e), "warning")
                 if flight_future is not None or (use_flight and detected and bird_crop_bgr is not None and bird_crop_bgr.size > 0):
                     add_photo_stage('flight', (time.time() - flight_stage_start) * 1000)
             
@@ -3393,7 +3396,7 @@ class PhotoProcessor:
                     new_cap = prefix_block + ('\n' + old_cap if old_cap else '')
                     self.report_db.update_photo(caption_prefix_key, {'caption': new_cap})
                 except Exception as _e:
-                    self._log(f"  ⚠️ Bird species caption update failed [{caption_prefix_key}]: {_e}", "warning")
+                    self._log(self.i18n.t("logs.caption_update_failed", file=caption_prefix_key, error=_e), "warning")
 
         # 待确定候选写入 EXIF 标题：只对终评 2 星及以上的照片（「其他鸟类」目录里的照片），
         # 星级在评星 V2 收尾后才确定，所以放在这里。
@@ -3434,7 +3437,7 @@ class PhotoProcessor:
                 self._perf_add_stage('exif_flush', async_flush_ms)
             self._perf_stats['exif_flush_count'] += async_flush_count
             if metadata_writer_errors:
-                self._log(f"  ⚠️ EXIF async writer errors: {len(metadata_writer_errors)}", "warning")
+                self._log(self.i18n.t("logs.exif_writer_errors", count=len(metadata_writer_errors)), "warning")
         
         # SQLite 数据库会在 _update_csv_keypoint_data 中自动提交
         # 无需手动 flush
@@ -3709,7 +3712,7 @@ class PhotoProcessor:
         """
         display_name = filename or original_prefix or f"#{index}"
         self._log(
-            f"  ⚠️ 第{index}张处理异常，已跳过 [{display_name}]: {error}",
+            self.i18n.t("logs.photo_failed_skipped", index=index, name=display_name, error=error),
             "error"
         )
         self.stats['failed'] += 1
@@ -3802,7 +3805,7 @@ class PhotoProcessor:
     def _calculate_picked_flags(self):
         """Calculate picked flags - intersection of aesthetics + sharpness rankings among 3-star photos"""
         if len(self.star_3_photos) == 0:
-            self._log("\nℹ️  No 3-star photos, skipping picked flag calculation")
+            self._log(self.i18n.t("logs.no_three_star_skip_picked"))
             return
         
         self._log(self.i18n.t("logs.picked_calculation_start", count=len(self.star_3_photos)))
@@ -3896,7 +3899,7 @@ class PhotoProcessor:
                 self.dir_path,
                 set(RATING_FOLDER_NAMES.values()) | set(RATING_FOLDER_NAMES_EN.values()))
         except Exception as e:
-            self._log(f"    ⚠️ Empty folder cleanup failed: {e}", "warning")
+            self._log(self.i18n.t("logs.empty_folder_cleanup_failed", error=e), "warning")
             return
         if removed:
             self._log(self.i18n.t("logs.empty_folders_pruned", count=removed))
@@ -3976,7 +3979,7 @@ class PhotoProcessor:
                             break  # 找到就跳出
         
         if not files_to_move:
-            self._log("\n📂 No files to move")
+            self._log(self.i18n.t("logs.no_files_to_move"))
             return
         
         # V4.3.0: 文件整理阶段进度反馈。主进度条在 AI 分析阶段已占满 100%，此后
@@ -4030,7 +4033,7 @@ class PhotoProcessor:
                 ).items():
                     self.report_db.update_photo(file_prefix, update_data)
             except Exception as e:
-                self._log(f"  ⚠️  Failed to update current_path in DB: {e}", "warning")
+                self._log(self.i18n.t("logs.db_current_path_failed", error=e), "warning")
 
         
         # 生成manifest（V4.0: 增加鸟种分类信息和临时 JPEG 列表）
@@ -4050,9 +4053,10 @@ class PhotoProcessor:
         try:
             with open(manifest_path, 'w', encoding='utf-8') as f:
                 json.dump(manifest, f, ensure_ascii=False, indent=2)
-            self._log(f"  ✅ Moved {moved_count} photos")
+            # 移动张数已由上面的 logs.organizing_complete 按界面语言报告过，这里不再重复
+            # （此前多打一行写死的英文 "Moved N photos"）/ already reported, localized
         except Exception as e:
-            self._log(f"  ⚠️  Manifest save failed: {e}", "warning")
+            self._log(self.i18n.t("logs.manifest_save_failed", error=e), "warning")
     
     def _cleanup_temp_files(self, files_tbr, raw_dict):
         """V4.0.6: Clean up entire cache directory (temp_preview + yolo_debug + crop_debug)"""
@@ -4070,9 +4074,9 @@ class PhotoProcessor:
                     try:
                         self.report_db.clear_cache_paths()
                     except Exception as e:
-                        self._log(f"⚠️ Failed to clear DB paths: {e}", "warning")
+                        self._log(self.i18n.t("logs.db_paths_clear_failed", error=e), "warning")
             except Exception as e:
-                self._log(f"⚠️ Failed to remove cache directory: {e}", "warning")
+                self._log(self.i18n.t("logs.cache_dir_remove_failed", error=e), "warning")
         else:
             self._log(self.i18n.t("logs.temp_files_cleaned", count=0))
     

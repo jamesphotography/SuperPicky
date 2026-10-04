@@ -162,6 +162,12 @@ def reset(directory, log_callback=None, i18n=None):
         log_callback: 日志回调函数（可选，用于UI显示）
         i18n: I18n instance for internationalization (optional)
     """
+    # 没传 i18n 时取当前界面语言（命令行的高级重置就没传）；此前退回写死的中文，
+    # 英文环境下也输出中文 / Fall back to the UI language instead of hard-coded Chinese
+    if i18n is None:
+        from tools.i18n import get_i18n
+        i18n = get_i18n()
+
     def log(msg):
         """统一日志输出"""
         if log_callback:
@@ -170,23 +176,14 @@ def reset(directory, log_callback=None, i18n=None):
             print(msg)
 
     if not os.path.exists(directory):
-        if i18n:
-            log(i18n.t("errors.dir_not_exist", directory=directory))
-        else:
-            log(f"ERROR: {directory} does not exist")
+        log(i18n.t("errors.dir_not_exist", directory=directory))
         return False
 
-    if i18n:
-        log(i18n.t("logs.reset_start"))
-        log(i18n.t("logs.reset_dir", directory=directory))
-    else:
-        log(f"🔄 开始重置目录: {directory}")
+    log(i18n.t("logs.reset_start"))
+    log(i18n.t("logs.reset_dir", directory=directory))
 
     # 1. 清理临时文件、日志和Crop图片
-    if i18n:
-        log("\n" + i18n.t("logs.clean_tmp"))
-    else:
-        log("\n📁 清理临时文件...")
+    log("\n" + i18n.t("logs.clean_tmp"))
 
     # 1.1 清理 _tmp 目录（包含所有临时文件、日志、crop图片等）
     tmp_dir = os.path.join(directory, ".superpicky")
@@ -212,15 +209,9 @@ def reset(directory, log_callback=None, i18n=None):
                     except Exception:
                         pass
             shutil.rmtree(tmp_dir, ignore_errors=True)
-            if i18n:
-                log(i18n.t("logs.tmp_deleted"))
-            else:
-                log(f"  ✅ 已删除 _tmp 目录及其所有内容")
+            log(i18n.t("logs.tmp_deleted"))
         except Exception as e:
-            if i18n:
-                log(i18n.t("logs.tmp_delete_failed", error=str(e)))
-            else:
-                log(f"  ❌ 删除 _tmp 目录失败: {e}")
+            log(i18n.t("logs.tmp_delete_failed", error=str(e)))
             # 尝试使用系统命令强制删除（macOS/Linux）
             try:
                 import subprocess
@@ -229,15 +220,9 @@ def reset(directory, log_callback=None, i18n=None):
                                     check=True, timeout=120)
                 else:
                     subprocess.run(['rm', '-rf', tmp_dir], check=True, timeout=120)
-                if i18n:
-                    log(i18n.t("logs.tmp_force_delete"))
-                else:
-                    log(f"  ✅ 使用系统命令强制删除 _tmp 成功")
+                log(i18n.t("logs.tmp_force_delete"))
             except Exception as e2:
-                if i18n:
-                    log(i18n.t("logs.tmp_force_failed", error=str(e2)))
-                else:
-                    log(f"  ❌ 强制删除也失败: {e2}")
+                log(i18n.t("logs.tmp_force_failed", error=str(e2)))
 
     # 1.2 清理旧版本的日志和CSV文件（如果存在于根目录）
     files_to_clean = [".report.csv", ".report.db", ".process_log.txt", "superpicky.log"]
@@ -246,80 +231,47 @@ def reset(directory, log_callback=None, i18n=None):
         if os.path.exists(path) and os.path.isfile(path):
             try:
                 os.remove(path)
-                if i18n:
-                    log(i18n.t("logs.file_deleted", name=name))
-                else:
-                    log(f"  ✅ 已删除: {name}")
+                log(i18n.t("logs.file_deleted", name=name))
             except Exception as e:
-                if i18n:
-                    log(i18n.t("logs.delete_failed", filename=name, error=e))
-                else:
-                    log(f"  ❌ 删除失败 {name}: {e}")
+                log(i18n.t("logs.delete_failed", filename=name, error=e))
 
     # 1.3 清理临时JPEG文件（tmp_*.jpg，如果有遗留在根目录的）
     tmp_jpg_pattern = os.path.join(directory, "tmp_*.jpg")
     tmp_jpg_files = glob.glob(tmp_jpg_pattern)
     tmp_jpg_files = [f for f in tmp_jpg_files if not os.path.basename(f).startswith('.')]
     if tmp_jpg_files:
-        if i18n:
-            log(i18n.t("logs.tmp_jpeg_found", count=len(tmp_jpg_files)))
-        else:
-            log(f"  发现 {len(tmp_jpg_files)} 个临时JPEG文件（tmp_*.jpg），正在删除...")
+        log(i18n.t("logs.tmp_jpeg_found", count=len(tmp_jpg_files)))
         deleted_tmp = 0
         for tmp_file in tmp_jpg_files:
             try:
                 os.remove(tmp_file)
                 deleted_tmp += 1
             except Exception as e:
-                if i18n:
-                    log(i18n.t("logs.delete_failed", filename=os.path.basename(tmp_file), error=e))
-                else:
-                    log(f"  ❌ 删除失败 {os.path.basename(tmp_file)}: {e}")
+                log(i18n.t("logs.delete_failed", filename=os.path.basename(tmp_file), error=e))
         if deleted_tmp > 0:
-            if i18n:
-                log(i18n.t("logs.tmp_jpeg_done", count=deleted_tmp))
-            else:
-                log(f"  ✅ 临时JPEG删除完成: {deleted_tmp} 成功")
+            log(i18n.t("logs.tmp_jpeg_done", count=deleted_tmp))
 
     # 2. 删除所有XMP侧车文件（Lightroom会优先读取XMP）
-    if i18n:
-        log("\n" + i18n.t("logs.delete_xmp"))
-    else:
-        log("\n🗑️  删除XMP侧车文件...")
+    log("\n" + i18n.t("logs.delete_xmp"))
     xmp_pattern = os.path.join(directory, "**/*.xmp")
     xmp_files = glob.glob(xmp_pattern, recursive=True)
     # 过滤掉隐藏文件
     xmp_files = [f for f in xmp_files if not os.path.basename(f).startswith('.')]
     if xmp_files:
-        if i18n:
-            log(i18n.t("logs.xmp_found", count=len(xmp_files)))
-        else:
-            log(f"  发现 {len(xmp_files)} 个XMP文件，正在删除...")
+        log(i18n.t("logs.xmp_found", count=len(xmp_files)))
         deleted_xmp = 0
         for xmp_file in xmp_files:
             try:
                 os.remove(xmp_file)
                 deleted_xmp += 1
             except Exception as e:
-                if i18n:
-                    log(i18n.t("logs.delete_failed", filename=os.path.basename(xmp_file), error=e))
-                else:
-                    log(f"  ❌ 删除失败 {os.path.basename(xmp_file)}: {e}")
-        if i18n:
-            log(i18n.t("logs.xmp_deleted", count=deleted_xmp))
-        else:
-            log(f"  ✅ XMP文件删除完成: {deleted_xmp} 成功")
+                log(i18n.t("logs.delete_failed", filename=os.path.basename(xmp_file), error=e))
+        log(i18n.t("logs.xmp_deleted", count=deleted_xmp))
     else:
-        if i18n:
-            log(i18n.t("logs.xmp_not_found"))
-        else:
-            log("  ℹ️  未找到XMP文件")
+        log(i18n.t("logs.xmp_not_found"))
 
     # 3. 重置所有图片文件的EXIF元数据
-    if i18n:
-        log("\n" + i18n.t("logs.reset_exif"))
-    else:
-        log("\n🏷️  重置EXIF元数据...")
+    log("\n" + i18n.t("logs.reset_exif"))
 
     # 支持的图片格式
     image_extensions = ['*.NEF', '*.nef', '*.CR2', '*.cr2', '*.ARW', '*.arw',
@@ -338,37 +290,22 @@ def reset(directory, log_callback=None, i18n=None):
     image_files = sorted(list(set(os.path.abspath(f) for f in image_files)))
 
     if image_files:
-        if i18n:
-            log(i18n.t("logs.images_found", count=len(image_files)))
-        else:
-            log(f"  发现 {len(image_files)} 个图片文件")
+        log(i18n.t("logs.images_found", count=len(image_files)))
 
         try:
             # 使用批量重置功能（传递log_callback和i18n）
             manager = get_exiftool_manager()
             stats = manager.batch_reset_metadata(image_files, log_callback=log_callback, i18n=i18n)
 
-            if i18n:
-                log(i18n.t("logs.batch_complete", success=stats['success'], skipped=stats.get('skipped', 0), failed=stats['failed']))
-            else:
-                log(f"  ✅ EXIF重置完成: {stats['success']} 成功, {stats.get('skipped', 0)} 跳过(4-5星), {stats['failed']} 失败")
+            log(i18n.t("logs.batch_complete", success=stats['success'], skipped=stats.get('skipped', 0), failed=stats['failed']))
 
         except Exception as e:
-            if i18n:
-                log(i18n.t("logs.exif_reset_failed", error=str(e)))
-            else:
-                log(f"  ❌ EXIF重置失败: {e}")
+            log(i18n.t("logs.exif_reset_failed", error=str(e)))
             return False
     else:
-        if i18n:
-            log(i18n.t("logs.no_images"))
-        else:
-            log("  ⚠️  未找到图片文件")
+        log(i18n.t("logs.no_images"))
 
-    if i18n:
-        log("\n" + i18n.t("logs.reset_complete"))
-    else:
-        log("\n✅ 目录重置完成！")
+    log("\n" + i18n.t("logs.reset_complete"))
     return True
 
 
@@ -558,6 +495,12 @@ def force_flatten_directory(directory, log_callback=None, i18n=None) -> dict:
     folders back to the root; user folders are left untouched. Conflicts are skipped
     (never overwritten); nothing is deleted except now-empty matched folders.
     """
+    # 没传 i18n 时取当前界面语言（命令行的高级重置就没传）；此前退回写死的中文，
+    # 英文环境下也输出中文 / Fall back to the UI language instead of hard-coded Chinese
+    if i18n is None:
+        from tools.i18n import get_i18n
+        i18n = get_i18n()
+
     def log(msg):
         if log_callback:
             log_callback(msg)
@@ -568,10 +511,7 @@ def force_flatten_directory(directory, log_callback=None, i18n=None) -> dict:
     if not os.path.isdir(directory):
         return stats
 
-    if i18n:
-        log(i18n.t("logs.adv_flatten_start"))
-    else:
-        log("\n🧹 高级重置：识别 SuperPicky 目录并摊平文件...")
+    log(i18n.t("logs.adv_flatten_start"))
 
     try:
         top_entries = sorted(os.listdir(directory))
@@ -600,19 +540,13 @@ def force_flatten_directory(directory, log_callback=None, i18n=None) -> dict:
                 dst = os.path.join(directory, fname)
                 if os.path.exists(dst):
                     stats["skipped"] += 1
-                    if i18n:
-                        log(i18n.t("logs.restore_skipped_exists", filename=fname))
-                    else:
-                        log(f"  ⏭️  同名跳过（不覆盖）: {fname}")
+                    log(i18n.t("logs.restore_skipped_exists", filename=fname))
                     continue
                 try:
                     shutil.move(src, dst)
                     stats["moved"] += 1
                 except Exception as e:
-                    if i18n:
-                        log(i18n.t("logs.move_failed", filename=fname, error=e))
-                    else:
-                        log(f"  ❌ 移动失败 {fname}: {e}")
+                    log(i18n.t("logs.move_failed", filename=fname, error=e))
 
         # 删除清空的子目录与顶层匹配目录。上面移文件时刻意跳过了 ._* / .DS_Store，
         # 原先「目录里一样东西都没有才删」会被它们挡住——exFAT 盘上每个目录都有
@@ -628,11 +562,7 @@ def force_flatten_directory(directory, log_callback=None, i18n=None) -> dict:
             removed_top = False
         stats["dirs_removed"] += (before + 1) if removed_top else max(before - _count_subdirs(top_dir), 0)
 
-    if i18n:
-        log(i18n.t("logs.adv_flatten_done",
-                   moved=stats["moved"], folders=stats["folders_matched"],
-                   skipped=stats["skipped"]))
-    else:
-        log(f"  ✅ 高级重置完成：识别 {stats['folders_matched']} 个目录，"
-            f"移回 {stats['moved']} 个文件，同名跳过 {stats['skipped']} 个")
+    log(i18n.t("logs.adv_flatten_done",
+               moved=stats["moved"], folders=stats["folders_matched"],
+               skipped=stats["skipped"]))
     return stats

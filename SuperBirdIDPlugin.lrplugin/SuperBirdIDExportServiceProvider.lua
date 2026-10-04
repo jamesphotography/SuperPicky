@@ -194,7 +194,7 @@ local function recognizeSinglePhoto(photo, apiUrl, topK, useYolo, useGps)
     if not LrFileUtils.exists(photoPath) then
         return {
             success = false,
-            error = "文件不存在: " .. photoName,
+            error = LOC("$$$/SuperBirdID/Error/FileNotFound=File not found: ^1", photoName),
             photoName = photoName
         }
     end
@@ -219,7 +219,7 @@ local function recognizeSinglePhoto(photo, apiUrl, topK, useYolo, useGps)
     if not response then
         return {
             success = false,
-            error = "API调用失败",
+            error = LOC("$$$/SuperBirdID/Error/ApiFailed=API call failed"),
             photoName = photoName
         }
     end
