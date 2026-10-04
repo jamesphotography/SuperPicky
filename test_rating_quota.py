@@ -264,3 +264,46 @@ class TestQuotaBarConstraints(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---- V2 对焦检查范围与仲裁门槛（2026-10-04）/ V2 focus-check scope & arbitration ----
+
+def _metrics(**kw):
+    """能过 V2 全部硬门槛的典型指标 / Metrics passing every V2 gate."""
+    from core.rating_quota import PhotoMetricsV2
+    base = dict(key="k", detected=True, confidence=0.9, norm_sharpness=580.0, topiq=5.9,
+                best_eye=0.99, beak_vis=0.9)
+    base.update(kw)
+    return PhotoMetricsV2(**base)
+
+
+def test_v2_checks_focus_for_ranked_photos_below_v1_threshold():
+    """
+    V1 预评分 0★（锐度低于用户 V1 门槛）但能进 V2 排名的照片，V2 必须检查对焦——
+    此前被跳过，精焦加分/脱焦减分从不生效。
+    """
+    from core.rating_quota import needs_focus_check
+    assert needs_focus_check(0, True, _metrics())
+    assert not needs_focus_check(0, False, _metrics())          # V1 维持原省时逻辑
+
+
+def test_focus_check_keeps_v1_scope_and_skips_v2_gated():
+    """并集：V1 预评分 ≥1★ 的照旧检查；V2 门槛淘汰且 V1 也是 0★ 的不检查。"""
+    from core.rating_quota import needs_focus_check
+    angle_poor = _metrics(best_eye=0.1, beak_vis=0.1)
+    assert needs_focus_check(1, True, angle_poor)
+    assert not needs_focus_check(0, True, _metrics(norm_sharpness=60.0))
+    assert not needs_focus_check(0, True, None)
+
+
+def test_v2_focus_arbitration_threshold_matches_field_review():
+    """V2 仲裁固定 520：557/573（肉眼清晰）不扣分，423/388（略软/明显糊）仍按脱焦。"""
+    from core.focus_point_detector import arbitrate_focus_weights
+    from core.rating_quota import FOCUS_ARBITRATION_SHARPNESS as thr
+    assert thr == 520.0
+    for sharp in (557.0, 573.0):
+        (w, _), arbitrated = arbitrate_focus_weights((0.5, 0.8), sharp, thr)
+        assert arbitrated and w == 0.9
+    for sharp in (423.0, 388.0):
+        (w, _), arbitrated = arbitrate_focus_weights((0.5, 0.8), sharp, thr)
+        assert not arbitrated and w == 0.5

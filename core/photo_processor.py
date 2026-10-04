@@ -1347,6 +1347,8 @@ class PhotoProcessor:
             MIN_TOPIQ as V2_MIN_TOPIQ,
             W_SHARP as V2_W_SHARP,
             W_TOPIQ as V2_W_TOPIQ,
+            FOCUS_ARBITRATION_SHARPNESS as V2_FOCUS_ARBITRATION_SHARPNESS,
+            needs_focus_check as needs_focus_check_v2,
         )
         v2_enabled = self.config.rating_algorithm == "v2"
         v2_pending: Dict[str, Dict] = {}
@@ -2588,8 +2590,25 @@ class PhotoProcessor:
                     detail_metadata_for_rejected
                     and rejected_by_detection
                 )
+                # 是否做对焦检查：V1 预评分 ≥1★，或（V2）能进排名——详见
+                # core.rating_quota.needs_focus_check / see its docstring
+                needs_focus_check = needs_focus_check_v2(
+                    preliminary_result.rating,
+                    v2_enabled,
+                    PhotoMetricsV2(
+                        key=original_prefix,
+                        detected=bool(detected),
+                        confidence=confidence,
+                        norm_sharpness=normalized_sharpness,
+                        topiq=topiq,
+                        best_eye=best_eye_visibility,
+                        beak_vis=beak_vis,
+                    ) if detected else None,
+                    min_confidence=confidence_threshold,
+                )
+                needs_focus_check = needs_focus_check or should_read_focus_for_detail
                 if (
-                    (preliminary_result.rating >= 1 or should_read_focus_for_detail)
+                    needs_focus_check
                     and detected
                     and bird_bbox is not None
                     and img_dims is not None
@@ -2609,7 +2628,7 @@ class PhotoProcessor:
                 # V4.0: 对焦权重计算（通常仅 1 星以上；详情元数据可扩展到低置信度样本）
                 # V4.0: Focus weighting, normally for 1-star+ photos; detail metadata
                 # can extend it to low-confidence samples.
-                if preliminary_result.rating >= 1 or should_read_focus_for_detail:
+                if needs_focus_check:
                     if focus_data_available and focus_result is not None:
                         # V3.9.4 修复：使用原图尺寸而非 resize 后的 img_dims
                         # 如果 w_orig/h_orig 为 None，使用 img_dims 作为后备
@@ -2678,17 +2697,21 @@ class PhotoProcessor:
                     # gate), upgrade to GOOD (0.9/1.0). Pixel evidence beats EXIF
                     # focus-point metadata; truly-blurred shots keep the verdict.
                     _orig_focus_w = focus_sharpness_weight
+                    # V2 用固定门槛（与技能滑块解耦，见 rating_quota.FOCUS_ARBITRATION_SHARPNESS），
+                    # V1 沿用用户锐度门槛 / V2 uses a fixed threshold, V1 keeps the user's
+                    _arb_thr = (V2_FOCUS_ARBITRATION_SHARPNESS if v2_enabled
+                                else float(self.settings.sharpness_threshold))
                     (focus_sharpness_weight, focus_topiq_weight), _focus_arbitrated = arbitrate_focus_weights(
                         (focus_sharpness_weight, focus_topiq_weight),
                         normalized_sharpness,
-                        float(self.settings.sharpness_threshold),
+                        _arb_thr,
                     )
                     if _focus_arbitrated:
                         self._log(self.i18n.t(
                             "logs.focus_arbitrated",
                             orig=_orig_focus_w,
                             sharp=normalized_sharpness,
-                            thr=float(self.settings.sharpness_threshold),
+                            thr=_arb_thr,
                         ))
                 add_photo_stage('focus', (time.time() - focus_start) * 1000)
             
