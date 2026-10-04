@@ -293,6 +293,37 @@ class _ExifToolProcess:
                 raise
 
 
+def pick_flag_args(pick) -> List[str]:
+    """
+    把旗标写成 Lightroom 认的两个 XMP 字段（与 Lightroom 自己写的完全一致）。
+
+    Lightroom Classic 13.2 起从 XMP 读写旗标，但**读取时只看 xmpDM:good**：
+    "True" = 留用、"False" = 排除、没有该字段 = 无旗标；xmpDM:pick（1 / -1 / 0）是
+    Lightroom 同时写的配套字段。SuperPicky 此前只写 xmpDM:pick，所以精选（皇冠）
+    在 Lightroom Classic 里从未显示为留用旗标。依据：Lightroom 写出的 XMP
+    （immich discussion #12198），以及 riffle 项目在 Lightroom Classic 15.5.1
+    上的实测（只写 xmpDM:good 即可被识别，Classic 跟随 xmpDM:good）。
+
+    参数:
+    pick: 1 = 留用，-1 = 排除，0 = 无旗标
+
+    返回:
+    List[str]: exiftool 写入参数
+
+    Write the flag the way Lightroom does: xmpDM:pick (1/-1/0) plus
+    xmpDM:good ("True"/"False", removed when unflagged). Lightroom Classic
+    (13.2+) reads only xmpDM:good; writing xmpDM:pick alone never showed a
+    flag there.
+    """
+    pick = int(pick)
+    good = {1: "True", -1: "False"}.get(pick, "")
+    return [f'-XMP-xmpDM:Pick={pick}', f'-XMP-xmpDM:Good={good}']
+
+
+# 清除旗标时一并清掉的字段 / Flag fields cleared together on reset
+PICK_FLAG_CLEAR_ARGS = ['-XMP:Pick=', '-XMP-xmpDM:Good=']
+
+
 class ExifToolManager:
     """ExifTool管理器 - 使用本地打包的exiftool"""
 
@@ -707,7 +738,7 @@ class ExifToolManager:
         if item.get('rating') is not None:
             args.append(f'-Rating={item["rating"]}')
         if item.get('pick') is not None:
-            args.append(f'-XMP:Pick={item["pick"]}')
+            args.extend(pick_flag_args(item["pick"]))
         if item.get('sharpness') is not None:
             args.append(f'-XMP:City={item["sharpness"]:06.2f}')
         if item.get('nima_score') is not None:
@@ -852,7 +883,7 @@ class ExifToolManager:
         if item.get('rating') is not None:
             args.append(f'-XMP:Rating={item["rating"]}')
         if item.get('pick') is not None:
-            args.append(f'-XMP:Pick={item["pick"]}')
+            args.extend(pick_flag_args(item["pick"]))
         if item.get('sharpness') is not None:
             args.append(f'-XMP:City={item["sharpness"]:06.2f}')
         if item.get('nima_score') is not None:
@@ -957,7 +988,7 @@ class ExifToolManager:
 
         args = [
             '-XMP:Rating=',
-            '-XMP:Pick=',
+            *PICK_FLAG_CLEAR_ARGS,
             '-XMP:Label=',
             '-XMP:City=',
             '-XMP:State=',
@@ -1081,8 +1112,8 @@ class ExifToolManager:
         # Rating
         args.append(f'-Rating={rating}')
         
-        # Pick
-        args.append(f'-XMP:Pick={pick}')
+        # Pick（xmpDM:pick + xmpDM:good，后者才是 Lightroom Classic 读取的字段）
+        args.extend(pick_flag_args(pick))
         
         # Sharpness -> XMP:City
         if sharpness is not None:
@@ -1499,7 +1530,7 @@ class ExifToolManager:
             
             # Pick
             if item.get('pick') is not None:
-                args_list.append(f'-XMP:Pick={item["pick"]}')
+                args_list.extend(pick_flag_args(item["pick"]))
             
             # Sharpness -> XMP:City
             if item.get('sharpness') is not None:
@@ -1859,7 +1890,7 @@ class ExifToolManager:
         # 删除Rating、Pick、City、Country和Province-State字段
         args = [
             '-Rating=',
-            '-XMP:Pick=',
+            *PICK_FLAG_CLEAR_ARGS,
             '-XMP:Label=',
             '-XMP:City=',
             '-XMP:State=',
@@ -1946,7 +1977,7 @@ class ExifToolManager:
             # Flags are listed once; all file paths follow; one -execute at the end.
             batch_args = [
                 '-Rating=',
-                '-XMP:Pick=',
+                *PICK_FLAG_CLEAR_ARGS,
                 '-XMP:Label=',
                 '-XMP:City=',
                 '-XMP:State=',
