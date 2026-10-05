@@ -711,12 +711,10 @@ class BirdNameSearchWidget(QWidget):
             # Same extras as the edit dialog: alias search + model-first order.
             from tools.birdname_versions import catalog_search_extras
             alias_where, model_order = catalog_search_extras(conn)
-            # 繁体 TW：台湾鸟名命中的鸟种换回库里的简体名一并搜出
-            # zh_TW: species whose Taiwan name matches are searched by Simplified name.
-            from tools.zh_convert import tw_name_search
-            exact_cn, tw_hits = tw_name_search(query)
-            tw_where = (f" OR chinese_name IN ({','.join('?' * len(tw_hits))})"
-                        if tw_hits else "")
+            # 繁体 TW：台湾鸟名与名录繁体名都能搜（见 tools.zh_convert.tw_search_clause）
+            # zh_TW: search Taiwan names and the catalog's traditional names too.
+            from tools.zh_convert import tw_search_clause
+            tw_where, tw_params, exact_cn = tw_search_clause(query, conn)
             sql = f"""
                 SELECT * FROM birds
                 WHERE version_id = ? AND (
@@ -751,7 +749,7 @@ class BirdNameSearchWidget(QWidget):
                 f"%{query_lower}%",
                 f"%{query_lower}%",
                 *((f"%{query}%",) if alias_where else ()),
-                *tw_hits,
+                *tw_params,
                 exact_cn,
                 query,
                 query,
