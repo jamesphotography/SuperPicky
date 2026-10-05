@@ -21,6 +21,7 @@ use the IOC Taiwan names stored in bird_reference.sqlite; other text uses a
 compact OpenCC-derived table.
 """
 
+import functools
 import json
 import os
 import sqlite3
@@ -335,3 +336,48 @@ def tw_name_search(query: str, lang: Optional[str] = None) -> Tuple[str, List[st
             if tw == q:
                 exact = cn
     return exact, hits
+
+
+
+@functools.lru_cache(maxsize=None)
+def _tw_display_name(cn_name: Optional[str]) -> str:
+    """
+    简体鸟名在繁体 TW 界面上显示成的名字（与 species_cn 同一规则，带缓存供 SQL 逐行调用）。
+
+    Display name of a Simplified species name in the zh_TW UI (cached for SQL).
+    """
+    return tw_species_name(cn_name.strip()) if cn_name else ""
+
+
+def tw_search_clause(query: str, conn: sqlite3.Connection,
+                     lang: Optional[str] = None) -> Tuple[str, Tuple[str, ...], str]:
+    """
+    鸟名搜索在繁体 TW 界面下附加的 SQL 条件（改鸟种弹窗与鸟名查询共用）。
+
+    按「界面上显示的名字」搜：把 简体名 → 繁体 TW 显示名 的转换注册成 SQLite 函数，
+    条件为 sp_tw_name(chinese_name) LIKE %输入%。显示名的来源有两种——识鸟参考库的
+    台湾鸟名（白头鹎→白頭翁），以及参考库没有时的逐字转换（识鸟模型未收录的
+    北鵙雀鹟→北鵙雀鶲）。用同一个函数做显示和搜索，看到什么就能搜到什么，与名录
+    版本、名录里有没有繁体列都无关（此前只认参考库台湾名，「北鵙雀鶲」搜不到）。
+
+    参数:
+    query (str): 用户输入
+    conn (sqlite3.Connection): 执行搜索的连接（函数注册在它上面）
+    lang (str | None): 语言代码；None 表示取当前界面语言
+
+    返回:
+    tuple: (追加到 WHERE 括号内的 SQL 片段，以 " OR " 开头；对应参数；
+            精确命中台湾名时用于排序的简体名，否则为原 query)。非繁体界面为 ("", (), query)。
+
+    Extra WHERE terms for species search in the zh_TW UI: match the displayed
+    Taiwan name via a registered SQLite function, so whatever is shown can be
+    searched regardless of catalog version.
+    """
+    if not is_taiwan(lang):
+        return "", (), query
+    q = (query or "").strip()
+    if not q:
+        return "", (), query
+    conn.create_function("sp_tw_name", 1, _tw_display_name, deterministic=True)
+    exact_cn, _ = tw_name_search(query, lang)
+    return " OR sp_tw_name(chinese_name) LIKE ?", (f"%{q}%",), exact_cn

@@ -16,8 +16,9 @@ from scripts_dev import sync_from_master as sync  # noqa: E402
 
 def _master(tmp_path):
     """
-    最小主库：斑胸草雀（拆分种保留整种名）、田鹨（中国鸟用 ChinaBirds 名）。
-    Minimal master: a split species kept lumped and a China bird.
+    最小主库：斑胸草雀（拆分种保留整种名）、田鹨（中国鸟用 ChinaBirds 名）两个模型种，
+    加塔岛鹰鸮——模型未收录种（xref 没有 superpicky_model，识鸟参考库里也没有）。
+    Minimal master: two model species plus one species outside the model.
     """
     root = tmp_path / "bird-names"
     (root / "tools").mkdir(parents=True)
@@ -32,11 +33,14 @@ def _master(tmp_path):
         "CREATE TABLE pinyin (chinese_name TEXT, toned TEXT, plain TEXT, plain_u TEXT, initials TEXT);"
         "CREATE TABLE meta (key TEXT, value TEXT);"
         "INSERT INTO species VALUES (1,'Taeniopygia guttata','Zebra Finch','斑胸草雀','斑胸草雀'),"
-        "                           (2,'Anthus richardi','Richard''s Pipit','田鹨','大花鷚');"
-        "INSERT INTO xref VALUES (1,'ebird_code','zebfin2'),(2,'ebird_code','ricpip1');"
+        "                           (2,'Anthus richardi','Richard''s Pipit','田鹨','大花鷚'),"
+        "                           (3,'Ninox leucopsis','Tasmanian Boobook','塔岛鹰鸮','塔島鷹鴞');"
+        "INSERT INTO xref VALUES (1,'ebird_code','zebfin2'),(2,'ebird_code','ricpip1'),"
+        "                        (1,'superpicky_model','100'),(2,'superpicky_model','200');"
         "INSERT INTO name_alias VALUES ('巽他斑胸草雀',1,'rename');"
         "INSERT INTO pinyin VALUES ('斑胸草雀','bān xiōng cǎo què','','','bxcq'),"
-        "                          ('田鹨','tián liù','','','tl');"
+        "                          ('田鹨','tián liù','','','tl'),"
+        "                          ('塔岛鹰鸮','tǎ dǎo yīng xiāo','','','tdyx');"
         "INSERT INTO meta VALUES ('names_version','v1');")
     con.commit()
     con.close()
@@ -71,10 +75,11 @@ def _targets(tmp_path):
         "INSERT INTO birds (chinese_name,english_name,latin_name,version_id,family_zh) VALUES"
         " ('巽他斑胸草雀','Sunda Zebra Finch','Taeniopygia guttata',8,'梅花雀科'),"
         " ('理氏鹨','Richard''s Pipit','Anthus richardi',8,'鹡鸰科'),"
-        # 中文名已被主库占用：不补，避免两个「斑胸草雀」/ name taken: skipped
+        # 主库没有的 IOC 行：名录不再自行补（模型未收录种由主库统一提供）
+        # IOC-only rows: no longer gap-filled here (the master provides them)
         " ('斑胸草雀','Australian Zebra Finch','Taeniopygia castanotis',8,'梅花雀科'),"
-        # 主库没有：补漏 / not in master: gap-filled
-        " ('塔岛鹰鸮','Tasmanian Boobook','Ninox leucopsis',8,'鸱鸮科');")
+        " ('塔岛鹰鸮','Tasmanian Boobook','Ninox leucopsis',8,'鸱鸮科'),"
+        " ('新几内亚鹰鸮','Papuan Boobook','Ninox theomacha',8,'鸱鸮科');")
     con.commit()
     con.close()
 
@@ -107,7 +112,7 @@ def test_plain_syllables_matches_catalog_format():
 
 
 def test_sync_writes_all_three_targets(tmp_path):
-    """三处都写对：识鸟库改名改码、名录版本主库种 + 补漏、拼音补齐；有备份。"""
+    """三处都写对：识鸟库改名改码、名录 = 主库全部种（模型未收录的标 0）、拼音补齐；有备份。"""
     root, master = _master(tmp_path)
     ref, names, py = _targets(tmp_path)
     assert _run(tmp_path, root, master, ref, names, py) == 0
@@ -119,7 +124,7 @@ def test_sync_writes_all_three_targets(tmp_path):
     con.close()
 
     assert _catalog(names) == [
-        ("塔岛鹰鸮", None, None, 0, None, "鸱鸮科"),
+        ("塔岛鹰鸮", "ta dao ying xiao", "TDYX", 0, None, "鸱鸮科"),
         ("斑胸草雀", "ban xiong cao que", "BXCQ", 1, "巽他斑胸草雀", "梅花雀科"),
         ("田鹨", "tian liu", "TL", 1, "理氏鹨", "鹡鸰科"),
     ]
@@ -177,3 +182,22 @@ def test_unchanged_run_writes_nothing(tmp_path):
     assert (ref.read_bytes(), names.read_bytes(), py.read_bytes()) == before
     assert len(os.listdir(tmp_path / "bak")) == backups
 
+
+
+def test_model_species_missing_from_reference_is_fatal(tmp_path):
+    """
+    模型未收录种不在识鸟参考库属正常；模型种缺失仍要中止且不写。
+    Non-model species may be absent; a missing model species still aborts.
+    """
+    root, master = _master(tmp_path)
+    ref, names, py = _targets(tmp_path)
+    _, fatal, ref_ids = sync.plan_reference(str(ref), sync.load_master(str(master))["species"])
+    assert fatal == [] and ref_ids == {1, 2}
+
+    con = sqlite3.connect(ref)
+    con.execute("DELETE FROM BirdCountInfo WHERE id = 2")
+    con.commit()
+    con.close()
+    before = (ref.read_bytes(), names.read_bytes())
+    assert _run(tmp_path, root, master, ref, names, py) == 1
+    assert (ref.read_bytes(), names.read_bytes()) == before
