@@ -12,9 +12,9 @@ eBird 插件共用的唯一鸟名来源。改一只鸟的名字只改主库，�
    （按 id 对齐，先核对学名逐条一致）。识鸟结果、详情、卡片、LR 插件、CLI 都读它。
 2. ioc/pinyin_toned.json：补齐 / 更新主库现用名的带声调读音（其余条目不动）。
 3. ioc/birdname.db：写入一个名为「SuperPicky 名录」的版本，供改鸟种弹窗与鸟名查询使用：
-   - 主库全部鸟种（in_model=1），名字与识鸟结果一致；
-   - IOC 15.1 里主库没有的种（in_model=0，多为模型训练后才拆出的新种），用 IOC 名，
-     界面标「识鸟模型未收录」。中文名或英文名已被主库占用的 IOC 行不补，避免重复；
+   - 主库全部鸟种，名字与识鸟结果一致。识鸟参考库（BirdCountInfo）里有的记 in_model=1；
+     主库里模型未收录的种（2026-10-05 起由主库统一提供：IOC 15.1 有、模型训练后才拆出
+     或新增的种，此前由本脚本自行从 IOC 补）记 in_model=0，界面标「识鸟模型未收录」；
    - search_aliases：主库别名 + 对应 IOC 中文名，搜旧名 / IOC 名也能找到现用名。
 
 写库前跑主库校验（有错误即中止），三个文件都先备份到 ~/Library/Caches。可重复运行。
@@ -114,16 +114,21 @@ def load_master(master_db: str) -> dict:
     master_db (str): 主库路径
 
     返回:
-    dict: species（id → 字段）、aliases（id → [旧名]）、pinyin（中文名 → 带调拼音）、
+    dict: species（id → 字段，含 in_model）、aliases（id → [旧名]）、pinyin（中文名 → 带调拼音）、
           initials（中文名 → 首字母）、version
     """
     con = sqlite3.connect(f"file:{master_db}?mode=ro", uri=True)
     try:
         species = {}
-        for sid, sci, en, zh, tc, code in con.execute(
+        for sid, sci, en, zh, tc, code, model in con.execute(
                 "SELECT s.id, s.scientific_name, s.english_name, s.zh_simplified, s.zh_traditional, "
-                "(SELECT code FROM xref WHERE species_id = s.id AND system = 'ebird_code') FROM species s"):
-            species[sid] = {"sci": sci, "en": en, "zh": zh, "tc": tc or zh, "code": code}
+                "(SELECT code FROM xref WHERE species_id = s.id AND system = 'ebird_code'), "
+                "EXISTS (SELECT 1 FROM xref WHERE species_id = s.id AND system = 'superpicky_model') "
+                "FROM species s"):
+            # in_model：主库按 xref 标的「模型种」；名录的 in_model 列另按参考库判断
+            # in_model: the master's model flag (xref); the catalog column uses the reference DB.
+            species[sid] = {"sci": sci, "en": en, "zh": zh, "tc": tc or zh, "code": code,
+                            "in_model": bool(model)}
         aliases: Dict[int, List[str]] = {}
         for alias, sid in con.execute("SELECT alias, species_id FROM name_alias ORDER BY alias"):
             aliases.setdefault(sid, []).append(alias)
@@ -138,18 +143,22 @@ def load_master(master_db: str) -> dict:
             "version": version}
 
 
-def plan_reference(ref_db: str, species: dict) -> Tuple[List[tuple], List[str]]:
+def plan_reference(ref_db: str, species: dict) -> Tuple[List[tuple], List[str], Set[int]]:
     """
     对比 bird_reference.sqlite 的 BirdCountInfo，算出要改的行。
+
+    BirdCountInfo 是识鸟模型的鸟种表，只收模型的类别；主库里模型未收录的种（xref 没有
+    superpicky_model）不在这里，不算缺失。模型种缺失仍是致命问题。
 
     参数:
     ref_db (str): bird_reference.sqlite 路径
     species (dict): load_master()["species"]
 
     返回:
-    Tuple[List[tuple], List[str]]: (更新行 [(简体, 繁体, 代码, id)], 致命问题)
+    Tuple: (更新行 [(简体, 繁体, 代码, id)]；致命问题；BirdCountInfo 里的全部 id)
 
-    Diff BirdCountInfo against the master.
+    Diff BirdCountInfo against the master. Master species outside the model are
+    expected to be absent; returns (updates, fatal problems, reference ids).
     """
     con = sqlite3.connect(f"file:{ref_db}?mode=ro", uri=True)
     try:
@@ -167,23 +176,29 @@ def plan_reference(ref_db: str, species: dict) -> Tuple[List[tuple], List[str]]:
             fatal.append(f"id={sid} 学名不一致：SuperPicky {sci} / 主库 {m['sci']}")
         elif (zh, tc, code) != (m["zh"], m["tc"], m["code"]):
             updates.append((m["zh"], m["tc"], m["code"], sid))
-    if set(species) - seen:
-        fatal.append(f"主库有 {len(set(species) - seen)} 个鸟种 BirdCountInfo 里没有")
-    return updates, fatal
+    missing = {sid for sid, m in species.items() if m["in_model"]} - seen
+    if missing:
+        fatal.append(f"主库有 {len(missing)} 个模型鸟种 BirdCountInfo 里没有（id 例：{sorted(missing)[:5]}）")
+    return updates, fatal, seen
 
 
-def build_catalog(name_db: str, master: dict) -> Tuple[List[tuple], dict]:
+def build_catalog(name_db: str, master: dict, ref_ids: Set[int]) -> Tuple[List[tuple], dict]:
     """
-    组装「SuperPicky 名录」版本的全部行（主库种 + IOC 补漏种）。
+    组装「SuperPicky 名录」版本的全部行（主库全部现用鸟种）。
+
+    模型未收录的种此前由本函数从 IOC 补，2026-10-05 起改由主库统一提供
+    （bird-names tools/add_ioc_gap_species.py，挑选规则相同），这里不再自行补。
 
     参数:
-    name_db (str): birdname.db 路径（读 IOC 15.1 取分类与补漏）
+    name_db (str): birdname.db 路径（读 IOC 15.1 取目科属分类）
     master (dict): load_master() 结果
+    ref_ids (Set[int]): 识鸟参考库 BirdCountInfo 的 id；在其中的记 in_model=1
 
     返回:
     Tuple[List[tuple], dict]: (行，列顺序同 _CATALOG_COLUMNS；统计)
 
-    Assemble the master catalog rows: master species plus IOC-only species.
+    Assemble the catalog from every current master species; species outside the
+    reference DB are flagged in_model=0 ("not in model").
     """
     con = sqlite3.connect(f"file:{name_db}?mode=ro", uri=True)
     con.row_factory = sqlite3.Row
@@ -196,10 +211,8 @@ def build_catalog(name_db: str, master: dict) -> Tuple[List[tuple], dict]:
         ioc_by_sci.setdefault(norm_sci(r["latin_name"]), r)
 
     species = master["species"]
-    current = {m["zh"].lstrip("*") for m in species.values()}
-    master_sci = {norm_sci(m["sci"]) for m in species.values()}
-    master_en = {norm_en(m["en"]) for m in species.values()}
     rows: List[tuple] = []
+    gap = 0
     for sid, m in sorted(species.items()):
         if m["zh"].startswith("*"):
             continue                      # 同物异名旧条目不进搜索 / legacy synonyms stay out
@@ -213,16 +226,8 @@ def build_catalog(name_db: str, master: dict) -> Tuple[List[tuple], dict]:
                      master["initials"].get(m["zh"], "").upper(), m["tc"],
                      hit.get("order_en"), hit.get("family_en"), hit.get("genus_en"),
                      hit.get("order_zh"), hit.get("family_zh"), hit.get("genus_zh"),
-                     1, "|".join(alias) or None))
-    gap = 0
-    for r in ioc:
-        zh, en = (r["chinese_name"] or "").strip(), (r["english_name"] or "").strip()
-        if not zh or norm_sci(r["latin_name"]) in master_sci or norm_en(en) in master_en or zh in current:
-            continue
-        gap += 1
-        rows.append((zh, en, r["latin_name"], r["pinyin_name"], r["abbreviation"], r["traditional_name"],
-                     r["order_en"], r["family_en"], r["genus_en"], r["order_zh"], r["family_zh"], r["genus_zh"],
-                     0, None))
+                     int(sid in ref_ids), "|".join(alias) or None))
+        gap += sid not in ref_ids
     return rows, {"master": len(rows) - gap, "ioc_gap": gap}
 
 
@@ -343,19 +348,19 @@ def main(argv: List[str]) -> int:
             print("  " + e)
         return 1
     master = load_master(args.master_db)
-    updates, fatal = plan_reference(args.ref_db, master["species"])
+    updates, fatal, ref_ids = plan_reference(args.ref_db, master["species"])
     if fatal:
         print("bird_reference 与主库对不上，中止：")
         for f in fatal[:20]:
             print("  " + f)
         return 1
-    catalog, stats = build_catalog(args.name_db, master)
+    catalog, stats = build_catalog(args.name_db, master, ref_ids)
     catalog_same = catalog_unchanged(args.name_db, catalog)
     table, py_changed = merge_pinyin(args.pinyin_json, master)
 
     print(f"主库 names_version={master['version']}")
     print(f"  bird_reference：BirdCountInfo 更新 {len(updates)} 行")
-    print(f"  birdname.db「{MASTER_VERSION_NAME}」：主库种 {stats['master']}，IOC 补漏 {stats['ioc_gap']}"
+    print(f"  birdname.db「{MASTER_VERSION_NAME}」：模型种 {stats['master']}，模型未收录 {stats['ioc_gap']}"
           f"{'（与现有内容一致）' if catalog_same else '（有变化）'}")
     print(f"  pinyin_toned.json：增改 {py_changed} 条")
     if args.dry_run:

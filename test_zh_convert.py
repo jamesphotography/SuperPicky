@@ -178,3 +178,28 @@ def test_taiwan_pack_has_no_mainland_terms() -> None:
     leftovers = {k: v for k, v in tw.items()
                  if isinstance(v, str) and any(b in v for b in banned)}
     assert not leftovers, list(leftovers.items())[:5]
+
+
+def test_tw_search_clause_matches_displayed_names() -> None:
+    """
+    繁体界面按显示名搜：参考库台湾名（白頭翁）与逐字转换名（模型未收录的北鵙雀鶲）都搜得到；
+    非繁体界面不加条件。
+    In zh_TW, search matches displayed names (Taiwan names and converted ones).
+    """
+    import sqlite3
+
+    if not zh_convert.taiwan_species_names():
+        pytest.skip("bird_reference.sqlite 不可用 / reference DB unavailable")
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE birds (chinese_name TEXT)")
+    conn.executemany("INSERT INTO birds VALUES (?)", [("白头鹎",), ("北鵙雀鹟",), ("家燕",)])
+
+    def search(q: str, lang: str) -> list:
+        clause, params, _ = zh_convert.tw_search_clause(q, conn, lang)
+        sql = f"SELECT chinese_name FROM birds WHERE (chinese_name LIKE ?{clause})"
+        return [r[0] for r in conn.execute(sql, (f"%{q}%", *params))]
+
+    assert search("白頭翁", "zh_TW") == ["白头鹎"]
+    assert search("北鵙雀鶲", "zh_TW") == ["北鵙雀鹟"]
+    assert search("北鵙雀鶲", "zh_CN") == []
+    assert zh_convert.tw_search_clause("白頭翁", conn, "en_US") == ("", (), "白頭翁")
