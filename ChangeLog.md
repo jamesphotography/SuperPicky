@@ -1,3 +1,41 @@
+# SuperPicky 4.6.3 RC16
+
+**What's new since RC15:**
+
+- **Traditional Chinese (Taiwan) interface.** A new `繁體中文 TW` language with
+  Taiwan wording throughout. Bird names use the Taiwan names from the IOC list
+  (e.g. 白頭翁, 黑面琵鷺), and so do the folders SuperPicky creates
+  (`3星_優選`, `其他鳥類`) and the titles and keywords written for Lightroom and
+  Apple Photos. You can search by Taiwan names too. It is picked automatically
+  when your system language is Traditional Chinese. Reset, re-scan and burst
+  sorting still recognise folders created in any of the three languages.
+- **Language setting in Settings.** The bottom of the Settings sidebar now has an
+  always-visible language picker: Follow system, 简体中文, 繁體中文 TW or English
+  (each written in its own language). Restart the app after changing it.
+- **Everything follows the interface language.** Messages, logs and both command
+  line tools (`superpicky_cli`, `birdid_cli`, including `--help`) now use the
+  chosen language; previously about 350 messages were fixed in one language. The
+  command line now follows the language chosen in Settings. Replaying history no
+  longer shows blocks of English in the Chinese interface.
+- **Picks now show as Pick flags in Lightroom Classic** (13.2 or later). Before,
+  the crown pick was never recognised there. Photos with no bird now show as
+  Rejected. For photos already in your catalog, use
+  *Metadata → Read Metadata from Files* to pick up the change.
+- **Captions explain the rating.** The Lightroom caption and the browser's culling
+  note now open with the verdict and why: the photo's rank among shots of the same
+  species and where the star cut-offs fall, or which rule kept it from 3★, then
+  each check with ✓/✗, the bird and species confidence, and how low-confidence
+  species were handled.
+- **The same numbers everywhere.** The detail panel, sharpness/aesthetics sorting,
+  the Bird ID panel and exported reports now show the values the rating actually
+  uses (ISO-adjusted head sharpness, raw aesthetic score).
+- **Fixed:** with rating V2, photos whose sharpness was below your V1 threshold were
+  never checked for focus, so they were all shown as in focus. They are now checked
+  like the rest.
+- **Fixed:** the *Species beauty* sort in the browser was not remembered.
+
+---
+
 # SuperPicky 4.6.3 RC15
 
 **What's new since RC14:**
@@ -100,6 +138,33 @@
   installers grow slightly in size in exchange. I have no Windows machine to
   verify this myself — if you ever hit that error, please test this RC and
   report back whether install now succeeds. (issue #112)
+
+---
+
+# SuperPicky 4.6.3 RC16（中文）
+
+**RC15 以来的变化：**
+
+- **新增繁体中文（台湾）界面。** 语言选项「繁體中文 TW」，全程台湾用词。鸟名用 IOC 名录里的
+  台湾叫法（如 白頭翁、黑面琵鷺），SuperPicky 建的文件夹（`3星_優選`、`其他鳥類`）和写给
+  Lightroom / Apple Photos 的标题、关键词也一样；也能用台湾鸟名搜索。系统语言是繁体中文时
+  自动选用。重置、重扫与连拍整理仍认得任何一种语言建的文件夹。
+- **设置里可以直接选界面语言。** 设置中心左栏底部常驻语言选择：跟随系统、简体中文、
+  繁體中文 TW、English（各用本语言书写）。切换后重启生效。
+- **界面、日志与命令行全部跟随界面语言。** 提示、日志和两个命令行工具（`superpicky_cli`、
+  `birdid_cli`，含 `--help`）都按所选语言显示；此前约 350 处文字写死成一种语言。命令行改为
+  跟随「设置」里选的语言。中文界面重读历史记录时不再冒出大段英文。
+- **精选（皇冠）在 Lightroom Classic 里显示为「留用」旗标**（13.2 及以上）。此前 Lightroom
+  从未识别出精选。无鸟照片今后显示为「排除」。已导入目录的照片，请用
+  「元数据 → 从文件读取元数据」更新。
+- **题注说清楚为什么是这个星级。** Lightroom 题注与浏览器选片备注第一行是结论和原因：
+  在同种照片里排第几、各星级的分界在哪，或者卡在哪条规则没拿到 3★；再列 ✓/✗ 逐项依据、
+  有鸟置信度与鸟种识别置信度，以及低置信度鸟种是怎么处理的。
+- **各处显示同一套数字。** 详情面板、锐度/美学排序、识鸟面板和导出报告，显示的都是评星
+  实际用的数值（ISO 折算后的头部锐度、原始美学分）。
+- **修复：** 评星 V2 下，锐度低于 V1 锐度门槛的照片从不检查对焦，一律显示为合焦；现在和
+  其他照片一样检查。
+- **修复：** 浏览器里选了「鸟种颜值」排序，下次打开不会被记住。
 
 ---
 
