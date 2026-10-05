@@ -17,6 +17,7 @@ from PySide6.QtCore import Qt, Signal, QThread, QTimer, Slot, QEvent, QSize, QOb
 from PySide6.QtGui import QPixmap, QImage, QPainter, QPen, QColor, QBrush, QImageReader
 
 from tools.file_utils import sibling_jpeg
+from tools.zh_convert import zh_text
 from ui.styles import COLORS, FONTS
 from ui.icon_utils import (
     load_tinted_icon, stars_pixmap, ICON_IDLE, ICON_ACTIVE, ICON_DISABLED, ICON_DANGER,
@@ -1289,9 +1290,9 @@ class FullscreenViewer(QWidget):
         返回 / Returns:
             str: 鸟名，未识别时为空串 / species name, "" when unidentified.
         """
-        if getattr(self.i18n, "current_lang", "zh_CN").startswith("en"):
-            return photo.get("bird_species_en") or photo.get("bird_species_cn") or ""
-        return photo.get("bird_species_cn") or photo.get("bird_species_en") or ""
+        from tools.zh_convert import species_display
+        return species_display(photo.get("bird_species_cn"), photo.get("bird_species_en"),
+                               str(getattr(self.i18n, "current_lang", "zh_CN")))
 
     def refresh_species_label(self, photo: dict) -> None:
         """
@@ -1449,7 +1450,7 @@ class FullscreenViewer(QWidget):
             self._burst_info_btn.setText(f"{burst_pos}/{burst_total}")
             self._burst_info_btn.setEnabled(True)
             self._burst_info_btn.setCursor(Qt.PointingHandCursor)
-            self._burst_info_btn.setToolTip("\u70b9\u51fb\u6536\u56de\u8fde\u62cd\u5e8f\u5217" if not str(getattr(self.i18n, "current_lang", "")).startswith("en") else "Click to collapse burst sequence")
+            self._burst_info_btn.setToolTip(zh_text("\u70b9\u51fb\u6536\u56de\u8fde\u62cd\u5e8f\u5217") if not str(getattr(self.i18n, "current_lang", "")).startswith("en") else "Click to collapse burst sequence")
             self._burst_info_btn.setStyleSheet(
                 f"QPushButton {{ background-color: {COLORS['bg_input']};"
                 f" border: 1px solid {COLORS['accent']};"
@@ -1467,7 +1468,7 @@ class FullscreenViewer(QWidget):
 
         if is_group:
             lang = getattr(self.i18n, "current_lang", "")
-            text = f"Burst Sequence ({burst_count})" if str(lang).startswith("en") else f"\u8fde\u62cd\u5e8f\u5217\uff08{burst_count}\u5f20\uff09"
+            text = f"Burst Sequence ({burst_count})" if str(lang).startswith("en") else zh_text(f"\u8fde\u62cd\u5e8f\u5217\uff08{burst_count}\u5f20\uff09")
             self._burst_info_btn.setText(text)
             self._burst_info_btn.setEnabled(True)
             self._burst_info_btn.setCursor(Qt.PointingHandCursor)

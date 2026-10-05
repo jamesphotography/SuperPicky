@@ -93,6 +93,30 @@ class DropLineEdit(QLineEdit):
         event.ignore()
 
 
+# 设为 "1" 时，构造主窗口不再触发后台启动工作（启动识鸟服务器、预加载模型、
+# 写 startup.log）。测试套件（conftest.py）会设置它：这些工作会在测试里起真实的
+# 常驻服务器进程（测试结束后成为孤儿、占着 5156 端口）、多个窗口实例并发加载
+# torch 模型（偶发堆损坏崩溃 SIGTRAP），并写用户真实配置目录。正常运行不设置。
+# When "1", constructing the main window skips its background startup work
+# (Bird-ID server, model preload, startup.log). Set by the test suite: that work
+# spawned an orphaned server process, raced torch model loads across window
+# instances (intermittent heap-corruption SIGTRAP) and wrote to the user's real
+# config directory. Never set in normal runs.
+BACKGROUND_STARTUP_DISABLED_ENV = "SUPERPICKY_NO_BACKGROUND_STARTUP"
+
+
+def _background_startup_disabled() -> bool:
+    """
+    是否关闭主窗口的后台启动工作（见 BACKGROUND_STARTUP_DISABLED_ENV）。
+
+    返回:
+    bool: 环境变量为 "1" 时为 True
+
+    Whether the main window's background startup work is disabled.
+    """
+    return os.environ.get(BACKGROUND_STARTUP_DISABLED_ENV) == "1"
+
+
 def _format_wall_clock(ts: float) -> str:
     """
     把 epoch 时间戳格式化为本地墙钟 HH:MM:SS，供完成报告显示。
@@ -174,7 +198,7 @@ class WorkerThread(threading.Thread):
             self.signals.finished.emit(self.stats)
         except Exception as e:
             if e.__class__.__name__ == "ProcessingCancelled":
-                self.signals.log.emit("Processing cancelled.", "warning")
+                self.signals.log.emit(self.i18n.t("logs.processing_cancelled"), "warning")
             else:
                 self.signals.error.emit(str(e))
         finally:
@@ -213,7 +237,7 @@ class WorkerThread(threading.Thread):
             return
         if not cfg.video_auto_process_in_main:
             self.signals.log.emit(
-                f"⏭ 检测到 {len(video_paths)} 个视频，但视频处理未启用（参数设置可开启）",
+                self.i18n.t("logs.video_skipped_disabled", count=len(video_paths)),
                 "info"
             )
             return
@@ -847,6 +871,8 @@ class SuperPickyMainWindow(QMainWindow):
     @staticmethod
     def _write_startup_log():
         """后台记录一次系统信息到 SuperPicky 配置目录的 startup.log"""
+        if _background_startup_disabled():
+            return
         try:
             from tools.system_logger import write_startup_log
             log_path = write_startup_log()
@@ -1140,14 +1166,22 @@ class SuperPickyMainWindow(QMainWindow):
         zh_action.triggered.connect(lambda: self._change_language("zh_CN"))
         lang_menu.addAction(zh_action)
 
-        # English
+        # 繁體中文（台灣）
+        tw_action = QAction(self.i18n.t("menu.lang_tw"), self)
+        tw_action.setCheckable(True)
+        tw_action.setChecked(self.config.language == "zh_TW")
+        tw_action.triggered.connect(lambda: self._change_language("zh_TW"))
+        lang_menu.addAction(tw_action)
+
+        # English（此前用 "en" 判断选中，而保存时会转成 "en_US"，重启后英文永远不显示选中）
+        # English (previously checked against "en", but the config stores "en_US")
         en_action = QAction(self.i18n.t("menu.lang_en"), self)
         en_action.setCheckable(True)
-        en_action.setChecked(self.config.language == "en")
-        en_action.triggered.connect(lambda: self._change_language("en"))
+        en_action.setChecked(self.config.language == "en_US")
+        en_action.triggered.connect(lambda: self._change_language("en_US"))
         lang_menu.addAction(en_action)
 
-        self.lang_actions = {"zh_CN": zh_action, "en": en_action}
+        self.lang_actions = {"zh_CN": zh_action, "zh_TW": tw_action, "en_US": en_action}
 
         # 帮助菜单 — 关于已移入设置中心 / Help menu — About is now inside SettingsCenter
         help_menu = menubar.addMenu(self.i18n.t("menu.help"))
@@ -1917,7 +1951,7 @@ class SuperPickyMainWindow(QMainWindow):
                 self._suppress_results_browser_once = True
                 self._quick_restore_directory()
         except Exception as resume_err:
-            self._log(f"⚠️ 恢复状态检查失败: {resume_err}", "warning")
+            self._log(self.i18n.t("logs.resume_check_failed", error=resume_err), "warning")
 
     def _load_result_counts(self) -> dict:
         """从 report.db 读取评分统计，供状态条显示。"""
@@ -1976,7 +2010,7 @@ class SuperPickyMainWindow(QMainWindow):
             else:
                 subprocess.Popen(['xdg-open', self.directory_path])
         except Exception as e:
-            self._log(f"  ⚠️ 打开目录失败: {e}", "warning")
+            self._log(self.i18n.t("logs.open_folder_failed", error=e), "warning")
 
     def _status_folder_icon_html(self, px: int = 14) -> str:
         """
@@ -2344,7 +2378,7 @@ class SuperPickyMainWindow(QMainWindow):
                     self._quick_restore_directory()
                     return
         except Exception as resume_err:
-            self._log(f"⚠️ 恢复状态检查失败: {resume_err}", "warning")
+            self._log(self.i18n.t("logs.resume_check_failed", error=resume_err), "warning")
         finally:
             self._resume_prompt_handled = False
 
@@ -2456,7 +2490,8 @@ class SuperPickyMainWindow(QMainWindow):
         self._log(message, tag)
         # 改动 7: 处理中状态条实时显示当前文件名
         # 格式示例: "📸 处理照片 12/265: IMG_1234.JPG" 或 "[12/265] 处理: IMG_1234.JPG"
-        if tag == "progress" or ("处理" in message and "/" in message and ":" in message):
+        if tag == "progress" or (("处理" in message or "處理" in message or "Processing" in message)
+                                 and "/" in message and ":" in message):
             import re
             m = re.search(r':\s*(.+\.(jpg|jpeg|png|cr2|cr3|arw|nef|orf|rw2|dng))', message, re.IGNORECASE)
             if m:
@@ -2630,9 +2665,8 @@ class SuperPickyMainWindow(QMainWindow):
                 sub_dirs_to_reset = []
                 for root_d, subdirs, files in os.walk(directory_path):
                     subdirs[:] = [d for d in subdirs if not d.startswith('.')]
-                    from constants import RATING_FOLDER_NAMES, RATING_FOLDER_NAMES_EN
-                    star_names = set(RATING_FOLDER_NAMES.values()) | set(RATING_FOLDER_NAMES_EN.values())
-                    subdirs[:] = [d for d in subdirs if d not in star_names and not d.startswith('burst_')]
+                    from constants import ALL_RATING_FOLDER_NAMES
+                    subdirs[:] = [d for d in subdirs if d not in ALL_RATING_FOLDER_NAMES and not d.startswith('burst_')]
                     for d in subdirs:
                         full = os.path.join(root_d, d)
                         if is_processed(full):
@@ -2641,23 +2675,24 @@ class SuperPickyMainWindow(QMainWindow):
                 if sub_dirs_to_reset:
                     # Reset deepest first
                     sub_dirs_to_reset.sort(key=lambda p: p.count(os.sep), reverse=True)
-                    emit_log(f"\n\U0001f4c2 Batch reset: {len(sub_dirs_to_reset)} subdirectories")
+                    emit_log(i18n.t("logs.batch_reset_subdirs", count=len(sub_dirs_to_reset)))
                     for idx, sub_dir in enumerate(sub_dirs_to_reset, 1):
                         rel = os.path.relpath(sub_dir, directory_path)
-                        emit_log(f"\n\U0001f504 [{idx}/{len(sub_dirs_to_reset)}] {rel}/")
+                        emit_log(i18n.t("logs.batch_reset_sub_item", idx=idx,
+                                        total=len(sub_dirs_to_reset), rel=rel))
                         try:
                             # Reuse CLI reset logic
                             _args = SimpleNamespace(directory=sub_dir, yes=True)
                             from superpicky_cli import cmd_reset as _cli_reset
                             _cli_reset(_args)
-                            emit_log(f"  \u2705 {rel}/ reset done")
+                            emit_log(i18n.t("logs.batch_reset_sub_done", rel=rel))
                         except Exception as e:
-                            emit_log(f"  \u274c {rel}/ reset failed: {e}")
+                            emit_log(i18n.t("logs.batch_reset_sub_failed", rel=rel, error=e))
 
                 # Now reset the root directory
                 emit_log(i18n.t("logs.reset_step0"))
-                rating_dirs = ['3star_excellent', '2star_good', '1star_average', '0star_reject',
-                               '3星_优选', '2星_良好', '1星_普通', '0星_放弃']
+                from constants import ALL_RATING_FOLDER_NAMES
+                rating_dirs = sorted(ALL_RATING_FOLDER_NAMES)
                 subdir_stats = {'dirs_removed': 0, 'files_restored': 0}
                 
                 for rating_dir in rating_dirs:
@@ -2780,7 +2815,7 @@ class SuperPickyMainWindow(QMainWindow):
                                 sample = f"{sample}, ..."
                             emit_log(i18n.t("logs.empty_dir_delete_failed",
                                             dir=rating_dir,
-                                            error=f"仍有残留文件，保留: {sample}"))
+                                            error=i18n.t("logs.reset_dir_has_leftovers", sample=sample)))
                             continue
                         try:
                             shutil.rmtree(rating_path, ignore_errors=True)
@@ -2806,9 +2841,9 @@ class SuperPickyMainWindow(QMainWindow):
                             emit_log("  ✅ .superpicky/ (force)")
                             deleted_dirs += 1
                         except Exception as e2:
-                            emit_log(f"  ⚠️ .superpicky 删除失败: {e2}")
+                            emit_log(i18n.t("logs.reset_cache_delete_failed", error=e2))
                 elif _skip_exif_reset:
-                    emit_log("  ✅ .superpicky/ 缓存已保留（快速复原：预览图复用）")
+                    emit_log(i18n.t("logs.reset_cache_kept"))
                 
                 manifest_file = os.path.join(directory_path, ".superpicky_manifest.json")
                 if os.path.exists(manifest_file):
@@ -2816,7 +2851,7 @@ class SuperPickyMainWindow(QMainWindow):
                         os.remove(manifest_file)
                         emit_log("  ✅ .superpicky_manifest.json")
                     except Exception as e:
-                        emit_log(f"  ⚠️ manifest 删除失败: {e}")
+                        emit_log(i18n.t("logs.manifest_delete_failed", error=e))
                 
                 # 清理 macOS ._burst_XXX 残留文件
                 for filename in os.listdir(directory_path):
@@ -2958,13 +2993,10 @@ class SuperPickyMainWindow(QMainWindow):
         # 保存设置
         self.config.set_language(lang_code)
         if self.config.save():
-            # 根据目标语言显示对应的提示
-            if lang_code == "en":
-                title = "Language Changed"
-                msg = "Language changed. Restart the app to take effect."
-            else:
-                title = "语言已更改"
-                msg = "界面语言已更改，重启应用后生效。"
+            # 用目标语言显示提示（与设置中心的语言选择共用一份文字）
+            # Notice in the target language (shared with the Settings Center picker)
+            from tools.i18n import language_changed_notice
+            title, msg = language_changed_notice(lang_code)
             StyledMessageBox.information(self, title, msg)
 
     def _open_settings_center(self, start_page: str = "culling") -> None:
@@ -2984,6 +3016,11 @@ class SuperPickyMainWindow(QMainWindow):
         from ui.settings_center import SettingsCenter
         dlg = SettingsCenter(self.i18n, parent=self, start_page=start_page)
         dlg.exec()
+
+        # 设置中心里也能改界面语言：同步菜单栏语言子菜单的勾选（跟随系统时都不勾）
+        # The Settings Center can change the language too: sync the menu checks.
+        for code, action in getattr(self, "lang_actions", {}).items():
+            action.setChecked(code == self.config.language)
 
         # 刷新技能 chip 标签，确保与 advanced_config 中当前值一致
         # Refresh the skill level chip so it reflects the current advanced_config value
@@ -3268,6 +3305,8 @@ class SuperPickyMainWindow(QMainWindow):
 
     def _auto_start_birdid_server(self):
         """自动启动识鸟 API 服务器（使用服务器管理器） - 在后台线程中运行"""
+        if _background_startup_disabled():
+            return
         if not self._skip_until_initialized("首次初始化尚未完成，暂不启动识鸟 API 服务器。"):
             return
 
@@ -3316,9 +3355,9 @@ class SuperPickyMainWindow(QMainWindow):
             if success:
                 self._log(self.i18n.t("server.api_stopped"), "info")
             else:
-                self._log(f"停止服务器失败: {msg}", "warning")
+                self._log(self.i18n.t("logs.server_stop_failed", error=msg), "warning")
         except Exception as e:
-            self._log(f"停止服务器异常: {e}", "error")
+            self._log(self.i18n.t("logs.server_stop_error", error=e), "error")
 
     # ========== 辅助方法 ==========
 
@@ -3477,6 +3516,13 @@ class SuperPickyMainWindow(QMainWindow):
             )
         for line in result.tail:
             fragments.append(self._log_line_html(line.message, line.tag, line.time_text))
+        # 会话结束汇总块在日志里是固定英文（供解析），回放时不原样显示，改为按界面语言
+        # 写一行结果摘要；完整统计在右侧识鸟面板（_restore_completion_panel）。
+        # The English session-end block is not replayed; a localized one-line
+        # summary stands in for it (full stats live in the Bird ID panel).
+        summary_line = self._replay_summary_line(log_path)
+        if summary_line:
+            fragments.append(self._log_line_html(summary_line, "success", ""))
         fragments.append(
             self._log_line_html(self.i18n.t("logs.replay_footer", total=result.total), "muted", "")
         )
@@ -3487,6 +3533,42 @@ class SuperPickyMainWindow(QMainWindow):
         self.log_text.setTextCursor(cursor)
         self.log_text.ensureCursorVisible()
         return True
+
+    def _replay_summary_line(self, log_path: str) -> str:
+        """
+        按界面语言写一行「处理结束时」的结果摘要，用在日志回放末尾。
+
+        数字取自日志里最后一次已完成会话的结束汇总（parse_session_summary），即处理
+        结束那一刻的快照；用户之后在结果浏览器里的修改以右侧识鸟面板为准。
+
+        参数 / Parameters:
+            log_path (str): 日志文件路径 / Log file path.
+
+        返回 / Returns:
+            str: 摘要文字；没有已完成的会话时为空串 / Summary, or "" when none.
+
+        One localized line summarizing the last completed run, replacing the
+        English session-end block in the replay.
+        """
+        from core.log_restore import parse_session_summary
+
+        try:
+            stats = parse_session_summary(log_path)
+        except Exception:                              # noqa: BLE001 - 摘要是附加信息
+            return ""
+        if not stats:
+            return ""
+        return self.i18n.t(
+            "logs.replay_summary",
+            total=stats.get("total", 0),
+            s3=stats.get("star_3", 0),
+            picked=stats.get("picked", 0),
+            s2=stats.get("star_2", 0),
+            s1=stats.get("star_1", 0),
+            s0=stats.get("star_0", 0),
+            no_bird=stats.get("no_bird", 0),
+            minutes=f"{stats.get('total_time', 0.0) / 60:.1f}",
+        )
 
     def _restore_completion_panel(self, directory: str) -> bool:
         """
@@ -3782,9 +3864,9 @@ class SuperPickyMainWindow(QMainWindow):
                 parts = []  # 逐种按罕见度着色:常见默认/能见橙/少见以上红
                 for sp in bird_species:
                     if isinstance(sp, dict):
-                        name = sp.get('cn_name', '') if is_chinese else sp.get('en_name', '')
-                        if not name:
-                            name = sp.get('en_name', '') if is_chinese else sp.get('cn_name', '')
+                        from tools.zh_convert import species_display
+                        name = species_display(sp.get('cn_name'), sp.get('en_name'),
+                                               self.i18n.current_lang)
                         tier = sp.get('gbif_tier')
                     else:
                         name, tier = str(sp), None
@@ -3920,6 +4002,8 @@ class SuperPickyMainWindow(QMainWindow):
 
     def _preload_all_models(self):
         """后台预加载所有AI模型（不阻塞UI）"""
+        if _background_startup_disabled():
+            return
         if not self._skip_until_initialized("首次初始化尚未完成，跳过模型预加载。"):
             return
 

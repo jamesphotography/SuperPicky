@@ -257,15 +257,15 @@ def _extract_burst_group_key(photo: dict) -> Optional[str]:
 
 def _burst_sharpness(photo: dict) -> float:
     """
-    连拍代表照片选取用的锐度值：优先 adj_sharpness，回退 head_sharp，缺失视为最低。
-    与 report.db 排序 COALESCE(adj_sharpness, head_sharp, -1e99) 保持一致。
+    连拍代表照片选取用的锐度值：ISO 折算后的头部锐度，缺失视为最低。
+    与 report.db 的 sharpness_desc 排序、详情面板与题注显示的数字同口径。
 
-    Sharpness used to pick a burst's cover photo: prefer adj_sharpness, fall back to
-    head_sharp, treat missing as lowest — mirrors the DB's sharpness_desc ordering.
+    Sharpness used to pick a burst's cover photo: the ISO-normalized head
+    sharpness (missing = lowest), matching the DB's sharpness_desc sort and the
+    number shown in the detail panel and caption.
     """
-    v = photo.get("adj_sharpness")
-    if v is None:
-        v = photo.get("head_sharp")
+    from core.iso_sharpness import display_head_sharpness
+    v = display_head_sharpness(photo)
     return float(v) if v is not None else float("-inf")
 
 
@@ -308,12 +308,13 @@ def _burst_totals_from_photos(photos: list) -> Counter:
 
 def _photo_bird_name(photo: dict, i18n) -> str:
     """
-    按界面语言从 photo dict 取鸟种名，供 compute_target_folder 使用。
-    Return the species name in the UI language for folder-name computation.
+    按界面语言从 photo dict 取鸟种目录名，供 compute_target_folder 使用；
+    与处理流程建目录的规则一致（英文空格换下划线，繁体 TW 用台湾鸟名）。
+    Return the species folder name in the UI language, matching the pipeline.
     """
-    use_en = i18n.current_lang.startswith("en")
-    key = "bird_species_en" if use_en else "bird_species_cn"
-    return (photo.get(key) or "").strip()
+    from tools.zh_convert import species_folder_name
+    return species_folder_name(photo.get("bird_species_cn"), photo.get("bird_species_en"),
+                               i18n.current_lang)
 
 
 def _trigger_rating_move(
@@ -678,9 +679,9 @@ def _species_metadata_title(bird_cn: str, bird_en: str) -> str:
 
     Pick the species name written to metadata, matching the main pipeline.
     """
-    if get_i18n().current_lang.startswith('en'):
-        return (bird_en or bird_cn or "").strip()
-    return (bird_cn or bird_en or "").strip()
+    from tools.zh_convert import species_display
+    return species_display((bird_cn or "").strip(), (bird_en or "").strip(),
+                           get_i18n().current_lang).strip()
 
 
 def _write_species_metadata(
@@ -805,6 +806,11 @@ def _run_mark_no_bird(
     old_cn = (old_bird_cn or photo.get("bird_species_cn") or "").strip()
     old_en = (old_bird_en or photo.get("bird_species_en") or "").strip()
 
+    # 题注首行插入「手动标记为无鸟」，原评分说明保留在下方
+    # Prepend a manual "no bird" line to the caption; the original stays below
+    from core.rating_caption import mark_manual_change
+    new_caption = mark_manual_change(photo.get("caption"), -1, i18n.t)
+
     # 1. 先写库：即使随后文件移动失败，报告也已经不再把它算成那种鸟。
     if report_db is not None:
         report_db.update_photo(db_key, {
@@ -817,6 +823,7 @@ def _run_mark_no_bird(
             "alt_species_en": None,
             "alt_confidence": None,
             "rating": -1,
+            "caption": new_caption,
         })
 
     # 2. 同步内存副本，界面刷新与目录计算都读它
@@ -827,6 +834,7 @@ def _run_mark_no_bird(
     photo["alt_confidence"] = None
     photo["has_bird"] = 0
     photo["rating"] = -1
+    photo["caption"] = new_caption
 
     # 3. 移文件：鸟名已清空 + rating=-1 → compute_target_folder 落到
     #    「其他鸟类/0星_放弃」。连拍组内与根目录下的文件由 core 自行跳过。
@@ -852,7 +860,7 @@ def _run_mark_no_bird(
                 path, old_title=_species_metadata_title(old_cn, old_en) or None,
                 write_keywords=write_keywords,
             )
-            writer.set_rating_and_pick(path, -1)
+            writer.set_rating_and_pick(path, -1, caption=new_caption)
         except Exception as e:
             from tools.utils import log_message
             log_message(f"[mark_no_bird] metadata write failed for {path}: {e}")
@@ -1188,7 +1196,7 @@ def _build_context_menu(parent_widget, photo: dict, directory: str):
 
     _i18n = get_i18n()
     if sys.platform == "win32":
-        reveal_label = "在资源管理器中显示" if not _i18n.current_lang.startswith('en') else "Show in Explorer"
+        reveal_label = _i18n.t('browser.ctx_show_in_explorer')
     else:
         reveal_label = _i18n.t('browser.ctx_show_in_finder')
     finder_action = QAction(reveal_label, parent_widget)
@@ -1222,10 +1230,14 @@ def _build_context_menu(parent_widget, photo: dict, directory: str):
     # 没有鸟名的照片无种可合并,不显示该项。
     # Whole-species merge: retag every photo of this species at once.
     # Hidden for photos without a species (nothing to merge).
-    merge_species_name = (
-        photo.get("bird_species_en") if _i18n.current_lang.startswith("en")
-        else photo.get("bird_species_cn")
-    ) or ""
+    from tools.zh_convert import species_display
+    merge_species_name = species_display(
+        photo.get("bird_species_cn"), photo.get("bird_species_en"), _i18n.current_lang)
+    # 保持原语义：只看界面语言对应的那个名字，缺了就不显示「整种合并」
+    # Keep prior semantics: hide the merge item when the UI-language name is missing.
+    if not (photo.get("bird_species_en") if _i18n.current_lang.startswith("en")
+            else photo.get("bird_species_cn")):
+        merge_species_name = ""
     if merge_species_name:
         merge_action = QAction(
             _i18n.t('browser.ctx_merge_species').format(species=merge_species_name),
@@ -2492,8 +2504,18 @@ class ResultsBrowserWindow(QMainWindow):
         ) or {}
         filename = current_photo.get("filename") or (photo_or_filename if isinstance(photo_or_filename, str) else "")
         db_key = _photo_db_key(current_photo) if current_photo else filename
+        # 题注首行插入「手动改为 N★」，原评分说明保留在下方——否则题注还写着
+        # 「3★ 优选」，与用户改后的星级自相矛盾（DB、Lightroom 题注同步）。
+        # Prepend a manual-override line to the caption so it no longer
+        # contradicts the new rating; the original explanation stays below.
+        from core.rating_caption import mark_manual_change
+        new_caption = (mark_manual_change(current_photo.get("caption"), new_rating, self.i18n.t)
+                       if current_photo else None)
+        rating_update = {"rating": new_rating}
+        if new_caption is not None:
+            rating_update["caption"] = new_caption
         if self._db:
-            self._db.update_photo(db_key, {"rating": new_rating})
+            self._db.update_photo(db_key, rating_update)
         # 三份缓存一起补：报告的星级分布读 _all_photos，显示列表每次重建又从
         # _raw_filtered_photos 拷贝——此前只补了 _filtered_photos，于是界面上
         # 是新星级、导出的报告却按旧星级计数，而点一下连拍组展开/收起，界面
@@ -2503,10 +2525,18 @@ class ResultsBrowserWindow(QMainWindow):
         # per-photo, so they must not spread across the burst group.
         if current_photo:
             _patch_cached_photos(
-                current_photo, {"rating": new_rating},
+                current_photo, rating_update,
                 self._filtered_photos, self._all_photos,
                 self._raw_filtered_photos, include_burst=False,
             )
+            current_photo.update(rating_update)
+            # 详情面板正显示这张时，刷新元数据让「选片备注」立即反映新题注（不重新解码大图）
+            # Refresh the detail panel's metadata (no image decode) if it shows this photo
+            shown = getattr(self._detail_panel, "_current_photo", None)
+            if shown is current_photo or (shown and shown.get("filename") == filename):
+                if shown is not current_photo:
+                    shown.update(rating_update)
+                self._detail_panel.set_current_photo(shown)
         else:
             # 只拿到文件名（老调用方）时按文件名匹配，行为与此前一致
             # Filename-only callers keep the previous matching behaviour.
@@ -2525,6 +2555,7 @@ class ResultsBrowserWindow(QMainWindow):
             threading.Thread(
                 target=get_exiftool_manager().set_rating_and_pick,
                 args=(file_path, new_rating),
+                kwargs={"caption": new_caption},
                 daemon=True,
             ).start()
         # 后台移动文件（仅已整理的照片；burst / 根目录 / 新旧相同 时内部自动跳过）
@@ -2755,6 +2786,11 @@ class ResultsBrowserWindow(QMainWindow):
         ) or ""
         if not old_name or not self._db:
             return
+        if not use_en:
+            # 弹窗里显示台湾鸟名（繁体 TW）；old_name 此后只用于显示
+            # Show the Taiwan name in zh_TW; old_name is display-only from here.
+            from tools.zh_convert import species_cn
+            old_name = species_cn(old_name)
 
         # 1. 收集全部同鸟种照片（_all_photos 存的是相对路径，必须先解析成绝对路径）
         resolved_pool = [self._resolve_photo_paths(p) for p in self._all_photos]
@@ -2772,11 +2808,17 @@ class ResultsBrowserWindow(QMainWindow):
         new_en = dialog.selected_en
         if not new_cn and not new_en:
             return
-        new_name = (new_en if use_en else new_cn) or ""
+        # 显示名（繁体 TW 用台湾鸟名）与目录名分开取：目录名必须与 rating_mover
+        # 实际移动时的规则一致（英文空格换下划线），预览才不会和真实目录对不上。
+        # Display name vs folder name: the folder preview must use the same
+        # rule rating_mover applies when it actually moves files.
+        from tools.zh_convert import species_cn, species_folder_name
+        new_name = (new_en if use_en else species_cn(new_cn or "")) or ""
 
         # 3. 确认：把张数、连拍组数、涉及的批次和真实目标目录摆出来再动手
         layout = get_advanced_config().folder_layout
-        folders = _merge_target_folders(targets, new_name, layout)
+        folders = _merge_target_folders(
+            targets, species_folder_name(new_cn, new_en, i18n.current_lang), layout)
         burst_count = len({p.get("burst_id") for p in targets if p.get("burst_id")})
         burst_note = (
             i18n.t('browser.merge_burst_note').format(bursts=burst_count)
@@ -2966,11 +3008,14 @@ class ResultsBrowserWindow(QMainWindow):
         new_en = dialog.selected_en
         if not new_cn and not new_en:
             return
-        new_name = (new_en if use_en else new_cn) or ""
+        # 显示名与目录名分开取（同整种合并）/ Display vs folder name, as in merge.
+        from tools.zh_convert import species_cn, species_folder_name
+        new_name = (new_en if use_en else species_cn(new_cn or "")) or ""
 
         # 确认：把张数、连拍组数与真实目标目录摆出来再动手
         layout = get_advanced_config().folder_layout
-        folders = _merge_target_folders(targets, new_name, layout)
+        folders = _merge_target_folders(
+            targets, species_folder_name(new_cn, new_en, i18n.current_lang), layout)
         burst_count = len({p.get("burst_id") for p in targets if p.get("burst_id")})
         burst_note = (
             i18n.t('browser.merge_burst_note').format(bursts=burst_count)
@@ -3606,11 +3651,7 @@ class ResultsBrowserWindow(QMainWindow):
                 msg_box.setText(self.i18n.t("browser.delete_msg").format(filename=filename))
             else:
                 count = len(target_photos)
-                if self.i18n.current_lang.startswith('en'):
-                    msg_text = f"Move {count} selected photos to Trash?\n\n❗ This will also delete their database records. You'll need to reprocess after restoring."
-                else:
-                    msg_text = f"将选中的 {count} 张图片移入回收站？\n\n❗ 此操作会同时从数据库删除记录，恢复文件后需重新处理。"
-                msg_box.setText(msg_text)
+                msg_box.setText(self.i18n.t("browser.delete_multi_msg", count=count))
                 
             msg_box.exec()
             if msg_box.clickedButton() != yes_btn:

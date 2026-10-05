@@ -25,7 +25,9 @@ UNCONFIRMED_SPECIES_MIN_CONFIDENCE = 30.0
 
 def _pick(cn: Optional[str], en: Optional[str], is_en: bool) -> str:
     """
-    按界面语言取名并回退另一语言 / Pick a name by UI language with fallback.
+    按界面语言取名并回退另一语言；中文名在繁体 TW 界面下换成台湾鸟名。
+    Pick a name by UI language with fallback; Chinese names become Taiwan
+    names when the interface language is zh_TW.
 
     参数 / Parameters:
         cn (Optional[str]): 中文名 / Chinese name.
@@ -35,8 +37,11 @@ def _pick(cn: Optional[str], en: Optional[str], is_en: bool) -> str:
     返回 / Returns:
         str: 名称，可能为空串 / Name, possibly empty.
     """
+    from tools.zh_convert import species_cn
     cn = (cn or "").strip()
     en = (en or "").strip()
+    if cn:
+        cn = species_cn(cn)
     return (en or cn) if is_en else (cn or en)
 
 

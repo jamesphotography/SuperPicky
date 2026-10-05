@@ -13,10 +13,11 @@ from pathlib import PurePosixPath, PureWindowsPath
 from typing import List, Optional, Set, Tuple
 
 from constants import (
+    ALL_RATING_FOLDER_NAMES,
     HEIF_EXTENSIONS,
     JPG_EXTENSIONS,
-    RATING_FOLDER_NAMES,
-    RATING_FOLDER_NAMES_EN,
+    NO_BIRD_FOLDER_ALIASES,
+    OTHER_SPECIES_FOLDER_ALIASES,
     RAW_EXTENSIONS,
     VIDEO_EXTENSIONS,
 )
@@ -28,12 +29,14 @@ _PHOTO_EXTENSIONS: Set[str] = set(RAW_EXTENSIONS + JPG_EXTENSIONS + HEIF_EXTENSI
 # V4.3 Phase 4: All video extensions (lowercase)
 _VIDEO_EXTENSIONS: Set[str] = set(VIDEO_EXTENSIONS)
 
-# 星级目录名（中 + 英）
-_RATING_DIR_NAMES: Set[str] = set(RATING_FOLDER_NAMES.values()) | set(RATING_FOLDER_NAMES_EN.values())
+# 星级目录名（简体 + 繁体 TW + 英文）/ rating folder names in all UI languages
+_RATING_DIR_NAMES: Set[str] = set(ALL_RATING_FOLDER_NAMES)
 
 # V4.3 Phase 4: 视频归类后产生的目录名（防止扫描进入避免循环扫到新生成视频）
 # V4.3 Phase 4: Video sub-folder names produced by Phase 3 organizer.
-_VIDEO_SUBFOLDER_NAMES: Set[str] = {"其他鸟", "无鸟"}
+# 取视频整理目录的三语别名，任一界面语言建的目录都要排除
+# Use the organizer's aliases so folders from any UI language are excluded.
+_VIDEO_SUBFOLDER_NAMES: Set[str] = set(OTHER_SPECIES_FOLDER_ALIASES) | set(NO_BIRD_FOLDER_ALIASES)
 
 DEFAULT_SCAN_MAX_DEPTH = 16
 

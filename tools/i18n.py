@@ -11,7 +11,7 @@ import locale
 import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 
 from config import get_lazy_registry
 
@@ -25,6 +25,68 @@ def _safe_print(message: str) -> None:
         encoding = getattr(stream, "encoding", None) or locale.getpreferredencoding(False) or "utf-8"
         sanitized = message.encode(encoding, errors="replace").decode(encoding, errors="replace")
         print(sanitized)
+
+
+# 支持的界面语言（设置菜单与 advanced_config.set_language 的白名单）
+# Supported UI languages (settings menu and set_language whitelist).
+SUPPORTED_LANGUAGES = ("zh_CN", "zh_TW", "en_US")
+
+
+# 各语言用自己的文字书写的名称：语言选项必须让「看不懂当前界面语言」的人也认得出
+# Each language's name in its own script, so users can spot it in any UI language.
+LANGUAGE_NATIVE_NAMES = {
+    "zh_CN": "简体中文",
+    "zh_TW": "繁體中文 TW",
+    "en_US": "English",
+}
+
+
+def language_changed_notice(lang: Optional[str]) -> Tuple[str, str]:
+    """
+    切换界面语言后的「重启生效」提示，用**目标语言**书写（切换后用户最先要读懂的就是这句）。
+
+    参数:
+    lang (str | None): 目标语言代码；None 表示跟随系统，按检测到的系统语言书写
+
+    返回:
+    tuple[str, str]: (标题, 正文)
+
+    The "restart to apply" notice, written in the target language
+    (None = follow system, so the detected system language is used).
+    """
+    if lang is None:
+        lang = I18n._detect_system_language()
+    if str(lang).startswith("en"):
+        return "Language Changed", "Language changed. Restart the app to take effect."
+    if lang == "zh_TW":
+        return "語言已變更", "介面語言已變更，重新啟動應用程式後生效。"
+    return "语言已更改", "界面语言已更改，重启应用后生效。"
+
+
+def _is_traditional_tag(tag: str) -> bool:
+    """
+    系统语言标记是否表示繁体中文（台湾/香港/澳门，或 Hant 书写）。
+
+    参数:
+    tag (str): 如 "zh_TW.UTF-8"、"zh-Hant-TW"、"Chinese (Traditional)_Taiwan"
+
+    返回:
+    bool: 是繁体中文时为 True
+
+    Whether a system language tag means Traditional Chinese.
+    """
+    t = (tag or "").lower().replace("-", "_")
+    return any(x in t for x in ("zh_tw", "zh_hk", "zh_mo", "hant", "traditional"))
+
+
+def is_english_lang(lang: str) -> bool:
+    """当前语言是否英文 / Whether the language is English."""
+    return str(lang or "").startswith("en")
+
+
+def is_traditional_lang(lang: str) -> bool:
+    """当前语言是否繁体中文（台湾）/ Whether the language is Traditional Chinese (Taiwan)."""
+    return str(lang or "") == "zh_TW"
 
 
 class I18n:
@@ -66,15 +128,19 @@ class I18n:
         # 加载语言包
         self._load_translations()
 
-    def _detect_system_language(self) -> str:
+    @staticmethod
+    def _detect_system_language() -> str:
         """
         自动检测系统语言
 
         Returns:
             语言代码 (zh_CN, en_US等)
         """
-        # 1. 尝试从环境变量获取
+        # 1. 尝试从环境变量获取（繁体要先判：zh_TW / zh_HK 里也含 "zh"，此前一律判成简体）
+        # Check Traditional first: "zh_TW"/"zh_HK" also contain "zh".
         lang = os.environ.get('LANG', '')
+        if _is_traditional_tag(lang):
+            return 'zh_TW'
         if 'zh' in lang.lower():
             return 'zh_CN'
         elif lang.startswith('en'):
@@ -84,6 +150,8 @@ class I18n:
         try:
             system_locale, _ = locale.getlocale()
             if system_locale:
+                if _is_traditional_tag(system_locale):
+                    return 'zh_TW'
                 if 'zh' in system_locale.lower() or 'chinese' in system_locale.lower():
                     return 'zh_CN'
                 elif 'en' in system_locale.lower():
@@ -107,10 +175,10 @@ class I18n:
                 match = re.search(r'"([^"]+)"', output)
                 if match:
                     first_lang = match.group(1).lower()
+                    if _is_traditional_tag(first_lang):
+                        return 'zh_TW'
                     if 'zh-hans' in first_lang or 'zh_cn' in first_lang:
                         return 'zh_CN'
-                    elif 'zh-hant' in first_lang or 'zh_tw' in first_lang:
-                        return 'zh_TW'
         except Exception:
             pass
 
@@ -233,8 +301,12 @@ class I18n:
         if not self.locales_dir.exists():
             return languages
 
-        for file in self.locales_dir.glob("*.json"):
-            lang_code = file.stem  # 文件名（不含扩展名）
+        # 只列支持的语言：locales 下还有转换表等非语言包 json（如 zh_tw_convert.json）
+        # Only supported languages: locales/ also holds non-language json files.
+        for lang_code in SUPPORTED_LANGUAGES:
+            file = self.locales_dir / f"{lang_code}.json"
+            if not file.exists():
+                continue
 
             # 读取语言包中的语言名称
             try:
@@ -247,7 +319,7 @@ class I18n:
                 lang_names = {
                     'zh_CN': '简体中文',
                     'en_US': 'English',
-                    'zh_TW': '繁體中文'
+                    'zh_TW': '繁體中文 TW'
                 }
                 languages[lang_code] = lang_names.get(lang_code, lang_code)
 
@@ -260,6 +332,25 @@ def set_primary_language(lang: str) -> None:
     都返回与 UI 相同语言的实例，与创建顺序无关。
     """
     get_lazy_registry().set('_primary_lang', lang)
+
+
+def apply_saved_language() -> None:
+    """
+    让命令行等非图形入口跟随「设置」里选的界面语言（与图形界面一致）；没选时按系统语言。
+
+    此前命令行只看系统语言，与图形界面可能不一致。读配置失败时静默退回系统语言。
+
+    Make non-GUI entry points (the CLIs) follow the language chosen in Settings,
+    like the GUI does; falls back to the system language when none is set.
+    """
+    try:
+        from advanced_config import get_advanced_config
+        lang = get_advanced_config().language
+    except Exception:
+        lang = None
+    if lang:
+        get_i18n(lang)
+        set_primary_language(lang)
 
 
 def get_i18n(lang: str = None) -> I18n:

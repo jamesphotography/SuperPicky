@@ -868,10 +868,15 @@ class ReportDB:
         # ranks 2/4/8/…/44 by sharpness, up to 120 by rarity). Filename order is
         # left untouched since its whole purpose is chronological browsing.
         picked_first = "COALESCE(picked, 0) DESC, "
+        # 锐度/美学排序与详情面板、题注显示的数字同口径（ISO 折算后的头部锐度、原始美学分），
+        # 列表里的数字才会按顺序排列。头部锐度的 ISO 折算要用对数，SQLite 不一定编译了
+        # 数学函数，故查出后在 Python 里排序（见下方 sharpness_desc 分支）。
+        # Sharpness/aesthetics sort on the displayed basis so the numbers line up;
+        # the ISO normalization needs log2, so sharpness is sorted in Python below.
         if sort_by == "sharpness_desc":
-            order_sql = f"ORDER BY {picked_first}COALESCE(adj_sharpness, head_sharp, -1e99) DESC, filename ASC"
+            order_sql = "ORDER BY filename ASC"
         elif sort_by == "aesthetic_desc":
-            order_sql = f"ORDER BY {picked_first}COALESCE(adj_topiq, nima_score, -1e99) DESC, filename ASC"
+            order_sql = f"ORDER BY {picked_first}COALESCE(nima_score, -1e99) DESC, filename ASC"
         elif sort_by == "rarity_desc":
             # V4.2.7: 按 GBIF 罕见度降序（最罕见在前）— 无 GBIF 数据的排最后
             order_sql = f"ORDER BY {picked_first}COALESCE(gbif_rarity_100, -1e99) DESC, filename ASC"
@@ -887,6 +892,16 @@ class ReportDB:
         with self._lock:
             cursor = self._conn.execute(sql, params)
             results = [dict(row) for row in cursor.fetchall()]
+
+        if sort_by == "sharpness_desc":
+            from core.iso_sharpness import display_head_sharpness
+
+            def _sharp_key(row: dict) -> tuple:
+                v = display_head_sharpness(row)
+                return (-int(row.get("picked") or 0),
+                        -(v if v is not None else -1e99),
+                        row.get("filename") or "")
+            results.sort(key=_sharp_key)
 
         return results
 

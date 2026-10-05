@@ -41,6 +41,7 @@ def _photo(**kw) -> dict:
         "has_bird": 1, "rating": 3, "picked": 0, "is_flying": 0,
         "focus_status": None,
         "adj_sharpness": 300.0, "adj_topiq": 50.0,
+        "head_sharp": 300.0, "nima_score": 50.0,
         "bird_species_cn": "白腹海雕", "bird_species_en": "White-bellied Sea Eagle",
         "gbif_rarity_100": 10.0, "iucn_category": "LC",
         "iso": 640, "shutter_speed": "1/2000", "aperture": "5.6",
@@ -914,6 +915,7 @@ def test_hero_carries_pick_metrics_and_secondaries_do_not():
         rows.append(_photo(filename=f"m{i}.NEF", current_path=f"/tmp/pick/m{i}.NEF",
                            bird_species_cn="冠鸠", bird_species_en="Bronzewing",
                            burst_id=i, adj_sharpness=418.6, adj_topiq=5.74,
+                           head_sharp=418.6, nima_score=5.74,
                            aesthetic_index=63.2, rating=3))
     html = build_html(aggregate(rows), {})
     assert html.count("锐度 419") == 1, "锐度只应出现在代表作上"
@@ -929,7 +931,8 @@ def test_pick_metrics_localized_and_skip_missing_values():
     """英文界面用英文标签；缺失的项不出现，不留空占位。"""
     rows = [_photo(filename="e.NEF", current_path="/tmp/pick/e.NEF",
                    bird_species_cn="鹊鹩", bird_species_en="Wren",
-                   adj_sharpness=300.0, adj_topiq=None, aesthetic_index=None)]
+                   adj_sharpness=300.0, adj_topiq=None, aesthetic_index=None,
+                   head_sharp=300.0, nima_score=None)]
     html = build_html(aggregate(rows), {}, is_zh=False)
     assert "Sharp 300" in html
     assert "Aesth" not in html and "Beauty" not in html
@@ -948,7 +951,8 @@ def test_aesthetic_keeps_one_decimal_to_stay_discriminative():
     def cap_of(topiq: float) -> str:
         rows = [_photo(filename="x.NEF", current_path="/tmp/pick/x.NEF",
                        bird_species_cn="冠鸠", bird_species_en="Bronzewing",
-                       adj_topiq=topiq, adj_sharpness=500.0)]
+                       adj_topiq=topiq, adj_sharpness=500.0,
+                       nima_score=topiq, head_sharp=500.0)]
         html = build_html(aggregate(rows), {})
         return html.split('class="cap">', 1)[1].split("</div>", 1)[0]
 

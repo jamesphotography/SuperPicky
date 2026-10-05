@@ -20,6 +20,7 @@ from PySide6.QtCore import Qt, Signal, QSize, QThread, Slot, QTimer
 from PySide6.QtGui import QPixmap, QFont, QGuiApplication, QImage, QImageReader
 
 from ui.styles import COLORS, FONTS
+from core.iso_sharpness import display_aesthetic, display_head_sharpness
 from ui.icon_utils import load_tinted_icon, stars_pixmap, tinted_png_path, glyph_png_path, ICON_IDLE, ICON_ACTIVE
 from core.rarity_tier import (gbif_score_to_tier, tier_name, tier_icon,
                               tier_color, format_rarity_values)
@@ -127,7 +128,11 @@ def _format_iucn(category: str, is_zh: bool) -> tuple:
     if not info:
         return (category, COLORS['text_primary'])
     zh_name, en_name, color = info
-    name = zh_name if is_zh else en_name
+    if is_zh:
+        from tools.zh_convert import zh_text
+        name = zh_text(zh_name)
+    else:
+        name = en_name
     return (f"{name} ({category})", color)
 
 
@@ -180,6 +185,50 @@ def _format_file_size(num_bytes: int) -> str:
             return f"{size:.1f} {unit}"
         size /= 1024.0
     return "\u2014"
+
+
+def caption_to_html(caption: str) -> str:
+    """
+    把评分说明（题注）渲染成详情面板用的富文本：第 1 行结论加粗，第 2 行「为什么」
+    用正文亮色（这是用户最关心的一句），✓ 绿、✗ 红，中性信息常规色，其余说明
+    （排名依据、ISO）浅色小字；手动修改标记用强调色。
+
+    旧版题注（「最终评分: …」格式）同样适用：首行加粗，其余按普通行显示。
+
+    参数:
+    caption (str): 多行题注原文
+
+    返回:
+    str: HTML 片段（已转义）
+
+    Render the rating caption as rich text: bold verdict, green ✓ / red ✗ lines,
+    muted footer lines, accent-coloured manual-override line.
+    """
+    import html
+    from core.rating_caption import MANUAL_MARK
+
+    out = []
+    body_index = 0  # 不计手动修改标记行的行号：0 = 结论，1 = 为什么
+    for line in (caption or "").split("\n"):
+        esc = html.escape(line)
+        if line.startswith(MANUAL_MARK):
+            out.append(f'<span style="color:{COLORS["accent"]}; font-weight:600;">{esc}</span>')
+            continue
+        body_index += 1
+        if body_index == 1:
+            out.append(f'<span style="color:{COLORS["text_primary"]}; font-weight:600; '
+                       f'font-size:13px;">{esc}</span>')
+        elif body_index == 2 and not line.startswith(("✓", "✗", "·")):
+            out.append(f'<span style="color:{COLORS["text_primary"]};">{esc}</span>')
+        elif line.startswith("✓"):
+            out.append(f'<span style="color:{COLORS["success"]};">{esc}</span>')
+        elif line.startswith("✗"):
+            out.append(f'<span style="color:{COLORS["error"]};">{esc}</span>')
+        elif line.startswith("·"):
+            out.append(f'<span style="color:{COLORS["text_secondary"]};">{esc}</span>')
+        else:
+            out.append(f'<span style="color:{COLORS["text_tertiary"]}; font-size:11px;">{esc}</span>')
+    return "<br>".join(out)
 
 
 def _make_value_label(text: str = "—") -> QLabel:
@@ -479,8 +528,12 @@ class DetailPanel(QWidget):
         self._val_filename = _make_value_label()
         self._val_datetime = _make_value_label()
         self._val_caption = _make_value_label()
-        self._val_caption.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px; font-family: {FONTS['mono']}; background: transparent;")
+        # 评分说明按行着色（见 caption_to_html），比例字体更适合中文与 ✓/✗ 符号
+        # Rich-text rating note (see caption_to_html); proportional font suits CJK
+        self._val_caption.setTextFormat(Qt.RichText)
+        self._val_caption.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px; background: transparent;")
         self._val_caption.setWordWrap(True)
+        self._val_caption.setTextInteractionFlags(Qt.TextSelectableByMouse)
 
         # 文件名仍只在大图顶条显示;鸟种行按用户反馈(Paul P0-2)加回详情面板,
         # 置于全球罕见度上方,点击可复制鸟名(复用 _val_species 既有行为)。
@@ -543,10 +596,13 @@ class DetailPanel(QWidget):
         meta_layout.addLayout(form)
         meta_layout.addStretch()
 
-        # --- 折叠式选片备注（默认收起，点箭头展开）---
+        # --- 折叠式选片备注（默认展开：它解释了这张照片为什么是这个星级；
+        #     用户收起后在本次会话内保持收起）---
+        # Culling note, expanded by default (it explains the rating); a
+        # collapse by the user persists for the session.
         meta_layout.addWidget(self._divider())
 
-        self._caption_expanded = False
+        self._caption_expanded = True
 
         self._caption_toggle_btn = QPushButton()
         self._caption_toggle_btn.setFlat(True)
@@ -566,7 +622,7 @@ class DetailPanel(QWidget):
         meta_layout.addWidget(self._caption_toggle_btn)
 
         self._caption_content = QWidget()
-        self._caption_content.setVisible(False)
+        self._caption_content.setVisible(self._caption_expanded)
         caption_inner = QVBoxLayout(self._caption_content)
         caption_inner.setContentsMargins(0, 2, 0, 6)
         caption_inner.setSpacing(0)
@@ -646,8 +702,8 @@ class DetailPanel(QWidget):
         ):
             val.setText("—")
         self._rating_label.setText("—")
-        self._caption_content.setVisible(False)
-        self._caption_expanded = False
+        # 展开/收起状态保留用户的选择，不随清空重置
+        # Keep the user's expand/collapse choice across photos
         self._update_caption_toggle_label()
 
     # ------------------------------------------------------------------
@@ -709,8 +765,9 @@ class DetailPanel(QWidget):
         elif not focus and _is_no_bird_photo(p):
             focus = self.i18n.t("browser.focus_no_bird")
         focus = focus or "—"
-        sharp = p.get("adj_sharpness")
-        topiq = p.get("adj_topiq")
+        # 与题注同口径：ISO 折算后的头部锐度、原始美学分（见 core/iso_sharpness.py）
+        sharp = display_head_sharpness(p)
+        topiq = display_aesthetic(p)
         fl = p.get("focal_length")
         iso = p.get("iso")
         conf = p.get("confidence")
@@ -744,8 +801,8 @@ class DetailPanel(QWidget):
             f"{t('browser.meta_gbif_rarity')}: {f'{tier_icon(gbif_score_to_tier(gbif_r))} {tier_name(gbif_score_to_tier(gbif_r), is_zh=is_zh)} ({gbif_r:.1f})' if gbif_r is not None else '—'}",
             f"{t('browser.meta_iucn')}: {iucn_text}",
             f"{t('browser.meta_focus')}: {focus}",
-            f"{t('browser.meta_sharpness')}: {f'{sharp:.1f}' if sharp is not None else '—'}",
-            f"{t('browser.meta_aesthetic')}: {f'{topiq:.2f}' if topiq is not None else '—'}",
+            f"{t('browser.meta_sharpness')}: {f'{sharp:.0f}' if sharp is not None else '—'}",
+            f"{t('browser.meta_aesthetic')}: {f'{topiq:.1f}' if topiq is not None else '—'}",
             f"{t('browser.meta_confidence')}: {f'{conf*100:.1f}%' if conf is not None else '—'}",
             f"{t('browser.meta_rating')}: {_rating_text.get(rating, '—')}",
         ]
@@ -1039,17 +1096,21 @@ class DetailPanel(QWidget):
             self._val_focus.setText(txt)
             self._val_focus.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 12px; background: transparent;")
 
-        # 锐度（颜色跟随对焦状态）
-        sharp = p.get("adj_sharpness")
-        self._val_sharpness.setText(f"{sharp:.1f}" if sharp is not None else _unknown)
+        # 头部锐度（颜色跟随对焦状态）。与题注同口径：ISO 折算后、未乘对焦/飞鸟系数——
+        # 此前显示 adj_sharpness，与选片备注里的数字对不上（如 504 vs 560）。
+        # Same basis as the caption (ISO-normalized, no focus/flight factors);
+        # adj_sharpness used to disagree with the note's number.
+        sharp = display_head_sharpness(p)
+        self._val_sharpness.setText(f"{sharp:.0f}" if sharp is not None else _unknown)
         sharp_color = _FOCUS_COLORS.get(focus_raw, COLORS['text_primary'])
         self._val_sharpness.setStyleSheet(
             f"color: {sharp_color}; font-size: 13px; font-weight: 600; background: transparent;"
         )
 
-        # 美学分（靛紫）
-        topiq = p.get("adj_topiq")
-        self._val_aesthetic.setText(f"{topiq:.2f}" if topiq is not None else _unknown)
+        # 美学分（靛紫），与题注同口径：原始分，一位小数
+        # Aesthetics on the caption's basis: raw score, one decimal
+        topiq = display_aesthetic(p)
+        self._val_aesthetic.setText(f"{topiq:.1f}" if topiq is not None else _unknown)
         self._val_aesthetic.setStyleSheet(
             "color: #818cf8; font-size: 13px; font-weight: 600; background: transparent;"
         )
@@ -1065,10 +1126,9 @@ class DetailPanel(QWidget):
 
         # 鸟种（跟随界面语言）+ 显示铅笔编辑按钮
         # Bird species (follows UI language) + show pencil edit button.
-        if self.i18n.current_lang.startswith('en'):
-            species = p.get("bird_species_en") or p.get("bird_species_cn") or _unknown
-        else:
-            species = p.get("bird_species_cn") or p.get("bird_species_en") or _unknown
+        from tools.zh_convert import species_display
+        species = species_display(p.get("bird_species_cn"), p.get("bird_species_en"),
+                                  self.i18n.current_lang) or _unknown
         self._val_species.setText(species)
         self._val_species.setToolTip(species)
 
@@ -1149,7 +1209,7 @@ class DetailPanel(QWidget):
         self._val_datetime.setText(dt)
 
         # 选片备注（折叠区）
-        cap = p.get("caption") or _unknown
-        self._val_caption.setText(cap)
+        cap = p.get("caption")
+        self._val_caption.setText(caption_to_html(cap) if cap else _unknown)
         self._val_caption.setToolTip(cap)
         self._update_caption_toggle_label()

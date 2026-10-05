@@ -77,6 +77,13 @@ def _preshrink_if_large(img_array: np.ndarray) -> np.ndarray:
     return img_array
 
 
+
+
+def _t(key: str, **params) -> str:
+    """延迟导入 i18n，取当前界面语言的文案 / Lazily translate with the UI language."""
+    from tools.i18n import t
+    return t(key, **params)
+
 class IQAScorer:
     """IQA 评分器 - 使用 TOPIQ 美学评分"""
 
@@ -88,7 +95,7 @@ class IQAScorer:
             device: 计算设备 ('mps', 'cuda', 'cpu')
         """
         self.device = get_best_device()
-        print(f"🎨 IQA 评分器初始化中... (设备: {self.device})")
+        print(_t("logs.iqa_init", device=self.device))
 
         # 延迟加载模型（第一次使用时才加载）
         self._topiq_model = None
@@ -96,7 +103,7 @@ class IQAScorer:
         # V4.0.5: 复用 transform 实例，避免每次调用新建
         self._transform = T.ToTensor()
 
-        print("✅ IQA 评分器已就绪 (TOPIQ模型将在首次使用时加载)")
+        print(_t("logs.iqa_ready"))
 
     def _load_topiq(self):
         """延迟加载 TOPIQ 模型"""
@@ -119,7 +126,7 @@ class IQAScorer:
                     self._use_fp16 = False
                     
                 self._topiq_model.eval()
-                print("✅ TOPIQ 模型加载完成")
+                print(_t("logs.topiq_model_loaded"))
             except Exception as e:
                 raise RuntimeError(f"TOPIQ 模型加载失败: {e}")
         return self._topiq_model

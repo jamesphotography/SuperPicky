@@ -25,6 +25,7 @@ from typing import Dict, List, Optional, Tuple
 
 from PIL import Image, ImageOps
 
+from core.iso_sharpness import display_aesthetic, display_head_sharpness
 from core.rarity_tier import gbif_score_to_tier
 from tools.file_utils import sibling_jpeg
 
@@ -271,8 +272,9 @@ def _to_ref(row: dict) -> PhotoRef:
         path=path,
         rating=int(row.get("rating") or 0),
         picked=bool(row.get("picked")),
-        sharpness=row.get("adj_sharpness"),
-        aesthetic=row.get("adj_topiq"),
+        # 与浏览器详情、题注同口径（ISO 折算后的头部锐度、原始美学分）
+        sharpness=display_head_sharpness(row),
+        aesthetic=display_aesthetic(row),
         iso=row.get("iso"),
         shutter=row.get("shutter_speed"),
         aperture=row.get("aperture"),
@@ -950,9 +952,29 @@ class _ImageRegistry:
         return (f'<img data-lazy decoding="async" src="{uri}" '
                 f'alt="{_esc(alt)}"{cls}>')
 
+def _z(text: str) -> str:
+    """
+    报告里写死的中文在繁体 TW 界面下转成台湾正体（其余语言原样）。
+
+    Localize a hard-coded Simplified string for the zh_TW interface.
+    """
+    from tools.zh_convert import zh_text
+    return zh_text(text)
+
+
+def _cn_name(name: str) -> str:
+    """
+    中文鸟名按界面语言输出：繁体 TW 用台湾鸟名，其余原样。
+
+    Chinese species name for the UI language (Taiwan name in zh_TW).
+    """
+    from tools.zh_convert import species_cn
+    return species_cn(name) if name else name
+
+
 def _cover_html(data: ReportData, reg: _ImageRegistry, is_zh: bool) -> str:
     """封面：满幅大图 + 标题 + 地点 + 三个大数字（spec 5.1 ①）。"""
-    lab = ("总张数", "鸟种", "精选") if is_zh else ("Photos", "Species", "Picked")
+    lab = tuple(_z(x) for x in ("总张数", "鸟种", "精选")) if is_zh else ("Photos", "Species", "Picked")
     # 键用 path 不用 filename：必须与 collect_image_jobs 的 job_id 同构，
     # 且合并报告里不同子目录可能有同名文件，用文件名会互相顶替。
     # Key by path (not filename) to match collect_image_jobs and to keep
@@ -1020,7 +1042,8 @@ def _pick_bits(ref: PhotoRef, beauty: Optional[float], is_zh: bool) -> List[str]
     返回:
         List[str]: 已格式化的短语，缺数据的项不出现。
 
-    锐度与美学是**这张照片**的评分（adj_sharpness / adj_topiq），颜值是
+    锐度与美学是**这张照片**的评分（ISO 折算后的头部锐度 / 原始美学分，与浏览器详情、
+    题注同口径，见 core/iso_sharpness.py），颜值是
     **这个鸟种**的 iRateBird 指数。只挂在代表作上：副图各带一串数字会盖过画面。
 
     小数位数按各自的实际量程定，不能统一：
@@ -1035,7 +1058,7 @@ def _pick_bits(ref: PhotoRef, beauty: Optional[float], is_zh: bool) -> List[str]
     decimal (rounding flattens a whole batch to 5s and 6s) — matching the
     threshold scale users already see in the skill-level presets.
     """
-    labels = ("锐度", "美学", "颜值") if is_zh else ("Sharp", "Aesth", "Beauty")
+    labels = tuple(_z(x) for x in ("锐度", "美学", "颜值")) if is_zh else ("Sharp", "Aesth", "Beauty")
     out: List[str] = []
     if ref.sharpness:
         out.append(f"{labels[0]} {ref.sharpness:.0f}")
@@ -1236,8 +1259,8 @@ def _species_index_html(data: ReportData, is_zh: bool) -> str:
         return ""
     items = []
     for index, block in enumerate(data.species, 1):
-        primary = (block.name_cn or block.name_en) if is_zh else (
-            block.name_en or block.name_cn)
+        primary = (_cn_name(block.name_cn) or block.name_en) if is_zh else (
+            block.name_en or _cn_name(block.name_cn))
         items.append(f'<a href="#sp-{index}">{_esc(primary)}'
                      f'<span class="n">{block.count}</span></a>')
     sep = '<span class="sep">·</span>'
@@ -1257,13 +1280,13 @@ def _species_html(data: ReportData, reg: "_ImageRegistry", is_zh: bool) -> str:
 
     if not data.species:
         return ""
-    title = "本次鸟种" if is_zh else "Species"
-    unit = "张" if is_zh else " photos"
+    title = _z("本次鸟种") if is_zh else "Species"
+    unit = _z("张") if is_zh else " photos"
     out = [f'<section class="sec wrap"><h2>{title} ({len(data.species)})</h2>',
            _species_index_html(data, is_zh)]
     for index, block in enumerate(data.species, 1):
-        primary = block.name_cn if is_zh else block.name_en
-        secondary = block.name_en if is_zh else block.name_cn
+        primary = _cn_name(block.name_cn) if is_zh else block.name_en
+        secondary = block.name_en if is_zh else _cn_name(block.name_cn)
         badges = ""
         if block.tier is not None:
             color = _tier_color_on_dark(tier_name_color(block.tier))
@@ -1309,9 +1332,9 @@ def _stats_html(data: ReportData, is_zh: bool) -> str:
 
     Statistics section. Bars are plain CSS widths; no charting library.
     """
-    title = "数据" if is_zh else "Statistics"
+    title = _z("数据") if is_zh else "Statistics"
     labels = {5: "★★★★★", 4: "★★★★", 3: "★★★", 2: "★★", 1: "★", 0: "0",
-              -1: ("无鸟" if is_zh else "No bird")}
+              -1: (_z("无鸟") if is_zh else "No bird")}
     top = max(data.by_rating.values()) or 1
     bars = []
     for rating in (5, 4, 3, 2, 1, 0, -1):
@@ -1337,13 +1360,14 @@ def _stats_html(data: ReportData, is_zh: bool) -> str:
     gear = data.gear
     kv = []
     if is_zh:
-        kv.append(f'命中率 <b>{hit:.1f}%</b>')
+        kv.append(_z('命中率') + f' <b>{hit:.1f}%</b>')
         if data.flying:
-            kv.append(f'飞版 <b>{data.flying}</b>')
+            kv.append(_z('飞版') + f' <b>{data.flying}</b>')
         if data.focus_precise:
-            kv.append(f'精焦 <b>{data.focus_precise}</b>')
+            kv.append(_z('精焦') + f' <b>{data.focus_precise}</b>')
         if data.burst_groups:
-            kv.append(f'连拍 <b>{data.burst_groups}</b> 组 · 均 <b>{data.burst_avg:.1f}</b> 张')
+            kv.append(_z('连拍') + f' <b>{data.burst_groups}</b> ' + _z('组 · 均')
+                      + f' <b>{data.burst_avg:.1f}</b> ' + _z('张'))
     else:
         kv.append(f'Hit rate <b>{hit:.1f}%</b>')
         if data.flying:
@@ -1389,11 +1413,13 @@ def build_html(data: ReportData, encoded: Dict[str, str], *,
             + _species_html(data, reg, is_zh)
             + _stats_html(data, is_zh))
     title = _esc(data.dir_name) or "SuperPicky"
-    by = (f"由 SuperPicky {_esc(app_version)} 生成" if is_zh
+    by = (_z("由 SuperPicky {v} 生成").format(v=_esc(app_version)) if is_zh
           else f"Generated by SuperPicky {_esc(app_version)}")
-    pdf_label = "存为 PDF" if is_zh else "Save as PDF"
+    pdf_label = _z("存为 PDF") if is_zh else "Save as PDF"
+    from tools.zh_convert import is_taiwan
+    html_lang = ("zh-Hant-TW" if is_taiwan() else "zh-Hans") if is_zh else "en"
     return f"""<!DOCTYPE html>
-<html lang="{'zh-Hans' if is_zh else 'en'}">
+<html lang="{html_lang}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -1464,7 +1490,7 @@ def build_output_path(directory: str, dir_name: str, is_zh: bool,
     # 目录名可能含路径分隔符或非法字符，须净化，否则会穿出目标目录。
     # Sanitize: a name containing separators must not escape the target dir.
     safe = re.sub(r'[\\/:*?"<>|]', "_", dir_name).strip() or "report"
-    stem = (f"SuperPicky报告_{safe}_{today}" if is_zh
+    stem = (_z("SuperPicky报告_") + f"{safe}_{today}" if is_zh
             else f"SuperPicky-Report-{safe}-{today}")
     candidate = os.path.join(directory, stem + ".html")
     index = 2

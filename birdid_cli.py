@@ -18,7 +18,26 @@ from pathlib import Path
 
 # 确保模块路径正确
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from tools.i18n import t
+from tools.i18n import apply_saved_language, t
+
+
+def _display_name(cn_name: str, en_name: str) -> str:
+    """
+    屏幕上显示的鸟名：英文界面只显示英文名，中文界面显示「中文名 (英文名)」。
+
+    参数:
+    cn_name (str): 中文名
+    en_name (str): 英文名
+
+    返回:
+    str: 按界面语言组织的鸟名
+
+    Name shown on screen: English only in an English UI, "中文 (English)" otherwise.
+    """
+    from tools.i18n import get_i18n
+    if get_i18n().current_lang.startswith("en"):
+        return en_name or cn_name
+    return f"{cn_name} ({en_name})" if en_name else cn_name
 
 
 def print_banner():
@@ -142,7 +161,7 @@ def display_result(result: dict, verbose: bool = True):
         # 显示使用的模型
         model_name = result.get('model', 'birdid2024')
         if model_name == 'osea':
-            print("🤖 模型: OSEA (10,964 物种)")
+            print(t("cli.bid_model_osea"))
 
         if result.get('yolo_info'):
             print(t("cli.yolo_info", info=result['yolo_info']))
@@ -163,16 +182,16 @@ def display_result(result: dict, verbose: bool = True):
     
     print(t("cli.result_title", count=len(results)))
     for i, r in enumerate(results, 1):
-        cn_name = r.get('cn_name', '未知')
-        en_name = r.get('en_name', 'Unknown')
+        cn_name = r.get('cn_name', t("cli.bid_unknown"))
+        en_name = r.get('en_name', t("cli.bid_unknown"))
         confidence = r.get('confidence', 0)
         ebird_match = "✓eBird" if r.get('ebird_match') else ""
         scientific_name = r.get('scientific_name', '')
 
-        print(f"  {i}. {cn_name} ({en_name})")
+        print(f"  {i}. {_display_name(cn_name, en_name)}")
         if scientific_name:
-            print(f"     学名: {scientific_name}")
-        print(f"     置信度: {confidence:.1f}% {ebird_match}")
+            print(t("cli.bid_scientific_name", scientific_name=scientific_name))
+        print(t("cli.bid_confidence_line", confidence=confidence, ebird_match=ebird_match))
 
     return True
 
@@ -230,19 +249,19 @@ def cmd_identify(args):
     model_type = getattr(args, 'model', 'birdid2024')
     use_tta = getattr(args, 'tta', False)
 
-    print(f"\n📸 图片数量: {len(images)}")
-    print(f"🤖 模型: {model_type.upper()}" + (" + TTA" if model_type == 'osea' and use_tta else ""))
-    print(f"⚙️  YOLO裁剪: {'是' if args.yolo else '否'}")
+    print(t("cli.bid_image_count", count=len(images)))
+    print(t("cli.identify_model", model=model_type.upper()) + (" + TTA" if model_type == 'osea' and use_tta else ""))
+    print(t("cli.bid_yolo_crop", value=t("cli.yes") if args.yolo else t("cli.no")))
     if model_type == 'birdid2024':
-        print(f"⚙️  GPS自动检测: {'是' if args.gps else '否'}")
-        print(f"⚙️  eBird过滤: {'是' if args.ebird else '否'}")
+        print(t("cli.bid_gps_auto", value=t("cli.yes") if args.gps else t("cli.no")))
+        print(t("cli.bid_ebird_filter", value=t("cli.yes") if args.ebird else t("cli.no")))
         if args.country:
-            print(f"  └─ 国家: {args.country}")
+            print(t("cli.birdid_country", country=args.country))
         if args.region:
-            print(f"  └─ 区域: {args.region}")
-    print(f"⚙️  返回数量: {args.top}")
+            print(t("cli.birdid_region", region=args.region))
+    print(t("cli.bid_top", top=args.top))
     if args.write_exif:
-        print(f"⚙️  写入EXIF: 是 (阈值: {args.threshold}%)")
+        print(t("cli.bid_write_exif_on", threshold=args.threshold))
     print()
     
     # 批量模式
@@ -251,20 +270,20 @@ def cmd_identify(args):
     
     # 单张识别
     image_path = os.path.abspath(images[0])
-    print(f"📸 图片: {os.path.basename(image_path)}")
+    print(t("cli.bid_image", name=os.path.basename(image_path)))
     
-    print("🔍 正在识别...")
+    print(t("cli.identifying"))
     result = identify_single(args, image_path)
     
     success = display_result(result, verbose=True)
     
     # 写入 EXIF
     if args.write_exif and success:
-        print(f"\n📝 写入 EXIF...")
+        print(t("cli.writing_exif"))
         if write_exif(image_path, result, args.threshold):
-            print(f"  ✅ 已写入: {result['results'][0]['cn_name']}")
+            print(t("cli.written", name=result['results'][0]['cn_name']))
         else:
-            print(f"  ❌ 写入失败")
+            print(t("cli.write_failed"))
     
     print()
     return 0 if success else 1
@@ -273,7 +292,7 @@ def cmd_identify(args):
 def batch_identify(args, images: list):
     """批量识别"""
     print(f"{'═' * 60}")
-    print(f"  批量识别模式 - 共 {len(images)} 张图片")
+    print(t("cli.bid_batch_mode", count=len(images)))
     print(f"{'═' * 60}\n")
     
     stats = {
@@ -298,7 +317,8 @@ def batch_identify(args, images: list):
                 
                 # 显示 Top 1 结果
                 best = result['results'][0]
-                cn_name = best.get('cn_name', '未知')
+                cn_name = _display_name(best.get('cn_name', t("cli.bid_unknown")),
+                                        best.get('en_name', ''))
                 confidence = best.get('confidence', 0)
                 print(f"  → {cn_name} ({confidence:.1f}%)")
                 
@@ -311,33 +331,33 @@ def batch_identify(args, images: list):
                 if args.write_exif:
                     if write_exif(image_path, result, args.threshold):
                         stats['written'] += 1
-                        print(f"    ✅ 已写入EXIF")
+                        print(t("cli.bid_exif_written"))
             else:
                 stats['failed'] += 1
-                error = result.get('error', '无法识别')
+                error = result.get('error', t("cli.bid_not_identified"))
                 print(f"  ⚠️  {error}")
                 
         except Exception as e:
             stats['failed'] += 1
-            print(f"  ❌ 错误: {e}")
+            print(t("cli.bid_error", e=e))
     
     # 打印统计
     print(f"\n{'═' * 60}")
-    print(f"  批量识别完成")
+    print(t("cli.bid_batch_done"))
     print(f"{'═' * 60}")
-    print(f"\n📊 统计:")
-    print(f"  成功: {stats['success']}/{stats['total']}")
-    print(f"  失败: {stats['failed']}/{stats['total']}")
+    print(t("cli.bid_stats_title"))
+    print(t("cli.bid_success_count", success=stats['success'], total=stats['total']))
+    print(t("cli.bid_failed_count", failed=stats['failed'], total=stats['total']))
     if args.write_exif:
-        print(f"  写入EXIF: {stats['written']}")
+        print(t("cli.bid_written_count", written=stats['written']))
     
     if stats['species']:
-        print(f"\n🐦 识别到的物种 ({len(stats['species'])} 种):")
+        print(t("cli.bid_species_found", count=len(stats['species'])))
         sorted_species = sorted(stats['species'].items(), key=lambda x: -x[1])
         for species, count in sorted_species[:10]:
-            print(f"  • {species}: {count} 张")
+            print(t("cli.bid_species_line", species=species, count=count))
         if len(sorted_species) > 10:
-            print(f"  ... 以及 {len(sorted_species) - 10} 种其他物种")
+            print(t("cli.bid_more_species", count=len(sorted_species) - 10))
     
     print()
     return 0 if stats['failed'] < stats['total'] else 1
@@ -354,17 +374,17 @@ def cmd_organize(args):
     
     directory = os.path.abspath(args.directory)
     if not os.path.isdir(directory):
-        print(f"❌ 目录不存在: {directory}")
+        print(t("cli.dir_not_found", path=directory))
         return 1
     
-    print(f"\n📂 目录: {directory}")
-    print(f"⚙️  置信度阈值: {args.threshold}%")
-    print(f"⚙️  eBird过滤: {'是' if args.ebird else '否'}")
+    print(t("cli.bid_dir", directory=directory))
+    print(t("cli.bid_threshold", threshold=args.threshold))
+    print(t("cli.bid_ebird_filter", value=t("cli.yes") if args.ebird else t("cli.no")))
     if args.country:
-        print(f"  └─ 国家: {args.country}")
+        print(t("cli.birdid_country", country=args.country))
     if args.region:
-        print(f"  └─ 区域: {args.region}")
-    print(f"⚙️  写入EXIF: {'是' if args.write_exif else '否'}")
+        print(t("cli.birdid_region", region=args.region))
+    print(t("cli.bid_write_exif", value=t("cli.yes") if args.write_exif else t("cli.no")))
     
     # 扫描图片文件
     extensions = {'.jpg', '.jpeg', '.png', '.nef', '.arw', '.cr2', '.cr3', '.rw2', '.orf', '.dng', '.raf'}
@@ -377,19 +397,19 @@ def cmd_organize(args):
             images.append(os.path.join(directory, filename))
     
     if not images:
-        print("\n❌ 未找到图片文件")
+        print(t("cli.bid_no_images"))
         return 1
     
-    print(f"\n📸 找到 {len(images)} 个图片文件")
+    print(t("cli.bid_images_found", count=len(images)))
     
     if not args.yes:
-        confirm = input("\n⚠️  将按鸟种分目录，确定继续? [y/N]: ")
+        confirm = input(t("cli.bid_organize_confirm"))
         if confirm.lower() not in ['y', 'yes']:
-            print("❌ 已取消")
+            print(t("cli.cancelled"))
             return 1
     
     print(f"\n{'═' * 60}")
-    print(f"  开始批量识别并分类")
+    print(t("cli.bid_organize_start"))
     print(f"{'═' * 60}\n")
     
     # 用于记录移动操作的 manifest
@@ -427,15 +447,15 @@ def cmd_organize(args):
             
             if result['success'] and result.get('results'):
                 best = result['results'][0]
-                cn_name = best.get('cn_name', '未知')
-                en_name = best.get('en_name', 'Unknown')
+                cn_name = best.get('cn_name', t("cli.bid_unknown"))
+                en_name = best.get('en_name', t("cli.bid_unknown"))
                 confidence = best.get('confidence', 0)
                 
-                print(f"  → {cn_name} ({confidence:.1f}%)")
+                print(f"  → {_display_name(cn_name, en_name)} ({confidence:.1f}%)")
                 
                 # 检查置信度
                 if confidence < args.threshold:
-                    print(f"    ⚠️  置信度不足，跳过分类")
+                    print(t("cli.bid_low_conf_skip"))
                     stats['skipped'] += 1
                     continue
                 
@@ -456,7 +476,7 @@ def cmd_organize(args):
                 if not os.path.exists(new_path):
                     shutil.move(image_path, new_path)
                     stats['moved'] += 1
-                    print(f"    📂 移动到: {species_folder}/")
+                    print(t("cli.bid_moved_to", species_folder=species_folder))
                     
                     # 记录到 manifest
                     manifest['moves'].append({
@@ -481,42 +501,42 @@ def cmd_organize(args):
                         }
                         exiftool_mgr.set_metadata(new_path, metadata)
                 else:
-                    print(f"    ⚠️  目标文件已存在，跳过")
+                    print(t("cli.bid_target_exists"))
                     stats['skipped'] += 1
             else:
                 stats['failed'] += 1
-                print(f"  ⚠️  无法识别")
+                print(t("cli.bid_unidentified"))
                 
         except Exception as e:
             stats['failed'] += 1
-            print(f"  ❌ 错误: {e}")
+            print(t("cli.bid_error", e=e))
     
     # 保存 manifest
     if manifest['moves']:
         with open(manifest_path, 'w', encoding='utf-8') as f:
             json.dump(manifest, f, ensure_ascii=False, indent=2)
-        print(f"\n💾 已保存移动记录: .birdid_manifest.json")
+        print(t("cli.bid_manifest_saved"))
     
     # 打印统计
     print(f"\n{'═' * 60}")
-    print(f"  分类完成")
+    print(t("cli.bid_organize_done"))
     print(f"{'═' * 60}")
-    print(f"\n📊 统计:")
-    print(f"  总文件: {stats['total']}")
-    print(f"  已识别: {stats['identified']}")
-    print(f"  已移动: {stats['moved']}")
-    print(f"  跳过: {stats['skipped']}")
-    print(f"  失败: {stats['failed']}")
+    print(t("cli.bid_stats_title"))
+    print(t("cli.bid_total_files", total=stats['total']))
+    print(t("cli.bid_identified", identified=stats['identified']))
+    print(t("cli.bid_moved", moved=stats['moved']))
+    print(t("cli.bid_skipped", skipped=stats['skipped']))
+    print(t("cli.bid_failed", failed=stats['failed']))
     
     if stats['species']:
-        print(f"\n🐦 分类到 {len(stats['species'])} 个鸟种目录:")
+        print(t("cli.bid_species_folders", count=len(stats['species'])))
         sorted_species = sorted(stats['species'].items(), key=lambda x: -x[1])
         for species, count in sorted_species[:15]:
-            print(f"  • {species}/: {count} 张")
+            print(t("cli.bid_species_folder_line", species=species, count=count))
         if len(sorted_species) > 15:
-            print(f"  ... 以及 {len(sorted_species) - 15} 个其他鸟种目录")
+            print(t("cli.bid_more_folders", count=len(sorted_species) - 15))
     
-    print(f"\n💡 提示: 使用 'birdid_cli.py reset {directory}' 可恢复原始目录结构")
+    print(t("cli.bid_reset_hint", directory=directory))
     print()
     return 0
 
@@ -531,12 +551,12 @@ def cmd_reset(args):
     directory = os.path.abspath(args.directory)
     manifest_path = os.path.join(directory, '.birdid_manifest.json')
     
-    print(f"\n🔄 重置目录: {directory}")
+    print(t("cli.bid_reset_dir", directory=directory))
     
     # 检查 manifest
     if not os.path.exists(manifest_path):
-        print("\n❌ 未找到移动记录 (.birdid_manifest.json)")
-        print("   只能重置由 'birdid_cli.py organize' 命令创建的目录结构")
+        print(t("cli.bid_no_manifest"))
+        print(t("cli.bid_no_manifest_hint"))
         return 1
     
     # 加载 manifest
@@ -544,20 +564,20 @@ def cmd_reset(args):
         with open(manifest_path, 'r', encoding='utf-8') as f:
             manifest = json.load(f)
     except Exception as e:
-        print(f"\n❌ 无法读取移动记录: {e}")
+        print(t("cli.bid_manifest_read_failed", e=e))
         return 1
     
     moves = manifest.get('moves', [])
     if not moves:
-        print("\n⚠️  移动记录为空，无需重置")
+        print(t("cli.bid_manifest_empty"))
         return 0
     
-    print(f"\n📋 找到 {len(moves)} 条移动记录")
+    print(t("cli.bid_moves_found", count=len(moves)))
     
     if not args.yes:
-        confirm = input("\n⚠️  将恢复所有文件到原始位置，确定继续? [y/N]: ")
+        confirm = input(t("cli.bid_reset_confirm"))
         if confirm.lower() not in ['y', 'yes']:
-            print("❌ 已取消")
+            print(t("cli.cancelled"))
             return 1
     
     stats = {'restored': 0, 'skipped': 0, 'failed': 0}
@@ -581,16 +601,16 @@ def cmd_reset(args):
                 if not os.path.exists(original):
                     shutil.move(moved_to, original)
                     stats['restored'] += 1
-                    print(f"  ✅ 恢复: {os.path.basename(original)}")
+                    print(t("cli.bid_restored", name=os.path.basename(original)))
                     
                     # 记录可能为空的目录
                     empty_dirs.add(os.path.dirname(moved_to))
                 else:
                     stats['skipped'] += 1
-                    print(f"  ⚠️  跳过 (原位置已有文件): {os.path.basename(original)}")
+                    print(t("cli.bid_restore_skipped", name=os.path.basename(original)))
             except Exception as e:
                 stats['failed'] += 1
-                print(f"  ❌ 失败: {os.path.basename(original)} - {e}")
+                print(t("cli.bid_restore_failed", name=os.path.basename(original), e=e))
         else:
             stats['skipped'] += 1
     
@@ -610,20 +630,20 @@ def cmd_reset(args):
     if stats['restored'] > 0:
         try:
             os.remove(manifest_path)
-            print(f"\n🗑️  已删除移动记录")
+            print(t("cli.bid_manifest_deleted"))
         except:
             pass
     
     # 打印统计
     print(f"\n{'═' * 60}")
-    print(f"  重置完成")
+    print(t("cli.bid_reset_done"))
     print(f"{'═' * 60}")
-    print(f"\n📊 统计:")
-    print(f"  已恢复: {stats['restored']}")
-    print(f"  跳过: {stats['skipped']}")
-    print(f"  失败: {stats['failed']}")
+    print(t("cli.bid_stats_title"))
+    print(t("cli.bid_restored_count", restored=stats['restored']))
+    print(t("cli.bid_skipped", skipped=stats['skipped']))
+    print(t("cli.bid_failed", failed=stats['failed']))
     if removed_dirs > 0:
-        print(f"  清理空目录: {removed_dirs}")
+        print(t("cli.bid_empty_dirs_removed", removed_dirs=removed_dirs))
     
     print()
     return 0
@@ -632,7 +652,7 @@ def cmd_reset(args):
 def cmd_list_countries(args):
     """列出支持的国家代码"""
     print_banner()
-    print("\n🗺️  支持的国家代码 (部分):\n")
+    print(t("cli.bid_countries_title"))
     
     countries = [
         ("AU", "澳大利亚", "Australia"),
@@ -658,9 +678,9 @@ def cmd_list_countries(args):
     ]
     
     for code, cn, en in countries:
-        print(f"  {code:4} {cn} ({en})")
+        print(f"  {code:4} {_display_name(cn, en)}")
     
-    print(f"\n💡 提示: 完整列表请参考 eBird 网站: https://ebird.org/explore")
+    print(t("cli.bid_countries_hint"))
     print()
     return 0
 
@@ -679,90 +699,81 @@ def add_identify_arguments(parser, multi: bool = True):
     superpicky_cli so the two identify entry points stay in lockstep.
     """
     if multi:
-        parser.add_argument('images', nargs='+', help='图片文件路径 (支持 glob 模式)')
+        parser.add_argument('images', nargs='+', help=t("cli.bid_help_images"))
     else:
-        parser.add_argument('image', help='图片文件路径')
+        parser.add_argument('image', help=t("cli.bid_help_image"))
     parser.add_argument('-t', '--top', type=int, default=5,
-                        help='返回前 N 个结果 (默认: 5)')
+                        help=t("cli.bid_help_top"))
     # 模型选项
     parser.add_argument('--model', '-m', type=str, default='birdid2024',
                         choices=['birdid2024', 'osea'],
-                        help='选择模型: birdid2024 (默认) 或 osea')
+                        help=t("cli.bid_help_model"))
     parser.add_argument('--tta', action='store_true',
-                        help='启用 TTA 模式 (仅 OSEA 模型，更准但更慢)')
+                        help=t("cli.bid_help_tta"))
     # YOLO / GPS / eBird 选项
     parser.add_argument('--no-yolo', action='store_false', dest='yolo',
-                        help='禁用 YOLO 裁剪')
+                        help=t("cli.bid_help_no_yolo"))
     parser.add_argument('--no-gps', action='store_false', dest='gps',
-                        help='禁用 GPS 自动检测')
+                        help=t("cli.bid_help_no_gps"))
     parser.add_argument('--no-ebird', action='store_false', dest='ebird',
-                        help='禁用 eBird 区域过滤')
+                        help=t("cli.bid_help_no_ebird"))
     parser.add_argument('--country', '-c', type=str, default=None,
-                        help='手动指定国家代码 (如 AU, CN, US)')
+                        help=t("cli.bid_help_country"))
     parser.add_argument('--region', '-r', type=str, default=None,
-                        help='手动指定区域代码 (如 AU-SA, CN-31)')
+                        help=t("cli.bid_help_region"))
     # 写入选项
     parser.add_argument('--write-exif', '-w', action='store_true',
-                        help='将识别结果写入 EXIF (Title, Caption, Keywords)')
+                        help=t("cli.bid_help_write_exif"))
     parser.add_argument('--threshold', type=float, default=70.0,
-                        help='写入EXIF的置信度阈值 (默认: 70%%)')
+                        help=t("cli.bid_help_exif_threshold"))
     if multi:
         parser.add_argument('--batch', '-b', action='store_true',
-                            help='批量模式 (简化输出)')
+                            help=t("cli.bid_help_batch"))
     parser.set_defaults(yolo=True, gps=True, ebird=True)
 
 
 def main():
     """主入口"""
+    # 跟随「设置」里的界面语言 / follow the language chosen in Settings
+    apply_saved_language()
     parser = argparse.ArgumentParser(
         prog='birdid_cli',
         description=t("cli.bid_description"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  %(prog)s bird.jpg                        # 识别单张图片 (birdid2024)
-  %(prog)s bird.jpg --model osea           # 使用 OSEA 模型识别
-  %(prog)s bird.jpg --model osea --tta     # OSEA + TTA (更准但更慢)
-  %(prog)s bird.NEF --country AU           # 指定澳大利亚过滤 (birdid2024)
-  %(prog)s bird.jpg --region AU-SA         # 指定南澳州过滤
-  %(prog)s *.jpg --batch --write-exif      # 批量识别并写入EXIF
-  %(prog)s organize ~/Photos/Birds -y      # 按鸟种自动分目录
-  %(prog)s reset ~/Photos/Birds -y         # 恢复原始目录结构
-  %(prog)s list-countries                  # 列出国家代码
-        """
+        epilog=t("cli.bid_examples")
     )
     
-    subparsers = parser.add_subparsers(dest='command', help='可用命令')
+    subparsers = parser.add_subparsers(dest='command', help=t("cli.help_commands"))
     
     # ===== 识别命令 (默认) =====
-    p_identify = subparsers.add_parser('identify', help='识别鸟类 (默认)')
+    p_identify = subparsers.add_parser('identify', help=t("cli.bid_help_identify"))
     add_identify_arguments(p_identify, multi=True)
 
     # ===== 按鸟种分目录命令 =====
-    p_organize = subparsers.add_parser('organize', help='批量识别并按鸟种分目录')
-    p_organize.add_argument('directory', help='照片目录路径')
+    p_organize = subparsers.add_parser('organize', help=t("cli.bid_help_organize"))
+    p_organize.add_argument('directory', help=t("cli.help_directory"))
     p_organize.add_argument('--threshold', type=float, default=70.0,
-                           help='置信度阈值 (默认: 70%%)')
+                           help=t("cli.bid_help_organize_threshold"))
     p_organize.add_argument('--no-ebird', action='store_false', dest='ebird',
-                           help='禁用 eBird 区域过滤')
+                           help=t("cli.bid_help_no_ebird"))
     p_organize.add_argument('--country', '-c', type=str, default=None,
-                           help='手动指定国家代码 (如 AU, CN, US)')
+                           help=t("cli.bid_help_country"))
     p_organize.add_argument('--region', '-r', type=str, default=None,
-                           help='手动指定区域代码 (如 AU-SA, CN-31)')
+                           help=t("cli.bid_help_region"))
     p_organize.add_argument('--write-exif', '-w', action='store_true',
-                           help='同时写入 EXIF 元数据')
+                           help=t("cli.bid_help_also_write_exif"))
     p_organize.add_argument('-y', '--yes', action='store_true',
-                           help='跳过确认提示')
+                           help=t("cli.help_yes"))
     p_organize.set_defaults(ebird=True)
     
     # ===== 重置目录命令 =====
-    p_reset = subparsers.add_parser('reset', help='恢复原始目录结构')
-    p_reset.add_argument('directory', help='照片目录路径')
+    p_reset = subparsers.add_parser('reset', help=t("cli.bid_help_reset"))
+    p_reset.add_argument('directory', help=t("cli.help_directory"))
     p_reset.add_argument('-y', '--yes', action='store_true',
-                        help='跳过确认提示')
+                        help=t("cli.help_yes"))
     
     # ===== 列出国家命令 =====
-    p_list = subparsers.add_parser('list-countries', help='列出支持的国家代码')
+    p_list = subparsers.add_parser('list-countries', help=t("cli.bid_help_list_countries"))
     
     # 解析参数
     args = parser.parse_args()

@@ -307,11 +307,12 @@ class FilterPanel(QWidget):
         _narrow = {"2": 40, "1": 30, "nobird": 32}
         # 图标筹码 tooltip(图标无文字,用提示说明含义)
         _is_zh = not getattr(self.i18n, 'current_lang', 'zh_CN').startswith('en')
+        from tools.zh_convert import zh_text
         _tips = {
-            "3": "三星" if _is_zh else "3 stars",
-            "2": "二星" if _is_zh else "2 stars",
-            "1": "一星" if _is_zh else "1 star",
-            "nobird": "未选用:0星 / 无鸟" if _is_zh else "Unrated: 0★ / no bird",
+            "3": zh_text("三星") if _is_zh else "3 stars",
+            "2": zh_text("二星") if _is_zh else "2 stars",
+            "1": zh_text("一星") if _is_zh else "1 star",
+            "nobird": zh_text("未选用:0星 / 无鸟") if _is_zh else "Unrated: 0★ / no bird",
         }
 
         for mode, label, ratings in _RATING_OPTIONS:
@@ -574,8 +575,11 @@ class FilterPanel(QWidget):
         # 筛选、记忆当前选中项、与数据库比对全靠它。
         # Numbered for a species count at a glance; the item data stays the
         # bare name, since every lookup keys on it.
+        # 繁体 TW 界面：显示台湾鸟名，itemData 仍是库里的简体名
+        # zh_TW UI shows Taiwan names; itemData keeps the stored Simplified name.
+        from tools.zh_convert import species_cn
         for number, sp in enumerate(species, 1):
-            self.species_combo.addItem(f"{number}. {sp}", sp)
+            self.species_combo.addItem(f"{number}. {species_cn(sp, self.i18n.current_lang)}", sp)
         if has_other:
             # 与磁盘上的「其他鸟类」目录同名，让下拉和目录结构对得上
             # Same label as the on-disk folder so the two line up.

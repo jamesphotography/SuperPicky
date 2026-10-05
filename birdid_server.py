@@ -127,7 +127,8 @@ def update_gui_settings_from_gps(country_code: str, subnational_code: Optional[s
             region_display = geo.display_name(subnational_code, english) if subnational_code else ""
         else:
             en_name, zh_name = country_display_names(country_code)
-            country_display = en_name if english else zh_name
+            from tools.zh_convert import zh_text
+            country_display = en_name if english else zh_text(zh_name)
             region_display = subnational_code or ""
         cfg.set_birdid_region(
             cfg.birdid_use_geo_filter,
@@ -357,17 +358,18 @@ def recognize_bird():
         formatted_results = []
         
         # 获取语言设置，决定 display_name 使用中文还是英文
-        gui_language = get_gui_language()
-        use_chinese = gui_language is None or gui_language == 'zh_CN'
-        
+        # 未设置语言时按简体中文；繁体 TW 时 display_name 用台湾鸟名（此前只认 zh_CN，
+        # 繁体会被当成英文）。cn_name 字段保持简体原值。
+        # Unset → Simplified; zh_TW gets the Taiwan name in display_name
+        # (previously only zh_CN counted as Chinese). cn_name stays Simplified.
+        from tools.zh_convert import species_display
+        gui_language = get_gui_language() or 'zh_CN'
+
         for i, r in enumerate(result.get('results', []), 1):
             cn_name = r.get('cn_name', '')
             en_name = r.get('en_name', '')
             # 根据语言设置选择 display_name
-            if use_chinese:
-                display_name = cn_name if cn_name else en_name
-            else:
-                display_name = en_name if en_name else cn_name
+            display_name = species_display(cn_name, en_name, gui_language)
             
             formatted_results.append({
                 'rank': i,

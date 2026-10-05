@@ -473,9 +473,8 @@ def find_processed_subdirs(root_dir: str) -> List[str]:
 
     for root, subdirs, files in os.walk(root_dir):
         subdirs[:] = [d for d in subdirs if not d.startswith('.') and not d.startswith('burst_')]
-        from constants import RATING_FOLDER_NAMES, RATING_FOLDER_NAMES_EN
-        star_names = set(RATING_FOLDER_NAMES.values()) | set(RATING_FOLDER_NAMES_EN.values())
-        subdirs[:] = [d for d in subdirs if d not in star_names]
+        from constants import ALL_RATING_FOLDER_NAMES
+        subdirs[:] = [d for d in subdirs if d not in ALL_RATING_FOLDER_NAMES]
 
         for d in subdirs:
             full = os.path.join(root, d)

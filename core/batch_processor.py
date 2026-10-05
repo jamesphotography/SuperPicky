@@ -12,6 +12,7 @@ import time
 from typing import Callable, Dict, List, Optional, Sequence, Union
 from dataclasses import dataclass, field
 
+from tools.i18n import t
 from core.recursive_scanner import DEFAULT_SCAN_MAX_DEPTH, ScannedDirectory, count_photos, is_processed, scan_directories
 
 
@@ -94,7 +95,7 @@ class BatchProcessor:
             
             # 增量跳过
             if self.skip_existing and is_processed(dir_path):
-                self.log(f"\n⏭️  [{i}/{len(normalized_dirs)}] 跳过已处理: {dir_name} ({photo_count} 张)")
+                self.log(t("cli.batch_skip_processed", i=i, count=len(normalized_dirs), dir_name=dir_name, photo_count=photo_count))
                 result.skipped_dirs += 1
                 result.dir_results.append({
                     'dir': dir_name,
@@ -104,7 +105,7 @@ class BatchProcessor:
                 continue
             
             self.log(f"\n{'━' * 60}")
-            self.log(f"📂 [{i}/{len(normalized_dirs)}] 处理: {dir_name} ({photo_count} 张)")
+            self.log(t("cli.batch_processing_dir", i=i, count=len(normalized_dirs), dir_name=dir_name, photo_count=photo_count))
             self.log(f"{'━' * 60}")
             
             dir_start = time.time()
@@ -131,12 +132,7 @@ class BatchProcessor:
                 dir_time = time.time() - dir_start
                 stats = proc_result.stats
                 
-                self.log(f"\n  ✅ 完成 ({dir_time:.1f}s): "
-                         f"3★={stats.get('star_3', 0)} "
-                         f"2★={stats.get('star_2', 0)} "
-                         f"1★={stats.get('star_1', 0)} "
-                         f"0★={stats.get('star_0', 0)} "
-                         f"无鸟={stats.get('no_bird', 0)}")
+                self.log(t("cli.batch_dir_done", dir_time=dir_time, s3=stats.get('star_3', 0), s2=stats.get('star_2', 0), s1=stats.get('star_1', 0), s0=stats.get('star_0', 0), no_bird=stats.get('no_bird', 0)))
                 
                 result.processed_dirs += 1
                 result.total_photos += stats.get('total', 0)
@@ -154,7 +150,7 @@ class BatchProcessor:
                 
             except Exception as e:
                 dir_time = time.time() - dir_start
-                self.log(f"\n  ❌ 失败 ({dir_time:.1f}s): {e}")
+                self.log(t("cli.batch_dir_failed", dir_time=dir_time, e=e))
                 result.failed_dirs += 1
                 result.dir_results.append({
                     'dir': dir_name,
@@ -193,21 +189,21 @@ class BatchProcessor:
             with open(report_path, 'w', encoding='utf-8') as f:
                 json.dump(report, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            self.log(f"⚠️  汇总报告保存失败: {e}")
+            self.log(t("cli.batch_report_save_failed", e=e))
     
     def _print_summary(self, result: BatchResult):
         """打印批量处理汇总"""
         self.log(f"\n{'═' * 60}")
-        self.log(f"📊 批量处理汇总")
+        self.log(t("cli.batch_summary_title"))
         self.log(f"{'═' * 60}")
-        self.log(f"  目录总数: {result.total_dirs}")
-        self.log(f"  已处理:   {result.processed_dirs}")
+        self.log(t("cli.batch_total_dirs", total_dirs=result.total_dirs))
+        self.log(t("cli.batch_processed_dirs", processed_dirs=result.processed_dirs))
         if result.skipped_dirs > 0:
-            self.log(f"  已跳过:   {result.skipped_dirs}")
+            self.log(t("cli.batch_skipped_dirs", skipped_dirs=result.skipped_dirs))
         if result.failed_dirs > 0:
-            self.log(f"  失败:     {result.failed_dirs}")
-        self.log(f"  照片总数: {result.total_photos}")
-        self.log(f"  总耗时:   {result.total_time:.1f}s")
+            self.log(t("cli.batch_failed_dirs", failed_dirs=result.failed_dirs))
+        self.log(t("cli.batch_total_photos", total_photos=result.total_photos))
+        self.log(t("cli.batch_total_time", total_time=result.total_time))
         
         # 汇总各星级
         totals = {'star_3': 0, 'star_2': 0, 'star_1': 0, 'star_0': 0, 'no_bird': 0}
@@ -216,9 +212,9 @@ class BatchProcessor:
                 for key in totals:
                     totals[key] += d.get(key, 0)
         
-        self.log(f"\n  ⭐ 评分汇总:")
-        self.log(f"    3★ 优选: {totals['star_3']}")
-        self.log(f"    2★ 良好: {totals['star_2']}")
-        self.log(f"    1★ 普通: {totals['star_1']}")
-        self.log(f"    0★ 放弃: {totals['star_0']}")
-        self.log(f"    无鸟:    {totals['no_bird']}")
+        self.log(t("cli.batch_rating_summary"))
+        self.log(t("cli.batch_star3", star_3=totals['star_3']))
+        self.log(t("cli.batch_star2", star_2=totals['star_2']))
+        self.log(t("cli.batch_star1", star_1=totals['star_1']))
+        self.log(t("cli.batch_star0", star_0=totals['star_0']))
+        self.log(t("cli.batch_no_bird", no_bird=totals['no_bird']))

@@ -69,11 +69,14 @@ def test_keywords_end_to_end_merge_and_idempotent(monkeypatch):
         # 固定为 embedded，隔离用户的全局 metadata_write_mode 设置。
         # 本测试断言关键字写进 JPEG 本体后能读回；若用户把该设置改成 sidecar，
         # 关键字会写进 .xmp 边车，读本体自然为空——那是合法配置而非缺陷。
-        # 用 monkeypatch 而非直接赋值：这里拿到的是全局单例，必须在用例结束后还原。
+        # 打在**类**上而不是单例实例上：pytest 撤销实例级补丁时会把原方法写回实例
+        # __dict__，永久遮住后续测试的类级补丁（test_exiftool_write_mode_none 合跑必挂）。
         # Pin embedded so the user's global metadata_write_mode cannot flip the
-        # result (sidecar mode writes to a .xmp instead of the JPEG). monkeypatch
-        # is used because this is the shared singleton and must be restored.
-        monkeypatch.setattr(mgr, "_get_metadata_write_mode", lambda: "embedded")
+        # result. Patch the CLASS: undoing an instance-level patch leaves a
+        # shadowing instance attribute that broke later class-level patches.
+        from tools.exiftool_manager import ExifToolManager
+        monkeypatch.setattr(ExifToolManager, "_get_metadata_write_mode",
+                            lambda self: "embedded")
         for _ in range(2):  # 第二次验证幂等 / second pass proves idempotency
             stats = mgr.batch_set_metadata([{"file": jpg, "keywords": ["白胸鸲鹟"]}])
             assert stats["failed"] == 0

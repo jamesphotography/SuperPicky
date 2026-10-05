@@ -159,12 +159,18 @@ def tier_name(tier_index: Optional[int], is_zh: bool = True) -> str:
     """
     tier 索引 → 中/英文 tier 名。
 
+    中文名在繁体 TW 界面下自动转成台湾正体。
+
     Returns the tier label for the given index, in Chinese (is_zh=True)
-    or English. Returns "—" when tier_index is None.
+    or English. Returns "—" when tier_index is None. Chinese labels are
+    converted to Taiwan Traditional when the interface language is zh_TW.
     """
     if tier_index is None or not (0 <= tier_index < 5):
         return "—"
-    return (TIER_NAMES_ZH if is_zh else TIER_NAMES_EN)[tier_index]
+    if not is_zh:
+        return TIER_NAMES_EN[tier_index]
+    from tools.zh_convert import zh_text
+    return zh_text(TIER_NAMES_ZH[tier_index])
 
 
 def tier_icon(tier_index: Optional[int]) -> str:
