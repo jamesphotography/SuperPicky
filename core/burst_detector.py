@@ -630,13 +630,13 @@ class BurstDetector:
         
         Args:
             directory: 主目录路径
-            rating_dirs: 评分子目录列表（默认 ['3星_优选', '2星_良好']）
+            rating_dirs: 评分子目录列表（默认简体/繁体 TW 的 3星、2星目录）
             
         Returns:
             完整结果
         """
         if rating_dirs is None:
-            rating_dirs = ['3星_优选', '2星_良好']
+            rating_dirs = ['3星_优选', '3星_優選', '2星_良好']
         
         results = {
             'total_photos': 0,

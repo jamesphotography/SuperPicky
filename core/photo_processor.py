@@ -48,6 +48,7 @@ from core.burst_species import BirdIdOutcome, reconcile_burst_species
 from tools.species_display import UNCONFIRMED_SPECIES_MIN_CONFIDENCE
 
 from constants import RATING_FOLDER_NAMES, RAW_EXTENSIONS, JPG_EXTENSIONS, HEIF_EXTENSIONS, get_rating_folder_names
+from tools.zh_convert import species_display, species_folder_name, zh_text
 
 # 国际化
 from tools.i18n import get_i18n
@@ -915,10 +916,9 @@ class PhotoProcessor:
                         # species directory the DB-driven results browser cannot show.
                         if bird_info.get('low_confidence'):
                             continue
-                        if self.i18n.current_lang.startswith('en'):
-                            bird_species_name = bird_info.get('en_name', '').replace(' ', '_')
-                        else:
-                            bird_species_name = bird_info.get('cn_name', '')
+                        bird_species_name = species_folder_name(
+                            bird_info.get('cn_name'), bird_info.get('en_name'),
+                            self.i18n.current_lang)
                         if bird_species_name:
                             break
             # 如果最高星级照片没有鸟种，查找其他任意照片
@@ -935,10 +935,9 @@ class PhotoProcessor:
                         # species directory the DB-driven results browser cannot show.
                         if bird_info.get('low_confidence'):
                             continue
-                        if self.i18n.current_lang.startswith('en'):
-                            bird_species_name = bird_info.get('en_name', '').replace(' ', '_')
-                        else:
-                            bird_species_name = bird_info.get('cn_name', '')
+                        bird_species_name = species_folder_name(
+                            bird_info.get('cn_name'), bird_info.get('en_name'),
+                            self.i18n.current_lang)
                         if bird_species_name:
                             break
 
@@ -1456,15 +1455,15 @@ class PhotoProcessor:
                 species_title_targets[file_prefix] = list(title_targets)
             bird_prefixes.add(file_prefix)
 
-            is_en = self.i18n.current_lang.startswith('en')
+            ui_lang = self.i18n.current_lang
             if outcome.confidence >= self.settings.birdid_confidence_threshold:
-                bird_log = (outcome.en_name or outcome.cn_name) if is_en else (outcome.cn_name or outcome.en_name)
+                bird_log = species_display(outcome.cn_name, outcome.en_name, ui_lang)
                 # V4.2.7: 跟随鸟名输出 GBIF 罕见度 tier（5 级圆形充填图标 + 中英文）
                 # V4.2.7: Append GBIF rarity tier to the bird-id log line.
                 _tier_idx, tier_suffix = birdid_tier(outcome.gbif_rarity_100)
                 self._log(f"  🐦 Bird ID [{source_display}]: {bird_log} ({outcome.confidence:.0f}%){tier_suffix}", "species")
             else:
-                low_conf_name = (outcome.en_name or outcome.cn_name) if is_en else (outcome.cn_name or outcome.en_name)
+                low_conf_name = species_display(outcome.cn_name, outcome.en_name, ui_lang)
                 self._log(self.i18n.t(
                     "logs.birdid_low_confidence",
                     source=source_display,
@@ -1506,10 +1505,9 @@ class PhotoProcessor:
             aesthetic_index = outcome.aesthetic_index
 
             if birdid_confidence >= self.settings.birdid_confidence_threshold:
-                if self.i18n.current_lang.startswith('en'):
-                    bird_title = en_name or cn_name
-                else:
-                    bird_title = cn_name or en_name
+                # 写进照片标题/关键词的鸟名跟随界面语言（繁体 TW 用台湾鸟名）
+                # Title/keyword species name follows the UI language (Taiwan name in zh_TW).
+                bird_title = species_display(cn_name, en_name, self.i18n.current_lang)
                 tier_idx, _tier_suffix = birdid_tier(gbif_rarity_100)
 
                 species_entry = {'cn_name': cn_name, 'en_name': en_name}
@@ -1589,7 +1587,7 @@ class PhotoProcessor:
                         queue_metadata(meta_item)
             else:
                 # 低置信度：将候选鸟名存入 file_bird_species 供 caption 使用
-                low_conf_name = (en_name or cn_name) if self.i18n.current_lang.startswith('en') else (cn_name or en_name)
+                low_conf_name = species_display(cn_name, en_name, self.i18n.current_lang)
                 if cn_name:
                     self.file_bird_species[file_prefix] = {
                         'cn_name': cn_name,
@@ -3217,13 +3215,12 @@ class PhotoProcessor:
                 float(self.settings.birdid_confidence_threshold),
             )
             unified_source: Dict[str, str] = {}
-            is_en_log = self.i18n.current_lang.startswith('en')
             for record in unifications:
                 source = birdid_sources.get(record.winner_prefix, record.winner_prefix)
                 for changed_prefix in record.changed:
                     unified_source[changed_prefix] = source
-                winner_name = ((record.winner.en_name or record.winner.cn_name) if is_en_log
-                               else (record.winner.cn_name or record.winner.en_name))
+                winner_name = species_display(record.winner.cn_name, record.winner.en_name,
+                                              self.i18n.current_lang)
                 self._log(self.i18n.t(
                     "logs.burst_species_unified",
                     group=record.group_id,
@@ -3313,10 +3310,9 @@ class PhotoProcessor:
                     facts.species_confidence = bird_info.get('confidence')
                     facts.species_low_confidence = bool(bird_info.get('low_confidence'))
                     if facts.species_low_confidence:
-                        is_en = self.i18n.current_lang.startswith('en')
-                        facts.species_candidate = (
-                            (bird_info.get('en_name') or bird_info.get('cn_name')) if is_en
-                            else (bird_info.get('cn_name') or bird_info.get('en_name')))
+                        facts.species_candidate = species_display(
+                            bird_info.get('cn_name'), bird_info.get('en_name'),
+                            self.i18n.current_lang)
                     final_caption = build_caption(facts, self.i18n.t)
                     self._caption_facts[prefix] = facts
                 for item in pend['items']:
@@ -3360,14 +3356,13 @@ class PhotoProcessor:
             # 按鸟种打一行 3星/池内 分布(仅当存在识鸟结果时)
             # Per-species "3-star / pool" breakdown (only when species exist)
             if any(pend['metrics'].species for pend in v2_pending.values()):
-                is_zh = not self.i18n.current_lang.startswith('en')
-                unknown_label = "未识别" if is_zh else "unknown"
+                ui_lang = self.i18n.current_lang
+                unknown_label = "unknown" if ui_lang.startswith('en') else zh_text("未识别", ui_lang)
                 sp_stats: Dict[str, list] = {}
                 for prefix, pend in v2_pending.items():
                     info = self.file_bird_species.get(prefix)
                     if info:
-                        name = (info.get('cn_name') if is_zh else info.get('en_name')) \
-                            or info.get('en_name') or info.get('cn_name')
+                        name = species_display(info.get('cn_name'), info.get('en_name'), ui_lang)
                     else:
                         name = unknown_label
                     entry = sp_stats.setdefault(name, [0, 0])
@@ -3481,17 +3476,16 @@ class PhotoProcessor:
         if not tier_groups and not no_tier:
             return
 
-        is_zh = not self.i18n.current_lang.startswith('en')
-        tier_names = TIER_NAMES_ZH if is_zh else TIER_NAMES_EN
-        primary_key = 'cn_name' if is_zh else 'en_name'
-        fallback_key = 'en_name' if is_zh else 'cn_name'
+        ui_lang = self.i18n.current_lang
+        is_zh = not ui_lang.startswith('en')
+        tier_names = [zh_text(n, ui_lang) for n in TIER_NAMES_ZH] if is_zh else TIER_NAMES_EN
 
         def _name(entry: Dict) -> str:
-            return entry.get(primary_key) or entry.get(fallback_key) or '?'
+            return species_display(entry.get('cn_name'), entry.get('en_name'), ui_lang) or '?'
 
-        header = "🐦 鸟种罕见度分布:" if is_zh else "🐦 Species rarity breakdown:"
-        unit = "种" if is_zh else "spp."
-        unknown_label = "未知" if is_zh else "unknown"
+        header = zh_text("🐦 鸟种罕见度分布:", ui_lang) if is_zh else "🐦 Species rarity breakdown:"
+        unit = zh_text("种", ui_lang) if is_zh else "spp."
+        unknown_label = zh_text("未知", ui_lang) if is_zh else "unknown"
 
         self._log("")
         self._log(header)
@@ -3892,12 +3886,10 @@ class PhotoProcessor:
         Remove organizer folders left empty at the end of a run; failures are
         logged, never fatal.
         """
-        from constants import RATING_FOLDER_NAMES, RATING_FOLDER_NAMES_EN
+        from constants import ALL_RATING_FOLDER_NAMES
         from core.folder_cleanup import prune_organized_folders
         try:
-            removed = prune_organized_folders(
-                self.dir_path,
-                set(RATING_FOLDER_NAMES.values()) | set(RATING_FOLDER_NAMES_EN.values()))
+            removed = prune_organized_folders(self.dir_path, set(ALL_RATING_FOLDER_NAMES))
         except Exception as e:
             self._log(self.i18n.t("logs.empty_folder_cleanup_failed", error=e), "warning")
             return
@@ -3920,10 +3912,9 @@ class PhotoProcessor:
                 if rating >= 2:
                     bird_info = self.file_bird_species.get(prefix)
                     if bird_info and not bird_info.get('low_confidence'):
-                        if self.i18n.current_lang.startswith('en'):
-                            bird_name = bird_info.get('en_name', '').replace(' ', '_')
-                        else:
-                            bird_name = bird_info.get('cn_name', '')
+                        bird_name = species_folder_name(
+                            bird_info.get('cn_name'), bird_info.get('en_name'),
+                            self.i18n.current_lang)
                         if not bird_name:
                             bird_name = (
                                 bird_info.get('cn_name', '')

@@ -38,7 +38,8 @@
     "recent_dirs_clear": "清除历史记录",
     "recent_dirs_offline": "(脱机)",
     "video_analysis": "视频分析…",
-    "video_menu": "视频"
+    "video_menu": "视频",
+    "lang_tw": "繁體中文 TW"
   },
   "buttons": {
     "select_dir": "📁 选择照片目录",
@@ -392,7 +393,14 @@
     "iqa_init": "🎨 IQA 评分器初始化中... (设备: {device})",
     "iqa_ready": "✅ IQA 评分器已就绪 (TOPIQ 模型将在首次使用时加载)",
     "topiq_model_loaded": "✅ TOPIQ 模型加载完成",
-    "exif_sidecar_mode": "[ExifTool] 元数据写入模式为侧车，所有文件统一写 XMP 侧车 ({count} 条)"
+    "exif_sidecar_mode": "[ExifTool] 元数据写入模式为侧车，所有文件统一写 XMP 侧车 ({count} 条)",
+    "batch_reset_subdirs": "\n📂 批量复原：{count} 个子目录",
+    "batch_reset_sub_item": "\n🔄 [{idx}/{total}] {rel}/",
+    "batch_reset_sub_done": "  ✅ {rel}/ 复原完成",
+    "batch_reset_sub_failed": "  ❌ {rel}/ 复原失败：{error}",
+    "reset_dir_has_leftovers": "仍有残留文件，保留: {sample}",
+    "reset_cache_delete_failed": "  ⚠️ .superpicky 删除失败: {error}",
+    "reset_cache_kept": "  ✅ .superpicky/ 缓存已保留（快速复原：预览图复用）"
   },
   "server": {
     "server_already_running": "✅ 服务器已在端口 {port} 运行",
@@ -574,7 +582,9 @@
     "birdid_region_hint": "有 GPS 的照片按拍摄地自动判断省/州或国家；这里的选择只对没有 GPS 的照片生效",
     "geo_attribution": "鸟类区域清单 - eBird（康奈尔鸟类学实验室），获取于 {fetched_at}，依 eBird API 使用条款提供；行政区边界 - Natural Earth（公有领域）",
     "telemetry_label": "发送匿名使用统计",
-    "telemetry_desc": "发送版本号、操作系统、语言与一个每日变更的随机编号等，用于了解有多少人在使用。不含任何照片、文件路径或个人信息。"
+    "telemetry_desc": "发送版本号、操作系统、语言与一个每日变更的随机编号等，用于了解有多少人在使用。不含任何照片、文件路径或个人信息。",
+    "language_label": "界面语言 · Language",
+    "language_auto": "跟随系统"
   },
   "advanced_settings": {
     "title": "参数设置",
@@ -1026,7 +1036,10 @@
     "screenshot_permission_later": "稍后再说",
     "screenshot_hotkey_failed": "截图快捷键发送失败: {error}",
     "geo_tier_subnational": "🗺️ 按省/州过滤：{region}（{count} 种）",
-    "species_unconfirmed": "{name}（待确定 {confidence}%）"
+    "species_unconfirmed": "{name}（待确定 {confidence}%）",
+    "sc_unavailable": "screencapture 不可用",
+    "sc_empty_file": "截图文件为空，请检查系统设置 > 隐私与安全性 > 屏幕录制权限",
+    "sc_save_failed": "截图保存失败"
   },
   "rating_engine": {
     "reject_no_bird": "未检测到鸟类",
@@ -1630,7 +1643,9 @@
     "merge_batch_sep": "、",
     "merge_batch_more": "另 {n} 个",
     "merge_folders_label": "目标目录",
-    "merge_folders_label_merged": "目标目录（各批次下）"
+    "merge_folders_label_merged": "目标目录（各批次下）",
+    "ctx_show_in_explorer": "在资源管理器中显示",
+    "delete_multi_msg": "将选中的 {count} 张图片移入回收站？\n\n❗ 此操作会同时从数据库删除记录，恢复文件后需重新处理。"
   },
   "video": {
     "title_phase1": "视频分析（Phase 1 · 仅 YOLO 有鸟/无鸟）",

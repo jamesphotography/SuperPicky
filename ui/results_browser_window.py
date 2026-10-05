@@ -308,12 +308,13 @@ def _burst_totals_from_photos(photos: list) -> Counter:
 
 def _photo_bird_name(photo: dict, i18n) -> str:
     """
-    按界面语言从 photo dict 取鸟种名，供 compute_target_folder 使用。
-    Return the species name in the UI language for folder-name computation.
+    按界面语言从 photo dict 取鸟种目录名，供 compute_target_folder 使用；
+    与处理流程建目录的规则一致（英文空格换下划线，繁体 TW 用台湾鸟名）。
+    Return the species folder name in the UI language, matching the pipeline.
     """
-    use_en = i18n.current_lang.startswith("en")
-    key = "bird_species_en" if use_en else "bird_species_cn"
-    return (photo.get(key) or "").strip()
+    from tools.zh_convert import species_folder_name
+    return species_folder_name(photo.get("bird_species_cn"), photo.get("bird_species_en"),
+                               i18n.current_lang)
 
 
 def _trigger_rating_move(
@@ -678,9 +679,9 @@ def _species_metadata_title(bird_cn: str, bird_en: str) -> str:
 
     Pick the species name written to metadata, matching the main pipeline.
     """
-    if get_i18n().current_lang.startswith('en'):
-        return (bird_en or bird_cn or "").strip()
-    return (bird_cn or bird_en or "").strip()
+    from tools.zh_convert import species_display
+    return species_display((bird_cn or "").strip(), (bird_en or "").strip(),
+                           get_i18n().current_lang).strip()
 
 
 def _write_species_metadata(
@@ -1195,7 +1196,7 @@ def _build_context_menu(parent_widget, photo: dict, directory: str):
 
     _i18n = get_i18n()
     if sys.platform == "win32":
-        reveal_label = "在资源管理器中显示" if not _i18n.current_lang.startswith('en') else "Show in Explorer"
+        reveal_label = _i18n.t('browser.ctx_show_in_explorer')
     else:
         reveal_label = _i18n.t('browser.ctx_show_in_finder')
     finder_action = QAction(reveal_label, parent_widget)
@@ -1229,10 +1230,14 @@ def _build_context_menu(parent_widget, photo: dict, directory: str):
     # 没有鸟名的照片无种可合并,不显示该项。
     # Whole-species merge: retag every photo of this species at once.
     # Hidden for photos without a species (nothing to merge).
-    merge_species_name = (
-        photo.get("bird_species_en") if _i18n.current_lang.startswith("en")
-        else photo.get("bird_species_cn")
-    ) or ""
+    from tools.zh_convert import species_display
+    merge_species_name = species_display(
+        photo.get("bird_species_cn"), photo.get("bird_species_en"), _i18n.current_lang)
+    # 保持原语义：只看界面语言对应的那个名字，缺了就不显示「整种合并」
+    # Keep prior semantics: hide the merge item when the UI-language name is missing.
+    if not (photo.get("bird_species_en") if _i18n.current_lang.startswith("en")
+            else photo.get("bird_species_cn")):
+        merge_species_name = ""
     if merge_species_name:
         merge_action = QAction(
             _i18n.t('browser.ctx_merge_species').format(species=merge_species_name),
@@ -2781,6 +2786,11 @@ class ResultsBrowserWindow(QMainWindow):
         ) or ""
         if not old_name or not self._db:
             return
+        if not use_en:
+            # 弹窗里显示台湾鸟名（繁体 TW）；old_name 此后只用于显示
+            # Show the Taiwan name in zh_TW; old_name is display-only from here.
+            from tools.zh_convert import species_cn
+            old_name = species_cn(old_name)
 
         # 1. 收集全部同鸟种照片（_all_photos 存的是相对路径，必须先解析成绝对路径）
         resolved_pool = [self._resolve_photo_paths(p) for p in self._all_photos]
@@ -2798,11 +2808,17 @@ class ResultsBrowserWindow(QMainWindow):
         new_en = dialog.selected_en
         if not new_cn and not new_en:
             return
-        new_name = (new_en if use_en else new_cn) or ""
+        # 显示名（繁体 TW 用台湾鸟名）与目录名分开取：目录名必须与 rating_mover
+        # 实际移动时的规则一致（英文空格换下划线），预览才不会和真实目录对不上。
+        # Display name vs folder name: the folder preview must use the same
+        # rule rating_mover applies when it actually moves files.
+        from tools.zh_convert import species_cn, species_folder_name
+        new_name = (new_en if use_en else species_cn(new_cn or "")) or ""
 
         # 3. 确认：把张数、连拍组数、涉及的批次和真实目标目录摆出来再动手
         layout = get_advanced_config().folder_layout
-        folders = _merge_target_folders(targets, new_name, layout)
+        folders = _merge_target_folders(
+            targets, species_folder_name(new_cn, new_en, i18n.current_lang), layout)
         burst_count = len({p.get("burst_id") for p in targets if p.get("burst_id")})
         burst_note = (
             i18n.t('browser.merge_burst_note').format(bursts=burst_count)
@@ -2992,11 +3008,14 @@ class ResultsBrowserWindow(QMainWindow):
         new_en = dialog.selected_en
         if not new_cn and not new_en:
             return
-        new_name = (new_en if use_en else new_cn) or ""
+        # 显示名与目录名分开取（同整种合并）/ Display vs folder name, as in merge.
+        from tools.zh_convert import species_cn, species_folder_name
+        new_name = (new_en if use_en else species_cn(new_cn or "")) or ""
 
         # 确认：把张数、连拍组数与真实目标目录摆出来再动手
         layout = get_advanced_config().folder_layout
-        folders = _merge_target_folders(targets, new_name, layout)
+        folders = _merge_target_folders(
+            targets, species_folder_name(new_cn, new_en, i18n.current_lang), layout)
         burst_count = len({p.get("burst_id") for p in targets if p.get("burst_id")})
         burst_note = (
             i18n.t('browser.merge_burst_note').format(bursts=burst_count)
@@ -3632,11 +3651,7 @@ class ResultsBrowserWindow(QMainWindow):
                 msg_box.setText(self.i18n.t("browser.delete_msg").format(filename=filename))
             else:
                 count = len(target_photos)
-                if self.i18n.current_lang.startswith('en'):
-                    msg_text = f"Move {count} selected photos to Trash?\n\n❗ This will also delete their database records. You'll need to reprocess after restoring."
-                else:
-                    msg_text = f"将选中的 {count} 张图片移入回收站？\n\n❗ 此操作会同时从数据库删除记录，恢复文件后需重新处理。"
-                msg_box.setText(msg_text)
+                msg_box.setText(self.i18n.t("browser.delete_multi_msg", count=count))
                 
             msg_box.exec()
             if msg_box.clickedButton() != yes_btn:

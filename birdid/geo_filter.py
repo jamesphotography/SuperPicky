@@ -146,7 +146,13 @@ class RegionFilter:
         entry = self._regions.get(code)
         if not entry:
             return code
-        return entry[1] if english else (entry[2] or entry[1])
+        if english:
+            return entry[1]
+        if entry[2]:
+            # 繁体 TW 界面转台湾正体 / Taiwan Traditional in the zh_TW UI.
+            from tools.zh_convert import zh_text
+            return zh_text(entry[2])
+        return entry[1]
 
     def species_for(self, code: str) -> Set[int]:
         """

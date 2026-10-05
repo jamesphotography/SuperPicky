@@ -142,8 +142,8 @@ def _format_segments_detail(segments) -> str:
         return "—"
     # 鸟种名跟随界面语言：英文模式优先 species_en，中文模式优先 species_zh
     # Species name follows UI language: prefer en in English mode, zh otherwise.
+    from tools.zh_convert import species_display
     i18n = get_i18n()
-    is_en = i18n.current_lang.startswith('en')
     lines = []
     for s in segments:
         time_str = f"{_fmt_mmss(s.start_sec)}-{_fmt_mmss(s.end_sec)}"
@@ -152,7 +152,7 @@ def _format_segments_detail(segments) -> str:
             continue
         # 有鸟段：组装鸟种 + 飞行 + 置信度
         parts = [time_str]
-        species_name = (s.species_en or s.species_zh) if is_en else (s.species_zh or s.species_en)
+        species_name = species_display(s.species_zh, s.species_en, i18n.current_lang)
         if species_name:
             emoji = "🦅" if s.is_flying else "🐦"
             parts.append(f"{emoji} {species_name}")
@@ -760,6 +760,7 @@ class VideoAnalyzerWindow(QMainWindow):
         organizer = VideoOrganizer(options=OrganizeOptions(
             operation='move',
             use_english=use_en,
+            use_taiwan=self.i18n.current_lang == "zh_TW",
             no_bird_folder=self.i18n.t("video.folder_no_bird"),
             other_species_folder=self.i18n.t("video.folder_other_species"),
         ))

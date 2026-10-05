@@ -113,10 +113,15 @@ def load_regions_data() -> dict[str, Any]:
         print(f"[region_data] failed to read regions: {exc}")
         return {"countries": []}
 
+    # 库里中文名是简体；繁体 TW 界面下转台湾正体（name_cn 只用于显示与搜索，不作键）
+    # The DB stores Simplified names; zh_TW converts them (name_cn is display-only).
+    from tools.zh_convert import zh_text
+
     by_parent: dict[str, list[dict[str, Any]]] = {}
     for code, parent, name_en, name_zh, count in region_rows:
         by_parent.setdefault(str(parent), []).append(
-            {"code": str(code), "name": str(name_en), "name_cn": str(name_zh), "species_count": int(count)}
+            {"code": str(code), "name": str(name_en), "name_cn": zh_text(str(name_zh)),
+             "species_count": int(count)}
         )
 
     countries: list[dict[str, Any]] = []
@@ -126,7 +131,7 @@ def load_regions_data() -> dict[str, Any]:
             {
                 "code": str(code),
                 "name": str(name_en),
-                "name_cn": str(name_zh),
+                "name_cn": zh_text(str(name_zh)),
                 "is_continent": False,
                 "has_regions": bool(regions),
                 "regions_count": len(regions),

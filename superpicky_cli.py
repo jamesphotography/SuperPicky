@@ -96,7 +96,10 @@ def cmd_burst(args):
         exiftool_mgr = ExifToolManager()
         total_stats = {'groups_processed': 0, 'photos_moved': 0, 'best_marked': 0}
         
-        rating_dirs = ['3star_excellent', '2star_good', '3星_优选', '2星_良好']  # Support both languages
+        # 三种界面语言建的 3★/2★ 目录都要处理 / 3★/2★ folders from all UI languages
+        from constants import RATING_FOLDER_NAMES, RATING_FOLDER_NAMES_EN, RATING_FOLDER_NAMES_TW
+        rating_dirs = sorted({names[r] for names in (RATING_FOLDER_NAMES, RATING_FOLDER_NAMES_EN,
+                                                     RATING_FOLDER_NAMES_TW) for r in (3, 2)})
         for rating_dir in rating_dirs:
             subdir = os.path.join(args.directory, rating_dir)
             if not os.path.exists(subdir):
@@ -209,8 +212,9 @@ def cmd_reset(args):
     # V4.0.5: 先处理所有子目录（burst_XXX、鸟种 Other_Birds 等）
     # 将文件移回评分目录，然后由步骤1的 manifest 恢复到根目录
     print(t("cli.reset_step0"))
-    rating_dirs = ['3star_excellent', '2star_good', '1star_average', '0star_reject',
-                   '3星_优选', '2星_良好', '1星_普通', '0星_放弃']  # Support both languages
+    # 三种界面语言的评分目录（含 4★/5★）/ rating folders of all UI languages (incl. 4★/5★)
+    from constants import ALL_RATING_FOLDER_NAMES
+    rating_dirs = sorted(ALL_RATING_FOLDER_NAMES)
     subdir_stats = {'dirs_removed': 0, 'files_restored': 0}
     
     for rating_dir in rating_dirs:
@@ -409,8 +413,9 @@ def cmd_info(args):
         print(t("cli.manifest_missing"))
     
     # 检查分类文件夹
-    folders = ['3star_excellent', '2star_good', '1star_average', '0star_reject',
-               '3星_优选', '2星_良好', '1星_普通', '0星_放弃']  # Support both languages
+    # 三种界面语言的评分目录（含 4★/5★）/ rating folders of all UI languages (incl. 4★/5★)
+    from constants import ALL_RATING_FOLDER_NAMES
+    folders = sorted(ALL_RATING_FOLDER_NAMES)
     existing_folders = []
     for folder in folders:
         folder_path = os.path.join(args.directory, folder)

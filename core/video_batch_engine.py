@@ -148,6 +148,7 @@ class VideoBatchEngine:
         organizer = VideoOrganizer(options=OrganizeOptions(
             operation='move',
             use_english=_use_en,
+            use_taiwan=_i18n.current_lang == "zh_TW",
             no_bird_folder=_i18n.t("video.folder_no_bird"),
             other_species_folder=_i18n.t("video.folder_other_species"),
         ))

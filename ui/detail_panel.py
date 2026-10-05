@@ -128,7 +128,11 @@ def _format_iucn(category: str, is_zh: bool) -> tuple:
     if not info:
         return (category, COLORS['text_primary'])
     zh_name, en_name, color = info
-    name = zh_name if is_zh else en_name
+    if is_zh:
+        from tools.zh_convert import zh_text
+        name = zh_text(zh_name)
+    else:
+        name = en_name
     return (f"{name} ({category})", color)
 
 
@@ -1122,10 +1126,9 @@ class DetailPanel(QWidget):
 
         # 鸟种（跟随界面语言）+ 显示铅笔编辑按钮
         # Bird species (follows UI language) + show pencil edit button.
-        if self.i18n.current_lang.startswith('en'):
-            species = p.get("bird_species_en") or p.get("bird_species_cn") or _unknown
-        else:
-            species = p.get("bird_species_cn") or p.get("bird_species_en") or _unknown
+        from tools.zh_convert import species_display
+        species = species_display(p.get("bird_species_cn"), p.get("bird_species_en"),
+                                  self.i18n.current_lang) or _unknown
         self._val_species.setText(species)
         self._val_species.setToolTip(species)
 

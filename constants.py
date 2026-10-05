@@ -38,18 +38,51 @@ RATING_FOLDER_NAMES_EN = {
     -1: "0star_reject"
 }
 
+# 繁体 TW 文件夹名称（台湾正体）/ Taiwan Traditional folder names
+RATING_FOLDER_NAMES_TW = {
+    5: "5星_傑作",
+    4: "4星_精華",
+    3: "3星_優選",
+    2: "2星_良好",
+    1: "1星_普通",
+    0: "0星_放棄",
+    -1: "0星_放棄"
+}
+
+# 三种界面语言下的全部评分目录名：识别「SuperPicky 生成的目录」时一律用它，
+# 这样换了界面语言之后，复原/重扫/连拍整理仍认得旧语言建的目录。
+# Rating folder names across all three UI languages. Recognizers must use this
+# so folders created under another UI language are still found.
+ALL_RATING_FOLDER_NAMES = frozenset(
+    set(RATING_FOLDER_NAMES.values())
+    | set(RATING_FOLDER_NAMES_EN.values())
+    | set(RATING_FOLDER_NAMES_TW.values())
+)
+
+# 「其他鸟类」目录名（logs.folder_other_birds 在三种语言下的取值）
+# "Other birds" folder names (logs.folder_other_birds in all three languages).
+OTHER_BIRDS_FOLDER_NAMES = ("其他鸟类", "其他鳥類", "Other_Birds")
+
+# 视频整理的「其他鸟 / 无鸟」目录名（video.folder_other_species / folder_no_bird 三语取值）
+# Video organizer folder names (video.folder_other_species / folder_no_bird in all languages).
+OTHER_SPECIES_FOLDER_ALIASES = ("其他鸟", "其他鳥", "Other birds")
+NO_BIRD_FOLDER_ALIASES = ("无鸟", "無鳥", "No bird")
+
+
 def get_rating_folder_names():
     """
-    获取当前语言的评分文件夹名称映射
+    获取当前语言的评分文件夹名称映射（简体 / 繁体 TW / 英文）
 
     Returns:
         dict: {评分: 文件夹名称}
     """
     try:
         from tools.i18n import get_i18n
-        i18n = get_i18n()
-        if i18n.current_lang.startswith('en'):
+        lang = str(get_i18n().current_lang or "")
+        if lang.startswith('en'):
             return RATING_FOLDER_NAMES_EN.copy()
+        if lang == "zh_TW":
+            return RATING_FOLDER_NAMES_TW.copy()
     except Exception:
         pass
     return RATING_FOLDER_NAMES.copy()

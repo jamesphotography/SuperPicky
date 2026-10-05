@@ -38,7 +38,8 @@
     "recent_dirs_clear": "Clear History",
     "recent_dirs_offline": "(Offline)",
     "video_analysis": "Video Analysis…",
-    "video_menu": "Video"
+    "video_menu": "Video",
+    "lang_tw": "繁體中文 TW"
   },
   "buttons": {
     "select_dir": "📁 Select Source Folder",
@@ -392,7 +393,14 @@
     "iqa_init": "🎨 Initializing the IQA scorer... (device: {device})",
     "iqa_ready": "✅ IQA scorer ready (the TOPIQ model loads on first use)",
     "topiq_model_loaded": "✅ TOPIQ model loaded",
-    "exif_sidecar_mode": "[ExifTool] Metadata mode is sidecar: writing XMP sidecars for all files ({count} items)"
+    "exif_sidecar_mode": "[ExifTool] Metadata mode is sidecar: writing XMP sidecars for all files ({count} items)",
+    "batch_reset_subdirs": "\n📂 Batch reset: {count} subdirectories",
+    "batch_reset_sub_item": "\n🔄 [{idx}/{total}] {rel}/",
+    "batch_reset_sub_done": "  ✅ {rel}/ reset done",
+    "batch_reset_sub_failed": "  ❌ {rel}/ reset failed: {error}",
+    "reset_dir_has_leftovers": "leftover files remain, kept: {sample}",
+    "reset_cache_delete_failed": "  ⚠️ Failed to delete .superpicky: {error}",
+    "reset_cache_kept": "  ✅ .superpicky/ cache kept (quick restore: previews reused)"
   },
   "server": {
     "server_already_running": "✅ Server already running on port {port}",
@@ -574,7 +582,9 @@
     "birdid_region_hint": "Photos with GPS are matched to their state/province or country automatically; this selection only applies to photos without GPS",
     "geo_attribution": "Regional bird lists - eBird (Cornell Lab of Ornithology), retrieved {fetched_at}, provided under the eBird API Terms of Use; administrative boundaries - Natural Earth (public domain)",
     "telemetry_label": "Send anonymous usage statistics",
-    "telemetry_desc": "Sends the app version, operating system, language, and a random ID that changes daily, etc., so we can tell how many people use SuperPicky. No photos, file paths, or personal information are ever sent."
+    "telemetry_desc": "Sends the app version, operating system, language, and a random ID that changes daily, etc., so we can tell how many people use SuperPicky. No photos, file paths, or personal information are ever sent.",
+    "language_label": "Language · 语言",
+    "language_auto": "Follow system"
   },
   "advanced_settings": {
     "title": "Settings",
@@ -1112,7 +1122,10 @@
     "screenshot_permission_later": "Later",
     "screenshot_hotkey_failed": "Screenshot hotkey failed: {error}",
     "geo_tier_subnational": "🗺️ Filtered by state/province: {region} ({count} species)",
-    "species_unconfirmed": "{name} (unconfirmed {confidence}%)"
+    "species_unconfirmed": "{name} (unconfirmed {confidence}%)",
+    "sc_unavailable": "screencapture is unavailable",
+    "sc_empty_file": "Screenshot is empty. Check System Settings > Privacy & Security > Screen Recording.",
+    "sc_save_failed": "Failed to save the screenshot"
   },
   "cli": {
     "banner": "  🐦 SuperPicky CLI v{version} - AI Photo Selector (Command Line)",
@@ -1630,7 +1643,9 @@
     "merge_batch_sep": ", ",
     "merge_batch_more": "and {n} more",
     "merge_folders_label": "Target folders",
-    "merge_folders_label_merged": "Target folders (in each batch)"
+    "merge_folders_label_merged": "Target folders (in each batch)",
+    "ctx_show_in_explorer": "Show in Explorer",
+    "delete_multi_msg": "Move {count} selected photos to Trash?\n\n❗ This will also delete their database records. You'll need to reprocess after restoring."
   },
   "video": {
     "title_phase1": "Video Analysis (Phase 1 · YOLO bird/no-bird only)",

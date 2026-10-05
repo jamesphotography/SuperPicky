@@ -13,7 +13,7 @@ import shutil
 from typing import Optional, List, Dict
 from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from constants import RATING_FOLDER_NAMES, SIDECAR_RAW_EXTENSIONS
+from constants import ALL_RATING_FOLDER_NAMES, SIDECAR_RAW_EXTENSIONS
 import time
 import threading
 import queue
@@ -2174,7 +2174,9 @@ class ExifToolManager:
         
         # V3.3: 添加旧版目录到扫描列表（兼容旧版本）
         legacy_folders = ["2星_良好_锐度", "2星_良好_美学"]
-        all_folders = list(RATING_FOLDER_NAMES.values()) + legacy_folders
+        # 三种界面语言建的评分目录都要扫（此前只扫简体，英文/繁体目录里的残留不会复原）
+        # Scan rating folders of all UI languages (previously Simplified only).
+        all_folders = sorted(ALL_RATING_FOLDER_NAMES) + legacy_folders
         
         def restore_from_folder(folder_path: str, relative_path: str = ""):
             """递归恢复文件夹中的文件"""

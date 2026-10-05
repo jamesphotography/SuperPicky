@@ -1,0 +1,4 @@
+/* Localized versions of Info.plist keys */
+CFBundleDisplayName = "慧眼選鳥";
+CFBundleName = "慧眼選鳥";
+NSAppleEventsUsageDescription = "慧眼選鳥需要取得權限，才能將您選擇的鳥類照片加入 Apple 照片。";

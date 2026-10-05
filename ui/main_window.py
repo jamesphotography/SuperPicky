@@ -1140,14 +1140,22 @@ class SuperPickyMainWindow(QMainWindow):
         zh_action.triggered.connect(lambda: self._change_language("zh_CN"))
         lang_menu.addAction(zh_action)
 
-        # English
+        # 繁體中文（台灣）
+        tw_action = QAction(self.i18n.t("menu.lang_tw"), self)
+        tw_action.setCheckable(True)
+        tw_action.setChecked(self.config.language == "zh_TW")
+        tw_action.triggered.connect(lambda: self._change_language("zh_TW"))
+        lang_menu.addAction(tw_action)
+
+        # English（此前用 "en" 判断选中，而保存时会转成 "en_US"，重启后英文永远不显示选中）
+        # English (previously checked against "en", but the config stores "en_US")
         en_action = QAction(self.i18n.t("menu.lang_en"), self)
         en_action.setCheckable(True)
-        en_action.setChecked(self.config.language == "en")
-        en_action.triggered.connect(lambda: self._change_language("en"))
+        en_action.setChecked(self.config.language == "en_US")
+        en_action.triggered.connect(lambda: self._change_language("en_US"))
         lang_menu.addAction(en_action)
 
-        self.lang_actions = {"zh_CN": zh_action, "en": en_action}
+        self.lang_actions = {"zh_CN": zh_action, "zh_TW": tw_action, "en_US": en_action}
 
         # 帮助菜单 — 关于已移入设置中心 / Help menu — About is now inside SettingsCenter
         help_menu = menubar.addMenu(self.i18n.t("menu.help"))
@@ -2456,7 +2464,8 @@ class SuperPickyMainWindow(QMainWindow):
         self._log(message, tag)
         # 改动 7: 处理中状态条实时显示当前文件名
         # 格式示例: "📸 处理照片 12/265: IMG_1234.JPG" 或 "[12/265] 处理: IMG_1234.JPG"
-        if tag == "progress" or ("处理" in message and "/" in message and ":" in message):
+        if tag == "progress" or (("处理" in message or "處理" in message or "Processing" in message)
+                                 and "/" in message and ":" in message):
             import re
             m = re.search(r':\s*(.+\.(jpg|jpeg|png|cr2|cr3|arw|nef|orf|rw2|dng))', message, re.IGNORECASE)
             if m:
@@ -2630,9 +2639,8 @@ class SuperPickyMainWindow(QMainWindow):
                 sub_dirs_to_reset = []
                 for root_d, subdirs, files in os.walk(directory_path):
                     subdirs[:] = [d for d in subdirs if not d.startswith('.')]
-                    from constants import RATING_FOLDER_NAMES, RATING_FOLDER_NAMES_EN
-                    star_names = set(RATING_FOLDER_NAMES.values()) | set(RATING_FOLDER_NAMES_EN.values())
-                    subdirs[:] = [d for d in subdirs if d not in star_names and not d.startswith('burst_')]
+                    from constants import ALL_RATING_FOLDER_NAMES
+                    subdirs[:] = [d for d in subdirs if d not in ALL_RATING_FOLDER_NAMES and not d.startswith('burst_')]
                     for d in subdirs:
                         full = os.path.join(root_d, d)
                         if is_processed(full):
@@ -2641,23 +2649,24 @@ class SuperPickyMainWindow(QMainWindow):
                 if sub_dirs_to_reset:
                     # Reset deepest first
                     sub_dirs_to_reset.sort(key=lambda p: p.count(os.sep), reverse=True)
-                    emit_log(f"\n\U0001f4c2 Batch reset: {len(sub_dirs_to_reset)} subdirectories")
+                    emit_log(i18n.t("logs.batch_reset_subdirs", count=len(sub_dirs_to_reset)))
                     for idx, sub_dir in enumerate(sub_dirs_to_reset, 1):
                         rel = os.path.relpath(sub_dir, directory_path)
-                        emit_log(f"\n\U0001f504 [{idx}/{len(sub_dirs_to_reset)}] {rel}/")
+                        emit_log(i18n.t("logs.batch_reset_sub_item", idx=idx,
+                                        total=len(sub_dirs_to_reset), rel=rel))
                         try:
                             # Reuse CLI reset logic
                             _args = SimpleNamespace(directory=sub_dir, yes=True)
                             from superpicky_cli import cmd_reset as _cli_reset
                             _cli_reset(_args)
-                            emit_log(f"  \u2705 {rel}/ reset done")
+                            emit_log(i18n.t("logs.batch_reset_sub_done", rel=rel))
                         except Exception as e:
-                            emit_log(f"  \u274c {rel}/ reset failed: {e}")
+                            emit_log(i18n.t("logs.batch_reset_sub_failed", rel=rel, error=e))
 
                 # Now reset the root directory
                 emit_log(i18n.t("logs.reset_step0"))
-                rating_dirs = ['3star_excellent', '2star_good', '1star_average', '0star_reject',
-                               '3星_优选', '2星_良好', '1星_普通', '0星_放弃']
+                from constants import ALL_RATING_FOLDER_NAMES
+                rating_dirs = sorted(ALL_RATING_FOLDER_NAMES)
                 subdir_stats = {'dirs_removed': 0, 'files_restored': 0}
                 
                 for rating_dir in rating_dirs:
@@ -2780,7 +2789,7 @@ class SuperPickyMainWindow(QMainWindow):
                                 sample = f"{sample}, ..."
                             emit_log(i18n.t("logs.empty_dir_delete_failed",
                                             dir=rating_dir,
-                                            error=f"仍有残留文件，保留: {sample}"))
+                                            error=i18n.t("logs.reset_dir_has_leftovers", sample=sample)))
                             continue
                         try:
                             shutil.rmtree(rating_path, ignore_errors=True)
@@ -2806,9 +2815,9 @@ class SuperPickyMainWindow(QMainWindow):
                             emit_log("  ✅ .superpicky/ (force)")
                             deleted_dirs += 1
                         except Exception as e2:
-                            emit_log(f"  ⚠️ .superpicky 删除失败: {e2}")
+                            emit_log(i18n.t("logs.reset_cache_delete_failed", error=e2))
                 elif _skip_exif_reset:
-                    emit_log("  ✅ .superpicky/ 缓存已保留（快速复原：预览图复用）")
+                    emit_log(i18n.t("logs.reset_cache_kept"))
                 
                 manifest_file = os.path.join(directory_path, ".superpicky_manifest.json")
                 if os.path.exists(manifest_file):
@@ -2816,7 +2825,7 @@ class SuperPickyMainWindow(QMainWindow):
                         os.remove(manifest_file)
                         emit_log("  ✅ .superpicky_manifest.json")
                     except Exception as e:
-                        emit_log(f"  ⚠️ manifest 删除失败: {e}")
+                        emit_log(i18n.t("logs.manifest_delete_failed", error=e))
                 
                 # 清理 macOS ._burst_XXX 残留文件
                 for filename in os.listdir(directory_path):
@@ -2958,13 +2967,10 @@ class SuperPickyMainWindow(QMainWindow):
         # 保存设置
         self.config.set_language(lang_code)
         if self.config.save():
-            # 根据目标语言显示对应的提示
-            if lang_code == "en":
-                title = "Language Changed"
-                msg = "Language changed. Restart the app to take effect."
-            else:
-                title = "语言已更改"
-                msg = "界面语言已更改，重启应用后生效。"
+            # 用目标语言显示提示（与设置中心的语言选择共用一份文字）
+            # Notice in the target language (shared with the Settings Center picker)
+            from tools.i18n import language_changed_notice
+            title, msg = language_changed_notice(lang_code)
             StyledMessageBox.information(self, title, msg)
 
     def _open_settings_center(self, start_page: str = "culling") -> None:
@@ -2984,6 +2990,11 @@ class SuperPickyMainWindow(QMainWindow):
         from ui.settings_center import SettingsCenter
         dlg = SettingsCenter(self.i18n, parent=self, start_page=start_page)
         dlg.exec()
+
+        # 设置中心里也能改界面语言：同步菜单栏语言子菜单的勾选（跟随系统时都不勾）
+        # The Settings Center can change the language too: sync the menu checks.
+        for code, action in getattr(self, "lang_actions", {}).items():
+            action.setChecked(code == self.config.language)
 
         # 刷新技能 chip 标签，确保与 advanced_config 中当前值一致
         # Refresh the skill level chip so it reflects the current advanced_config value
@@ -3825,9 +3836,9 @@ class SuperPickyMainWindow(QMainWindow):
                 parts = []  # 逐种按罕见度着色:常见默认/能见橙/少见以上红
                 for sp in bird_species:
                     if isinstance(sp, dict):
-                        name = sp.get('cn_name', '') if is_chinese else sp.get('en_name', '')
-                        if not name:
-                            name = sp.get('en_name', '') if is_chinese else sp.get('cn_name', '')
+                        from tools.zh_convert import species_display
+                        name = species_display(sp.get('cn_name'), sp.get('en_name'),
+                                               self.i18n.current_lang)
                         tier = sp.get('gbif_tier')
                     else:
                         name, tier = str(sp), None

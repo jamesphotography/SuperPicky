@@ -129,8 +129,15 @@ def pinyin_for_ui(chinese_name: Optional[str], is_zh: bool) -> str:
     语言闸门收在这一个函数里，四个显示点（鸟名查询详情、改鸟种候选卡片、
     浏览器详情面板、识鸟结果卡片）都走它——各自写 if 迟早漏掉一处。
 
-    The single language gate used by all four display sites.
+    繁体 TW 界面也不显示：台湾不用汉语拼音标鸟名，且显示的台湾鸟名与拼音表的
+    简体名常对不上（白頭翁 ≠ 白头鹎）。
+
+    The single language gate used by all four display sites. The zh_TW UI shows
+    no pinyin either: Taiwan names often differ from the Simplified table keys.
     """
     if not is_zh:
+        return ""
+    from tools.zh_convert import is_taiwan
+    if is_taiwan():
         return ""
     return pinyin_for(chinese_name)

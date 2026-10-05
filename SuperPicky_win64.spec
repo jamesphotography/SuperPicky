@@ -52,6 +52,7 @@ all_datas = [
     # macOS 本地化 (应用名称) - 必须放在 Resources 根目录
     (os.path.join(base_path, 'locales', 'en.lproj'), 'en.lproj'),
     (os.path.join(base_path, 'locales', 'zh-Hans.lproj'), 'zh-Hans.lproj'),
+    (os.path.join(base_path, 'locales', 'zh-Hant.lproj'), 'zh-Hant.lproj'),
     # Ultralytics 配置
     (os.path.join(ultralytics_base, 'ultralytics/cfg'), 'ultralytics/cfg'),
     # V4.0.0: 鸟类识别模块数据 (V4.0.6: 移除旧 birdid/models，改用 models/model20240824.pth OSEA 模型)

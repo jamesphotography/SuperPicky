@@ -316,9 +316,9 @@ def reset(directory, log_callback=None, i18n=None):
 # user-created folders untouched so it can never move the wrong thing.
 # ============================================================================
 
-# 「其他鸟类」目录名（照片端 logs.folder_other_birds 的中英取值）
-# "Other Birds" folder labels (zh/en values of logs.folder_other_birds).
-_OTHER_BIRDS_LABELS = ("其他鸟类", "Other_Birds")
+# 「其他鸟类」目录名（照片端 logs.folder_other_birds 的三语取值，见 constants）
+# "Other Birds" folder labels (logs.folder_other_birds in all languages, see constants).
+from constants import OTHER_BIRDS_FOLDER_NAMES as _OTHER_BIRDS_LABELS  # noqa: E402
 # 旧版遗留评分目录名 / legacy rating folder names
 _LEGACY_RATING_FOLDERS = ("2星_良好_锐度", "2星_良好_美学")
 
@@ -346,9 +346,9 @@ def _bird_reference_db_path():
 def _build_superpicky_folder_set():
     """
     构建「SuperPicky 生成目录名」匹配集：
-        鸟名(中文 chinese_simplified + 英文 english_name[空格→下划线])
-        ∪ 评分目录名(中文 RATING_FOLDER_NAMES + 英文 RATING_FOLDER_NAMES_EN + legacy)
-        ∪ 其他鸟类(中/英)
+        鸟名(简体 chinese_simplified + 台湾 chinese_traditional + 英文 english_name[空格→下划线])
+        ∪ 评分目录名(简体/繁体 TW/英文三套 ALL_RATING_FOLDER_NAMES + legacy)
+        ∪ 其他鸟类(三语)
     burst_ 前缀单独判断（不入集合）。结果缓存。
 
     Build the set of folder names SuperPicky generates, so advanced reset only
@@ -359,26 +359,29 @@ def _build_superpicky_folder_set():
         return _SUPERPICKY_FOLDER_SET
 
     names = set()
-    # 评分目录（中英两套 + legacy）/ rating folders (zh + en + legacy)
+    # 评分目录（三语 + legacy）/ rating folders (all languages + legacy)
     try:
-        from constants import RATING_FOLDER_NAMES, RATING_FOLDER_NAMES_EN
-        names.update(RATING_FOLDER_NAMES.values())
-        names.update(RATING_FOLDER_NAMES_EN.values())
+        from constants import ALL_RATING_FOLDER_NAMES
+        names.update(ALL_RATING_FOLDER_NAMES)
     except Exception:
         pass
     names.update(_LEGACY_RATING_FOLDERS)
     names.update(_OTHER_BIRDS_LABELS)
 
-    # 鸟名（中文原样 + 英文空格转下划线，与照片端命名一致）
+    # 鸟名（简体原样 + 台湾鸟名 + 英文空格转下划线，与照片端命名一致）
+    # Species names: Simplified, Taiwan (zh_TW UI) and English with underscores.
     db_path = _bird_reference_db_path()
     if db_path:
         try:
             with sqlite3.connect(db_path) as conn:
                 cur = conn.cursor()
-                cur.execute("SELECT chinese_simplified, english_name FROM BirdCountInfo")
-                for cn, en in cur.fetchall():
+                cur.execute("SELECT chinese_simplified, chinese_traditional, english_name "
+                            "FROM BirdCountInfo")
+                for cn, tw, en in cur.fetchall():
                     if cn:
                         names.add(str(cn).strip())
+                    if tw:
+                        names.add(str(tw).strip())
                     if en:
                         names.add(str(en).strip().replace(" ", "_"))
         except Exception:
