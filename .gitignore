@@ -31,11 +31,9 @@ build/
 *.swo
 
 # 测试和临时文件
-test_*.py
-# Apple Photos 导入回归测试需要纳入版本控制 / Keep Apple Photos regression coverage
-!test_apple_photos_importer.py
-# 官网版本查询回归测试 / Keep site version-check regression coverage
-!test_site_version.py
+# test_*.py 不再忽略：测试文件一律纳入版本控制（此前这条规则让新测试默认不进 git，
+# 本机曾有 3 个正经测试从未提交）。临时脚本请放 scratchpad，不要用 test_ 前缀。
+# test_*.py is no longer ignored: every test belongs in version control.
 !test_about_version_check.py
 # 使用统计遥测回归测试 / Keep usage-analytics telemetry regression coverage
 !test_telemetry_config.py

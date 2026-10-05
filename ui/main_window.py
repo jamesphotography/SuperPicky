@@ -93,6 +93,30 @@ class DropLineEdit(QLineEdit):
         event.ignore()
 
 
+# 设为 "1" 时，构造主窗口不再触发后台启动工作（启动识鸟服务器、预加载模型、
+# 写 startup.log）。测试套件（conftest.py）会设置它：这些工作会在测试里起真实的
+# 常驻服务器进程（测试结束后成为孤儿、占着 5156 端口）、多个窗口实例并发加载
+# torch 模型（偶发堆损坏崩溃 SIGTRAP），并写用户真实配置目录。正常运行不设置。
+# When "1", constructing the main window skips its background startup work
+# (Bird-ID server, model preload, startup.log). Set by the test suite: that work
+# spawned an orphaned server process, raced torch model loads across window
+# instances (intermittent heap-corruption SIGTRAP) and wrote to the user's real
+# config directory. Never set in normal runs.
+BACKGROUND_STARTUP_DISABLED_ENV = "SUPERPICKY_NO_BACKGROUND_STARTUP"
+
+
+def _background_startup_disabled() -> bool:
+    """
+    是否关闭主窗口的后台启动工作（见 BACKGROUND_STARTUP_DISABLED_ENV）。
+
+    返回:
+    bool: 环境变量为 "1" 时为 True
+
+    Whether the main window's background startup work is disabled.
+    """
+    return os.environ.get(BACKGROUND_STARTUP_DISABLED_ENV) == "1"
+
+
 def _format_wall_clock(ts: float) -> str:
     """
     把 epoch 时间戳格式化为本地墙钟 HH:MM:SS，供完成报告显示。
@@ -847,6 +871,8 @@ class SuperPickyMainWindow(QMainWindow):
     @staticmethod
     def _write_startup_log():
         """后台记录一次系统信息到 SuperPicky 配置目录的 startup.log"""
+        if _background_startup_disabled():
+            return
         try:
             from tools.system_logger import write_startup_log
             log_path = write_startup_log()
@@ -3279,6 +3305,8 @@ class SuperPickyMainWindow(QMainWindow):
 
     def _auto_start_birdid_server(self):
         """自动启动识鸟 API 服务器（使用服务器管理器） - 在后台线程中运行"""
+        if _background_startup_disabled():
+            return
         if not self._skip_until_initialized("首次初始化尚未完成，暂不启动识鸟 API 服务器。"):
             return
 
@@ -3974,6 +4002,8 @@ class SuperPickyMainWindow(QMainWindow):
 
     def _preload_all_models(self):
         """后台预加载所有AI模型（不阻塞UI）"""
+        if _background_startup_disabled():
+            return
         if not self._skip_until_initialized("首次初始化尚未完成，跳过模型预加载。"):
             return
 
