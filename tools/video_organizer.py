@@ -36,11 +36,10 @@ from core.video_segment import BirdSegment
 # 数据结构 / Data structures
 # ============================================================================
 
-# 「其他鸟 / 无鸟」目录名的中英双语别名（用于跨语言幂等匹配）
-# Bilingual aliases for the "other species" / "no bird" folders, so the
-# idempotency guard recognizes folders created under either UI language.
-OTHER_SPECIES_FOLDER_ALIASES: Tuple[str, ...] = ("其他鸟", "Other birds")
-NO_BIRD_FOLDER_ALIASES: Tuple[str, ...] = ("无鸟", "No bird")
+# 「其他鸟 / 无鸟」目录名的三语别名（用于跨语言幂等匹配），定义在 constants
+# Trilingual aliases for the "other species" / "no bird" folders (see constants),
+# so the idempotency guard recognizes folders created under any UI language.
+from constants import NO_BIRD_FOLDER_ALIASES, OTHER_SPECIES_FOLDER_ALIASES  # noqa: E402,F401
 
 
 @dataclass(slots=True)
@@ -58,6 +57,8 @@ class OrganizeOptions:
     other_species_folder   : 有鸟但识别失败的目录名 / 命名前缀，默认 "其他鸟"
     use_english            : True 时鸟种文件夹名/文件名前缀用英文名（species_en），
                              False（默认）用中文名。由 UI 层按界面语言传入。
+    use_taiwan             : True 时中文鸟名改用台湾鸟名（繁体 TW 界面），
+                             见 tools.zh_convert.tw_species_name。
 
     Videos are organized directly under the source parent dir, by species.
     Localization (folder/prefix language) is decided by the UI layer and
@@ -67,6 +68,7 @@ class OrganizeOptions:
     no_bird_folder: str = "无鸟"
     other_species_folder: str = "其他鸟"
     use_english: bool = False
+    use_taiwan: bool = False
 
 
 @dataclass(slots=True)
@@ -367,10 +369,15 @@ class VideoOrganizer:
             # Aggregate species (zh + en); pick display name per UI language.
             species_with_dur = aggregate_species_by_duration(segments)
             use_en = self.options.use_english
+            from tools.zh_convert import tw_species_name
+
+            def _zh(name: str) -> str:
+                """繁体 TW 界面换成台湾鸟名；species_with_dur 本身保持简体（守卫要用）。"""
+                return tw_species_name(name) if (name and self.options.use_taiwan) else name
             # 落地用的鸟种名列表（英文模式优先英文，缺失回退中文；中文模式反之）
             # Names used for folder/filename (en-first in English mode, zh-first otherwise).
             species_list = [
-                (en or zh) if use_en else (zh or en)
+                (en or _zh(zh)) if use_en else (_zh(zh) or en)
                 for zh, en, _ in species_with_dur
             ]
             result.species_used = species_list
@@ -385,8 +392,10 @@ class VideoOrganizer:
             # or a video organized under one language would be re-nested under the other.
             if species_with_dur:
                 top_zh, top_en, _ = species_with_dur[0]
+                # 简体 / 台湾 / 英文三种命名都算已归类 / any of the three namings counts
                 folder_candidates = {
                     sanitize_path_component(top_zh),
+                    sanitize_path_component(tw_species_name(top_zh)),
                     sanitize_path_component(top_en or top_zh),
                 }
             elif has_bird:
@@ -530,6 +539,8 @@ def restore_organized_videos(directory: str, log=None) -> dict:
 
     Restore organized videos to their pre-organize locations using the manifest.
     """
+    from tools.i18n import get_i18n
+
     def _log(msg: str) -> None:
         if log:
             log(msg)
@@ -547,7 +558,7 @@ def restore_organized_videos(directory: str, log=None) -> dict:
             data = json.load(f)
         entries = data.get("entries", []) if isinstance(data, dict) else []
     except Exception as e:
-        _log(f"  ❌ 读取视频归类清单失败 / failed to read video manifest: {e}")
+        _log(get_i18n().t("video.restore_manifest_failed", error=e))
         return stats
 
     target_dirs: set[str] = set()
@@ -565,12 +576,12 @@ def restore_organized_videos(directory: str, log=None) -> dict:
                 os.makedirs(os.path.dirname(original), exist_ok=True)
                 if os.path.exists(original):
                     # 原始路径已被占用，保守跳过不覆盖 / don't overwrite an existing original
-                    _log(f"  ⚠️  原位已存在，跳过 / original exists, skipped: {original}")
+                    _log(get_i18n().t("video.restore_exists_skipped", name=original))
                 else:
                     shutil.move(video, original)
                     stats["restored"] += 1
             except Exception as e:
-                _log(f"  ❌ 复原失败 / restore failed {os.path.basename(video)}: {e}")
+                _log(get_i18n().t("video.restore_failed", name=os.path.basename(video), error=e))
         else:
             stats["missing"] += 1
         # 2. 删 SRT / delete SRT

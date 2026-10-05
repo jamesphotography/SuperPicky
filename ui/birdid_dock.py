@@ -235,7 +235,10 @@ class ResultCard(QFrame):
 
         # 名称 - 只显示当前语言，单行不换行
         is_en = self.i18n.current_lang.startswith('en')
-        display_name = en_name if is_en else cn_name
+        # 繁体 TW 界面显示台湾鸟名；self.cn_name 仍是简体，供写库/改鸟种使用
+        # zh_TW shows the Taiwan name; self.cn_name stays Simplified for data use.
+        from tools.zh_convert import species_cn
+        display_name = en_name if is_en else species_cn(cn_name or "")
 
         self.name_label = QLabel(display_name)
         self.name_label.setToolTip(self.i18n.t("birdid.click_to_copy"))
@@ -332,7 +335,8 @@ class ResultCard(QFrame):
         """右键菜单：复制鸟名"""
         from PySide6.QtWidgets import QMenu
         is_en = self.i18n.current_lang.startswith('en')
-        name = self.en_name if is_en else self.cn_name
+        from tools.zh_convert import species_cn, zh_text
+        name = self.en_name if is_en else species_cn(self.cn_name or "")
 
         menu = QMenu(self)
         menu.setStyleSheet(f"""
@@ -359,13 +363,13 @@ class ResultCard(QFrame):
             }}
         """)
 
-        copy_label = f'Copy "{name}"' if is_en else f'复制 "{name}"'
+        copy_label = f'Copy "{name}"' if is_en else zh_text("复制") + f' "{name}"'
         menu.addAction(copy_label, lambda: QApplication.clipboard().setText(name))
 
         menu.addSeparator()
 
-        full = f"{self.cn_name} / {self.en_name} ({self.confidence:.0f}%)"
-        full_label = "Copy full info" if is_en else "复制完整信息"
+        full = f"{species_cn(self.cn_name or '')} / {self.en_name} ({self.confidence:.0f}%)"
+        full_label = "Copy full info" if is_en else zh_text("复制完整信息")
         menu.addAction(full_label, lambda: QApplication.clipboard().setText(full))
 
         menu.exec(event.globalPos())
@@ -1602,7 +1606,10 @@ class BirdIDDockWidget(QDockWidget):
         # ── 来源与度量 / Source and metrics ──────────────────────────────────
         info_lines = [t("birdid.recorded_source", directory=os.path.basename(photo.root))]
 
-        sharp, topiq = record.get("adj_sharpness"), record.get("adj_topiq")
+        # 与详情面板、题注同口径（ISO 折算后的头部锐度、原始美学分）
+        # Same basis as the detail panel and the caption
+        from core.iso_sharpness import display_aesthetic, display_head_sharpness
+        sharp, topiq = display_head_sharpness(record), display_aesthetic(record)
         if sharp is not None and topiq is not None:
             info_lines.append(
                 t("logs.pending_metrics", sharp=f"{sharp:.0f}", nima=f"{topiq:.1f}")
@@ -1980,10 +1987,11 @@ class BirdIDDockWidget(QDockWidget):
         if bird_species:
             from core.rarity_tier import tier_name_color
             is_chinese = self.i18n.current_lang.startswith('zh')
+            from tools.zh_convert import species_cn
             parts = []  # 逐种按罕见度着色:常见默认/能见橙/少见以上红
             for sp in bird_species:
                 if isinstance(sp, dict):
-                    name = sp.get('cn_name', '') if is_chinese else sp.get('en_name', '')
+                    name = species_cn(sp.get('cn_name', '') or '') if is_chinese else sp.get('en_name', '')
                     if not name:
                         name = sp.get('en_name', '') or sp.get('cn_name', '')
                     tier = sp.get('gbif_tier')
@@ -2187,7 +2195,8 @@ class BirdIDDockWidget(QDockWidget):
         if isinstance(self.identify_results, list) and 0 <= index < len(self.identify_results):
             result = self.identify_results[index]
             is_en = self.i18n.current_lang.startswith('en')
-            bird_name = result.get('en_name', '') if is_en else result.get('cn_name', '')
+            from tools.zh_convert import species_cn
+            bird_name = result.get('en_name', '') if is_en else species_cn(result.get('cn_name', '') or '')
             if not bird_name:
                 bird_name = result.get('en_name', '') or result.get('cn_name', '')
 
@@ -2213,7 +2222,10 @@ class BirdIDDockWidget(QDockWidget):
                     f'<img src="{tinted_png_path("check.svg", COLORS["success"], 12)}" '
                     f'width="12" height="12" style="vertical-align:middle;">'
                 )
-                txt = _html.escape(f"{selected['cn_name']} ({selected['confidence']:.0f}%)")
+                from tools.zh_convert import species_display
+                name = species_display(selected.get('cn_name'), selected.get('en_name'),
+                                       self.i18n.current_lang)
+                txt = _html.escape(f"{name} ({selected['confidence']:.0f}%)")
                 self.status_label.setText(f"{check_img}&nbsp;{txt}")
                 self.status_label.setStyleSheet(f"font-size: 11px; color: {COLORS['success']};")
 
@@ -2427,7 +2439,7 @@ class BirdIDDockWidget(QDockWidget):
             if getattr(self, '_sc_main_win', None):
                 self._sc_main_win.show()
                 self._sc_main_win.raise_()
-            self._show_screenshot_error("screencapture 不可用")
+            self._show_screenshot_error(self.i18n.t("birdid.sc_unavailable"))
             return
         if hasattr(self, '_sc_poll_timer') and self._sc_poll_timer is not None:
             self._sc_poll_timer.stop()
@@ -2480,7 +2492,7 @@ class BirdIDDockWidget(QDockWidget):
                     QTimer.singleShot(100, lambda: self.on_file_dropped(self._sc_tmp_file))
                 else:
                     print("[Screenshot] ⚠️ 截图文件为空 (0 bytes)，可能缺少屏幕录制权限")
-                    self._show_screenshot_error("截图文件为空，请检查系统偏好设置 > 隐私与安全 > 屏幕录制 权限")
+                    self._show_screenshot_error(self.i18n.t("birdid.sc_empty_file"))
             else:
                 print(f"[Screenshot] ❌ 截图文件不存在 (用户可能取消了截图)")
                 import glob
@@ -2499,7 +2511,7 @@ class BirdIDDockWidget(QDockWidget):
         if image.save(tmp_file, b'PNG'):
             self.on_file_dropped(tmp_file)
         else:
-            self._show_screenshot_error("截图保存失败")
+            self._show_screenshot_error(self.i18n.t("birdid.sc_save_failed"))
 
     def _show_screenshot_error(self, msg: str):
         self.status_label.setText(msg)

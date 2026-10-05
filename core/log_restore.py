@@ -37,7 +37,7 @@ from __future__ import annotations
 import os
 import re
 from collections import deque
-from typing import List, NamedTuple, Optional
+from typing import Iterable, Iterator, List, NamedTuple, Optional
 
 # 日志文件名（与 tools/utils.log_message 写入的名字一致）
 # Log file name (matches what tools/utils.log_message writes).
@@ -68,6 +68,10 @@ _KEY_VALUE_RE = re.compile(r"^\s{2,}\S.*\s:\s")
 # Session markers written by ui/main_window.py; always English, never localised.
 _SESSION_START_MARK = "[Session Start]"
 _SESSION_END_MARK = "[Session End]"
+
+# 调试输出（如 ai_model 的 "DEBUG YOLO no_bird ..."）：经 log_message 写进同一份日志，
+# 但从未显示在控制台 / Debug lines share the log file but never reached the console.
+_DEBUG_PREFIX = "DEBUG "
 
 # 会话结束摘要各行的取值规则 / Field patterns inside the session-end summary.
 _SUMMARY_PATTERNS = {
@@ -209,13 +213,66 @@ def parse_log_line(raw: str) -> LogLine:
     return LogLine(time_text="", message=raw, tag=infer_tag(raw))
 
 
+def _is_separator(message: str) -> bool:
+    """整行都是 "=" 的分隔线 / A line made only of "=" characters."""
+    text = message.strip()
+    return len(text) >= 20 and set(text) == {"="}
+
+
+def iter_console_lines(raw_lines: Iterable[str]) -> Iterator[str]:
+    """
+    只保留处理时真正显示在控制台里的行。
+
+    日志文件里有两类内容从未进过控制台，回放时若原样显示，中文界面会冒出一大段英文：
+      1. 会话头 ``[Session Start]``（设置、系统信息）与会话结束 ``[Session End]`` 汇总块——
+         它们刻意写成固定英文，供排查问题与 parse_session_summary 解析；
+      2. ``DEBUG `` 开头的调试输出。
+    会话块的识别：一条分隔线后紧跟会话标记行，即进入块。会话块是一条多行消息，只有
+    第一行带时间戳，块内其余行都不带；而控制台日志每行都带时间戳——所以进入块后跳过
+    所有不带时间戳的行，遇到下一条带时间戳的行即结束（不依赖块里有几条分隔线）。
+
+    参数 / Parameters:
+        raw_lines (Iterable[str]): 日志文件的原始行（不含换行符）/ Raw lines.
+
+    返回 / Returns:
+        Iterator[str]: 应回放的原始行 / Raw lines to replay.
+
+    Keep only the lines that were shown in the console during processing: the
+    English session header/summary blocks and DEBUG lines are file-only.
+    """
+    held: Optional[str] = None      # 待定的分隔线：看下一行才知道是否属于会话块
+    in_block = False                # 正在跳过会话块
+    for raw in raw_lines:
+        message = parse_log_line(raw).message
+        if in_block:
+            if not _TIMESTAMP_RE.match(raw):
+                continue
+            in_block = False
+        if held is not None:
+            if _SESSION_START_MARK in message or _SESSION_END_MARK in message:
+                held = None
+                in_block = True
+                continue
+            yield held
+            held = None
+        if _is_separator(message):
+            held = raw
+            continue
+        if message.lstrip().startswith(_DEBUG_PREFIX):
+            continue
+        yield raw
+    if held is not None:
+        yield held
+
+
 def read_log_lines(
     path: str,
     head_limit: int = DEFAULT_HEAD_LINES,
     tail_limit: int = DEFAULT_TAIL_LINES,
 ) -> LogRestoreResult:
     """
-    单遍读取日志文件，返回头部与尾部若干行。
+    单遍读取日志文件，返回头部与尾部若干行。只统计、只返回处理时显示在控制台里的行
+    （会话头/会话结束块与调试输出被过滤，见 iter_console_lines）。
 
     只保留两端且内存有界（尾部用定长 deque），因此对几十万行的日志同样安全。
 
@@ -239,9 +296,9 @@ def read_log_lines(
     total = 0
 
     with open(path, "r", encoding="utf-8", errors="replace") as handle:
-        for raw in handle:
+        raw_lines = (raw.rstrip("\n").rstrip("\r") for raw in handle)
+        for line in iter_console_lines(raw_lines):
             total += 1
-            line = raw.rstrip("\n").rstrip("\r")
             if len(head) < head_limit:
                 head.append(line)
             else:

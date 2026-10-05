@@ -196,7 +196,6 @@ class SettingsCenter(QDialog):
 
         # 左侧导航 / Left-side navigation
         self._nav = QListWidget()
-        self._nav.setFixedWidth(160)
         for key in PAGE_ORDER:
             item = QListWidgetItem(
                 load_tinted_icon(_PAGE_ICON[key], ICON_IDLE, 18),
@@ -204,7 +203,19 @@ class SettingsCenter(QDialog):
             )
             item.setData(Qt.UserRole, key)
             self._nav.addItem(item)
-        root.addWidget(self._nav)
+
+        # 左栏 = 导航 + 底部常驻的界面语言选择（任何一页都看得到；英文系统的中文用户
+        # 反馈找不到菜单栏里的语言子菜单）
+        # Left column = nav + an always-visible UI-language picker at the bottom
+        # (users on English systems could not find the menu-bar submenu).
+        left = QWidget()
+        left.setFixedWidth(160)
+        left_lay = QVBoxLayout(left)
+        left_lay.setContentsMargins(0, 0, 0, 10)
+        left_lay.setSpacing(4)
+        left_lay.addWidget(self._nav, 1)
+        left_lay.addWidget(self._build_language_picker())
+        root.addWidget(left)
 
         # 右侧内容区 / Right-side content area
         right = QVBoxLayout()
@@ -2968,6 +2979,65 @@ class SettingsCenter(QDialog):
         return page
 
     # ── 外部接口 / Public API ─────────────────────────────────────────────────
+
+    def _build_language_picker(self) -> QWidget:
+        """
+        构建左栏底部的界面语言选择：「跟随系统」+ 各语言（用该语言自己的文字书写）。
+
+        选择即保存到 advanced_config.language（None = 跟随系统），并用目标语言提示
+        重启生效；界面文字不会立刻切换（各窗口构造时已取好文字）。
+
+        返回:
+        QWidget: 标签 + 下拉框
+
+        Build the UI-language picker at the bottom of the left column. Choosing
+        saves advanced_config.language immediately (None = follow system) and
+        shows a restart notice in the target language.
+        """
+        from advanced_config import get_advanced_config
+        from tools.i18n import LANGUAGE_NATIVE_NAMES, SUPPORTED_LANGUAGES
+
+        box = QWidget()
+        lay = QVBoxLayout(box)
+        lay.setContentsMargins(10, 0, 10, 0)
+        lay.setSpacing(4)
+
+        label = QLabel(self.i18n.t("settings.language_label"))
+        label.setStyleSheet(f"color:{COLORS['text_muted']};font-size:11px;")
+        lay.addWidget(label)
+
+        self._lang_combo = QComboBox()
+        self._lang_combo.addItem(self.i18n.t("settings.language_auto"), None)
+        for code in SUPPORTED_LANGUAGES:
+            self._lang_combo.addItem(LANGUAGE_NATIVE_NAMES[code], code)
+        current = get_advanced_config().language
+        idx = self._lang_combo.findData(current) if current else 0
+        self._lang_combo.setCurrentIndex(max(idx, 0))
+        style_combo_popup(self._lang_combo)
+        self._lang_combo.currentIndexChanged.connect(self._on_language_changed)
+        lay.addWidget(self._lang_combo)
+        return box
+
+    def _on_language_changed(self, index: int) -> None:
+        """
+        界面语言下拉变化：保存配置并用目标语言提示重启生效。
+
+        参数:
+        index (int): 下拉框当前项序号
+
+        Language picker changed: persist and show the restart notice.
+        """
+        from advanced_config import get_advanced_config
+        from tools.i18n import language_changed_notice
+
+        lang = self._lang_combo.itemData(index)
+        cfg = get_advanced_config()
+        if cfg.language == lang:
+            return
+        cfg.set_language(lang)
+        if cfg.save():
+            title, msg = language_changed_notice(lang)
+            StyledMessageBox.information(self, title, msg)
 
     def show_page(self, key: str) -> None:
         """

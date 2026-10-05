@@ -647,7 +647,7 @@ def organize_app_bundle_resources(app_dir: Path) -> None:
     resources_dir = app_dir / "Contents" / "Resources"
     resources_dir.mkdir(parents=True, exist_ok=True)
 
-    for resource_name in ("SuperBirdIDPlugin.lrplugin", "en.lproj", "zh-Hans.lproj"):
+    for resource_name in ("SuperBirdIDPlugin.lrplugin", "en.lproj", "zh-Hans.lproj", "zh-Hant.lproj"):
         source_path = macos_dir / resource_name
         destination_path = resources_dir / resource_name
         if source_path.exists():

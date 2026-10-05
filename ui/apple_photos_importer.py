@@ -501,6 +501,11 @@ def build_compact_photos_description(
         metric_parts.append(str(labels["flying"]))
 
     lines = [" · ".join(parts) for parts in (headline_parts, metric_parts) if parts]
+    if not prefer_english:
+        # 繁体 TW 界面：中文标签转台湾正体（简体/英文界面原样）
+        # zh_TW UI: Chinese labels become Taiwan Traditional.
+        from tools.zh_convert import zh_text
+        lines = [zh_text(line) for line in lines]
     return "\n".join(lines) or None
 
 
@@ -526,6 +531,11 @@ def build_photos_metadata(
     """
 
     species_cn = _nonempty_text(photo.get("bird_species_cn"))
+    if species_cn:
+        # 写进 Photos 的中文鸟名跟随界面：繁体 TW 用台湾鸟名
+        # Chinese name written to Photos follows the UI (Taiwan name in zh_TW).
+        from tools.zh_convert import species_cn as _localize_cn
+        species_cn = _localize_cn(species_cn)
     species_en = _nonempty_text(photo.get("bird_species_en"))
     species_title = (
         (species_en or species_cn) if prefer_english else (species_cn or species_en)

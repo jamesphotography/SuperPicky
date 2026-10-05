@@ -43,7 +43,7 @@ class AdvancedConfig:
         "log_level": "detailed",    # 日志详细程度: "simple" | "detailed"
 
         # 语言设置（后续实现）
-        "language": None,           # zh_CN | en_US | None (Auto)
+        "language": None,           # zh_CN | zh_TW | en_US | None (Auto)
         
         # V4.3: 摄影水平预设 (Skill Level Presets)
         "skill_level": "intermediate",  # 摄影水平: "beginner" | "intermediate" | "master" | "custom"
@@ -264,11 +264,14 @@ class AdvancedConfig:
             except Exception as e:
                 print(_t("logs.config_load_failed", e=e))
 
-    def save(self) -> None:
+    def save(self) -> bool:
         """
         将当前配置写回文件（UTF-8，ensure_ascii=False 以保留中文原文）。
 
         写入失败仅记录日志，不抛异常。/ Write failures are logged, not raised.
+
+        返回 / Returns:
+            bool: 写入成功为 True / True when written.
         """
         try:
             with open(self.config_file, 'w', encoding='utf-8') as f:
@@ -387,7 +390,7 @@ class AdvancedConfig:
 
     @property
     def language(self) -> Optional[str]:
-        """返回zh_CN | en_US | None (Auto)。"""
+        """返回 zh_CN | zh_TW | en_US | None (Auto)。"""
         return self.config["language"]
 
     @property
@@ -462,13 +465,25 @@ class AdvancedConfig:
         if value in ["simple", "detailed"]:
             self.config["log_level"] = value
 
-    def set_language(self, value: str) -> None:
-        """设置语言"""
+    def set_language(self, value: Optional[str]) -> None:
+        """
+        设置界面语言；None 表示跟随系统语言。不支持的值忽略。
+
+        参数:
+        value (str | None): zh_CN / zh_TW / en_US（兼容旧值 'en'），或 None（跟随系统）
+
+        Set the UI language; None means follow the system language.
+        Unsupported values are ignored.
+        """
+        if value is None:
+            self.config["language"] = None
+            return
         # 兼容性处理：如果传入 'en'，自动转换为 'en_US'
         if value == 'en':
             value = 'en_US'
-            
-        if value in ["zh_CN", "en_US"]:
+
+        from tools.i18n import SUPPORTED_LANGUAGES
+        if value in SUPPORTED_LANGUAGES:
             self.config["language"] = value
 
     # V4.3: 摄影水平预设 (Skill Level Presets)
@@ -706,12 +721,17 @@ class AdvancedConfig:
         self.config["external_apps"] = list(apps)
 
     def get_browser_sort(self) -> str:
-        """返回浏览器排序偏好: rarity_desc | filename | sharpness_desc | aesthetic_desc"""
+        """返回浏览器排序偏好: rarity_desc | filename | sharpness_desc | aesthetic_desc |
+        species_beauty_desc"""
         return self.config.get("browser_sort", "rarity_desc")
 
     def set_browser_sort(self, value: str) -> None:
         """保存浏览器排序偏好。"""
-        if value in ("rarity_desc", "filename", "sharpness_desc", "aesthetic_desc"):
+        # 须与 ui/filter_panel.py 排序下拉的选项一致，否则选了不会被记住
+        # （test_browser_sort_persist.py 会逐项核对）
+        # Must match the sort combo's options, or the choice is silently not saved
+        if value in ("rarity_desc", "filename", "sharpness_desc", "aesthetic_desc",
+                     "species_beauty_desc"):
             self.config["browser_sort"] = value
 
     def get_detail_metadata_for_rejected(self) -> bool:

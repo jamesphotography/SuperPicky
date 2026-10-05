@@ -38,6 +38,16 @@ PENALTY_EXPOSURE = -0.06      # 曝光问题减分 / exposure issue penalty
 EYE_CAP_THRESHOLD = 0.5   # 眼睛可见度低于此值 → 星级封顶 2★ / eye-visibility star cap
 QUOTA3_SHARP_FLOOR = 300.0    # 3★ 绝对兜底:归一化锐度下限 / absolute floor for 3★
 
+# V2 对焦仲裁门槛(issue #107):相机对焦点判为失焦/脱焦、但鸟头实测(ISO 归一化)锐度
+# 达到此值时,认定 EXIF 对焦点记录有偏差,按合焦处理、不扣分。V1 用用户的锐度滑块;
+# V2 里技能档位只决定配额,故固定为预设「大师」档的 520,与滑块解耦。
+# 2026-10-04 实拍复核(Z 9,3D 跟踪):对焦点落在鸟旁树枝上的 557/573 肉眼清晰→不扣分,
+# 对焦点在空处的 388 明显糊、423 略软→仍按脱焦扣分。
+# V2 focus arbitration threshold (issue #107): a missed-focus verdict is
+# overruled when the measured head sharpness reaches this value. Fixed (the
+# "master" preset) so V2 results no longer depend on the V1 sharpness slider.
+FOCUS_ARBITRATION_SHARPNESS = 520.0
+
 DEFAULT_QUOTA3 = 30.0     # 3★ 默认配额 %(= 推荐档 intermediate)/ default 3-star quota
 DEFAULT_QUOTA2 = 30.0     # 2★ 默认配额 %(接在 3★ 之后)/ 2-star quota after 3★
 DEFAULT_BURST_CAP3 = 2    # 连拍组内 3★ 上限 / per-burst 3-star cap
@@ -164,6 +174,40 @@ def gate_photo(
     return None
 
 
+def needs_focus_check(
+    preliminary_rating: int,
+    v2_enabled: bool,
+    photo: Optional[PhotoMetricsV2],
+    min_confidence: float = MIN_CONFIDENCE,
+) -> bool:
+    """
+    这张照片要不要做对焦检查（补读相机对焦点 + 判断落在鸟头/鸟身/鸟外）。
+
+    V1：只对预评分 ≥1★ 的照片做，省掉 0★ 照片的 exiftool 调用。
+    V2：再加上所有能进 V2 排名（过全部硬门槛）的照片。V2 的锐度门槛只有 100，
+    此前一律沿用 V1 预评分，锐度介于 100 与用户 V1 锐度门槛之间的照片从不检查
+    对焦——拿不到精焦加分、也不扣脱焦分，对焦状态与色标一律成了「合焦」。
+    两者取并集，原来会检查的照片（如角度不佳的 1★）照旧检查。
+
+    参数:
+        preliminary_rating: V1 预评分（不含对焦、飞鸟）
+        v2_enabled: 是否启用 V2 评星
+        photo: V2 硬门槛所需指标（对焦字段不参与判断）；未检测到鸟时为 None
+        min_confidence: 有鸟置信度门槛（跟随用户 AI 置信度设置）
+
+    返回:
+        bool: 是否需要检查对焦
+
+    Whether to read and verify the camera focus point: V1's preliminary
+    >= 1 star, plus (under V2) every photo that passes V2's hard gates.
+    """
+    if preliminary_rating >= 1:
+        return True
+    if not v2_enabled or photo is None or not photo.detected:
+        return False
+    return gate_photo(photo, min_confidence=min_confidence) is None
+
+
 def assign_ratings(
     photos: List[PhotoMetricsV2],
     quota3: float = DEFAULT_QUOTA3,
@@ -228,6 +272,13 @@ def assign_ratings(
             if gidx < c3 and p.norm_sharpness >= QUOTA3_SHARP_FLOOR:
                 star = 3
                 reason_key = "rating_v2.top_quota"
+            elif gidx < c3:
+                # 名次进了 3★ 配额，但锐度没到 3★ 绝对兜底 → 2★。
+                # 单独给原因，题注才能说清「为什么同种第一却只有 2★」。
+                # Ranked into the 3★ quota but below the absolute sharpness
+                # floor; a distinct reason lets the caption explain it.
+                star = 2
+                reason_key = "rating_v2.floor_capped"
             elif gidx < c3 + c2:
                 star = 2
                 reason_key = "rating_v2.mid_quota"
@@ -238,9 +289,23 @@ def assign_ratings(
             if p.best_eye < EYE_CAP_THRESHOLD and star > 2:
                 star = 2
                 reason_key = "rating_v2.eye_capped"
+            # reason_args 供题注使用(core/rating_caption.py):组内名次/张数、
+            # 本批(排序池)百分位与配额;percent 为旧键,保留兼容。
+            # reason_args feed the caption: in-group rank/size, pool
+            # percentiles and quotas; "percent" is the legacy key.
             results[p.key] = RatingV2Result(
                 star, q_score=q, reason_key=reason_key,
-                reason_args={"percent": math.ceil((gidx + 1) * 100 / gn)})
+                reason_args={
+                    "percent": math.ceil((gidx + 1) * 100 / gn),
+                    "rank": gidx + 1,
+                    "group_size": gn,
+                    "pct_sharp": pct_sharp(p.norm_sharpness),
+                    "pct_topiq": (pct_topiq(p.topiq) if p.topiq is not None else None),
+                    "quota3": quota3,
+                    "quota2": quota2,
+                    "sharp_floor3": QUOTA3_SHARP_FLOOR,
+                    "pool_size": len(pool),
+                })
 
     # 连拍组内 3★ 封顶:每组只留 Q 最高的前 N 张,其余降 2★
     # Per-burst 3-star cap: keep the top-N by Q, demote the rest to 2★
@@ -253,6 +318,7 @@ def assign_ratings(
             for key in keys[burst_cap3:]:  # scored 已按 Q 降序,故切片即淘汰尾部
                 results[key].rating = 2
                 results[key].reason_key = "rating_v2.burst_capped"
+                results[key].reason_args["burst_cap"] = burst_cap3
 
     return results
 

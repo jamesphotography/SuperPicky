@@ -625,16 +625,13 @@ def _embedded_write_mode(monkeypatch):
     Pin embedded mode; the user's real config is sidecar and would send the
     write to a .xmp sidecar instead of the file body.
     """
-    from tools.exiftool_manager import get_exiftool_manager
-    # 必须打在**单例实例**上，不能只打类：test_birdid_lr_keywords 用
-    # monkeypatch.setattr(mgr, ...) 打过同名实例属性，pytest 撤销时会把类方法
-    # 回写成实例属性；实例属性优先，之后再打类属性就不生效了（全量跑时本文件
-    # 因此写进了侧车、读本体为空）。
-    # Patch the singleton INSTANCE: another test's monkeypatch leaves the
-    # original class method installed as an instance attribute, which would
-    # shadow a class-level patch and silently route writes to the .xmp sidecar.
-    mgr = get_exiftool_manager()
-    monkeypatch.setattr(mgr, "_get_metadata_write_mode", lambda: "embedded")
+    from tools.exiftool_manager import ExifToolManager
+    # 打在**类**上：pytest 撤销实例级补丁时会把原方法写回实例 __dict__，永久遮住
+    # 之后所有类级补丁（conftest._drop_instance_method_shadows 会兜底清理）。
+    # Patch the CLASS: undoing an instance-level patch leaves a shadowing
+    # instance attribute behind (conftest also cleans these up).
+    monkeypatch.setattr(ExifToolManager, "_get_metadata_write_mode",
+                        lambda self: "embedded")
 
 
 def test_species_change_writes_chinese_title_readable_back(tmp_path, _embedded_write_mode):

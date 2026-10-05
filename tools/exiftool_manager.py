@@ -13,7 +13,7 @@ import shutil
 from typing import Optional, List, Dict
 from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from constants import RATING_FOLDER_NAMES, SIDECAR_RAW_EXTENSIONS
+from constants import ALL_RATING_FOLDER_NAMES, SIDECAR_RAW_EXTENSIONS
 import time
 import threading
 import queue
@@ -291,6 +291,37 @@ class _ExifToolProcess:
                 print(f"❌ ExifTool persistent error ({self.role}): {e}")
                 self.stop()
                 raise
+
+
+def pick_flag_args(pick) -> List[str]:
+    """
+    把旗标写成 Lightroom 认的两个 XMP 字段（与 Lightroom 自己写的完全一致）。
+
+    Lightroom Classic 13.2 起从 XMP 读写旗标，但**读取时只看 xmpDM:good**：
+    "True" = 留用、"False" = 排除、没有该字段 = 无旗标；xmpDM:pick（1 / -1 / 0）是
+    Lightroom 同时写的配套字段。SuperPicky 此前只写 xmpDM:pick，所以精选（皇冠）
+    在 Lightroom Classic 里从未显示为留用旗标。依据：Lightroom 写出的 XMP
+    （immich discussion #12198），以及 riffle 项目在 Lightroom Classic 15.5.1
+    上的实测（只写 xmpDM:good 即可被识别，Classic 跟随 xmpDM:good）。
+
+    参数:
+    pick: 1 = 留用，-1 = 排除，0 = 无旗标
+
+    返回:
+    List[str]: exiftool 写入参数
+
+    Write the flag the way Lightroom does: xmpDM:pick (1/-1/0) plus
+    xmpDM:good ("True"/"False", removed when unflagged). Lightroom Classic
+    (13.2+) reads only xmpDM:good; writing xmpDM:pick alone never showed a
+    flag there.
+    """
+    pick = int(pick)
+    good = {1: "True", -1: "False"}.get(pick, "")
+    return [f'-XMP-xmpDM:Pick={pick}', f'-XMP-xmpDM:Good={good}']
+
+
+# 清除旗标时一并清掉的字段 / Flag fields cleared together on reset
+PICK_FLAG_CLEAR_ARGS = ['-XMP:Pick=', '-XMP-xmpDM:Good=']
 
 
 class ExifToolManager:
@@ -707,7 +738,7 @@ class ExifToolManager:
         if item.get('rating') is not None:
             args.append(f'-Rating={item["rating"]}')
         if item.get('pick') is not None:
-            args.append(f'-XMP:Pick={item["pick"]}')
+            args.extend(pick_flag_args(item["pick"]))
         if item.get('sharpness') is not None:
             args.append(f'-XMP:City={item["sharpness"]:06.2f}')
         if item.get('nima_score') is not None:
@@ -852,7 +883,7 @@ class ExifToolManager:
         if item.get('rating') is not None:
             args.append(f'-XMP:Rating={item["rating"]}')
         if item.get('pick') is not None:
-            args.append(f'-XMP:Pick={item["pick"]}')
+            args.extend(pick_flag_args(item["pick"]))
         if item.get('sharpness') is not None:
             args.append(f'-XMP:City={item["sharpness"]:06.2f}')
         if item.get('nima_score') is not None:
@@ -957,7 +988,7 @@ class ExifToolManager:
 
         args = [
             '-XMP:Rating=',
-            '-XMP:Pick=',
+            *PICK_FLAG_CLEAR_ARGS,
             '-XMP:Label=',
             '-XMP:City=',
             '-XMP:State=',
@@ -1024,7 +1055,8 @@ class ExifToolManager:
         rating: int,
         pick: int = 0,
         sharpness: float = None,
-        nima_score: float = None
+        nima_score: float = None,
+        caption: Optional[str] = None,
     ) -> bool:
         """
         设置照片评分和旗标 (Lightroom标准)
@@ -1035,6 +1067,8 @@ class ExifToolManager:
             pick: 旗标 (-1=排除旗标, 0=无旗标, 1=精选旗标)
             sharpness: 锐度值（可选，写入IPTC:City字段，用于Lightroom排序）
             nima_score: NIMA美学评分（可选，写入IPTC:Province-State字段）
+            caption: 评分说明（可选，写入 XMP:Description 即 Lightroom「题注」；
+                经 UTF-8 临时文件传入，避免中文乱码）。浏览器手动改星级时用它同步题注。
             # V3.2: 移除 brisque_score 参数
 
         Returns:
@@ -1068,6 +1102,8 @@ class ExifToolManager:
                 'sharpness': sharpness,
                 'nima_score': nima_score
             }
+            if caption is not None:
+                item['caption'] = caption
             return self._write_metadata_arw(item)
 
         # V4.0.5: 使用常驻进程处理单文件更新
@@ -1076,8 +1112,8 @@ class ExifToolManager:
         # Rating
         args.append(f'-Rating={rating}')
         
-        # Pick
-        args.append(f'-XMP:Pick={pick}')
+        # Pick（xmpDM:pick + xmpDM:good，后者才是 Lightroom Classic 读取的字段）
+        args.extend(pick_flag_args(pick))
         
         # Sharpness -> XMP:City
         if sharpness is not None:
@@ -1086,7 +1122,16 @@ class ExifToolManager:
         # NIMA -> XMP:State
         if nima_score is not None:
             args.append(f'-XMP:State={nima_score:05.2f}')
-        
+
+        # 题注 -> XMP:Description，中文必须经 UTF-8 临时文件传入
+        # Caption via a UTF-8 temp file (never inline, to keep Chinese intact)
+        caption_tmp_path = None
+        if caption is not None:
+            fd, caption_tmp_path = tempfile.mkstemp(suffix='.txt', prefix='sp_caption_')
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                f.write(caption)
+            args.append(f'-XMP:Description<={caption_tmp_path}')
+
         # 文件路径
         args.append(file_path)
         
@@ -1095,7 +1140,14 @@ class ExifToolManager:
 
         try:
             # 发送命令
-            success = self._send_to_process(args)
+            try:
+                success = self._send_to_process(args)
+            finally:
+                if caption_tmp_path:
+                    try:
+                        os.remove(caption_tmp_path)
+                    except OSError:
+                        pass
             
             if success:
                 filename = os.path.basename(file_path)
@@ -1421,7 +1473,8 @@ class ExifToolManager:
             print("[ExifTool] metadata_write_mode=none, 跳过所有元数据写入")
             return stats
         if global_mode == "sidecar":
-            print(f"[ExifTool] metadata_write_mode=sidecar, 所有文件统一写 XMP 侧车 ({len(files_metadata)} 条)")
+            from tools.i18n import t as _t
+            print(_t("logs.exif_sidecar_mode", count=len(files_metadata)))
             for item in files_metadata:
                 if self._write_metadata_xmp_sidecar(item):
                     stats['success'] += 1
@@ -1478,7 +1531,7 @@ class ExifToolManager:
             
             # Pick
             if item.get('pick') is not None:
-                args_list.append(f'-XMP:Pick={item["pick"]}')
+                args_list.extend(pick_flag_args(item["pick"]))
             
             # Sharpness -> XMP:City
             if item.get('sharpness') is not None:
@@ -1838,7 +1891,7 @@ class ExifToolManager:
         # 删除Rating、Pick、City、Country和Province-State字段
         args = [
             '-Rating=',
-            '-XMP:Pick=',
+            *PICK_FLAG_CLEAR_ARGS,
             '-XMP:Label=',
             '-XMP:City=',
             '-XMP:State=',
@@ -1874,6 +1927,11 @@ class ExifToolManager:
         Returns:
             统计结果 {'success': 成功数, 'failed': 失败数}
         """
+        # 没传 i18n 时取当前界面语言；此前退回写死的中英文，或把键名原样显示出来
+        # Fall back to the UI language (previously hard-coded text or raw keys)
+        if i18n is None:
+            from tools.i18n import get_i18n
+            i18n = get_i18n()
         def log(msg):
             """统一日志输出"""
             if log_callback:
@@ -1884,11 +1942,7 @@ class ExifToolManager:
         stats = {'success': 0, 'failed': 0}
         total = len(file_paths)
 
-        if i18n:
-            log(i18n.t("logs.batch_reset_start", total=total))
-        else:
-            log(f"📦 Starting EXIF reset for {total} files...")
-            log(f"   Clearing all rating fields\n")
+        log(i18n.t("logs.batch_reset_start", total=total))
 
         # 分批处理
         for batch_start in range(0, total, batch_size):
@@ -1925,7 +1979,7 @@ class ExifToolManager:
             # Flags are listed once; all file paths follow; one -execute at the end.
             batch_args = [
                 '-Rating=',
-                '-XMP:Pick=',
+                *PICK_FLAG_CLEAR_ARGS,
                 '-XMP:Label=',
                 '-XMP:City=',
                 '-XMP:State=',
@@ -1973,26 +2027,17 @@ class ExifToolManager:
                 stats['success'] += batch_success
                 stats['failed'] += error_count
 
-                if i18n:
-                    log(i18n.t("logs.batch_progress", start=batch_start+1, end=batch_end, success=batch_success, skipped=0))
-                else:
-                    log(f"  ✅ 批次 {batch_start+1}-{batch_end}: {batch_success} 个文件已处理")
+                log(i18n.t("logs.batch_progress", start=batch_start+1, end=batch_end, success=batch_success, skipped=0))
 
             except Exception as e:
                 stats['failed'] += len(valid_files)
                 self._write_proc.stop()
-                if i18n:
-                    log(f"  ❌ {i18n.t('logs.batch_error', start=batch_start+1, end=batch_end, error=str(e))}")
-                else:
-                    log(f"  ❌ 批次 {batch_start+1}-{batch_end} 错误: {e}")
+                log(f"  ❌ {i18n.t('logs.batch_error', start=batch_start+1, end=batch_end, error=str(e))}")
 
         # V4.0.3: 清理潜在残留的临时文件
         self.cleanup_temp_files(file_paths)
 
-        if i18n:
-            log(f"\n{i18n.t('logs.batch_complete', success=stats['success'], skipped=0, failed=stats['failed'])}")
-        else:
-            log(f"\n✅ 批量重置完成: {stats['success']} 成功, {stats['failed']} 失败")
+        log(f"\n{i18n.t('logs.batch_complete', success=stats['success'], skipped=0, failed=stats['failed'])}")
         return stats
 
     def restore_files_from_manifest(self, dir_path: str, log_callback=None, i18n=None) -> Dict[str, int]:
@@ -2009,6 +2054,11 @@ class ExifToolManager:
         Returns:
             dict: {'restored': int, 'failed': int, 'not_found': int}
         """
+        # 没传 i18n 时取当前界面语言；此前退回写死的中英文，或把键名原样显示出来
+        # Fall back to the UI language (previously hard-coded text or raw keys)
+        if i18n is None:
+            from tools.i18n import get_i18n
+            i18n = get_i18n()
         import json
         import shutil
         
@@ -2124,7 +2174,9 @@ class ExifToolManager:
         
         # V3.3: 添加旧版目录到扫描列表（兼容旧版本）
         legacy_folders = ["2星_良好_锐度", "2星_良好_美学"]
-        all_folders = list(RATING_FOLDER_NAMES.values()) + legacy_folders
+        # 三种界面语言建的评分目录都要扫（此前只扫简体，英文/繁体目录里的残留不会复原）
+        # Scan rating folders of all UI languages (previously Simplified only).
+        all_folders = sorted(ALL_RATING_FOLDER_NAMES) + legacy_folders
         
         def restore_from_folder(folder_path: str, relative_path: str = ""):
             """递归恢复文件夹中的文件"""

@@ -1057,10 +1057,9 @@ class CropStudio(QWidget):
         h.setSpacing(12)
 
         # 鸟种名 / Species name
-        if is_zh:
-            species = p.get("bird_species_cn") or p.get("bird_species_en") or "—"
-        else:
-            species = p.get("bird_species_en") or p.get("bird_species_cn") or "—"
+        from tools.zh_convert import species_display
+        species = species_display(p.get("bird_species_cn"), p.get("bird_species_en"),
+                                  str(getattr(self._i18n, "current_lang", ""))) or "—"
         sp_lbl = QLabel(species)
         sp_lbl.setStyleSheet(
             f"color: {_c('text_primary', '#fafafa')}; font-size: 16px; font-weight: 700;"

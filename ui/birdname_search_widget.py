@@ -182,7 +182,10 @@ class BirdResultCard(QFrame):
             secondary = (bird_data.get("latin_name") or "").strip()
             secondary_italic = True
         else:
-            primary = bird_data.get("chinese_name", "")
+            # 繁体 TW 界面显示台湾鸟名；bird_data 里仍是简体名，选中回传不受影响
+            # zh_TW shows the Taiwan name; bird_data keeps the Simplified name.
+            from tools.zh_convert import species_cn
+            primary = species_cn(bird_data.get("chinese_name", "") or "")
             secondary = bird_data.get("english_name", "")
             secondary_italic = False
 
@@ -708,6 +711,12 @@ class BirdNameSearchWidget(QWidget):
             # Same extras as the edit dialog: alias search + model-first order.
             from tools.birdname_versions import catalog_search_extras
             alias_where, model_order = catalog_search_extras(conn)
+            # 繁体 TW：台湾鸟名命中的鸟种换回库里的简体名一并搜出
+            # zh_TW: species whose Taiwan name matches are searched by Simplified name.
+            from tools.zh_convert import tw_name_search
+            exact_cn, tw_hits = tw_name_search(query)
+            tw_where = (f" OR chinese_name IN ({','.join('?' * len(tw_hits))})"
+                        if tw_hits else "")
             sql = f"""
                 SELECT * FROM birds
                 WHERE version_id = ? AND (
@@ -717,7 +726,7 @@ class BirdNameSearchWidget(QWidget):
                     pinyin_name LIKE ? OR
                     abbreviation LIKE ? OR
                     LOWER(pinyin_name) LIKE ? OR
-                    LOWER(abbreviation) LIKE ?{alias_where}
+                    LOWER(abbreviation) LIKE ?{alias_where}{tw_where}
                 )
                 ORDER BY
                     CASE
@@ -742,7 +751,8 @@ class BirdNameSearchWidget(QWidget):
                 f"%{query_lower}%",
                 f"%{query_lower}%",
                 *((f"%{query}%",) if alias_where else ()),
-                query,
+                *tw_hits,
+                exact_cn,
                 query,
                 query,
                 query_lower,
@@ -834,7 +844,8 @@ class BirdNameSearchWidget(QWidget):
         # 拼音只在简体中文界面出现（用户 2026-09-19 要求），夹在中文名与学名
         # 之间——它注解的是中文名，离得越近越好读。
         # Title: name, pinyin (Simplified-Chinese UI only), then the Latin name.
-        title = cn or en or latin or "—"
+        from tools.zh_convert import species_cn, zh_text
+        title = (species_cn(cn) if cn else "") or en or latin or "—"
         muted = COLORS['text_muted']
         pinyin = pinyin_for_ui(cn, is_zh=not get_i18n().current_lang.startswith("en"))
         if pinyin:
@@ -895,7 +906,7 @@ class BirdNameSearchWidget(QWidget):
 
         # 简介
         desc = (info.get("short_description_zh") if info else None) or ""
-        desc = desc.strip()
+        desc = zh_text(desc.strip())
         self.detail_intro_label.setText(desc if desc else "—")
 
         self.detail_frame.show()

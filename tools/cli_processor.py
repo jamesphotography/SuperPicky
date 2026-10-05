@@ -128,10 +128,12 @@ class CLIProcessor:
     def _print_banner(self):
         """Print CLI banner"""
         self._log("\n" + "="*60)
-        self._log("🐦 SuperPicky CLI - AI Bird Photo Selector")
+        from constants import APP_VERSION
+        from tools.i18n import t
+        self._log(t("cli.banner", version=APP_VERSION))
         self._log("="*60 + "\n")
         
-        self._log("📁 Phase 1: File Scanning", "info")
+        self._log(t("cli.phase_scan"), "info")
     
     def _print_summary(self, result: ProcessingResult):
         """打印完成摘要（使用共享格式化模块）"""

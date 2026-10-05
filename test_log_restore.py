@@ -327,3 +327,52 @@ def test_log_line_html_shared_by_live_and_replay():
         assert "19:44:51" not in window._log_line_html("x" * 200, None, "19:44:51")
     finally:
         window.close()
+
+
+def test_replay_hides_file_only_blocks_and_debug_lines(tmp_path):
+    """
+    回放只显示处理时真正进过控制台的行：会话头/会话结束块（固定英文）与 DEBUG 调试行
+    都不回放——此前中文界面回放时会冒出一大段英文（2026-10-04 用户反馈）。
+    """
+    from core.log_restore import read_log_lines
+
+    path = _write_log_with_summary(tmp_path)
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write("[2026-09-19 20:30:00] DEBUG YOLO no_bird: x.jpg → 0 detections\n")
+        fh.write("[2026-09-19 20:30:01] ✅ 收尾完成\n")
+    result = read_log_lines(path)
+    messages = [line.message for line in result.head + result.tail]
+    joined = "\n".join(messages)
+    for gone in ("[Session Start]", "[Session End]", "[Selection Results]", "Total Photos",
+                 "[Performance]", "DEBUG YOLO", "=" * 60):
+        assert gone not in joined, gone
+    assert any("DSC06158.jpg" in m for m in messages)
+    assert any("收尾完成" in m for m in messages)
+    assert result.total == len(messages)
+
+
+def test_replay_keeps_ordinary_separator_lines():
+    """不属于会话块的分隔线照常保留（只有紧跟会话标记的才算会话块）。"""
+    from core.log_restore import iter_console_lines
+
+    raw = ["[2026-09-19 20:00:00] " + "=" * 60, "[2026-09-19 20:00:00] 📊 统计", "=" * 60]
+    assert list(iter_console_lines(raw)) == raw
+
+
+def test_main_window_replay_ends_with_localized_summary(tmp_path):
+    """回放末尾用界面语言写一行结果摘要，代替被隐藏的英文汇总块。"""
+    from ui.main_window import SuperPickyMainWindow
+
+    _write_log_with_summary(tmp_path)
+    window = SuperPickyMainWindow()
+    try:
+        window.log_text.clear()
+        assert window._restore_console_from_log(str(tmp_path)) is True
+        text = window.log_text.toPlainText()
+        assert "Selection Results" not in text and "Session End" not in text
+        expected = window.i18n.t(
+            "logs.replay_summary", total=5481, s3=649, picked=26, s2=1363, s1=1873,
+            s0=1484, no_bird=112, minutes="44.8")
+        assert expected in text
+    finally:
+        window.close()

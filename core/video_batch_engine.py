@@ -119,15 +119,16 @@ class VideoBatchEngine:
         stats = VideoBatchStats(total=len(video_paths))
         if not video_paths:
             return stats
+        t = get_i18n().t
 
         # 1. 模型加载（首次） / Load models on first call
-        self._log(log_cb, f"🎬 开始处理 {len(video_paths)} 个视频", "info")
+        self._log(log_cb, t("video.batch_start", count=len(video_paths)), "info")
         load_start = time.perf_counter()
         self._lazy_load_models(log_cb)
         stats.model_load_ms = (time.perf_counter() - load_start) * 1000.0
 
         if self._yolo is None:
-            self._log(log_cb, "⚠️ YOLO 模型加载失败，跳过视频处理", "error")
+            self._log(log_cb, t("video.batch_yolo_failed_skip"), "error")
             stats.failed = stats.total
             return stats
 
@@ -147,6 +148,7 @@ class VideoBatchEngine:
         organizer = VideoOrganizer(options=OrganizeOptions(
             operation='move',
             use_english=_use_en,
+            use_taiwan=_i18n.current_lang == "zh_TW",
             no_bird_folder=_i18n.t("video.folder_no_bird"),
             other_species_folder=_i18n.t("video.folder_other_species"),
         ))
@@ -158,20 +160,20 @@ class VideoBatchEngine:
             # 检查中断 / Check cancellation
             if stop_cb is not None and stop_cb():
                 stats.cancelled = stats.total - stats.analyzed
-                self._log(log_cb, f"⏸ 用户中断，已处理 {stats.analyzed}/{stats.total}", "warning")
+                self._log(log_cb, t("video.batch_interrupted", done=stats.analyzed, total=stats.total), "warning")
                 break
 
             if progress_cb is not None:
                 progress_cb(i, len(video_paths))
 
             name = os.path.basename(path)
-            self._log(log_cb, f"  [{i}/{len(video_paths)}] 分析: {name}", "info")
+            self._log(log_cb, t("video.batch_analyzing", idx=i, total=len(video_paths), name=name), "info")
 
             # 3a. 分析 / Analyze
             try:
                 result = analyzer.analyze(path, stop_callback=stop_cb)
             except Exception as e:
-                self._log(log_cb, f"    ❌ 分析失败: {e}", "error")
+                self._log(log_cb, t("video.batch_analyze_failed", error=e), "error")
                 stats.failed += 1
                 continue
 
@@ -186,7 +188,7 @@ class VideoBatchEngine:
                 org_result = organizer.organize(path, result.segments)
                 org_results.append(org_result)
             except Exception as e:
-                self._log(log_cb, f"    ❌ 归类失败: {e}", "error")
+                self._log(log_cb, t("video.batch_classify_failed", error=e), "error")
                 stats.failed += 1
                 continue
 
@@ -200,13 +202,14 @@ class VideoBatchEngine:
                               f"    ✅ {primary} → {os.path.basename(org_result.target_video_path or '')}",
                               "success")
                 else:
-                    label = "无鸟" if not any(s.has_bird for s in result.segments) else "其他鸟"
+                    label = (t("video.folder_no_bird") if not any(s.has_bird for s in result.segments)
+                             else t("video.folder_other_species"))
                     self._log(log_cb,
                               f"    ✅ {label} → {os.path.basename(org_result.target_video_path or '')}",
                               "success")
             else:
                 stats.failed += 1
-                self._log(log_cb, f"    ❌ 整理失败: {org_result.error}", "error")
+                self._log(log_cb, t("video.batch_organize_failed", error=org_result.error), "error")
 
         stats.total_wall_ms = (time.perf_counter() - batch_start) * 1000.0
 
@@ -228,12 +231,14 @@ class VideoBatchEngine:
 
         Lazy-load YOLO + optional BirdID + Flight on first call.
         """
+        from tools.i18n import get_i18n
+        t = get_i18n().t
         if self._yolo is None:
             try:
                 from ai_model import load_yolo_model
                 self._yolo = load_yolo_model()
             except Exception as e:
-                self._log(log_cb, f"YOLO 加载失败: {e}", "error")
+                self._log(log_cb, t("video.batch_yolo_load_failed", error=e), "error")
                 return
 
         if self.enable_species and self._species_clf is None:
@@ -241,7 +246,7 @@ class VideoBatchEngine:
                 from core.birdid_adapter import BirdIDAdapter
                 self._species_clf = BirdIDAdapter()
             except Exception as e:
-                self._log(log_cb, f"BirdID 加载失败，跳过鸟种识别: {e}", "warning")
+                self._log(log_cb, t("video.batch_birdid_load_failed", error=e), "warning")
                 self._species_clf = None
 
         if self.enable_flight and self._flight_clf is None:
@@ -249,7 +254,7 @@ class VideoBatchEngine:
                 from core.flight_adapter import FlightAdapter
                 self._flight_clf = FlightAdapter()
             except Exception as e:
-                self._log(log_cb, f"FlightDetector 加载失败，跳过飞行检测: {e}", "warning")
+                self._log(log_cb, t("video.batch_flight_load_failed", error=e), "warning")
                 self._flight_clf = None
 
     def _log(self, log_cb: Optional[LogCallback], msg: str, level: str = "info"):
@@ -261,19 +266,20 @@ class VideoBatchEngine:
 
     def _log_summary(self, log_cb: Optional[LogCallback], stats: VideoBatchStats):
         """打印批量处理汇总 / Print batch summary"""
+        from tools.i18n import get_i18n
+        t = get_i18n().t
+        cancelled = (t("video.batch_summary_cancelled", count=stats.cancelled)
+                     if stats.cancelled else "")
         self._log(log_cb,
-                  f"🎬 视频处理完毕："
-                  f"分析 {stats.analyzed}/{stats.total}，"
-                  f"归类 {stats.organized}，"
-                  f"失败 {stats.failed}"
-                  + (f"，中断 {stats.cancelled}" if stats.cancelled else ""),
+                  t("video.batch_summary", analyzed=stats.analyzed, total=stats.total,
+                    organized=stats.organized, failed=stats.failed, cancelled=cancelled),
                   "success" if stats.failed == 0 and stats.cancelled == 0 else "info")
         if stats.species_counts:
             top = sorted(stats.species_counts.items(), key=lambda kv: -kv[1])[:5]
-            top_str = ", ".join(f"{name}×{cnt}" for name, cnt in top)
-            self._log(log_cb, f"   🐦 主要鸟种: {top_str}", "info")
+            top_str = t("logs.name_list_sep").join(f"{name}×{cnt}" for name, cnt in top)
+            self._log(log_cb, t("video.batch_summary_species", species=top_str), "info")
+        load = (t("video.batch_summary_load", seconds=f"{stats.model_load_ms/1000:.1f}")
+                if stats.model_load_ms > 0 else "")
         self._log(log_cb,
-                  f"   ⏱ 总耗时 {stats.total_wall_ms/1000:.1f}s"
-                  + (f"（模型加载 {stats.model_load_ms/1000:.1f}s）"
-                     if stats.model_load_ms > 0 else ""),
+                  t("video.batch_summary_time", seconds=f"{stats.total_wall_ms/1000:.1f}", load=load),
                   "info")

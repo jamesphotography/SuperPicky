@@ -388,10 +388,15 @@ def _record_failure(failures: Optional[list], basename: str, reason: str) -> Non
 
 
 def _folder_bird_name(new_bird_cn: str, new_bird_en: str) -> str:
-    """根据当前界面语言选择用于目录命名的鸟名。"""
-    from tools.i18n import get_i18n
-    use_en = get_i18n().current_lang.startswith("en")
-    return (new_bird_en if use_en else new_bird_cn) or ""
+    """
+    根据当前界面语言选择用于目录命名的鸟名，与处理流程建目录的规则一致
+    （tools.zh_convert.species_folder_name：英文空格换下划线，繁体 TW 用台湾鸟名）。
+
+    Folder name for the species in the current UI language, matching how the
+    processing pipeline names folders.
+    """
+    from tools.zh_convert import species_folder_name
+    return species_folder_name(new_bird_cn, new_bird_en)
 
 
 def _species_update_fields(
