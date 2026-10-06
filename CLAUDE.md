@@ -1,6 +1,7 @@
 # CLAUDE.md (Claude / Anthropic Coding Agents)
 
-Use `scripts_dev/AI_CODING_RULES.md` as the single source of truth for this repository.
+本文件即本仓库给 AI 编码助手的规则来源。原 `scripts_dev/AI_CODING_RULES.md` 已于 2026-02-27（e770bd40）删除，其核心条目见下方「Always Enforce」与「Minimum Verification」。
+This file is the rule source for AI coding assistants in this repository. The former `scripts_dev/AI_CODING_RULES.md` was deleted on 2026-02-27 (e770bd40); its core rules live in "Always Enforce" and "Minimum Verification" below.
 
 ## Always Enforce
 
