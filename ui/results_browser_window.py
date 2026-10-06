@@ -742,6 +742,8 @@ def _mark_no_bird_files(photo: dict) -> list:
     The files whose species metadata must be cleared; the internal cache
     preview is excluded, matching the species-change path.
     """
+    from core.rating_mover import _is_internal_cache_path
+
     files = []
     main = photo.get("current_path") or photo.get("original_path") or ""
     if main and os.path.exists(main):
@@ -2871,7 +2873,6 @@ class ResultsBrowserWindow(QMainWindow):
         from ui.custom_dialogs import StyledMessageBox
         from PySide6.QtWidgets import QDialog
         from advanced_config import get_advanced_config
-        from core.rating_mover import merge_bird_species
 
         i18n = self.i18n
         use_en = i18n.current_lang.startswith("en")
