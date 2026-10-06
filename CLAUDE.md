@@ -19,7 +19,7 @@ This file is the rule source for AI coding assistants in this repository. The fo
 
 ## Minimum Verification
 
-- Run `.venv*/bin/python -m py_compile` on changed Python files.
+- Run `python3 -m py_compile` (Windows: `py -3 -m py_compile`) on changed Python files. The local dev interpreter is the system Python 3.13 configured in PyCharm; the repo's `.venv` is stale and must not be used.
 - For metadata changes: write + read-back verification with Chinese sample values.
 - For `.spec` changes: packaged startup smoke test.
 - For DB/threading changes: run a small multi-thread write/read stress check and confirm no transaction-state errors.
