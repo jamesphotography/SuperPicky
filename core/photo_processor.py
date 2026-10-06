@@ -25,7 +25,7 @@ from collections import deque
 import numpy as np
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, List, Optional, Callable, Set, Tuple
+from typing import Any, Dict, List, Optional, Callable, Set, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -143,13 +143,13 @@ class ProcessingCallbacks:
     log: Optional[Callable[[str, str], None]] = None
     progress: Optional[Callable[[int], None]] = None
     should_stop: Optional[Callable[[], bool]] = None
-    crop_preview: Optional[Callable[[any], None]] = None  # V4.2: 裁剪预览回调
+    crop_preview: Optional[Callable[[Any], None]] = None  # V4.2: 裁剪预览回调
 
 
 @dataclass
 class ProcessingResult:
     """处理结果数据"""
-    stats: Dict[str, any] = field(default_factory=dict)
+    stats: Dict[str, Any] = field(default_factory=dict)
     file_ratings: Dict[str, int] = field(default_factory=dict)
     star_3_photos: List[Dict] = field(default_factory=list)
     total_time: float = 0.0
@@ -1680,7 +1680,7 @@ class PhotoProcessor:
             """Normalize separators so cache-path checks work on both Windows and POSIX."""
             return str(path_value).replace("\\", "/")
         
-        def resolve_file_context(in_filename: str) -> Dict[str, any]:
+        def resolve_file_context(in_filename: str) -> Dict[str, Any]:
             in_filepath = os.path.join(self.dir_path, in_filename)
             in_file_prefix, _ = os.path.splitext(in_filename)
             in_filename_norm = normalize_path_for_match(in_filename)
@@ -1831,7 +1831,7 @@ class PhotoProcessor:
 
             return detail
         
-        def build_yolo_item(index: int, in_filename: str) -> Dict[str, any]:
+        def build_yolo_item(index: int, in_filename: str) -> Dict[str, Any]:
             ctx = resolve_file_context(in_filename)
             in_filepath = ctx['filepath']
             
