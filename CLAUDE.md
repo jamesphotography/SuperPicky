@@ -11,6 +11,11 @@ This file is the rule source for AI coding assistants in this repository. The fo
 - Any persistent external process must have deterministic cleanup on task/app exit.
 - Packaged CUDA failures: prioritize packaging/runtime diagnosis before algorithm refactors.
 - Keep Windows Torch/CUDA packaging with `upx=False` unless explicitly requested and validated.
+- Model loading: load checkpoints on CPU first (`map_location="cpu"`), then move to the target device; if CUDA init/inference fails, fall back to CPU with a visible log line.
+- SQLite + threads: `check_same_thread=False` alone does not make a shared connection safe — serialize access (e.g. `threading.RLock`, as `tools/report_db.py` does) or use per-thread connections. Do not mix manual `commit()` with context-managed transactions on the same connection without that lock; commit only when a transaction is active.
+- Business code must not reach into a DB wrapper's private connection (e.g. `report_db._conn.execute/commit`); add a thread-safe method to the wrapper instead.
+- Error logs must name the failing component (e.g. `YOLO`, `Keypoint`, `Flight`, `BirdID`); avoid all-or-nothing failure in preload/startup pipelines.
+- When rules conflict, priority is: data correctness (metadata, no mojibake) > runtime stability (no crash/leak) > cross-platform compatibility > performance.
 
 ## Minimum Verification
 
