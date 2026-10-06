@@ -885,7 +885,7 @@ def test_windows_browser_has_no_apple_photos_action(monkeypatch) -> None:
     monkeypatch.setattr(results_browser_window.sys, "platform", "win32")
     window = results_browser_window.ResultsBrowserWindow()
     try:
-        assert window._apple_photos_btn is None
+        assert window._apple_photos_action is None
     finally:
         window.cleanup()
         window.close()

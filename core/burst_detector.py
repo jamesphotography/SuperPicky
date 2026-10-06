@@ -10,7 +10,7 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List, Optional, Tuple, Dict
+from typing import Any, List, Optional, Tuple, Dict
 import os
 import subprocess
 import json
@@ -623,7 +623,7 @@ class BurstDetector:
         self,
         directory: str,
         rating_dirs: List[str] = None
-    ) -> Dict[str, any]:
+    ) -> Dict[str, Any]:
         """
         运行完整的连拍检测流程
         V4.0: 支持递归扫描鸟种子目录

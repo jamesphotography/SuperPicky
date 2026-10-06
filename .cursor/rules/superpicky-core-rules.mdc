@@ -5,7 +5,7 @@ alwaysApply: true
 
 # SuperPicky Cursor Rules
 
-Follow `scripts_dev/AI_CODING_RULES.md`.
+Follow `CLAUDE.md` for the full project rules (the former `scripts_dev/AI_CODING_RULES.md` was deleted in e770bd40).
 
 ## Non-negotiable
 

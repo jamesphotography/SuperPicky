@@ -2,7 +2,7 @@
 
 Follow project rules in:
 
-- `scripts_dev/AI_CODING_RULES.md`
+- `CLAUDE.md` (full project rules; the former `scripts_dev/AI_CODING_RULES.md` was deleted in e770bd40)
 - `.cursor/rules/superpicky-core-rules.mdc`
 
 Key constraints:

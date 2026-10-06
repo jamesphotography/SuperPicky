@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 import shutil
-from typing import Optional, List, Dict
+from typing import Any, Optional, List, Dict
 from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from constants import ALL_RATING_FOLDER_NAMES, SIDECAR_RAW_EXTENSIONS
@@ -640,7 +640,7 @@ class ExifToolManager:
         except Exception:
             return False
 
-    def _read_arw_structure(self, file_path: str) -> Optional[Dict[str, any]]:
+    def _read_arw_structure(self, file_path: str) -> Optional[Dict[str, Any]]:
         """读取 ARW 关键结构标签，用于检测文件布局变化 (V4.0.6: 使用常驻进程)"""
         tags = [
             'PreviewImageStart',
@@ -728,7 +728,7 @@ class ExifToolManager:
             return group.strip().lower().startswith('iptc')
         return tag_name.strip().lower() in cls._IPTC_BARE_TAGS
 
-    def _write_metadata_subprocess(self, item: Dict[str, any], in_place: bool = False) -> bool:
+    def _write_metadata_subprocess(self, item: Dict[str, Any], in_place: bool = False) -> bool:
         """写入元数据 (V4.0.6: 使用常驻进程)"""
         file_path = item.get('file')
         if not file_path or not os.path.exists(file_path):
@@ -836,7 +836,7 @@ class ExifToolManager:
             return []
         return [subj] if isinstance(subj, str) else [str(s) for s in subj]
 
-    def _keywords_args(self, item: Dict[str, any], read_target: str,
+    def _keywords_args(self, item: Dict[str, Any], read_target: str,
                        temp_files: List[str]) -> List[str]:
         """
         为 item['keywords'](若有)生成 merge-add 写入参数。
@@ -870,7 +870,7 @@ class ExifToolManager:
             print(f"⚠️ Keywords temp file failed: {e}, skip keywords write")
             return []
 
-    def _write_metadata_xmp_sidecar(self, item: Dict[str, any]) -> bool:
+    def _write_metadata_xmp_sidecar(self, item: Dict[str, Any]) -> bool:
         """写入 XMP 侧车文件 (V4.0.6: 使用常驻进程)"""
         file_path = item.get('file')
         if not file_path:
@@ -1006,7 +1006,7 @@ class ExifToolManager:
             print(f"❌ XMP sidecar reset error: {e}")
             return False
 
-    def _write_metadata_arw(self, item: Dict[str, any]) -> bool:
+    def _write_metadata_arw(self, item: Dict[str, Any]) -> bool:
         """ARW 写入策略（embedded / inplace / sidecar / auto）；ARW 格式强制走 sidecar（XMP）"""
         file_path = item.get('file')
         mode = self._get_arw_write_mode(file_path)
@@ -1447,7 +1447,7 @@ class ExifToolManager:
 
     def batch_set_metadata(
         self,
-        files_metadata: List[Dict[str, any]]
+        files_metadata: List[Dict[str, Any]]
     ) -> Dict[str, int]:
         """
         批量设置元数据（使用-execute分隔符，支持不同文件不同参数）
@@ -1714,7 +1714,7 @@ class ExifToolManager:
                 else:
                     print(f"⚠️ Original file missing, keeping temp file: {tmp_path}")
     
-    def _create_xmp_sidecars_for_raf(self, files_metadata: List[Dict[str, any]]):
+    def _create_xmp_sidecars_for_raf(self, files_metadata: List[Dict[str, Any]]):
         """
         V3.9.2: 为 RAF/ORF 等需要侧车文件的格式创建 XMP 文件
         
