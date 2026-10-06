@@ -1,6 +1,7 @@
 # CLAUDE.md (Claude / Anthropic Coding Agents)
 
-Use `scripts_dev/AI_CODING_RULES.md` as the single source of truth for this repository.
+本文件即本仓库给 AI 编码助手的规则来源。原 `scripts_dev/AI_CODING_RULES.md` 已于 2026-02-27（e770bd40）删除，其核心条目见下方「Always Enforce」与「Minimum Verification」。
+This file is the rule source for AI coding assistants in this repository. The former `scripts_dev/AI_CODING_RULES.md` was deleted on 2026-02-27 (e770bd40); its core rules live in "Always Enforce" and "Minimum Verification" below.
 
 ## Always Enforce
 
@@ -10,10 +11,15 @@ Use `scripts_dev/AI_CODING_RULES.md` as the single source of truth for this repo
 - Any persistent external process must have deterministic cleanup on task/app exit.
 - Packaged CUDA failures: prioritize packaging/runtime diagnosis before algorithm refactors.
 - Keep Windows Torch/CUDA packaging with `upx=False` unless explicitly requested and validated.
+- Model loading: load checkpoints on CPU first (`map_location="cpu"`), then move to the target device; if CUDA init/inference fails, fall back to CPU with a visible log line.
+- SQLite + threads: `check_same_thread=False` alone does not make a shared connection safe — serialize access (e.g. `threading.RLock`, as `tools/report_db.py` does) or use per-thread connections. Do not mix manual `commit()` with context-managed transactions on the same connection without that lock; commit only when a transaction is active.
+- Business code must not reach into a DB wrapper's private connection (e.g. `report_db._conn.execute/commit`); add a thread-safe method to the wrapper instead.
+- Error logs must name the failing component (e.g. `YOLO`, `Keypoint`, `Flight`, `BirdID`); avoid all-or-nothing failure in preload/startup pipelines.
+- When rules conflict, priority is: data correctness (metadata, no mojibake) > runtime stability (no crash/leak) > cross-platform compatibility > performance.
 
 ## Minimum Verification
 
-- Run `.venv*/bin/python -m py_compile` on changed Python files.
+- Run `python3 -m py_compile` (Windows: `py -3 -m py_compile`) on changed Python files. The local dev interpreter is the system Python 3.13 configured in PyCharm; the repo's `.venv` is stale and must not be used.
 - For metadata changes: write + read-back verification with Chinese sample values.
 - For `.spec` changes: packaged startup smoke test.
 - For DB/threading changes: run a small multi-thread write/read stress check and confirm no transaction-state errors.

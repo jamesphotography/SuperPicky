@@ -1549,8 +1549,8 @@
     "exposure_over": "Overexposed",
     "exposure_under": "Underexposed",
     "back": "Back",
-    "back_tooltip": "Back to Main",
-    "size_label": "SIZE",
+    "back_tooltip": "Back to the main window to pick another folder or reprocess",
+    "size_label": "Size",
     "section_species": "SPECIES",
     "section_focus": "FOCUS",
     "section_flight": "FLIGHT",
@@ -1600,8 +1600,8 @@
     "merge_reason_target_exists": "a file with the same name already exists in the target folder",
     "merge_reason_source_missing": "the source file could not be found (it may have been moved or deleted)",
     "merge_reason_move_error": "move failed ({detail})",
-    "photos_import_btn": "Add to Photos",
-    "photos_import_tooltip": "Prefer RAW when importing to Apple Photos and sync SuperPicky metadata",
+    "photos_import_btn": "Import to Photos",
+    "photos_import_tooltip": "Import into the macOS Photos app: RAW is used when present, with species, rating and keywords written so you can search by species in Photos.\nChecked photos only if any are checked, otherwise everything in the current filter; photos already imported are skipped.\nYour original files are not modified.",
     "photos_import_unavailable_title": "Cannot Import to Photos",
     "photos_import_no_files": "None of the {count} photo records resolves to a supported file.",
     "photos_import_confirm_title": "Add to Apple Photos",
@@ -1635,7 +1635,7 @@
     "picked_only": "Picked only",
     "picked_only_tip": "Show only picked photos (3★ shots that top both sharpness and aesthetics)",
     "merge_dirs": "Merge Folders…",
-    "merge_dirs_tooltip": "Combine results from several folders into one report (any location or drive)",
+    "merge_dirs_tooltip": "View several processed folders as one: photo counts, species, the report and eBird export all cover the combined set.\nFolders can be anywhere, on any drive.",
     "merged_title": "{span} ({count} folders)",
     "mark_no_bird_confirm_title": "Mark as no bird",
     "mark_no_bird_confirm_body": "{count} selected photos will be marked as having no bird: species cleared, rating dropped to 0 stars, files moved to the reject pile.\n\nTo undo, just set a species again.",
@@ -1645,7 +1645,11 @@
     "merge_folders_label": "Target folders",
     "merge_folders_label_merged": "Target folders (in each batch)",
     "ctx_show_in_explorer": "Show in Explorer",
-    "delete_multi_msg": "Move {count} selected photos to Trash?\n\n❗ This will also delete their database records. You'll need to reprocess after restoring."
+    "delete_multi_msg": "Move {count} selected photos to Trash?\n\n❗ This will also delete their database records. You'll need to reprocess after restoring.",
+    "export_menu": "Export",
+    "export_menu_tooltip": "Take these results out of SuperPicky: a shareable report, eBird records, or the Photos app",
+    "photos_import_hint": "Checked photos; if none, the current filtered view",
+    "size_tooltip": "Change the thumbnail size in the grid (or press + / −)"
   },
   "video": {
     "title_phase1": "Video Analysis (Phase 1 · YOLO bird/no-bird only)",
@@ -1859,8 +1863,8 @@
     "pack_error": "Packaging failed: {error}"
   },
   "ebird_export": {
-    "button": "Export eBird",
-    "button_tip": "Turn identified birds into eBird observations for import on the eBird site",
+    "button": "eBird Records",
+    "button_tip": "Create one eBird checklist (CSV) per shooting day, ready for \"Import Data\" on the eBird site.\nCounts identified photos rated 2★ and above, regardless of the current filter; location comes from photo GPS.",
     "title": "Export eBird Observations",
     "location_prompt": "Location name (eBird uses it to place the checklist; a hotspot or your own name):",
     "save_title": "Save eBird Observations",
@@ -1868,7 +1872,8 @@
     "no_records": "Nothing to export: needs photos rated 2★ or higher, with an identified species and a capture time.",
     "write_failed": "Could not write the file: {error}",
     "done": "Exported {checklists} checklist(s), {rows} observation(s).\n{path}\n\nOn the eBird site choose Import Data → eBird Record Format (Extended).",
-    "needs_review": "{count} species were left without a common name (uncertain mapping, scientific name only). Please verify them on eBird after import:"
+    "needs_review": "{count} species were left without a common name (uncertain mapping, scientific name only). Please verify them on eBird after import:",
+    "menu_hint": "2★ and above → eBird checklist CSV"
   },
   "dir_select": {
     "title": "Choose Folders to Merge",
@@ -1890,8 +1895,8 @@
     "nothing_found_many": "No processed results found in these {count} folders:\n{names}"
   },
   "report_export": {
-    "button": "Export Report",
-    "button_tip": "Export this session's results as a shareable HTML file",
+    "button": "Shareable Report",
+    "button_tip": "Create a report you can send to others: species list, best shots per species, rating breakdown and gear stats.\nPhotos are embedded, so it works offline, and it can be saved as PDF.\nCovers every photo in this session, regardless of the current filter.",
     "cancel": "Cancel",
     "estimate": "About {size} MB, roughly {secs} seconds",
     "include_gps": "Include exact GPS coordinates",
@@ -1903,6 +1908,7 @@
     "title": "Export Report",
     "too_big": "Large file — some chat apps and mail servers cap attachments near 100MB",
     "working": "Generating report…",
-    "write_failed": "Failed to write report: {error}"
+    "write_failed": "Failed to write report: {error}",
+    "menu_hint": "All photos → one HTML file"
   }
 }

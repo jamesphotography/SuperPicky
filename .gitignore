@@ -105,8 +105,15 @@ exif_args.txt
 
 # 开发/实验/测试目录（本地调试用，不上传）
 experiments/
-scripts_dev/
 tests/
+
+# scripts_dev 里的脚本要进版本库，只忽略它们产生的缓存与工作目录
+# Scripts in scripts_dev are tracked; only their caches / work dirs are ignored
+scripts_dev/.ebird_cache/
+scripts_dev/_gbif_rarity_fix/
+# 慧眼 iOS 罕见度同步脚本：含再分发决定说明，只留本机不公开
+# iOS rarity sync script: documents a redistribution decision, kept local only
+scripts_dev/sync_custom_rarity_to_ios.py
 
 # 旧的打包脚本（保留本地备份，不同步）
 package_notarize.sh

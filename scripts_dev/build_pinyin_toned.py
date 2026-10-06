@@ -31,7 +31,7 @@ import os
 import sqlite3
 import sys
 import unicodedata
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 # 带声调的元音，用于校验产物真的带了调号
 # Toned vowels, used to verify the output actually carries tone marks.

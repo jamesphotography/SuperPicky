@@ -435,3 +435,36 @@ def test_mark_no_bird_refreshes_species_dropdown(tmp_path, monkeypatch,
     finally:
         _join_worker_threads()
         win.close()
+
+
+# ── 带缓存预览 / 配套 JPEG 的 RAW ─────────────────────────────────────────
+
+def test_mark_no_bird_files_skips_cache_preview_keeps_companion_jpeg(tmp_path):
+    """
+    RAW 照片的 temp_jpeg_path 通常指向 .superpicky 缓存预览——这正是最常见的情况。
+
+    曾因 `_is_internal_cache_path` 未导入，只要 temp_jpeg_path 存在就抛 NameError：
+    数据库已改成无鸟、文件已搬走，但文件里的鸟名和星级一个都没清，批量时还会打断
+    后续照片。这里锁住两种分支：缓存预览不写，真正的配套 JPEG 照写。
+
+    A RAW's temp_jpeg_path usually points at the internal cache preview. A missing
+    import once made this raise NameError, leaving file metadata untouched after
+    the DB had already been flipped. Cache previews are skipped; real companion
+    JPEGs are kept.
+    """
+    from ui.results_browser_window import _mark_no_bird_files
+
+    raw = tmp_path / "DSC_1.NEF"
+    raw.write_bytes(b"")
+    cache = tmp_path / ".superpicky" / "cache" / "temp_preview" / "DSC_1.jpg"
+    cache.parent.mkdir(parents=True)
+    cache.write_bytes(b"")
+    companion = tmp_path / "DSC_1.JPG"
+    companion.write_bytes(b"")
+
+    assert _mark_no_bird_files(
+        {"current_path": str(raw), "temp_jpeg_path": str(cache)}
+    ) == [str(raw)], "缓存预览不是用户的文件，不该被写"
+    assert _mark_no_bird_files(
+        {"current_path": str(raw), "temp_jpeg_path": str(companion)}
+    ) == [str(raw), str(companion)], "配套 JPEG 里的鸟名也要清掉"
