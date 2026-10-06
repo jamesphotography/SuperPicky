@@ -1,0 +1,812 @@
+# SuperPicky 4.6.3 — RC history / RC 阶段增量记录
+
+本文件归档 4.6.3 开发期各 RC 版本的**增量**说明（RC1 → RC16，无 RC2 tag），仅供追溯。
+面向用户的完整发布说明见仓库根目录 `ChangeLog.md`，其中已并入下列全部内容。
+
+RC16 之后、正式版之前另有两项用户可见改动，只在正式版说明里出现：
+- 浏览器工具栏整理：导出收进「导出 ▾」菜单（d164d0e3）；
+- 修复「这不是鸟」在 RAW 照片上因 NameError 不清文件鸟名与星级（d03689f3）。
+  RC1–RC16 期间对 RAW 照片点过「这不是鸟」的，数据库与目录是对的，但文件内仍留着
+  旧鸟名与旧星级，需重新标记一次。
+
+This file archives the per-RC **incremental** notes from the 4.6.3 development
+cycle (RC1 → RC16) for traceability only. The user-facing release notes live in
+`ChangeLog.md` at the repository root, which already incorporates everything
+below.
+
+---
+
+# SuperPicky 4.6.3 RC16
+
+**What's new since RC15:**
+
+- **Traditional Chinese (Taiwan) interface.** A new `繁體中文 TW` language with
+  Taiwan wording throughout. Bird names use the Taiwan names from the IOC list
+  (e.g. 白頭翁, 黑面琵鷺), and so do the folders SuperPicky creates
+  (`3星_優選`, `其他鳥類`) and the titles and keywords written for Lightroom and
+  Apple Photos. You can search by Taiwan names too. It is picked automatically
+  when your system language is Traditional Chinese. Reset, re-scan and burst
+  sorting still recognise folders created in any of the three languages.
+- **Language setting in Settings.** The bottom of the Settings sidebar now has an
+  always-visible language picker: Follow system, 简体中文, 繁體中文 TW or English
+  (each written in its own language). Restart the app after changing it.
+- **Everything follows the interface language.** Messages, logs and both command
+  line tools (`superpicky_cli`, `birdid_cli`, including `--help`) now use the
+  chosen language; previously about 350 messages were fixed in one language. The
+  command line now follows the language chosen in Settings. Replaying history no
+  longer shows blocks of English in the Chinese interface.
+- **Picks now show as Pick flags in Lightroom Classic** (13.2 or later). Before,
+  the crown pick was never recognised there. Photos with no bird now show as
+  Rejected. For photos already in your catalog, use
+  *Metadata → Read Metadata from Files* to pick up the change.
+- **Captions explain the rating.** The Lightroom caption and the browser's culling
+  note now open with the verdict and why: the photo's rank among shots of the same
+  species and where the star cut-offs fall, or which rule kept it from 3★, then
+  each check with ✓/✗, the bird and species confidence, and how low-confidence
+  species were handled.
+- **The same numbers everywhere.** The detail panel, sharpness/aesthetics sorting,
+  the Bird ID panel and exported reports now show the values the rating actually
+  uses (ISO-adjusted head sharpness, raw aesthetic score).
+- **Fixed:** with rating V2, photos whose sharpness was below your V1 threshold were
+  never checked for focus, so they were all shown as in focus. They are now checked
+  like the rest.
+- **Fixed:** the *Species beauty* sort in the browser was not remembered.
+
+---
+
+# SuperPicky 4.6.3 RC15
+
+**What's new since RC14:**
+
+- **Emptied folders are now removed.** After changing a species (one photo,
+  several photos or the whole species) or a rating in the results browser, the
+  species and rating folders that end up empty are deleted. Previously they were
+  often left behind: an empty sibling folder, a Finder `.DS_Store`, or the hidden
+  `._` files macOS creates on exFAT drives was enough to keep them.
+- **Processing no longer leaves empty rating folders.** When burst shots are
+  gathered into a `burst_` folder, the rating folder they came from could stay
+  behind empty; these are now cleaned up at the end of the run.
+- **Reset on exFAT drives no longer leaves empty species folders** (species-first
+  folder layout).
+- Only empty folders and system files (`.DS_Store`, `Thumbs.db`, `desktop.ini`,
+  orphaned `._` files) are ever removed; photos, sidecars and your own files are
+  never touched. Empty folders left by earlier versions are not cleaned up
+  automatically.
+
+---
+
+# SuperPicky 4.6.3 RC14
+
+**What's new since RC13:**
+
+- **One set of Chinese bird names everywhere.** SuperPicky, the 慧眼观鸟 app,
+  OZBirds and the eBird Chinese-name extension now all take their names from a
+  single shared name database, so the same bird is no longer called different
+  things in different places.
+- **The species-edit dialog now matches Bird-ID results.** It used to search the
+  raw IOC 15.1 list, so correcting a photo could write a different name from the
+  one Bird-ID gives (e.g. Zebra Finch became 「巽他斑胸草雀」). It now searches the
+  same names Bird-ID uses. Searching an old or IOC name still finds the bird
+  (「理氏鹨」 finds 「田鹨」), and recently split species the ID model does not know
+  yet (e.g. Tasmanian Boobook) can still be picked, labelled "Not in ID model".
+- **163 Chinese names in Bird-ID results updated** to the shared database.
+  Species occurring in China use the ChinaBirds names (Richard's Pipit
+  「理氏鹨」→「田鹨」, Whiskered Tern 「须浮鸥」→「灰翅浮鸥」, Orange-bellied Leafbird
+  「黄冠橙腹叶鹎」→「橙腹叶鹎」); Green Heron is now 「北美绿鹭」. Where IOC gave a
+  name only to one part of a recent split, the whole-species name is kept,
+  because the ID model still treats it as one species. Two species that were
+  both called 「歌百灵」 now have distinct names.
+- **The Bird-ID completion summary now follows your edits.** After changing a
+  species, a rating or marking a photo as no-bird in the results browser, the
+  summary on the right (star counts, species list) updates when you close the
+  browser and when you reopen the folder. The console log still shows the
+  original run as it happened.
+- Photos processed before this update keep their old names in their results.
+
+---
+
+# SuperPicky 4.6.3 RC13
+
+**What's new since RC12:**
+
+- **Chinese bird names in Bird-ID results now follow IOC 15.1** (897 names).
+  The name search and the species-edit dialog had already switched to IOC 15.1
+  in RC10, but Bird-ID results, the detail panel and grid cards read a separate
+  database that was never updated, so the same bird could show two different
+  Chinese names. Only names where our English name matches IOC 15.1 were
+  synced; species that IOC has split (e.g. Olive-backed Sunbird, Spotted
+  Nutcracker) keep their current names for now, since the model still treats
+  them as one species. Species occurring in China keep the ChinaBirds name.
+  Photos processed before this update keep the old name in their results.
+- **Fixed:** Kalkadoon Grasswren (*Amytornis ballarae*) showed the Chinese name
+  「巴拉瑞特鹩莺」, a mistransliteration of the epithet (Ballara, a mining town
+  in Queensland, not Ballarat). It is now 「灰胸草鹩莺」.
+
+---
+
+# SuperPicky 4.6.3 RC12
+
+**What's new since RC11:**
+
+- **Singapore is now in the country dropdown's top-10 quick list**, in both
+  the Bird-ID panel and Settings Center — no more digging through "More
+  countries" to find it.
+- **Fixed:** the "More countries" search box only matched the display name
+  in your current UI language plus the English name, so searching a Chinese
+  name while in English UI, or typing an ISO code (e.g. "SG") directly,
+  could come up empty. It now matches the display name, English name,
+  Chinese name, and country code together.
+
+---
+
+# SuperPicky 4.6.3 RC11
+
+**What's new since RC10:**
+
+- **Fixed (unverified — needs your test): the Windows installer could fail
+  instantly with "Out of memory" while extracting the very first file.**
+  Root cause: Setup.exe is always a 32-bit process — an Inno Setup limitation
+  that applies no matter how the app itself is packaged — and the LZMA
+  dictionary size was set to 1 GB, right at the documented ceiling for what a
+  32-bit process can reliably allocate. On some Windows 11 builds the
+  available contiguous address space fell short of that, so the allocation
+  failed deterministically and Inno reported it generically as "Out of
+  memory." Lowered the dictionary size to 128 MB across all three installer
+  scripts (Full / CUDA / CUDA patch), well inside the documented safe range;
+  installers grow slightly in size in exchange. I have no Windows machine to
+  verify this myself — if you ever hit that error, please test this RC and
+  report back whether install now succeeds. (issue #112)
+
+---
+
+# SuperPicky 4.6.3 RC16（中文）
+
+**RC15 以来的变化：**
+
+- **新增繁体中文（台湾）界面。** 语言选项「繁體中文 TW」，全程台湾用词。鸟名用 IOC 名录里的
+  台湾叫法（如 白頭翁、黑面琵鷺），SuperPicky 建的文件夹（`3星_優選`、`其他鳥類`）和写给
+  Lightroom / Apple Photos 的标题、关键词也一样；也能用台湾鸟名搜索。系统语言是繁体中文时
+  自动选用。重置、重扫与连拍整理仍认得任何一种语言建的文件夹。
+- **设置里可以直接选界面语言。** 设置中心左栏底部常驻语言选择：跟随系统、简体中文、
+  繁體中文 TW、English（各用本语言书写）。切换后重启生效。
+- **界面、日志与命令行全部跟随界面语言。** 提示、日志和两个命令行工具（`superpicky_cli`、
+  `birdid_cli`，含 `--help`）都按所选语言显示；此前约 350 处文字写死成一种语言。命令行改为
+  跟随「设置」里选的语言。中文界面重读历史记录时不再冒出大段英文。
+- **精选（皇冠）在 Lightroom Classic 里显示为「留用」旗标**（13.2 及以上）。此前 Lightroom
+  从未识别出精选。无鸟照片今后显示为「排除」。已导入目录的照片，请用
+  「元数据 → 从文件读取元数据」更新。
+- **题注说清楚为什么是这个星级。** Lightroom 题注与浏览器选片备注第一行是结论和原因：
+  在同种照片里排第几、各星级的分界在哪，或者卡在哪条规则没拿到 3★；再列 ✓/✗ 逐项依据、
+  有鸟置信度与鸟种识别置信度，以及低置信度鸟种是怎么处理的。
+- **各处显示同一套数字。** 详情面板、锐度/美学排序、识鸟面板和导出报告，显示的都是评星
+  实际用的数值（ISO 折算后的头部锐度、原始美学分）。
+- **修复：** 评星 V2 下，锐度低于 V1 锐度门槛的照片从不检查对焦，一律显示为合焦；现在和
+  其他照片一样检查。
+- **修复：** 浏览器里选了「鸟种颜值」排序，下次打开不会被记住。
+
+---
+
+# SuperPicky 4.6.3 RC15（中文）
+
+**RC14 以来的变化：**
+
+- **搬空的文件夹会被删掉。** 在结果浏览器里改鸟种（单张、多张或整种）或改星级后，
+  搬空的鸟种目录与星级目录会删除。此前它们常常留着：同级还有一个空目录、Finder 的
+  `.DS_Store`、或 macOS 在 exFAT 硬盘上生成的 `._` 隐藏文件，都会让它删不掉。
+- **处理时不再留下空的星级目录。** 连拍整组归入 `burst_` 目录后，原来的星级目录可能
+  空着留下，现在处理结束时会清理。
+- **在 exFAT 硬盘上重置，不再留下空的鸟种目录**（「鸟种在外」的目录布局）。
+- 只删空目录与系统文件（`.DS_Store`、`Thumbs.db`、`desktop.ini`、孤立的 `._` 文件），
+  照片、边车文件和你自己的文件一概不碰。之前版本已留下的空目录不会自动清理。
+
+---
+
+# SuperPicky 4.6.3 RC14（中文）
+
+**RC13 以来的变化：**
+
+- **各处中文鸟名统一为同一套。** SuperPicky、慧眼观鸟、OZBirds 与 eBird 中文
+  鸟名插件现在共用同一个鸟名库，同一种鸟不再在不同地方叫不同的名字。
+- **改鸟种弹窗与识鸟结果同名。** 弹窗以前搜的是 IOC 15.1 原始名录，手动改出的
+  名字可能和识鸟给出的不一样（如斑胸草雀会被改成「巽他斑胸草雀」）。现在搜的就是
+  识鸟用的那套名字；搜旧名或 IOC 名照样能找到（搜「理氏鹨」得到「田鹨」）；识鸟
+  模型还不认识的新拆分种（如塔岛鹰鸮）仍可选，并标注「识鸟模型未收录」。
+- **识鸟结果的中文鸟名更新 163 处**，与共用鸟名库一致。中国有分布的鸟种用
+  ChinaBirds 名（理氏鹨→田鹨、须浮鸥→灰翅浮鸥、黄冠橙腹叶鹎→橙腹叶鹎）；美洲绿鹭
+  改为北美绿鹭。IOC 把名字只给了拆分后一支的，模型仍把它当一个种，保留整种名。
+  原来两种都叫「歌百灵」的现已分开命名。
+- **识鸟面板的完成统计跟上你的修改。** 在结果浏览器里改鸟种、改星级或标记无鸟
+  后，关闭浏览器或重新打开目录时，右侧的星级统计与鸟种名录会按最新结果更新；
+  控制台日志仍保留当次处理的原始记录。
+- 更新前已处理的照片，结果里仍是旧名。
+
+---
+
+# SuperPicky 4.6.3 RC13（中文）
+
+**RC12 以来的变化：**
+
+- **识鸟结果的中文鸟名同步到 IOC 15.1**（897 个）。鸟名查询面板与改鸟种弹窗
+  在 RC10 已改用 IOC 15.1，但识鸟结果、详情面板、网格卡片读的是另一个库，一直
+  没更新，于是同一种鸟两处叫法不同。只同步了英文名与 IOC 15.1 一致的鸟种；IOC
+  已拆分的种（如黄腹花蜜鸟、星鸦）因模型仍把它们当作一个种，暂保留现名。中国
+  有分布的鸟种仍以 ChinaBirds 名录为准。更新前已处理的照片，结果里仍是旧名。
+- **修复：**卡尔卡东草鹩莺（*Amytornis ballarae*）的中文名显示为「巴拉瑞特鹩莺」，
+  是把种加词误作维州 Ballarat 音译（实为昆士兰矿镇 Ballara），现改为
+  「灰胸草鹩莺」。
+
+---
+
+# SuperPicky 4.6.3 RC12（中文）
+
+**RC11 以来的变化：**
+
+- **国家下拉的首页 Top10 快捷列表加入新加坡**（识鸟面板与设置中心两处同步），
+  不用再点开「更多国家」才能找到。
+- **修复：**「更多国家」对话框的搜索框此前只匹配当前界面语言下的显示名和
+  英文名，导致英文界面下搜中文名、或直接输入国家代码（如 "SG"）都可能搜不
+  到。现在显示名、英文名、中文名、国家代码四个维度都会参与匹配。
+
+---
+
+# SuperPicky 4.6.3 RC11（中文）
+
+**RC10 以来的变化：**
+
+- **修复（未经验证，需要你实测确认）：Windows 安装包解压第一个文件时可能立刻
+  报 "Out of memory" 失败。** 根因是 Setup.exe 本体永远是 32-bit 进程——这是
+  Inno Setup 自身的限制，与被安装的应用怎么打包无关——而 LZMA 字典大小之前设成
+  了 1GB，正好卡在官方文档给出的 32-bit 进程理论上限上。部分 Windows 11 版本上
+  可用的连续地址空间不够，导致这次分配确定性失败，被 Inno 笼统报成
+  "Out of memory."。这次把三个安装脚本（Full / CUDA / CUDA 补丁包）里的字典
+  大小都降到 128MB，在文档给出的安全范围内留了余量，代价是安装包体积略增。
+  我这边没有 Windows 机器，没法自己验证这个修复是否真的解决问题——如果你之前
+  遇到过这个报错，请在这个 RC 上重新测试安装，并回报结果。（issue #112）
+
+---
+
+# SuperPicky 4.6.3 RC10
+
+**What's new since RC9:**
+
+- **Re-identify a photo from the species dialog.** When a photo landed in
+  "other birds", or the identification simply looks wrong, the dialog now has
+  a **Re-identify this photo** button next to the search box. It re-runs the
+  models on the full image — detecting the bird afresh rather than reusing the
+  crop made during culling — and lists every candidate with its confidence,
+  including low ones, so you can pick from what the model actually considered.
+- **Bird names updated to IOC 15.1.** The newer taxonomy was already bundled
+  but was never selected; the app was using IOC 14.2. Some names you could
+  search for before have been superseded by their current forms.
+- **Fixed: the optional custom rarity index stayed hidden for some species.**
+  It only appeared alongside the built-in global rarity, so species absent from
+  the bundled reference — mostly recent taxonomic splits — showed nothing at
+  all. It now shows on its own.
+
+---
+
+# SuperPicky 4.6.3 RC10（中文）
+
+**RC9 以来的变化：**
+
+- **可以在改鸟种弹窗里重新识别这张照片。** 照片被归进「其他鸟类」、或识别结果
+  不对劲时，弹窗的搜索框旁边多了一个**重新识别这张**按钮。它会对整张图重跑
+  模型——重新检测鸟的位置，而不是沿用选片时裁好的框——并列出全部候选及其
+  置信度（低置信度的也列），由你自己挑。
+- **鸟名更新到 IOC 15.1。** 这份更新的分类其实一直随包发着，只是从未被选中，
+  程序用的一直是 IOC 14.2。此前能搜到的个别旧名，现已由现行名称取代。
+- **修复：自定义罕见指数在部分鸟种上不显示。** 它此前只在内置的全球罕见度旁边
+  出现，于是内置库没有收录的鸟种——多是近年新拆分出的物种——什么都看不到。
+  现在它可以单独显示。
+
+---
+
+# SuperPicky 4.6.3 RC9
+
+**What's new since RC8:**
+
+1. **Fixed: XMP sidecars kept appearing even with metadata writing switched
+   off.** Changing a star rating, or marking a photo as having no bird, was the
+   one path that never checked the metadata setting, so every such action wrote
+   an `.xmp` next to the RAW no matter what the setting said. If you had turned
+   metadata writing off to keep your folders clean, it was not being honoured.
+
+2. **"Write into the file" can now apply to proprietary RAW as well.** NEF,
+   CR2, CR3, ARW, RAF, ORF, RW2, PEF, 3FR and IIQ files have always received an
+   `.xmp` sidecar instead, because rewriting the RAW itself is far slower and
+   riskier — but the interface never said so, and software that does not read
+   sidecars (Nikon's NX Studio, for example) therefore never saw any of it.
+
+   Settings → Output now has **"Also write into proprietary RAW files"**, off by
+   default, so nothing changes unless you ask for it. With it on, each photo
+   takes roughly 0.2s longer and is copied once beforehand so its structure can
+   be verified: the copy is written and compared against the original's key
+   structure, and only replaces it when they match — if anything looks off the
+   sidecar is written instead, so the original is never left damaged. That copy
+   is nearly free on an internal Mac SSD but is a real full-file copy on memory
+   cards and external drives, where it is noticeably slower. DNG is unaffected;
+   it was never forced to a sidecar.
+
+---
+
+# SuperPicky 4.6.3 RC9（中文）
+
+**RC8 以来的变化：**
+
+1. **修复：关掉元数据写入后，仍然不断生成 XMP 边车。** 改星级和「标记为无鸟」
+   是唯一一条没有检查元数据设置的路径，于是不管设置选的是什么，每操作一次就在
+   RAW 旁边写一个 `.xmp`。如果你是为了保持目录干净才关掉写入的，那个开关此前
+   并没有被遵守。
+
+2. **「写入文件」现在可以对专有 RAW 生效了。** NEF、CR2、CR3、ARW、RAF、ORF、
+   RW2、PEF、3FR、IIQ 一直都是只写 `.xmp` 边车——重写 RAW 本体慢得多也更冒险
+   ——但界面从未说明这一点，于是不读边车的软件（例如尼康 NX Studio）永远看不到
+   这些信息。
+
+   设置 → 输出新增 **「专有 RAW 也写入文件本体」**，**默认关闭**，不主动打开就
+   什么都不会变。打开后每张约多 0.2 秒，并且写入前会整份复制一次做结构校验：
+   先写副本，再比对原文件的关键结构，一致才替换；一旦发现异常就改写边车，原文件
+   不会被留在损坏状态。这次复制在 Mac 内置固态盘上几乎不花时间，但在存储卡和
+   外置盘上是真实的全量拷贝，会明显更慢。DNG 不受影响——它本来就不在强制边车之列。
+
+---
+
+# SuperPicky 4.6.3 RC8
+
+**What's new since RC7:**
+
+1. **Reopening a processed folder brings back what you saw last time.** The
+   console replays that folder's own `superpicky.log`, the Bird ID panel shows
+   the completion summary again (star breakdown, picked, in-flight, precise
+   focus, species list, total time), and dropping an already-processed photo
+   into the panel shows what the previous run recorded — species, confidence,
+   star rating, focus status and the stored crop preview — instead of spending
+   seconds decoding the RAW and re-running the models. A "re-identify" button
+   is always there if you do want a fresh run. Contributed by @OscarKing888
+   (#109).
+
+2. **Fixed: about a thousand species showed no pinyin.** RC7 built its pinyin
+   table from the name catalog only, but the species name shown in the detail
+   panel and on the Bird ID result cards comes from the identification
+   database, and 1,037 species live in the latter and not the former — so
+   those (`东方鹗`, `中华鹪鹛`, `七彩唐加拉雀` and others) simply showed
+   nothing where the pinyin should be. The table is now built from both
+   databases, and a test now fails if either database ever changes without the
+   table being rebuilt.
+
+3. **Chinese bird names updated to the current ChinaBirds checklist** (60
+   names). Contributed by @lhy1024 (#110).
+
+   **Four of those names now belong to a different species.** Folders, the
+   report's species list and the eBird export all key on the Chinese name, so
+   this matters if you have older batches:
+
+   | Name | Used to mean | Now means |
+   |---|---|---|
+   | 大山雀 | Parus major (Great Tit) | Parus cinereus (Cinereous Tit) |
+   | 灰眉岩鹀 | Emberiza cia (Rock Bunting) | Emberiza godlewskii |
+   | 虎斑地鸫 | Zoothera dauma (Scaly Thrush) | Zoothera aurea |
+   | 红眉朱雀 | Carpodacus davidianus | Carpodacus pulcherrimus |
+
+   Batches processed before this update keep the names they were filed under,
+   so a `大山雀` folder from an older run still holds Great Tits. Nothing is
+   renamed on disk and no photo is moved. Two things to know: browsing several
+   batches together groups by name, so old and new batches using the same name
+   would be shown as one species; and the eBird export cross-checks the Chinese
+   and English names, so affected records land in its "needs verification" list
+   rather than being exported silently under the new meaning.
+
+---
+
+# SuperPicky 4.6.3 RC8（中文）
+
+**RC7 以来的变化：**
+
+1. **重新打开处理过的目录，会恢复上次那一屏。** 控制台回放该目录自己的
+   `superpicky.log`，识鸟面板重新显示完成统计（星级分布、精选、飞版、精焦、
+   鸟种名录、总耗时）；把已处理过的照片拖进面板，直接显示上次处理留下的结果
+   ——鸟种、置信度、星级、对焦状态和当时的裁切预览图——不再花好几秒重新解码
+   RAW、重跑模型。结果区始终留着「重新识别」按钮，想现跑随时可以。
+   由 @OscarKing888 贡献（#109）。
+
+2. **修复：约一千个鸟种不显示拼音。** RC7 的拼音表只从名录库生成，而详情面板与
+   识鸟结果卡片上显示的鸟名来自识鸟库，有 1037 个鸟种只存在于后者——于是
+   `东方鹗`、`中华鹪鹛`、`七彩唐加拉雀` 这些鸟种该显示拼音的位置是空的。现在
+   拼音表取两个库的并集；并新增一条测试，任一个库变动后忘了重新生成拼音表就会
+   报错。
+
+3. **中文鸟名同步到现行 ChinaBirds 名录**（60 个）。由 @lhy1024 贡献（#110）。
+
+   **其中 4 个名字现在指的是另一个鸟种了。** 分目录、报告的鸟种清单、eBird
+   导出都以中文鸟名为准，所以如果你有旧批次，这条值得看一眼：
+
+   | 名字 | 原来指 | 现在指 |
+   |---|---|---|
+   | 大山雀 | Parus major（欧亚大山雀） | Parus cinereus（苍背山雀） |
+   | 灰眉岩鹀 | Emberiza cia（淡灰眉岩鹀） | Emberiza godlewskii（戈氏岩鹀） |
+   | 虎斑地鸫 | Zoothera dauma（小虎斑地鸫） | Zoothera aurea（怀氏虎鸫） |
+   | 红眉朱雀 | Carpodacus davidianus（中华朱雀） | Carpodacus pulcherrimus |
+
+   本次更新之前处理的批次，仍沿用当时归档的名字——旧批次里的 `大山雀` 目录装
+   的还是 Parus major。磁盘上不会有任何目录被改名，也不会有照片被移动。两点
+   需要知道：合并浏览多个批次时按名字分组，旧批次与新批次用同一个名字会被显示
+   成同一个鸟种；eBird 导出会交叉核对中英文名，受影响的记录会进「待核对」清单，
+   不会按新含义静默导出。
+
+---
+
+# SuperPicky 4.6.3 RC7
+
+**What's new since RC6:**
+
+1. **Correcting a species now also corrects its rarity, conservation status
+   and beauty score.** Those three belong to the species, not to the photo,
+   and were only ever written when Bird ID first identified it. So a photo you
+   retagged kept the previous species' data: the shareable report reads them
+   from each species' representative photo *and* orders the whole species list
+   by rarity, which meant a photo corrected to, say, a Barn Swallow could
+   appear at the very top of the report carrying the old species' "very rare"
+   and "endangered" badges. All three are now looked up again from the new
+   species' scientific name — offline, from the bundled reference database —
+   and cleared when there is no data, because showing the wrong badge is worse
+   than showing none. This applies to single-photo edits, multi-selection
+   edits and whole-species merges alike, and to every frame of a burst.
+
+2. **A species or star rating you changed no longer springs back to its old
+   value.** The browser keeps three internal copies of the photo list, and the
+   visible grid is rebuilt from one of them every time you expand or collapse
+   a burst group. Only two copies were being updated, so after correcting a
+   species, one click on a burst group brought the old name back on screen —
+   and paging through the full-screen view showed the old name too. Star
+   ratings had the same fault one layer deeper: the exported report counted
+   ratings from a copy that was never updated, so a photo you moved from 3
+   stars to 1 was still counted as 3 stars in the report's star breakdown.
+
+3. **The report's species list now matches the browser's species dropdown.**
+   The report used to list every species with a photo of a bird in it, while
+   the dropdown only lists species that have a folder on disk — that is, at
+   least one 2-star photo. On one real batch that read 22 species in the
+   report and 20 in the dropdown, with no way to tell which number was true.
+   The report now applies the same 2-star line, which is also what the eBird
+   export has always used, so all three agree. Species that do make the list
+   still count all of their photos, low-starred ones included.
+
+4. **Chinese bird names now show their pinyin** (Simplified Chinese interface
+   only) in four places: the bird-name lookup panel, the species picker used
+   when correcting a species, the browser's detail panel, and the Bird ID
+   result cards. Readings are tone-marked and hand-checked: bird names are
+   dense with characters that have more than one reading, and the two
+   available data sources disagreed on 655 names — so those were adjudicated
+   against standard ornithological references rather than taken from either
+   source on trust.
+
+---
+
+# SuperPicky 4.6.3 RC7（中文）
+
+**RC6 以来的变化：**
+
+1. **改鸟种时，罕见度、IUCN 等级和鸟种颜值会跟着一起改了。** 这三项是**鸟种**的
+   属性而不是照片的属性，此前只有识鸟第一次认出它时写过一次。于是改过鸟种的照片
+   仍带着上一个鸟种的数据：可分享报告正是从每个鸟种的代表照片上读这三项，还**按
+   罕见度给整个鸟种清单排序**——一张被改成「家燕」的照片，会顶着旧鸟种的「极罕见
+   + 濒危」标记排在报告最前面。现在会按新鸟种的学名重新查（离线，用随包的参考库），
+   查不到就清空——显示错的徽标比不显示更糟。单张改、多选批量改、整种合并三条路径
+   都一样，连拍组则整组跟着改。
+
+2. **改过的鸟种或星级不会再变回旧值了。** 浏览器内部有三份照片列表副本，而你每次
+   展开或收起连拍组时，界面上的网格都会从其中一份重建。此前只更新了两份，于是改完
+   鸟种后点一下连拍组，旧鸟名就回来了；全屏翻页看到的也是旧鸟名。改星级的问题更深
+   一层：导出报告时统计星级用的正是那份从未更新的副本，所以你把一张照片从 3 星改成
+   1 星后，报告的星级分布里它仍然算作 3 星。
+
+3. **报告的鸟种清单与浏览器的鸟种下拉一致了。** 报告过去列出每一个拍到鸟的鸟种，
+   而下拉只列磁盘上有目录的鸟种——也就是至少有一张 2 星照片的。实测同一批照片，
+   报告说 22 种、下拉说 20 种，而你无从判断哪个数字是真的。现在报告采用同一条 2 星
+   线，这也是 eBird 导出一直在用的口径，三处就此一致。上榜的鸟种张数照旧按它的全部
+   照片计，低星的也算在内。
+
+4. **中文鸟名会显示汉语拼音了**（仅简体中文界面），在四个地方：鸟名查询面板、改鸟种
+   时的鸟种选择弹窗、浏览器的详情面板、识鸟结果卡片。拼音带声调且经过人工核对——
+   鸟名里多音字密集，两份可用的数据源在 655 个鸟名上读音不一致，这些都按主流鸟类
+   文献逐条裁定，没有盲信其中任何一份。
+
+---
+
+# SuperPicky 4.6.3 RC6
+
+**What's new since RC5:**
+
+1. **Bird ID's location filter is back on eBird's own regional checklists.**
+   The filter that narrows candidate species by where a photo was taken now
+   reads eBird region lists instead of the bundled grid database. For China,
+   Australia and the United States you can again pick a province/state in
+   Settings, and when a photo carries GPS the region is worked out offline
+   from the coordinates — province/state where one is known, country
+   otherwise. Overseas territories (for example the French and British ones)
+   now use their own checklist instead of the mother country's, region codes
+   are accepted in any case ("au-nsw" works like "AU-NSW"), and a
+   province/state on its own implies its country. The grid database this
+   replaces was 35 MB, so the download and the installed app are that much
+   smaller.
+2. **A burst is no longer split across two species folders.** Identifying a
+   burst frame by frame could return different species for frames of the same
+   sequence (21 of 1,372 real bursts here), which then sent one burst into two
+   species folders. The whole burst now takes the species of its most
+   confident frame, and the remaining frames with a bird in them follow it;
+   if no frame reaches the confidence threshold, nothing is changed. The
+   unification happens before star ratings are assigned, so quotas, folders
+   and the report all see one species. The log line says which frame the
+   decision came from.
+3. **"Other birds" now shows the species Bird ID was unsure about.** When
+   confidence falls below the threshold the photo still goes to "other
+   birds", but the browser previously showed nothing about what it might be.
+   Thumbnails and the detail panel now read "Species name (unconfirmed N%)"
+   for those photos, and the same line is written to the EXIF title of
+   2-star-and-up photos — as a title only, not as a keyword, so unconfirmed
+   guesses never mix into your species searches. Candidates below 30%
+   confidence are not shown at all.
+4. **Fixed: the species line vanished from photo descriptions.** The star
+   rating pass rewrote the whole description and wiped the "Species:" and
+   "Alternative species" lines it had just written (in one 683-photo batch
+   only 54 kept them). The description prefix is now written after the rating
+   pass.
+
+---
+
+# SuperPicky 4.6.3 RC6（中文）
+
+**RC5 以来的变化：**
+
+1. **识鸟的地理过滤改回 eBird 自己的区域清单。** 按拍摄地点缩小候选鸟种的过滤器，
+   现在读 eBird 区域清单，不再用内置的网格库。中国、澳大利亚、美国重新可以在设置里
+   选省/州；照片带 GPS 时，离线根据坐标判断区域——能定到省州就用省州，否则用国家。
+   海外领地（如法属、英属各地）不再并入宗主国，改用自己的清单；区域代码不再区分
+   大小写（「au-nsw」与「AU-NSW」等效）；只给省州时会自动推出所属国家。被替换掉的
+   网格库有 35 MB，下载包和安装后的体积都相应变小。
+2. **同一组连拍不会再被拆进两个鸟种目录。** 逐帧识鸟可能给同一组连拍里的不同帧判出
+   不同鸟种（实测 1372 组连拍中有 21 组），结果一组连拍被分到两个鸟种目录。现在整组
+   连拍统一采用置信度最高那一帧的鸟种，组内其余有鸟的帧跟随；如果组内没有一帧达到
+   置信度阈值，则不做改动。统一发生在评星分配之前，因此配额、分目录和报告看到的
+   都是同一个鸟种，日志会写明依据的是哪一帧。
+3. **「其他鸟类」会显示识鸟没把准的那个鸟种了。** 置信度低于阈值的照片仍然归入
+   「其他鸟类」，但过去在浏览器里完全看不到它可能是什么。现在缩略图和详情面板会显示
+   「鸟名（待确定 N%）」，终评 2 星及以上的照片也把同样的文字写进 EXIF 标题——只写
+   标题不写关键字，避免没确定的猜测混进鸟种检索。置信度低于 30% 的候选不显示。
+4. **修复：照片说明里的鸟种行会消失。** 评星环节会整段重写说明文字，把刚写好的
+   「鸟种：」「备选鸟种」两行抹掉（某个 683 张的批次里只有 54 张保住）。现在说明文字
+   的前缀改到评星之后再写。
+
+---
+
+# SuperPicky 4.6.3 RC5
+
+**What's new since RC4:**
+
+1. **Dropping a NEF into Bird ID no longer opens a second copy of the app.**
+   On the Mac build, dragging a Nikon NEF (or another RAW without GPS data)
+   into the Bird ID panel could launch a second SuperPicky window while the
+   original panel kept spinning forever. The cause was a bundled component
+   that, after failing to open the RAW as a regular image, tried to install a
+   missing package on the fly — and in the packaged app that "installer" was
+   SuperPicky itself. Runtime self-installation is now switched off, the
+   package information it was looking for is bundled, and the component is
+   pinned to a tested version.
+2. **The whole-species merge confirmation now tells you it spans several
+   batches.** When you browse several folders together and change every photo
+   of a species at once, the change applies to all of those batches. The
+   confirmation dialog now says how many batches are involved and lists them,
+   so a single line such as "Cattle Egret/3 stars" is no longer mistaken for
+   one folder. Browsing a single folder shows exactly the same dialog as
+   before.
+
+---
+
+# SuperPicky 4.6.3 RC5（中文）
+
+**RC4 以来的变化：**
+
+1. **把 NEF 拖进识鸟面板，不会再多开一个程序了。** 在 Mac 版里，把尼康 NEF
+   （或其他不带 GPS 的 RAW）拖进识鸟面板，可能会拉起第二个 SuperPicky 窗口，
+   原来的面板则一直转圈。原因是内置的一个组件把 RAW 当普通图片打开失败后，
+   会尝试临时安装一个缺失的包——而在打包版里，这个「安装程序」就是 SuperPicky
+   自己。现在已关闭运行时自动安装，补齐了它要查找的包信息，并把该组件锁定在
+   验证过的版本。
+2. **整种合并的确认弹窗会提示跨了几个批次。** 同时浏览多个目录时，把某个鸟种
+   的照片一次全部改掉，作用范围是所有这些批次。确认弹窗现在会写明涉及几个批次
+   并列出来，不会再把「牛背鹭/3星_优选」这样一行误当成一个文件夹。只浏览单个
+   目录时，弹窗与以前完全相同。
+
+---
+
+# SuperPicky 4.6.3 RC4
+
+**What's new since RC3:**
+
+1. **A species correction now reaches the report.** After you corrected a bird's
+   species, the exported HTML report still listed the photo under the species
+   you had just replaced — and so did the eBird export and the "birds you
+   photographed this session" list that the correction dialog opens with. The
+   browser itself was right: the species dropdown and the thumbnail caption both
+   updated immediately, which is exactly why this was easy to miss. You would
+   only find out when you opened the report. Corrections made before this build
+   are unaffected in your library — the database was always written correctly —
+   so simply exporting the report again with this build gives you the right
+   names. Bursts are handled too: correcting one frame of a burst updates every
+   frame of that burst in the report, the way it always did on disk.
+
+---
+
+# SuperPicky 4.6.3 RC4（中文）
+
+**RC3 以来的变化：**
+
+1. **改完鸟种，报告终于跟着改了。** 在选鸟结果浏览器里纠正鸟种之后，导出的
+   HTML 报告里那张照片仍然挂在你刚刚换掉的那个鸟种下面——eBird 导出、以及改鸟种
+   弹窗开场列出的「本次拍到的鸟种」也一样。而浏览器本身是对的：左侧鸟种下拉和
+   缩略图下的鸟名都立刻更新了，所以这个问题很容易被忽略，只有打开报告才会发现。
+   这次修复之前做过的纠错不影响你的照片库——数据库一直写的是对的——所以用这一版
+   重新导出一次报告，鸟名就都正确了。连拍也一并处理：改一张连拍的鸟种，报告里
+   整组都会跟着改，与磁盘上一贯的行为一致。
+
+---
+
+# SuperPicky 4.6.3 RC3
+
+**What's new since RC1:**
+
+There are no changes to the app itself in RC2 — it is the same build as RC1.
+What changed is how the NVIDIA GPU version reaches you.
+
+1. **The CUDA (NVIDIA GPU) installer is now on the GitHub release page.** Until
+   now it was the one download you could not get from GitHub: it was believed to
+   exceed GitHub's 2 GiB per-file limit, so every release it had to be copied by
+   hand to a cloud drive. It never actually exceeded the limit — the file is
+   1.97 GiB, which many tools display as "2.11 GB", and that display is what the
+   assumption was built on. It now ships in the release like every other
+   download. The cloud-drive mirrors stay as they are.
+
+2. **The CUDA installer is smaller.** A cuDNN component that only serves
+   recurrent and attention networks was being bundled, and this app runs neither
+   — every model in it is a plain convolutional network. Removing it takes
+   roughly 80 MB off the download. Nothing about detection, identification or
+   scoring changes.
+
+The CPU version for Windows and the macOS version are byte-for-byte unaffected
+by both changes.
+
+---
+
+# SuperPicky 4.6.3 RC3（中文）
+
+**RC1 以来的变化：**
+
+RC2 的程序本身与 RC1 完全相同，改的是 N 卡（CUDA）版怎么送到你手上。
+
+1. **CUDA（N 卡）安装包现在直接放在 GitHub 发布页上。** 在此之前它是唯一一个
+   在 GitHub 上下不到的版本：一直以为它超过了 GitHub 单文件 2 GiB 的上限，所以
+   每次发版都要手工搬到网盘。其实它从来没超过——文件是 1.97 GiB，只是很多工具
+   把它显示成「2.11 GB」，当初就是照着这个显示下的判断。现在它和其他下载一样
+   随发布页一起发出。网盘镜像照旧保留。
+
+2. **CUDA 安装包变小了。** 包里一直带着一个只服务循环网络与注意力网络的 cuDNN
+   组件，而这个程序里一个都没用到——所有模型都是普通的卷积网络。去掉它，下载量
+   少了大约 80 MB。识别、检测、评分的行为一点不变。
+
+这两项改动都不影响 Windows CPU 版和 macOS 版，那两个包与 RC1 逐字节相同。
+
+---
+
+# SuperPicky 4.6.3 RC1
+
+This release is about correcting the AI when it is plainly wrong, and about
+windows that stay where you can reach them.
+
+## What's new
+
+1. **Tell SuperPicky "this is not a bird".** Every so often the detector calls a
+   crocodile — or a branch, or a rock — a bird, and until now there was no way to
+   say otherwise: you could change the species, but not remove it. The species
+   dialog now has a **Not a bird** button. It clears the species, drops the photo
+   to 0 stars, moves it to the reject pile and takes it out of the report's
+   species list, all in one step. Tick several thumbnails first and the whole
+   selection goes at once. Got it wrong? Just set a species again — the photo
+   counts as a bird once more (you will want to restore its rating yourself,
+   since naming a species deliberately leaves your stars alone).
+
+2. **The species picker opens with the birds you actually photographed.** When a
+   bird is misidentified it is usually mistaken for the species next to it, and
+   that one was very likely photographed the same day. The dialog now lists this
+   shoot's species first, most-shot at the top, before you type anything; once
+   you do type, they still sort to the top of the matches.
+
+3. **The results browser opens maximized.** On a 14-inch MacBook — or at any
+   enlarged text size — the old fixed window squeezed the three-column layout.
+   It now opens maximized, keeping the title bar and toolbar (this is not
+   macOS full screen).
+
+4. **Pick several folders at once when merging.** The system folder chooser now
+   accepts a multiple selection, so building a merged set no longer means
+   opening the dialog once per folder.
+
+5. **Your own rarity index sits next to the global one.** The bird-name lookup
+   now shows the custom rarity score beside the global figure, the same way the
+   results browser does.
+
+## Fixes
+
+6. **The main window no longer opens with its buttons off-screen.** The window
+   remembered a size and position without checking whether they still fit the
+   screen, so a window saved while the Dock was hidden came back with **Start**
+   and **Reset** cut off underneath a pinned Dock — visible in the layout,
+   impossible to click. The saved placement is now clamped into the screen's
+   usable area, keeping your preferred position while guaranteeing the whole
+   window is reachable.
+
+7. **78 common species are no longer labelled "legendary".** A flaw in how
+   rarity data was matched stored a genus-level key for species whose exact
+   match failed, and a genus key finds no occurrence records — so the count came
+   back as zero and the bird was scored as impossibly rare. The Eastern Cattle
+   Egret, one of the most widespread herons in the world, was rated legendary.
+   All affected entries have been rebuilt.
+
+8. **Changing a species now updates the thumbnail.** The caption under each
+   thumbnail was written once when the grid was built and never again, so after
+   correcting a species the grid kept showing the old name until you reopened
+   the folder.
+
+9. **You can finally see it when a file move fails.** Corrections that could not
+   move a file were supposed to report the reason; the notice was scheduled in a
+   way that never actually ran, so a failed correction looked exactly like a
+   successful one. It now reaches you.
+
+---
+
+# SuperPicky 4.6.3 RC1（中文）
+
+这一版是关于两件事：AI 认错得离谱时你能纠正它，以及窗口别跑到你够不着的地方。
+
+## 这一版有什么新东西
+
+1. **可以告诉 SuperPicky「这不是鸟」。** 识别偶尔会把鳄鱼——或者一根树枝、一块
+   石头——当成鸟，而在此之前你拿它没办法：能改鸟种，却不能说「这压根不是鸟」。
+   改鸟种的弹窗里现在多了**「这不是鸟」**。点一下，鸟种清空、降为 0 星、移进
+   「其他鸟类/0星_放弃」，报告的鸟种名录里也不再有它，一步到位。先勾几张再点，
+   整批一起标掉。标错了？重新指定鸟种即可，它又算作有鸟——星级要你自己升回来，
+   因为改鸟种不擅自动你的星。
+
+2. **选鸟种时先列出你今天真拍到的那些。** 认错多半是认成了隔壁那种，而那种当天
+   通常也拍到了。弹窗打开时（还没打字）先按张数列出本次拍到的鸟种；开始搜索后，
+   它们仍然排在匹配结果的最前面。
+
+3. **选鸟结果浏览器默认最大化打开。** 在 14 寸 MacBook 上，或者你把系统字号调大
+   之后，原先固定大小的窗口会把三栏布局挤变形。现在最大化打开，标题栏和工具栏
+   都还在（不是 macOS 那种全屏）。
+
+4. **合并目录时可以一次选中好几个。** 系统的目录选取框现在支持多选，攒一份合并
+   清单不必再一个一个地开弹窗。
+
+5. **查询鸟名时并排显示你自己的罕见指数。** 鸟名查询的详情区现在把自定义罕见
+   指数摆在全球罕见度旁边，与选鸟结果里的显示方式一致。
+
+## 修复
+
+6. **主窗口不会再把按钮开到屏幕外面。** 窗口会记住上次的大小和位置，却从不检查
+   这套数值在当前屏幕上还放不放得下——于是在 Dock 自动隐藏时存下的位置，等你把
+   Dock 固定显示之后再打开，**「开始处理」**和**「重置」**就被 Dock 压在下面：
+   布局里明明有，就是点不到。现在会把记住的位置夹进屏幕可用区域，既保留你惯用的
+   位置，也保证整个窗口都够得着。
+
+7. **78 个常见鸟种不再被标成「传奇」。** 罕见度数据在匹配失败时会退而存下属一级
+   的标识，而属一级的标识查不到任何观测记录——数量返回 0，于是这个鸟种被算成了
+   稀世罕见。牛背鹭，全世界分布最广的鹭之一，就这么成了「传奇」。所有受影响的
+   条目都已重建。
+
+8. **改完鸟种，缩略图上的名字会跟着变了。** 缩略图下方那行字只在建网格时写过
+   一次，之后再没更新过，所以改完鸟种，网格里显示的还是旧鸟名，除非你重开目录。
+
+9. **文件搬不动的时候，你终于能看见了。** 改鸟种时若文件移动失败，本该告诉你
+   原因，但那条提示的触发方式实际上从来没执行过——失败看起来和成功一模一样。
+   现在它会真的弹出来。
+
+---
