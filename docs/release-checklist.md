@@ -150,9 +150,13 @@ git push origin v4.6.0-rc1
 }
 ```
 
-`win_cuda` 自 2026-09-10 起也进 Release，`files` 里可以直接填它的文件名；
-`drive` / `baidu` 继续保留网盘镜像（大陆用户走网盘更快）。只有在体积卡口触发、
-CUDA 包回退到 artifact 时，`win_cuda` 才会重新变成只有网盘（见第 3 节）。
+`win_cuda` 自 2026-09-10 起也进 Release，`files` 里可以直接填它的文件名。
+
+**自 4.6.3 正式版（2026-10-06）起不再放网盘**：`drive` / `baidu` 留空 `{}`，
+所有平台只走 GitHub 直链 + 首页的「大陆镜像」（`gh-proxy.com` 前缀，由
+`build-dl-map.mjs` 按 `files` 自动生成，无需手填）。当初放网盘只是因为误以为
+CUDA 包超出 GitHub 2 GiB 上限；该误判已澄清（见第 3 节），网盘的理由随之消失。
+只有在体积卡口触发、CUDA 包回退到 artifact 时，才需要临时为 `win_cuda` 恢复网盘。
 
 > ⚠️ **提交时，`drive` / `baidu` 里必须是 `/dl/<id>` 站内路径，不是网盘直链。**
 > 真实地址存在 `SuperPicky-Site/src/dl-map.json` 里，由 Worker 做 302 跳转。
