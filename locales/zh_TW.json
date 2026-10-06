@@ -1549,8 +1549,8 @@
     "exposure_over": "過曝",
     "exposure_under": "欠曝",
     "back": "返回",
-    "back_tooltip": "返回主介面",
-    "size_label": "SIZE",
+    "back_tooltip": "回到主畫面，可以換資料夾或重新處理",
+    "size_label": "縮圖",
     "section_species": "鳥種",
     "section_focus": "對焦",
     "section_flight": "飛行",
@@ -1600,8 +1600,8 @@
     "merge_reason_target_exists": "目標資料夾已有同名檔案",
     "merge_reason_source_missing": "找不到原檔案（可能已被移動或刪除）",
     "merge_reason_move_error": "移動出錯（{detail}）",
-    "photos_import_btn": "新增到照片",
-    "photos_import_tooltip": "優先將 RAW 匯入 Apple 照片，並同步 SuperPicky 中繼資料",
+    "photos_import_btn": "匯入「照片」App",
+    "photos_import_tooltip": "把照片匯入 macOS 的「照片」App：有 RAW 時匯入 RAW，並寫入鳥種、星級和關鍵字，在「照片」裡可直接搜尋鳥種。\n勾選了照片就只匯入勾選的，否則匯入目前篩選出的全部；匯入過的會自動略過。\n原始檔案不會被更動。",
     "photos_import_unavailable_title": "無法匯入照片",
     "photos_import_no_files": "這 {count} 條照片記錄均無法解析到受支援的檔案。",
     "photos_import_confirm_title": "新增到 Apple 照片",
@@ -1634,8 +1634,8 @@
     "compare_rate_right": "給右圖評 {stars} 星  [鍵盤: {shortcut}]",
     "picked_only": "只看精選",
     "picked_only_tip": "只顯示精選照片（3★ 中銳度與美學雙雙上榜的那批）",
-    "merge_dirs": "合併資料夾…",
-    "merge_dirs_tooltip": "把多個資料夾的選鳥結果合併成一份統計（可跨資料夾、跨硬碟）",
+    "merge_dirs": "合併多個資料夾…",
+    "merge_dirs_tooltip": "把幾個已處理資料夾的結果合成一份來看：張數、鳥種、報告和 eBird 記錄都按合併後的全部計算。\n資料夾可以在不同位置、不同硬碟。",
     "merged_title": "{span}（{count} 個資料夾）",
     "mark_no_bird_confirm_title": "標記為沒有鳥",
     "mark_no_bird_confirm_body": "將把選取的 {count} 張照片標記為沒有鳥：清除鳥種、降為 0 星並移入「其他鳥類/0星_放棄」。\n\n要改回來，重新指定鳥種即可。",
@@ -1645,7 +1645,11 @@
     "merge_folders_label": "目標資料夾",
     "merge_folders_label_merged": "目標資料夾（各批次下）",
     "ctx_show_in_explorer": "在檔案總管中顯示",
-    "delete_multi_msg": "將選取的 {count} 張圖片移入垃圾桶？\n\n❗ 此操作會同時從資料庫刪除記錄，恢復檔案後需重新處理。"
+    "delete_multi_msg": "將選取的 {count} 張圖片移入垃圾桶？\n\n❗ 此操作會同時從資料庫刪除記錄，恢復檔案後需重新處理。",
+    "export_menu": "匯出",
+    "export_menu_tooltip": "把這批選鳥結果帶出軟體：產生分享報告、匯出 eBird 記錄，或匯入「照片」App",
+    "photos_import_hint": "勾選的照片；沒勾選時為目前篩選出的照片",
+    "size_tooltip": "調整網格裡縮圖的大小（也可以按 + / − 鍵）"
   },
   "video": {
     "title_phase1": "影片分析（Phase 1 · 僅 YOLO 有鳥/無鳥）",
@@ -1859,8 +1863,8 @@
     "pack_error": "打包失敗：{error}"
   },
   "ebird_export": {
-    "button": "匯出 eBird",
-    "button_tip": "把辨識結果整理成 eBird 觀測記錄，可在 eBird 網站匯入",
+    "button": "匯出 eBird 記錄",
+    "button_tip": "依拍攝日期每天產生一份 eBird 觀察清單（CSV），可在 eBird 網站「Import Data」上傳。\n只統計 2 星以上、已辨識出鳥種的照片，不受目前篩選影響；座標取自照片 GPS。",
     "title": "匯出 eBird 觀測記錄",
     "location_prompt": "地點名稱（eBird 用它定位，可填熱點名或自定義地點）：",
     "save_title": "儲存 eBird 觀測記錄",
@@ -1868,7 +1872,8 @@
     "no_records": "沒有可匯出的觀測記錄：需要 2★ 以上、已辨識鳥種且帶拍攝時間的照片。",
     "write_failed": "寫入失敗：{error}",
     "done": "已匯出 {checklists} 份清單、{rows} 條觀測記錄。\n{path}\n\n在 eBird 網站選「匯入資料」→「eBird Record Format (Extended)」上傳即可。",
-    "needs_review": "其中 {count} 個鳥種未填通用名（對映不確定，只給了學名），匯入後請在 eBird 核對："
+    "needs_review": "其中 {count} 個鳥種未填通用名（對映不確定，只給了學名），匯入後請在 eBird 核對：",
+    "menu_hint": "2 星以上照片 → eBird 清單 CSV"
   },
   "dir_select": {
     "title": "選擇要合併的資料夾",
@@ -1890,8 +1895,8 @@
     "nothing_found_many": "以下 {count} 個資料夾裡沒有找到已處理的選鳥結果：\n{names}"
   },
   "report_export": {
-    "button": "匯出報告",
-    "button_tip": "把這次選片的結果匯出成一個可分享的 HTML 檔案",
+    "button": "產生分享報告",
+    "button_tip": "產生一份可以直接傳給別人的拍攝報告：鳥種名錄、每種的代表作、星級分布和器材統計。\n照片嵌在檔案裡，離線也能看，還能存成 PDF。\n統計的是這次的全部照片，不受目前篩選影響。",
     "cancel": "取消",
     "estimate": "預計生成約 {size} MB，用時約 {secs} 秒",
     "include_gps": "包含精確 GPS 座標",
@@ -1903,6 +1908,7 @@
     "title": "匯出報告",
     "too_big": "檔案偏大，部分聊天工具與電子信箱的附件上限在 100MB 左右",
     "working": "正在生成報告…",
-    "write_failed": "報告寫入失敗：{error}"
+    "write_failed": "報告寫入失敗：{error}",
+    "menu_hint": "全部照片 → 一個 HTML 檔案"
   }
 }

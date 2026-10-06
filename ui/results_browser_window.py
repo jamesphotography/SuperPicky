@@ -1538,30 +1538,82 @@ class ResultsBrowserWindow(QMainWindow):
                 border-bottom: 1px solid {COLORS['border_subtle']};
             }}
         """)
+        # 工具栏按钮统一规格：全局 QPushButton 样式带 12px 上下内边距，塞进 32px
+        # 固定高度后文字只剩 8px，被挤得高低不一；带图标与不带图标的按钮排版又
+        # 各不相同。这里在工具栏范围内把内边距改成 0 12px、字号统一 13px，并给
+        # 每个按钮都配 16px 图标，使所有控件按同一基线垂直居中。
+        # 部件自身样式表优先于祖先样式表，所以能覆盖全局按钮规则。
+        # Uniform toolbar buttons: the global 12px vertical padding left only
+        # 8px of text room inside the fixed 32px height, so labels sat at
+        # different heights. Scope a 0/12px padding and 13px font to the bar.
+        bar.setStyleSheet(bar.styleSheet() + f"""
+            QWidget#toolbar QPushButton {{
+                padding: 0px 12px;
+                min-height: 0px;
+                font-size: 13px;
+                border-radius: 6px;
+            }}
+            QWidget#toolbar QPushButton#tertiary {{
+                background-color: transparent;
+                border: none;
+                color: {COLORS['text_secondary']};
+            }}
+            QWidget#toolbar QPushButton#tertiary:hover {{
+                background-color: {COLORS['bg_card']};
+                color: {COLORS['text_primary']};
+            }}
+            QWidget#toolbar QPushButton#secondary {{
+                background-color: {COLORS['bg_card']};
+                border: 1px solid {COLORS['border']};
+                color: {COLORS['text_secondary']};
+            }}
+            QWidget#toolbar QPushButton#secondary:hover {{
+                border-color: {COLORS['text_muted']};
+                color: {COLORS['text_primary']};
+            }}
+            QWidget#toolbar QPushButton::menu-indicator {{
+                subcontrol-position: right center;
+                subcontrol-origin: padding;
+                right: 8px;
+            }}
+        """)
         layout = QHBoxLayout(bar)
         layout.setContentsMargins(16, 8, 16, 8)
-        layout.setSpacing(12)
+        layout.setSpacing(8)
+
+        def _toolbar_button(text: str, icon_name: str, object_name: str,
+                            tooltip: str) -> QPushButton:
+            """
+            生成统一规格的工具栏按钮（32px 高、16px 图标、详细提示气泡）。
+
+            参数:
+            text (str): 按钮文字
+            icon_name (str): img/ico 下的 SVG 文件名
+            object_name (str): 样式等级，"secondary"（有边框）或 "tertiary"（幽灵）
+            tooltip (str): 鼠标停留时显示的功能说明
+
+            返回:
+            QPushButton: 尚未加入布局的按钮
+
+            Build a uniform toolbar button (32px tall, 16px icon, tooltip).
+            """
+            # QPushButton 的图标与文字之间没有可设的间距，用一个前导空格隔开。
+            # QPushButton has no icon-text spacing property; a leading space does it.
+            btn = QPushButton(" " + text)
+            btn.setIcon(load_tinted_icon(icon_name, ICON_IDLE, 16))
+            btn.setIconSize(QSize(16, 16))
+            btn.setObjectName(object_name)
+            btn.setFixedHeight(32)
+            btn.setToolTip(tooltip)
+            return btn
 
         # P2: 返回主界面按钮（最左侧）
-        back_btn = QPushButton("  " + self.i18n.t("browser.back"))
-        back_btn.setIcon(load_tinted_icon("birdhouse.svg", ICON_IDLE, 16))
-        back_btn.setIconSize(QSize(16, 16))
-        back_btn.setObjectName("tertiary")
-        back_btn.setFixedHeight(32)
-        back_btn.setToolTip(self.i18n.t("browser.back_tooltip"))
+        back_btn = _toolbar_button(self.i18n.t("browser.back"), "birdhouse.svg",
+                                   "tertiary", self.i18n.t("browser.back_tooltip"))
         back_btn.clicked.connect(self._go_back_to_main)
         layout.addWidget(back_btn)
 
-        # 合并目录入口：随时增删要一起统计的目录（可跨文件夹、跨盘）
-        # Entry point to the directory list; batches often live far apart.
-        merge_btn = QPushButton(self.i18n.t("browser.merge_dirs"))
-        merge_btn.setObjectName("tertiary")
-        merge_btn.setFixedHeight(32)
-        merge_btn.setToolTip(self.i18n.t("browser.merge_dirs_tooltip"))
-        merge_btn.clicked.connect(self._open_merge_picker)
-        layout.addWidget(merge_btn)
-
-        layout.addSpacing(8)
+        layout.addSpacing(4)
 
         # Directory switcher combo box
         self._dir_combo = QComboBox()
@@ -1587,20 +1639,35 @@ class ResultsBrowserWindow(QMainWindow):
         self._dir_combo.hide()
         layout.addWidget(self._dir_combo)
 
-        # 目录显示标签
+        # 目录显示标签：做成与按钮同高（32px）的胶囊，文字垂直居中，
+        # 不再与旁边的按钮高低错开。悬停显示完整路径（_load_single 里设置）。
+        # Directory name as a 32px pill so it lines up with the buttons.
         self._dir_label = QLabel(self.i18n.t("browser.open_dir"))
+        self._dir_label.setFixedHeight(32)
+        self._dir_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         self._dir_label.setStyleSheet(f"""
             QLabel {{
                 color: {COLORS['text_secondary']};
-                font-size: 12px;
+                font-size: 13px;
                 font-family: {FONTS['mono']};
-                background: transparent;
+                background: {COLORS['bg_primary']};
+                border: 1px solid {COLORS['border_subtle']};
+                border-radius: 6px;
+                padding: 0px 10px;
             }}
         """)
-        self._dir_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self._dir_label.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
         layout.addWidget(self._dir_label)
 
-        layout.addSpacing(16)
+        # 合并目录入口紧挨目录名：它改变的正是「现在看的是哪些目录」。
+        # 随时增删要一起统计的目录（可跨文件夹、跨盘）。
+        # The merge entry sits next to the folder name it changes.
+        merge_btn = _toolbar_button(self.i18n.t("browser.merge_dirs"), "square-stack.svg",
+                                    "tertiary", self.i18n.t("browser.merge_dirs_tooltip"))
+        merge_btn.clicked.connect(self._open_merge_picker)
+        layout.addWidget(merge_btn)
+
+        layout.addStretch(1)
 
         # 多选计数标签（C3，默认隐藏）
         self._select_count_label = QLabel("")
@@ -1622,55 +1689,82 @@ class ResultsBrowserWindow(QMainWindow):
         self._compare_btn.clicked.connect(self._enter_comparison)
         layout.addWidget(self._compare_btn)
 
-        # 导出报告：把当前载入的全量照片聚合成一个可分享的 HTML（spec D4）。
-        # 刻意**不受筛选面板影响**——报告的统计口径必须是「这次拍的全部」，
-        # 跟随筛选会让命中率变成 62/62=100% 这种无意义的数字。
-        # Export report over the full loaded set, never the filtered view.
-        self._export_btn = QPushButton(self.i18n.t("report_export.button"))
-        self._export_btn.setObjectName("secondary")
-        self._export_btn.setFixedHeight(32)
-        self._export_btn.setToolTip(self.i18n.t("report_export.button_tip"))
-        self._export_btn.clicked.connect(self._export_report)
-        layout.addWidget(self._export_btn)
+        # 「导出 ▾」菜单：分享报告 / eBird 记录 / 「照片」App 三个出口收进一个
+        # 按钮，工具栏不再挤满（英文界面尤其）。每项第二行写明作用于哪些照片，
+        # 因为三者口径不同：
+        #   - 分享报告：全部已载入照片，刻意**不受筛选影响**——报告的统计口径
+        #     必须是「这次拍的全部」，跟随筛选会让命中率变成 62/62=100%（spec D4）；
+        #   - eBird 记录：同样取全量——观测记录讲的是「这次拍到了什么」，跟随
+        #     筛选会漏报；
+        #   - 「照片」App：勾选优先，否则当前筛选结果（见 _apple_photos_target_photos）。
+        # "Export ▾" menu gathering the three outputs. Report and eBird use the
+        # full loaded set; the Photos import uses the checked/filtered photos.
+        from ui.toolbar_menu import TwoLineMenuAction
 
-        # 导出 eBird 观测记录：口径与报告一致，取全量而非当前筛选——
-        # 观测记录讲的是「这次拍到了什么」，跟随筛选会漏报。
-        # Export eBird observations over the full set, not the filtered view.
-        self._ebird_btn = QPushButton(self.i18n.t("ebird_export.button"))
-        self._ebird_btn.setObjectName("secondary")
-        self._ebird_btn.setFixedHeight(32)
-        self._ebird_btn.setToolTip(self.i18n.t("ebird_export.button_tip"))
-        self._ebird_btn.clicked.connect(self._export_ebird)
-        layout.addWidget(self._ebird_btn)
+        self._export_menu_btn = _toolbar_button(
+            self.i18n.t("browser.export_menu"), "download.svg", "secondary",
+            self.i18n.t("browser.export_menu_tooltip"))
+        export_menu = QMenu(self._export_menu_btn)
+        export_menu.setStyleSheet(f"""
+            QMenu {{
+                background-color: {COLORS['bg_elevated']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 8px;
+                padding: 4px;
+            }}
+        """)
+
+        self._report_action = TwoLineMenuAction(
+            export_menu, load_tinted_icon("gallery-thumbnails.svg", ICON_IDLE, 18),
+            self.i18n.t("report_export.button"),
+            self.i18n.t("report_export.menu_hint"),
+            self.i18n.t("report_export.button_tip"))
+        self._report_action.triggered.connect(self._export_report)
+        export_menu.addAction(self._report_action)
+
+        self._ebird_action = TwoLineMenuAction(
+            export_menu, load_tinted_icon("bird.svg", ICON_IDLE, 18),
+            self.i18n.t("ebird_export.button"),
+            self.i18n.t("ebird_export.menu_hint"),
+            self.i18n.t("ebird_export.button_tip"))
+        self._ebird_action.triggered.connect(self._export_ebird)
+        export_menu.addAction(self._ebird_action)
 
         # Apple Photos 导入严格限于 macOS；模块只在用户触发时惰性加载，Windows
         # 启动和打包运行路径不导入任何 AppleScript 控制代码。
         # Apple Photos import is macOS-only. Its controller is loaded lazily on
         # user action so Windows startup never imports AppleScript control code.
-        self._apple_photos_btn = None
+        self._apple_photos_action = None
         if sys.platform == "darwin":
-            self._apple_photos_btn = QPushButton(self.i18n.t("browser.photos_import_btn"))
-            self._apple_photos_btn.setIcon(load_tinted_icon("image-plus.svg", ICON_IDLE, 16))
-            self._apple_photos_btn.setIconSize(QSize(16, 16))
-            self._apple_photos_btn.setObjectName("secondary")
-            self._apple_photos_btn.setFixedHeight(32)
-            self._apple_photos_btn.setToolTip(self.i18n.t("browser.photos_import_tooltip"))
-            self._apple_photos_btn.setEnabled(False)
-            self._apple_photos_btn.clicked.connect(self._start_apple_photos_import)
-            layout.addWidget(self._apple_photos_btn)
+            self._apple_photos_action = TwoLineMenuAction(
+                export_menu, load_tinted_icon("image-plus.svg", ICON_IDLE, 18),
+                self.i18n.t("browser.photos_import_btn"),
+                self.i18n.t("browser.photos_import_hint"),
+                self.i18n.t("browser.photos_import_tooltip"))
+            self._apple_photos_action.setEnabled(False)
+            self._apple_photos_action.triggered.connect(self._start_apple_photos_import)
+            export_menu.addAction(self._apple_photos_action)
 
-        # 缩略图尺寸:标签 + 滑块绑成一组,紧贴显示
+        self._export_menu_btn.setMenu(export_menu)
+        layout.addWidget(self._export_menu_btn)
+
+        layout.addSpacing(8)
+
+        # 缩略图尺寸:标签 + 滑块绑成一组,紧贴显示；标签与滑块共用同一条提示
+        # Thumbnail size: label + slider share one tooltip.
         size_box = QHBoxLayout()
         size_box.setContentsMargins(0, 0, 0, 0)
         size_box.setSpacing(6)
         size_label = QLabel(self.i18n.t("browser.size_label"))
-        size_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 10px; background: transparent;")
+        size_label.setStyleSheet(f"color: {COLORS['text_tertiary']}; font-size: 12px; background: transparent;")
+        size_label.setToolTip(self.i18n.t("browser.size_tooltip"))
         size_box.addWidget(size_label)
 
         self._size_slider = QSlider(Qt.Horizontal)
         self._size_slider.setRange(80, 300)
         self._size_slider.setValue(160)
         self._size_slider.setFixedWidth(100)
+        self._size_slider.setToolTip(self.i18n.t("browser.size_tooltip"))
         self._size_slider.valueChanged.connect(self._on_size_changed)
         size_box.addWidget(self._size_slider)
         layout.addLayout(size_box)
@@ -3291,12 +3385,12 @@ class ResultsBrowserWindow(QMainWindow):
     def _update_apple_photos_button(self) -> None:
         """按结果和任务状态更新 macOS 导入按钮。/ Update import action availability."""
 
-        button = getattr(self, "_apple_photos_btn", None)
-        if button is None:
+        action = getattr(self, "_apple_photos_action", None)
+        if action is None:
             return
         importer = self._apple_photos_importer
         is_running = bool(importer is not None and importer.is_running)
-        button.setEnabled(bool(self._filtered_photos) and not is_running)
+        action.setEnabled(bool(self._filtered_photos) and not is_running)
 
     @Slot()
     def _start_apple_photos_import(self) -> None:
