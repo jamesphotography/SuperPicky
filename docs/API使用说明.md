@@ -77,7 +77,7 @@ curl http://127.0.0.1:5156/health
 }
 ```
 
-**返回**:
+**返回**（示例中第二名被旧版智能筛选排除，但仍保留在 `all_results`）：
 ```json
 {
   "success": true,
@@ -87,22 +87,41 @@ curl http://127.0.0.1:5156/health
       "cn_name": "白头鹎",
       "pinyin_name": "bái tóu bēi",
       "en_name": "Light-vented Bulbul",
+      "display_name": "白头鹎",
       "scientific_name": "Pycnonotus sinensis",
       "gbif_rarity_100": 12.5,
       "iucn_category": "LC",
       "confidence": 95.5,
-      "ebird_match": true
+      "ebird_match": true,
+      "description": ""
+    }
+  ],
+  "all_results": [
+    {
+      "rank": 1,
+      "cn_name": "白头鹎",
+      "pinyin_name": "bái tóu bēi",
+      "en_name": "Light-vented Bulbul",
+      "display_name": "白头鹎",
+      "scientific_name": "Pycnonotus sinensis",
+      "gbif_rarity_100": 12.5,
+      "iucn_category": "LC",
+      "confidence": 95.5,
+      "ebird_match": true,
+      "description": ""
     },
     {
       "rank": 2,
       "cn_name": "白喉红臀鹎",
       "pinyin_name": "bái hóu hóng tún bēi",
       "en_name": "Sooty-headed Bulbul",
+      "display_name": "白喉红臀鹎",
       "scientific_name": "Pycnonotus aurigaster",
       "gbif_rarity_100": null,
       "iucn_category": null,
       "confidence": 3.2,
-      "ebird_match": false
+      "ebird_match": false,
+      "description": ""
     }
   ],
   "yolo_info": "YOLO检测: 1个目标, 置信度0.95",
@@ -111,9 +130,21 @@ curl http://127.0.0.1:5156/health
     "longitude": 116.456,
     "region": "中国",
     "info": "GPS: 39.123000, 116.456000 (ExifTool)"
-  }
+  },
+  "geo_info": null
 }
 ```
+
+- `results`：保留原有行为，返回第一名及与第一名置信度相对差距不超过 50% 的连续候选。旧版 Lightroom 插件和客户端继续读取此字段，无需修改。
+- `all_results`：新增字段，返回本次识别核心输出的全部候选，未经接口层的上述智能筛选；候选顺序、`rank` 和完整字段格式与 `results` 一致。置信度是 0–100 的百分数，不会重新归一化。
+- “全部”仍受请求 `top_k`（默认 3）、核心最低置信度及地理过滤限制，数量可能少于 `top_k`；不是模型全部鸟种的概率，也不代表照片里有这些鸟。当前核心最低置信度为启用物种候选集时 0.3%，否则 1%。需要更多候选可显式提高 `top_k`。
+- SuperViewer 接入：候选列表和 XMP `birdid_candidates` 优先采用 `all_results`，旧服务未提供此字段时回退到 `results`；`birdid_response` 保存完整响应，以便日后重新选择候选。采用候选时，从该条记录读取拼音、稀有度等信息。
+- 失败/无候选时保持原有错误响应与状态码，不新增成功结果。
+
+`all_results` is additive: legacy `results` keeps its original smart filtering. It contains all candidates returned by the recognition core for this request, still subject to `top_k` (default 3), core confidence thresholds and geographic filtering. Both arrays share the same candidate schema, ordering and unnormalized 0–100 confidence values. New clients should prefer `all_results` and fall back to `results` when the new field is absent; error responses are unchanged.
+
+以下候选字段说明同时适用于 `results[]` 和 `all_results[]`。
+The candidate field descriptions below apply to both arrays.
 
 `results[].pinyin_name`：中文鸟名的带声调拼音，音节以空格分隔；所有界面语言均返回此字段，中文名为空或拼音表未收录时返回空字符串 `""`。
 
