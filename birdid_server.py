@@ -248,6 +248,8 @@ def recognize_bird():
                 "pinyin_name": "bái tóu bēi",
                 "en_name": "Light-vented Bulbul",
                 "scientific_name": "Pycnonotus sinensis",
+                "gbif_rarity_100": 12.5,
+                "iucn_category": "LC",
                 "confidence": 95.5,
                 "ebird_match": true
             },
@@ -383,6 +385,10 @@ def recognize_bird():
                     "en_name": en_name,
                     "display_name": display_name,  # 根据语言设置自动选择
                     "scientific_name": r.get("scientific_name", ""),
+                    # 原样透传，保留 0 分；缺失值由 JSON 序列化为 null。
+                    # Pass through unchanged, preserving zero; missing values become null.
+                    "gbif_rarity_100": r.get("gbif_rarity_100"),
+                    "iucn_category": r.get("iucn_category"),
                     "confidence": float(r.get("confidence", 0)),
                     "ebird_match": r.get("ebird_match", False),
                     "description": r.get("description", ""),
