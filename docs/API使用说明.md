@@ -85,16 +85,22 @@ curl http://127.0.0.1:5156/health
     {
       "rank": 1,
       "cn_name": "白头鹎",
+      "pinyin_name": "bái tóu bēi",
       "en_name": "Light-vented Bulbul",
       "scientific_name": "Pycnonotus sinensis",
+      "gbif_rarity_100": 12.5,
+      "iucn_category": "LC",
       "confidence": 95.5,
       "ebird_match": true
     },
     {
       "rank": 2,
       "cn_name": "白喉红臀鹎",
+      "pinyin_name": "bái hóu hóng tún bēi",
       "en_name": "Sooty-headed Bulbul",
       "scientific_name": "Pycnonotus aurigaster",
+      "gbif_rarity_100": null,
+      "iucn_category": null,
       "confidence": 3.2,
       "ebird_match": false
     }
@@ -108,6 +114,22 @@ curl http://127.0.0.1:5156/health
   }
 }
 ```
+
+`results[].pinyin_name`：中文鸟名的带声调拼音，音节以空格分隔；所有界面语言均返回此字段，中文名为空或拼音表未收录时返回空字符串 `""`。
+
+`results[].pinyin_name`: Tone-marked pinyin of the Chinese bird name, with space-separated syllables. Returned for every UI language; an empty or unknown Chinese name yields `""`.
+
+`results[].gbif_rarity_100`：GBIF 罕见度分数（数值，0–100，越大越罕见），沿用识别核心的拍摄地国家优先、全球回退结果。`0` 是有效分数；缺失时返回 `null`。
+
+`results[].iucn_category`：IUCN 保护等级字符串（如 `LC`、`NT`、`VU`、`EN`、`CR`），原样透传识别核心结果；缺失时返回 `null`，不默认填为 `LC`。
+
+以上两个字段在每个候选中均返回，不受界面语言影响。示例分数仅用于说明响应格式，不代表鸟种的实际评分。
+
+`results[].gbif_rarity_100`: Numeric GBIF rarity score (0–100; higher means rarer), preserving the recognition core's photo-country lookup and global fallback. Zero is valid; missing data is `null`.
+
+`results[].iucn_category`: IUCN category string (such as `LC`, `NT`, `VU`, `EN`, or `CR`), passed through from the recognition core. Missing data is `null`, never defaulted to `LC`.
+
+Both fields are returned for every candidate regardless of UI language. Example scores illustrate the response format, not actual species ratings.
 
 **示例**:
 
