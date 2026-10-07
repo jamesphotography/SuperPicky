@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
     QDialog, QListWidget, QDialogButtonBox, QListWidgetItem, QLineEdit,
 )
 from PySide6.QtCore import Qt, Signal, QThread, QTimer, QSize
-from PySide6.QtGui import QPixmap, QDragEnterEvent, QDropEvent
+from PySide6.QtGui import QPixmap, QDragEnterEvent, QDropEvent, QKeySequence, QShortcut
 
 from ui.styles import COLORS, FONTS
 from ui.combo_popup import style_combo_popup
@@ -121,7 +121,10 @@ class DropArea(QFrame):
         layout.addWidget(icon_label)
 
         # 提示文字
-        hint_label = QLabel(self.i18n.t("birdid.drag_hint"))
+        paste_key = QKeySequence(QKeySequence.StandardKey.Paste).toString(
+            QKeySequence.SequenceFormat.NativeText
+        )
+        hint_label = QLabel(self.i18n.t("birdid.drag_hint", shortcut=paste_key))
         hint_label.setAlignment(ALIGN_CENTER)
         hint_label.setWordWrap(True)
         hint_label.setStyleSheet(f"""
@@ -611,6 +614,20 @@ class BirdIDDockWidget(QDockWidget):
     # 请求主窗口打开设置中心指定页 / Request main window to open Settings Center page
     open_settings_requested = Signal(str)
 
+    # Windows 截图等待：每 500ms 查一次剪贴板，最多等 3 分钟（360 次）。
+    # 原先只等 60 秒，用户截图前稍一犹豫就会错过。
+    # Windows snip wait: poll every 500 ms for up to 3 minutes (360 polls);
+    # the old 60 s limit was easy to miss if the user hesitated.
+    WIN_SNIP_POLL_MS = 500
+    WIN_SNIP_MAX_POLLS = 360
+
+    # 粘贴文件时认的扩展名，与「选择图片」对话框的过滤器一致。
+    # Extensions accepted when pasting a copied file; matches the file dialog filter.
+    PASTE_FILE_EXTENSIONS = (
+        ".jpg", ".jpeg", ".png", ".nef", ".cr2", ".cr3",
+        ".arw", ".raf", ".orf", ".rw2", ".dng",
+    )
+
     def __init__(self, parent=None):
         self.i18n = get_i18n()
         super().__init__(self.i18n.t("birdid.title").upper(), parent)
@@ -648,6 +665,14 @@ class BirdIDDockWidget(QDockWidget):
 
         self._setup_ui()
         self._apply_settings()
+
+        # Windows 截图等待状态（见 _begin_win_screenshot_wait）
+        # Windows snip wait state (see _begin_win_screenshot_wait)
+        self._sc_waiting: bool = False
+        self._sc_clipboard_connected: bool = False
+        self._screenshot_poll_count: int = 0
+        self._screenshot_timer: Optional[QTimer] = None
+        self._setup_paste_shortcut()
 
     def _setup_title_bar(self):
         """创建自定义标题栏 - 标题靠左，按钮靠右"""
@@ -2501,24 +2526,113 @@ class BirdIDDockWidget(QDockWidget):
                 if related:
                     print(f"[Screenshot] 临时目录中的相关文件: {related}")
 
-    def _load_screenshot_from_clipboard(self):
+    # ── 粘贴识别 / Paste to identify ─────────────────────────────────────────
+
+    def _setup_paste_shortcut(self) -> None:
+        """
+        注册标准粘贴快捷键（Windows Ctrl+V / macOS ⌘V），把剪贴板里的图片交给识别。
+
+        作用范围是面板所在的整个窗口（停靠时即主窗口）。输入框获得焦点时，
+        QLineEdit 会先接管粘贴键，所以在搜索框、路径框里粘贴文字不受影响。
+
+        这是截图识别的手动退路（issue #113）：系统截图工具没把图片交回来时，
+        用户截完按一下 Ctrl+V 照样能识别；用其他截图软件截的图也一样。
+
+        Register the platform paste shortcut for the dock's window. Focused line
+        edits claim the key first, so pasting text into inputs is unaffected.
+        This is the manual fallback for screenshot identification (#113).
+        """
+        shortcut = QShortcut(QKeySequence(QKeySequence.StandardKey.Paste), self)
+        shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        shortcut.activated.connect(self._paste_from_clipboard)
+
+    def _image_path_from_clipboard(self) -> tuple:
+        """
+        从剪贴板取出一张可识别的图片，返回其文件路径。
+
+        优先认复制的本地图片文件（资源管理器 / Finder 里复制的文件），直接识别原文件；
+        否则认剪贴板里的图像数据，存成临时 PNG。
+
+        返回 / Returns:
+        tuple[Optional[str], Optional[str]]: (路径, 失败时的 i18n 键)。
+            有图片 → (路径, None)；没有图片 → (None, "birdid.paste_no_image")；
+            有图片但存盘失败 → (None, "birdid.sc_save_failed")。
+
+        Return (path, None) for a usable image, or (None, i18n_key) explaining why
+        not. A copied local image file wins over raw image data.
+        """
         import tempfile
+
         clipboard = QApplication.clipboard()
-        image = clipboard.image()
-        if image is None or image.isNull():
-            return
-        tmp_file = os.path.join(tempfile.gettempdir(), 'birdid_screenshot.png')
-        if image.save(tmp_file, b'PNG'):
-            self.on_file_dropped(tmp_file)
-        else:
-            self._show_screenshot_error(self.i18n.t("birdid.sc_save_failed"))
+        mime = clipboard.mimeData()
+        if mime is None:
+            return None, "birdid.paste_no_image"
+
+        if mime.hasUrls():
+            for url in mime.urls():
+                if not url.isLocalFile():
+                    continue
+                path = url.toLocalFile()
+                if (os.path.isfile(path)
+                        and os.path.splitext(path)[1].lower() in self.PASTE_FILE_EXTENSIONS):
+                    return path, None
+
+        if mime.hasImage():
+            image = clipboard.image()
+            if image.isNull():
+                print(f"[Paste] 剪贴板声称有图片但读出为空 / image is null, "
+                      f"formats={list(mime.formats())}")
+                return None, "birdid.paste_no_image"
+            tmp_file = os.path.join(tempfile.gettempdir(), 'birdid_screenshot.png')
+            # 格式必须传 str：PySide6 6.10+ 对 bytes 格式（b'PNG'）直接抛 ValueError，
+            # 4.6.3 及以前的 Windows 截图识别正是因此失效（issue #113）。
+            # Pass the format as str: PySide6 6.10+ raises ValueError for bytes,
+            # which is what broke Windows screenshot identification (#113).
+            if image.save(tmp_file, "PNG"):
+                return tmp_file, None
+            print(f"[Paste] 保存剪贴板图片失败 / failed to save: {tmp_file}")
+            return None, "birdid.sc_save_failed"
+
+        return None, "birdid.paste_no_image"
+
+    def _paste_from_clipboard(self) -> bool:
+        """
+        粘贴剪贴板里的图片并开始识别；身处「查询鸟名」页时先切回识鸟页。
+
+        返回 / Returns:
+        bool: 开始识别返回 True；剪贴板里没有可用图片返回 False（状态栏写明原因）。
+
+        Paste the clipboard image and identify it, switching to the identify tab
+        first. Returns False, with the reason in the status line, when there is
+        no usable image.
+        """
+        path, error_key = self._image_path_from_clipboard()
+        if not path:
+            self._show_screenshot_error(self.i18n.t(error_key))
+            return False
+        if self.stacked_widget.currentIndex() != 0:
+            self._switch_tab(0)
+        print(f"[Paste] 识别剪贴板图片 / identifying pasted image: {path}")
+        self.on_file_dropped(path)
+        return True
 
     def _show_screenshot_error(self, msg: str):
         self.status_label.setText(msg)
         self.status_label.setStyleSheet(f"font-size: 11px; color: {COLORS['error']};")
         self.status_label.show()
 
+    # ── Windows 截图 / Windows snipping ──────────────────────────────────────
+
     def _take_screenshot_win(self):
+        """
+        Windows：隐藏主窗口后调起系统截图（Win+Shift+S），等截图出现在剪贴板。
+
+        Hide the main window, invoke the system snip (Win+Shift+S) and wait for
+        the capture to land on the clipboard.
+        """
+        if self._sc_waiting:
+            print("[Screenshot] 已在等待上一次截图，忽略重复点击 / already waiting")
+            return
         try:
             QApplication.clipboard().clear()
         except Exception:
@@ -2553,6 +2667,7 @@ class BirdIDDockWidget(QDockWidget):
             keybd(VK_SHIFT, 0, KEYEVENTF_KEYUP, 0)
             keybd(VK_LWIN,  0, KEYEVENTF_KEYUP, 0)
         except Exception as e:
+            print(f"[Screenshot] ❌ 发送 Win+Shift+S 失败 / hotkey failed: {e}")
             self._restore_win_window()
             self.status_label.setText(
                 self.i18n.t("birdid.screenshot_hotkey_failed", error=e)
@@ -2560,10 +2675,118 @@ class BirdIDDockWidget(QDockWidget):
             self.status_label.setStyleSheet(f"font-size: 11px; color: {COLORS['error']};")
             return
 
+        print("[Screenshot] 已发送 Win+Shift+S，等待剪贴板出现截图 / "
+              "hotkey sent, waiting for the clipboard")
+        self._begin_win_screenshot_wait()
+
+    def _begin_win_screenshot_wait(self) -> None:
+        """
+        开始等待截图：同时监听剪贴板变化信号并定时轮询。
+
+        信号能在截图落到剪贴板的那一刻立即收尾；轮询是兜底——个别系统上信号
+        可能不触发。两条路都走 _try_finish_win_screenshot，由 _sc_waiting 保证
+        同一张截图只识别一次。
+
+        Start waiting for the snip: listen to clipboard changes and poll as a
+        fallback. Both paths share _try_finish_win_screenshot, and _sc_waiting
+        makes completion single-shot.
+        """
+        self._sc_waiting = True
         self._screenshot_poll_count = 0
-        self._screenshot_timer = QTimer(self)
-        self._screenshot_timer.timeout.connect(self._poll_clipboard_for_screenshot)
-        self._screenshot_timer.start(500)
+
+        clipboard = QApplication.clipboard()
+        if not self._sc_clipboard_connected:
+            clipboard.dataChanged.connect(self._on_win_clipboard_changed)
+            self._sc_clipboard_connected = True
+
+        if self._screenshot_timer is None:
+            self._screenshot_timer = QTimer(self)
+            self._screenshot_timer.timeout.connect(self._poll_clipboard_for_screenshot)
+        self._screenshot_timer.start(self.WIN_SNIP_POLL_MS)
+
+    def _end_win_screenshot_wait(self) -> None:
+        """停止等待：关掉轮询并断开剪贴板信号 / Stop polling and disconnect."""
+        self._sc_waiting = False
+        if self._screenshot_timer is not None:
+            self._screenshot_timer.stop()
+        if self._sc_clipboard_connected:
+            try:
+                QApplication.clipboard().dataChanged.disconnect(self._on_win_clipboard_changed)
+            except (RuntimeError, TypeError):
+                pass
+            self._sc_clipboard_connected = False
+
+    def _on_win_clipboard_changed(self) -> None:
+        """剪贴板变化时立即检查截图 / Check for the snip as soon as the clipboard changes."""
+        if not self._sc_waiting:
+            return
+        self._try_finish_win_screenshot("signal")
+
+    def _poll_clipboard_for_screenshot(self):
+        """
+        轮询兜底；超时后停止等待、恢复窗口，并提示可以手动粘贴。
+
+        Polling fallback; on timeout stop waiting, restore the window and tell the
+        user they can paste manually.
+        """
+        if not self._sc_waiting:
+            return
+
+        self._screenshot_poll_count += 1
+
+        if self._screenshot_poll_count > self.WIN_SNIP_MAX_POLLS:
+            mime = QApplication.clipboard().mimeData()
+            formats = list(mime.formats()) if mime else []
+            print(f"[Screenshot] ⚠️ 等待截图超时 / timed out, clipboard formats={formats}")
+            self._end_win_screenshot_wait()
+            self._restore_win_window()
+            self._show_screenshot_error(self.i18n.t("birdid.sc_timeout"))
+            return
+
+        if self._screenshot_poll_count % 20 == 0:
+            mime = QApplication.clipboard().mimeData()
+            formats = list(mime.formats()) if mime else []
+            print(f"[Screenshot] 仍在等待截图 / still waiting "
+                  f"({self._screenshot_poll_count}), formats={formats}")
+
+        self._try_finish_win_screenshot("poll")
+
+    def _try_finish_win_screenshot(self, source: str) -> None:
+        """
+        剪贴板里有截图就收尾：停止等待、存临时 PNG、恢复窗口、开始识别。
+
+        参数 / Parameters:
+        source (str): 触发来源，"signal" 或 "poll"，仅用于日志 / Log-only trigger source.
+
+        Finish when the clipboard holds an image: stop waiting, save a temp PNG,
+        restore the window and identify.
+        """
+        import tempfile
+
+        clipboard = QApplication.clipboard()
+        mime = clipboard.mimeData()
+        if not (mime and mime.hasImage()):
+            return
+
+        image = clipboard.image()
+        if image.isNull():
+            # 图片可能还没写完，继续等 / The image may not be ready yet; keep waiting.
+            print(f"[Screenshot] 剪贴板有图片格式但读出为空，继续等待 / "
+                  f"null image via {source}, formats={list(mime.formats())}")
+            return
+
+        self._end_win_screenshot_wait()
+        tmp_file = os.path.join(tempfile.gettempdir(), 'birdid_screenshot.png')
+        saved = image.save(tmp_file, "PNG")  # 必须是 str，见 _image_path_from_clipboard
+        self._restore_win_window()
+        if not saved:
+            print(f"[Screenshot] ❌ 截图保存失败 / failed to save: {tmp_file}")
+            self._show_screenshot_error(self.i18n.t("birdid.sc_save_failed"))
+            return
+
+        print(f"[Screenshot] ✅ 收到截图 / got snip via {source}: "
+              f"{image.width()}x{image.height()} → {tmp_file}")
+        QTimer.singleShot(100, lambda: self.on_file_dropped(tmp_file))
 
     def _restore_win_window(self):
         main_win = getattr(self, '_sc_main_win', None)
@@ -2571,34 +2794,6 @@ class BirdIDDockWidget(QDockWidget):
             main_win.show()
             main_win.raise_()
             main_win.activateWindow()
-
-    def _poll_clipboard_for_screenshot(self):
-        import tempfile
-
-        self._screenshot_poll_count += 1
-
-        if self._screenshot_poll_count > 120:
-            self._screenshot_timer.stop()
-            self._restore_win_window()
-            return
-
-        clipboard = QApplication.clipboard()
-        mime = clipboard.mimeData()
-
-        if mime and mime.hasImage():
-            self._screenshot_timer.stop()
-
-            image = clipboard.image()
-            if image.isNull():
-                self._restore_win_window()
-                return
-
-            tmp_file = os.path.join(tempfile.gettempdir(), 'birdid_screenshot.png')
-            if image.save(tmp_file, b'PNG'):
-                self._restore_win_window()
-                QTimer.singleShot(100, lambda: self.on_file_dropped(tmp_file))
-            else:
-                self._restore_win_window()
 
     def reset_view(self):
         self.drop_area.show()

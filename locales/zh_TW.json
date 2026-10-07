@@ -922,7 +922,7 @@
   },
   "birdid": {
     "title": "鳥類辨識",
-    "drag_hint": "拖放圖片\n或點選選擇",
+    "drag_hint": "拖放圖片\n或點選選擇，也可按 {shortcut} 貼上",
     "select_image": "選擇鳥類圖片",
     "country": "國家:",
     "region": "區域:",
@@ -1039,7 +1039,9 @@
     "species_unconfirmed": "{name}（待確定 {confidence}%）",
     "sc_unavailable": "screencapture 不可用",
     "sc_empty_file": "截圖檔案為空，請檢查系統設定 > 隱私與安全性 > 螢幕錄製權限",
-    "sc_save_failed": "截圖儲存失敗"
+    "sc_save_failed": "截圖儲存失敗",
+    "sc_timeout": "沒有等到截圖。截好後可直接按 Ctrl+V 貼上辨識",
+    "paste_no_image": "剪貼簿裡沒有圖片"
   },
   "rating_engine": {
     "reject_no_bird": "未偵測到鳥類",
