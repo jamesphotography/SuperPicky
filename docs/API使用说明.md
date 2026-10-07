@@ -85,6 +85,7 @@ curl http://127.0.0.1:5156/health
     {
       "rank": 1,
       "cn_name": "白头鹎",
+      "pinyin_name": "bái tóu bēi",
       "en_name": "Light-vented Bulbul",
       "scientific_name": "Pycnonotus sinensis",
       "confidence": 95.5,
@@ -93,6 +94,7 @@ curl http://127.0.0.1:5156/health
     {
       "rank": 2,
       "cn_name": "白喉红臀鹎",
+      "pinyin_name": "bái hóu hóng tún bēi",
       "en_name": "Sooty-headed Bulbul",
       "scientific_name": "Pycnonotus aurigaster",
       "confidence": 3.2,
@@ -108,6 +110,10 @@ curl http://127.0.0.1:5156/health
   }
 }
 ```
+
+`results[].pinyin_name`：中文鸟名的带声调拼音，音节以空格分隔；所有界面语言均返回此字段，中文名为空或拼音表未收录时返回空字符串 `""`。
+
+`results[].pinyin_name`: Tone-marked pinyin of the Chinese bird name, with space-separated syllables. Returned for every UI language; an empty or unknown Chinese name yields `""`.
 
 **示例**:
 
