@@ -238,6 +238,9 @@ def recognize_bird():
         "top_k": 3  // 返回前K个结果（可选，默认3）
     }
 
+    all_results 返回智能筛选前的核心候选，results 保留原有筛选。
+    all_results exposes core candidates before smart filtering; results is unchanged.
+
     返回 (JSON):
     {
         "success": true,
@@ -395,6 +398,10 @@ def recognize_bird():
                 }
             )
 
+        # 保留核心返回的全部候选；旧 results 继续使用原来的智能筛选。
+        # Preserve every core candidate; keep legacy smart filtering for results.
+        all_results = list(formatted_results)
+
         # 智能候选筛选：根据置信度差距决定返回多少个候选
         if len(formatted_results) >= 2:
             top_confidence = formatted_results[0]['confidence']
@@ -442,6 +449,7 @@ def recognize_bird():
         response = {
             'success': True,
             'results': formatted_results,
+            'all_results': all_results,
             'yolo_info': result.get('yolo_info'),
             'gps_info': result.get('gps_info'),
             'geo_info': result.get('geo_info')
