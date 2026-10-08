@@ -26,6 +26,19 @@ def recognition_api(monkeypatch, tmp_path):
 
     identifier = ModuleType("birdid.bird_identifier")
     identifier.identify_bird = identify
+    # 同时替换 birdid 包本身：若包尚未导入，`from birdid.bird_identifier import …`
+    # 会先执行 birdid/__init__.py，而它要从（已被替换的）bird_identifier 导入
+    # quick_identify 等名字，单独运行本文件时就会 ImportError、接口返回 500；
+    # 全量运行时因其他测试已在收集阶段导入真实 birdid 而碰巧通过。
+    # 空壳包的 __path__ 指向真实目录，其他子模块照常可导入；monkeypatch 结束后恢复原状。
+    # Also stub the birdid package: when it is not yet imported, importing the
+    # submodule runs birdid/__init__.py, which pulls quick_identify and other names
+    # from the stubbed module and fails when this file runs alone. The stub keeps
+    # the real directory on __path__ so other submodules still import normally.
+    package = ModuleType("birdid")
+    package.__path__ = [str(Path(server.__file__).resolve().parent / "birdid")]
+    package.bird_identifier = identifier
+    monkeypatch.setitem(sys.modules, "birdid", package)
     monkeypatch.setitem(sys.modules, "birdid.bird_identifier", identifier)
     settings = ModuleType("advanced_config")
     settings.get_advanced_config = lambda: SimpleNamespace(name_format="default")
