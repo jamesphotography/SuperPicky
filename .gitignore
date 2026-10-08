@@ -77,6 +77,17 @@ ebird_cache/
 # wildcard covers every timestamped variant so `git add -A` cannot commit them.
 .superpicky_backup_*/
 
+# SQLite 运行时临时文件（WAL 日志、共享内存、回滚日志）。库打开时自动生成，
+# 关闭后会合并回主库；提交它们毫无意义，且会挡住 git pull。
+# SQLite runtime sidecars (WAL, shared memory, rollback journal). They are
+# created while a database is open and folded back on close; never commit them.
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+
 # 虚拟环境
 .venv/
 .venv-cuda/
