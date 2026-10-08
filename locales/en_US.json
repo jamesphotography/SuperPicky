@@ -1008,7 +1008,7 @@
   },
   "birdid": {
     "title": "Bird ID",
-    "drag_hint": "Drop image here\nor click to select",
+    "drag_hint": "Drop image here\nor click to select, or press {shortcut} to paste",
     "select_image": "Select Bird Image",
     "country": "Country:",
     "region": "Region:",
@@ -1125,7 +1125,9 @@
     "species_unconfirmed": "{name} (unconfirmed {confidence}%)",
     "sc_unavailable": "screencapture is unavailable",
     "sc_empty_file": "Screenshot is empty. Check System Settings > Privacy & Security > Screen Recording.",
-    "sc_save_failed": "Failed to save the screenshot"
+    "sc_save_failed": "Failed to save the screenshot",
+    "sc_timeout": "No screenshot arrived. Take one and press Ctrl+V to identify it",
+    "paste_no_image": "No image on the clipboard"
   },
   "cli": {
     "banner": "  🐦 SuperPicky CLI v{version} - AI Photo Selector (Command Line)",

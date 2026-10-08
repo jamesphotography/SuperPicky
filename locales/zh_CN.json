@@ -922,7 +922,7 @@
   },
   "birdid": {
     "title": "鸟类识别",
-    "drag_hint": "拖放图片\n或点击选择",
+    "drag_hint": "拖放图片\n或点击选择，也可按 {shortcut} 粘贴",
     "select_image": "选择鸟类图片",
     "country": "国家:",
     "region": "区域:",
@@ -1039,7 +1039,9 @@
     "species_unconfirmed": "{name}（待确定 {confidence}%）",
     "sc_unavailable": "screencapture 不可用",
     "sc_empty_file": "截图文件为空，请检查系统设置 > 隐私与安全性 > 屏幕录制权限",
-    "sc_save_failed": "截图保存失败"
+    "sc_save_failed": "截图保存失败",
+    "sc_timeout": "没有等到截图。截好后可直接按 Ctrl+V 粘贴识别",
+    "paste_no_image": "剪贴板里没有图片"
   },
   "rating_engine": {
     "reject_no_bird": "未检测到鸟类",
