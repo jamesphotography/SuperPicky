@@ -1,3 +1,47 @@
+# SuperPicky 4.6.4 RC1
+
+**What's new since 4.6.3:**
+
+- **Fixed: screenshot identification on Windows.** Clicking *Screenshot* opened the
+  Windows snipping tool, but the capture was then silently dropped and never
+  identified (#113). It now goes straight to identification, and SuperPicky waits up
+  to 3 minutes for you to take the shot instead of 60 seconds. macOS was not affected.
+- **Paste to identify.** Press **Ctrl+V** (**⌘V** on Mac) in the Bird ID panel to
+  identify whatever image is on the clipboard — a screenshot from any tool, or an image
+  file you copied in Explorer or Finder. Typing in a text box still pastes text as usual.
+- **Search species by code** (#119). In the species editor and the bird-name lookup you
+  can now type an **eBird species code**, which every species has (`cangoo` → Canada
+  Goose, `gragoo` → Greylag Goose; a prefix such as `cang` works too), or a North
+  American **4-letter alpha code** (`CANG`). Exact code matches are listed first; Chinese
+  names and pinyin initials still take priority. In the bird-name lookup this works when
+  the *SuperPicky* catalog is selected.
+- **For tools that use the Bird ID API** (Lightroom plugin, SuperViewer and similar):
+  each candidate now also carries its pinyin, GBIF rarity and IUCN status, and a new
+  `all_results` list returns every candidate before the usual filtering, while
+  `results` is unchanged. Contributed by @OscarKing888 (#114, #115).
+
+---
+
+# SuperPicky 4.6.4 RC1（中文）
+
+**4.6.3 以来的变化：**
+
+- **修复：Windows 上截图识别不工作。** 点「截图识别」能调出系统截图工具，但截好的图
+  随后被悄悄丢掉，始终不开始识别（#113）。现在截完直接识别，等你截图的时间也从 60 秒
+  放宽到 3 分钟。Mac 不受影响。
+- **粘贴识别。** 在识鸟面板按 **Ctrl+V**（Mac 为 **⌘V**），直接识别剪贴板里的图片——
+  任何截图软件截的图，或在资源管理器 / 访达里复制的图片文件都行。在输入框里粘贴文字
+  照常不受影响。
+- **用鸟种代码搜索**（#119）。改鸟种弹窗和鸟名查询里可以直接输入 **eBird 物种代码**
+  （每个鸟种都有，`cangoo` → 加拿大黑雁，`gragoo` → 灰雁；输入前缀如 `cang` 也行），
+  或北美的 **4 位代码**（`CANG`）。代码精确命中的排在前面，中文名和拼音首字母仍然
+  优先。鸟名查询里需选中「SuperPicky 名录」才生效。
+- **给调用识鸟接口的工具**（Lightroom 插件、SuperViewer 等）：每个候选新增拼音、GBIF
+  罕见度和 IUCN 等级；新增 `all_results` 列表，返回常规筛选之前的全部候选，原有的
+  `results` 不变。由 @OscarKing888 贡献（#114、#115）。
+
+---
+
 # SuperPicky 4.6.3
 
 This release is about correcting the AI when it is plainly wrong, about bird
