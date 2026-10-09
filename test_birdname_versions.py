@@ -194,3 +194,79 @@ def test_missing_database_yields_none():
     from tools.birdname_versions import pick_version_from_db
 
     assert pick_version_from_db("/nonexistent/birdname.db") is None
+
+
+# ── 鸟种代码搜索（issue #119）/ Species-code search ─────────────────────────
+
+def _code_catalog():
+    """
+    带代码列的迷你名录：加拿大黑雁（CANG / cangoo）、黑喉蓝林莺（BTBW / btbwar）、
+    白头鹎（拼音首字母 BTB，无北美代码）。
+    Mini catalog with code columns; 白头鹎's pinyin initials collide with an eBird prefix.
+    """
+    import sqlite3
+
+    con = sqlite3.connect(":memory:")
+    con.execute("CREATE TABLE birds (chinese_name TEXT, english_name TEXT, abbreviation TEXT,"
+                " ebird_code TEXT, alpha4 TEXT)")
+    con.executemany("INSERT INTO birds VALUES (?, ?, ?, ?, ?)", [
+        ("加拿大黑雁", "Canada Goose", "JNDHY", "cangoo", "CANG"),
+        ("黑喉蓝林莺", "Black-throated Blue Warbler", "HHLLY", "btbwar", "BTBW"),
+        ("白头鹎", "Light-vented Bulbul", "BTB", "livbul1", None),
+    ])
+    return con
+
+
+def _rank(con, query):
+    """
+    按界面的排序骨架跑一次搜索：精确名字 → 代码精确 → 部分名字 → 其余（含代码前缀）。
+    Run the UI's ranking skeleton with the code clause spliced in.
+    """
+    from tools.birdname_versions import catalog_code_search
+
+    code = catalog_code_search(con, query)
+    sql = ("SELECT chinese_name FROM birds WHERE (chinese_name LIKE ? OR english_name LIKE ? "
+           f"OR LOWER(abbreviation) LIKE ?{code.where}) ORDER BY CASE "
+           "WHEN chinese_name = ? THEN 1 WHEN english_name = ? THEN 2 "
+           f"WHEN LOWER(abbreviation) = ? THEN 4{code.rank} "
+           "WHEN chinese_name LIKE ? THEN 5 WHEN english_name LIKE ? THEN 6 ELSE 7 END, chinese_name")
+    q = query.lower()
+    params = (f"%{query}%", f"%{query}%", f"%{q}%", *code.where_params,
+              query, query, q, *code.rank_params, f"{query}%", f"{query}%")
+    return [r[0] for r in con.execute(sql, params)]
+
+
+def test_code_search_is_empty_for_old_catalogs():
+    """老库没有代码列时一律返回空片段，查询照旧 / No columns, no clause."""
+    import sqlite3
+    from tools.birdname_versions import catalog_code_search
+
+    old = sqlite3.connect(":memory:")
+    old.execute("CREATE TABLE birds (chinese_name TEXT)")
+    code = catalog_code_search(old, "CANG")
+    assert (code.where, code.where_params, code.rank, code.rank_params) == ("", (), "", ())
+
+
+def test_code_search_ignores_input_that_is_not_code_like():
+    """中文、带空格、过短或过长的输入不加任何条件 / Only code-like input adds a clause."""
+    from tools.birdname_versions import catalog_code_search
+
+    con = _code_catalog()
+    for query in ("加拿大", "Canada Goose", "ca", "cangoose1", ""):
+        code = catalog_code_search(con, query)
+        assert code.where == "" and code.rank == "", query
+
+
+def test_alpha4_and_ebird_codes_find_the_species_first():
+    """4 位代码、eBird 代码（大小写不限）与 eBird 前缀都能找到 / Codes find the bird."""
+    con = _code_catalog()
+    assert _rank(con, "CANG")[0] == "加拿大黑雁"
+    assert _rank(con, "cang")[0] == "加拿大黑雁"
+    assert _rank(con, "cangoo")[0] == "加拿大黑雁"
+    assert _rank(con, "BTBW")[0] == "黑喉蓝林莺"
+    assert _rank(con, "btbwa") == ["黑喉蓝林莺"]
+
+
+def test_pinyin_initials_still_beat_an_ebird_prefix():
+    """拼音首字母 btb 精确命中白头鹎，必须排在 eBird 前缀 btb… 之前 / Pinyin wins."""
+    assert _rank(_code_catalog(), "btb") == ["白头鹎", "黑喉蓝林莺"]

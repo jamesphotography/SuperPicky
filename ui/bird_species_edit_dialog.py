@@ -424,6 +424,10 @@ class BirdSpeciesEditDialog(QDialog):
             # zh_TW: search Taiwan names and the catalog's traditional names too.
             from tools.zh_convert import tw_search_clause
             tw_where, tw_params, exact_cn = tw_search_clause(query, conn)
+            # 鸟种代码：北美 4 位代码（CANG）与 eBird 代码（cangoo），见 issue #119
+            # Species codes: IBP four-letter (CANG) and eBird (cangoo); see #119.
+            from tools.birdname_versions import catalog_code_search
+            code = catalog_code_search(conn, query)
             sql = f"""
                 SELECT * FROM birds
                 WHERE version_id = ? AND (
@@ -433,7 +437,7 @@ class BirdSpeciesEditDialog(QDialog):
                     pinyin_name  LIKE ? OR
                     abbreviation LIKE ? OR
                     LOWER(pinyin_name)  LIKE ? OR
-                    LOWER(abbreviation) LIKE ?{alias_where}{tw_where}
+                    LOWER(abbreviation) LIKE ?{alias_where}{tw_where}{code.where}
                 )
                 ORDER BY
                     CASE
@@ -441,7 +445,7 @@ class BirdSpeciesEditDialog(QDialog):
                         WHEN chinese_name = ?          THEN 1
                         WHEN english_name = ?          THEN 2
                         WHEN abbreviation = ?          THEN 3
-                        WHEN LOWER(abbreviation) = ?   THEN 4
+                        WHEN LOWER(abbreviation) = ?   THEN 4{code.rank}
                         WHEN chinese_name LIKE ?       THEN 5
                         WHEN english_name LIKE ?       THEN 6
                         ELSE 7
@@ -456,8 +460,10 @@ class BirdSpeciesEditDialog(QDialog):
                 f"%{q_lower}%", f"%{q_lower}%",
                 *((f"%{query}%",) if alias_where else ()),
                 *tw_params,
+                *code.where_params,
                 *session,
                 exact_cn, query, query, q_lower,
+                *code.rank_params,
                 f"{query}%", f"{query}%",
             )
             cursor.execute(sql, params)

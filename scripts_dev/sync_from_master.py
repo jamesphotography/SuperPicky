@@ -120,15 +120,18 @@ def load_master(master_db: str) -> dict:
     con = sqlite3.connect(f"file:{master_db}?mode=ro", uri=True)
     try:
         species = {}
-        for sid, sci, en, zh, tc, code, model in con.execute(
+        # 一个鸟种在同一体系里理应只有一个代码（主库 check.py 会报多码）；万一多个取最小值
+        # One code per species per system (check.py flags extras); MIN() if ever several.
+        for sid, sci, en, zh, tc, code, model, alpha4 in con.execute(
                 "SELECT s.id, s.scientific_name, s.english_name, s.zh_simplified, s.zh_traditional, "
-                "(SELECT code FROM xref WHERE species_id = s.id AND system = 'ebird_code'), "
-                "EXISTS (SELECT 1 FROM xref WHERE species_id = s.id AND system = 'superpicky_model') "
+                "(SELECT MIN(code) FROM xref WHERE species_id = s.id AND system = 'ebird_code'), "
+                "EXISTS (SELECT 1 FROM xref WHERE species_id = s.id AND system = 'superpicky_model'), "
+                "(SELECT MIN(code) FROM xref WHERE species_id = s.id AND system = 'ibp_alpha4') "
                 "FROM species s"):
             # in_model：主库按 xref 标的「模型种」；名录的 in_model 列另按参考库判断
             # in_model: the master's model flag (xref); the catalog column uses the reference DB.
             species[sid] = {"sci": sci, "en": en, "zh": zh, "tc": tc or zh, "code": code,
-                            "in_model": bool(model)}
+                            "in_model": bool(model), "alpha4": alpha4}
         aliases: Dict[int, List[str]] = {}
         for alias, sid in con.execute("SELECT alias, species_id FROM name_alias ORDER BY alias"):
             aliases.setdefault(sid, []).append(alias)
@@ -226,14 +229,21 @@ def build_catalog(name_db: str, master: dict, ref_ids: Set[int]) -> Tuple[List[t
                      master["initials"].get(m["zh"], "").upper(), m["tc"],
                      hit.get("order_en"), hit.get("family_en"), hit.get("genus_en"),
                      hit.get("order_zh"), hit.get("family_zh"), hit.get("genus_zh"),
-                     int(sid in ref_ids), "|".join(alias) or None))
+                     int(sid in ref_ids), "|".join(alias) or None,
+                     m["code"] or None, m.get("alpha4") or None))
         gap += sid not in ref_ids
     return rows, {"master": len(rows) - gap, "ioc_gap": gap}
 
 
 _CATALOG_COLUMNS = ("chinese_name", "english_name", "latin_name", "pinyin_name", "abbreviation",
                     "traditional_name", "order_en", "family_en", "genus_en", "order_zh", "family_zh",
-                    "genus_zh", "in_model", "search_aliases")
+                    "genus_zh", "in_model", "search_aliases", "ebird_code", "alpha4")
+
+# 名录在 IOC 原表结构之外追加的列：缺列时 ALTER 补上，并据此判断库是否需要重写。
+# ebird_code / alpha4 供鸟种代码搜索（issue #119，见 tools.birdname_versions.catalog_code_search）。
+# Columns added on top of the IOC table layout; ALTERed in when missing.
+_EXTRA_COLUMNS = (("in_model", "INTEGER"), ("search_aliases", "TEXT"),
+                  ("ebird_code", "TEXT"), ("alpha4", "TEXT"))
 
 
 def catalog_unchanged(name_db: str, rows: List[tuple]) -> bool:
@@ -255,7 +265,7 @@ def catalog_unchanged(name_db: str, rows: List[tuple]) -> bool:
     con = sqlite3.connect(f"file:{name_db}?mode=ro", uri=True)
     try:
         cols = {r[1] for r in con.execute("PRAGMA table_info(birds)")}
-        if not {"in_model", "search_aliases"} <= cols:
+        if not {name for name, _ in _EXTRA_COLUMNS} <= cols:
             return False
         row = con.execute("SELECT version_id FROM versions WHERE version_name = ?",
                           (MASTER_VERSION_NAME,)).fetchone()
@@ -283,10 +293,9 @@ def write_catalog(name_db: str, rows: List[tuple]) -> None:
     try:
         with con:
             cols = {r[1] for r in con.execute("PRAGMA table_info(birds)")}
-            if "in_model" not in cols:
-                con.execute("ALTER TABLE birds ADD COLUMN in_model INTEGER")
-            if "search_aliases" not in cols:
-                con.execute("ALTER TABLE birds ADD COLUMN search_aliases TEXT")
+            for name, sql_type in _EXTRA_COLUMNS:
+                if name not in cols:
+                    con.execute(f"ALTER TABLE birds ADD COLUMN {name} {sql_type}")
             row = con.execute("SELECT version_id FROM versions WHERE version_name = ?",
                               (MASTER_VERSION_NAME,)).fetchone()
             if row is None:

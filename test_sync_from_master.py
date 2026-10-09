@@ -36,7 +36,8 @@ def _master(tmp_path):
         "                           (2,'Anthus richardi','Richard''s Pipit','田鹨','大花鷚'),"
         "                           (3,'Ninox leucopsis','Tasmanian Boobook','塔岛鹰鸮','塔島鷹鴞');"
         "INSERT INTO xref VALUES (1,'ebird_code','zebfin2'),(2,'ebird_code','ricpip1'),"
-        "                        (1,'superpicky_model','100'),(2,'superpicky_model','200');"
+        "                        (1,'superpicky_model','100'),(2,'superpicky_model','200'),"
+        "                        (2,'ibp_alpha4','RIPI');"
         "INSERT INTO name_alias VALUES ('巽他斑胸草雀',1,'rename');"
         "INSERT INTO pinyin VALUES ('斑胸草雀','bān xiōng cǎo què','','','bxcq'),"
         "                          ('田鹨','tián liù','','','tl'),"
@@ -131,6 +132,22 @@ def test_sync_writes_all_three_targets(tmp_path):
     table = json.loads(py.read_text(encoding="utf-8"))
     assert table["田鹨"] == "tián liù" and table["家燕"] == "jiā yàn"
     assert len(os.listdir(tmp_path / "bak")) == 3
+
+
+def test_catalog_carries_species_codes(tmp_path):
+    """名录带上 eBird 代码与 IBP 4 位代码（issue #119），没有的为空 / Codes are synced."""
+    root, master = _master(tmp_path)
+    ref, names, py = _targets(tmp_path)
+    assert _run(tmp_path, root, master, ref, names, py) == 0
+
+    con = sqlite3.connect(names)
+    try:
+        rows = con.execute(
+            "SELECT b.chinese_name, b.ebird_code, b.alpha4 FROM birds b JOIN versions v USING (version_id) "
+            "WHERE v.version_name = ? ORDER BY b.chinese_name", (sync.MASTER_VERSION_NAME,)).fetchall()
+    finally:
+        con.close()
+    assert rows == [("塔岛鹰鸮", None, None), ("斑胸草雀", "zebfin2", None), ("田鹨", "ricpip1", "RIPI")]
 
 
 def test_rerun_keeps_version_id_and_changes_nothing(tmp_path):

@@ -28,7 +28,7 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 #: 覆盖面「相当」的判定：种数达到最大值的这个比例即视为同一档。
 #: IOC 两版相差 0.2%，ChinaBirds 只有 IOC 的 13%，这个阈值把它们干净地分开。
@@ -183,3 +183,82 @@ def catalog_search_extras(conn: sqlite3.Connection) -> Tuple[str, str]:
     order = "COALESCE(in_model, 1) DESC, " if "in_model" in cols else ""
     return where, order
 
+
+# 看起来像鸟种代码的输入：3～7 个英文字母或数字（eBird 代码如 cangoo / livbul1，
+# 北美 4 位代码如 CANG）。中文、带空格的英文名、拼音全拼都不会命中。
+# Code-like input: 3-7 ASCII letters/digits (eBird "cangoo", IBP "CANG").
+_CODE_LIKE_RE = re.compile(r"^[A-Za-z0-9]{3,7}$")
+
+
+class CodeSearch(NamedTuple):
+    """
+    鸟种代码搜索的 SQL 片段与参数（见 catalog_code_search）。
+
+    属性 / Attributes:
+    where (str): 追加在 WHERE 括号内的 OR 条件
+    where_params (tuple): where 的参数
+    rank (str): 插进排序 CASE 的 WHEN 子句（放在「精确名字」之后、「部分名字」之前）
+    rank_params (tuple): rank 的参数
+
+    SQL fragments and parameters for species-code search.
+    """
+
+    where: str
+    where_params: tuple
+    rank: str
+    rank_params: tuple
+
+
+_NO_CODE_SEARCH = CodeSearch("", (), "", ())
+
+
+def catalog_code_search(conn: sqlite3.Connection, query: str) -> CodeSearch:
+    """
+    鸟种代码搜索（issue #119）：北美 4 位代码（IBP，如 CANG）与 eBird 代码（如 cangoo）。
+
+    「SuperPicky 名录」由 sync_from_master 写入 `alpha4` 与 `ebird_code` 两列；老库没有
+    这两列，或输入不像代码（中文、含空格、长度不在 3～7）时返回空片段，查询照旧。
+
+    匹配：4 位代码精确（不分大小写）；eBird 代码精确或前缀。
+    排序：rank 子句给「代码精确命中」4.5 分——排在中文名 / 英文名 / 拼音首字母精确命中
+    （1～4）之后、部分名字匹配（5～6）之前；只靠 eBird 前缀命中的落到 ELSE（最后）。
+    这样中文用户输入拼音首字母 btb 时，白头鹎仍排在 eBird 代码以 btb 开头的鸟之前。
+
+    参数 / Parameters:
+    conn (sqlite3.Connection): 已打开的 birdname.db 连接
+    query (str): 用户输入
+
+    返回 / Returns:
+    CodeSearch: SQL 片段与参数；调用方把 where 拼进 WHERE 的 OR 列表，把 rank 插进
+        排序 CASE 中「LOWER(abbreviation) = ? THEN 4」之后。
+
+    Species-code search for IBP four-letter and eBird codes. Exact code hits rank
+    right after exact name/pinyin-initial hits; prefix-only eBird hits rank last,
+    so pinyin initials such as "btb" keep their bird on top.
+    """
+    q = (query or "").strip()
+    if not _CODE_LIKE_RE.match(q):
+        return _NO_CODE_SEARCH
+    try:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(birds)")}
+    except sqlite3.Error:
+        return _NO_CODE_SEARCH
+    has_alpha, has_ebird = "alpha4" in cols, "ebird_code" in cols
+    if not (has_alpha or has_ebird):
+        return _NO_CODE_SEARCH
+
+    upper, lower = q.upper(), q.lower()
+    where, where_params, rank, rank_params = "", [], "", []
+    if has_alpha:
+        where += " OR alpha4 = ?"
+        where_params.append(upper)
+        rank += " WHEN alpha4 = ? THEN 4.5"
+        rank_params.append(upper)
+    if has_ebird:
+        # 代码只含字母数字（已由 _CODE_LIKE_RE 保证），LIKE 无需转义
+        # Codes are alphanumeric, so the LIKE pattern needs no escaping.
+        where += " OR ebird_code LIKE ?"
+        where_params.append(lower + "%")
+        rank += " WHEN ebird_code = ? THEN 4.5"
+        rank_params.append(lower)
+    return CodeSearch(where, tuple(where_params), rank, tuple(rank_params))
