@@ -109,6 +109,64 @@ def compute_organize_db_updates(files_to_move: List[Dict]) -> Dict[str, Dict[str
     return updates
 
 
+def build_path_update_data(yolo_item: Dict[str, Any], dir_path: str) -> Dict[str, str]:
+    """
+    处理一张照片后应写入 DB 的路径字段（相对 dir_path）。
+
+    - ``original_path``：原图本体——有 RAW 用 RAW；否则用这张图自己，但缓存预览图
+      （.superpicky/cache 下或 tmp_ 前缀）不算原图；
+    - ``current_path``：原图本体**当前确实在磁盘上**时与 original_path 相同。
+      处理开始时 ai_model 把「送进 YOLO 的那张图」记成 current_path，RAW 照片
+      就是缓存预览图。分类整理会再用 RAW 的真实位置覆盖它，但平铺布局不整理，
+      此前 current_path 就一直停在预览图上，浏览器的打开/复制路径/改星级/删除都
+      作用到预览图（issue #118）。这里在源头写对；
+    - ``temp_jpeg_path``：识别用的 JPEG（缓存预览图、tmp_ 文件或照片自身的 JPEG）。
+
+    参数 / Parameters:
+    yolo_item (Dict[str, Any]): 需含 filename / filepath / file_prefix / raw_path
+    dir_path (str): 处理目录（相对路径的基准）
+
+    返回 / Returns:
+    Dict[str, str]: 需要写入的路径字段，没有把握的字段不出现
+
+    Path fields to record after processing one photo. current_path points at the
+    image body whenever it exists on disk, so the flat layout (which never
+    reorganises files) no longer leaves it on the cache preview.
+    """
+    filename = yolo_item.get("filename", "") or ""
+    filepath = yolo_item.get("filepath", "") or ""
+    prefix = str(yolo_item.get("file_prefix", "") or "")
+    raw_path = yolo_item.get("raw_path")
+    filename_norm = str(filename).replace("\\", "/")
+    filepath_norm = str(filepath).replace("\\", "/")
+    is_cache = ".superpicky/cache" in filename_norm or prefix.startswith("tmp_")
+
+    data: Dict[str, str] = {}
+    # 1. original_path / current_path：原图本体
+    # The image body: the RAW when there is one, else this picture unless it is a cache file.
+    if raw_path:
+        data["original_path"] = os.path.relpath(raw_path, dir_path)
+        body = raw_path
+    elif not is_cache:
+        data["original_path"] = os.path.relpath(filepath, dir_path)
+        body = filepath
+    else:
+        body = None
+    if body and os.path.exists(body):
+        data["current_path"] = data["original_path"]
+
+    # 2. temp_jpeg_path：识别所用的 JPEG / the JPEG used for identification
+    if ".superpicky/cache" in filepath_norm:
+        data["temp_jpeg_path"] = os.path.relpath(filepath, dir_path)
+    elif prefix.startswith("tmp_"):
+        data["temp_jpeg_path"] = filename
+    elif filepath.lower().endswith((".jpg", ".jpeg")):
+        # RAW+JPG 配对或纯 JPG：直接把 JPG 写进 temp_jpeg_path
+        # RAW+JPG pair or JPEG-only: record the JPEG itself.
+        data["temp_jpeg_path"] = os.path.relpath(filepath, dir_path)
+    return data
+
+
 @dataclass
 class ProcessingSettings:
     """处理参数配置"""
@@ -2069,25 +2127,10 @@ class PhotoProcessor:
                 file_prefix = yolo_item['file_prefix']
                 original_prefix = yolo_item['original_prefix']
             
-                # V4.1: 更新路径信息到数据库
-                path_update_data = {}
-                yolo_filename_norm = normalize_path_for_match(yolo_item.get('filename', ''))
+                # V4.1: 更新路径信息到数据库（字段规则见 build_path_update_data）
+                # Path fields for the DB; rules live in build_path_update_data.
+                path_update_data = build_path_update_data(yolo_item, self.dir_path)
                 yolo_filepath_norm = normalize_path_for_match(yolo_item.get('filepath', ''))
-            
-                # 1. original_path
-                if yolo_item.get('raw_path'):
-                     path_update_data['original_path'] = os.path.relpath(yolo_item['raw_path'], self.dir_path)
-                elif not str(yolo_item.get('file_prefix', '')).startswith('tmp_') and '.superpicky/cache' not in yolo_filename_norm:
-                     path_update_data['original_path'] = os.path.relpath(yolo_item['filepath'], self.dir_path)
-            
-                # 2. temp_jpeg_path
-                if '.superpicky/cache' in yolo_filepath_norm:
-                     path_update_data['temp_jpeg_path'] = os.path.relpath(yolo_item['filepath'], self.dir_path)
-                elif str(yolo_item.get('file_prefix', '')).startswith('tmp_'):
-                     path_update_data['temp_jpeg_path'] = yolo_item['filename']
-                elif yolo_item.get('filepath', '').lower().endswith(('.jpg', '.jpeg')):
-                     # RAW+JPG 配对照片或纯 JPG：直接将 JPG 路径写入 temp_jpeg_path
-                     path_update_data['temp_jpeg_path'] = os.path.relpath(yolo_item['filepath'], self.dir_path)
                  
                 raw_ext = yolo_item['raw_ext']
                 raw_path = yolo_item['raw_path']

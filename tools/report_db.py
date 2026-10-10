@@ -173,6 +173,45 @@ class ReportDB:
 
         # 初始化 Schema
         self._init_schema()
+        # 纠正指向内部缓存的 current_path（issue #118，见方法说明）
+        # Repair current_path values that point into the internal cache (#118).
+        self._repair_cache_current_paths()
+
+    def _repair_cache_current_paths(self) -> int:
+        """
+        把指向 .superpicky/cache（缓存预览图）的 current_path 改回 original_path。
+
+        4.6.0～4.6.4RC1 用平铺布局处理的 RAW 照片，current_path 停在缓存预览图上
+        （处理时记录的是送进 YOLO 的那张图，平铺布局又不整理文件，没有人纠正它），
+        于是打开 / 复制路径 / 改星级 / 删除 / 导入照片 App 都作用到预览图。源头已在
+        core.photo_processor.build_path_update_data 修正；这里修存量数据，用户不必
+        重新处理目录。
+
+        每次打开都执行而不是按 schema 版本只跑一次：条件确定、可重复运行，也能修好
+        旧版本在新旧版本来回切换时又写进来的记录。只在 original_path 有值且本身不是
+        缓存路径时才改；POSIX 与 Windows 分隔符都认。
+
+        返回 / Returns:
+        int: 纠正的行数
+
+        Point current_path back at original_path whenever it names a file inside the
+        internal cache. Runs on every open (idempotent) so old databases heal without
+        reprocessing.
+        """
+        cache_like = "REPLACE({col}, '\\', '/') LIKE '%.superpicky/cache/%'"
+        sql = (
+            "UPDATE photos SET current_path = original_path "
+            f"WHERE {cache_like.format(col='current_path')} "
+            "AND original_path IS NOT NULL AND TRIM(original_path) != '' "
+            f"AND NOT {cache_like.format(col='original_path')}"
+        )
+        with self._lock:
+            with self._conn:
+                fixed = self._conn.execute(sql).rowcount
+        if fixed:
+            print(f"🔧 report.db: 纠正 {fixed} 条指向缓存预览图的 current_path / "
+                  f"repaired {fixed} cache current_path value(s)")
+        return fixed
 
     def _init_schema(self):
         """创建表和索引（如果不存在）。"""
