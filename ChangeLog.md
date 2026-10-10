@@ -1,3 +1,32 @@
+# SuperPicky 4.6.4 RC2
+
+**What's new since RC1:**
+
+- **Fixed: with *Organize by: Flat*, actions on RAW photos hit a hidden preview
+  instead of the RAW** (#118). SuperPicky recorded the internal preview JPG (inside
+  `.superpicky/cache`) as each RAW photo's location, so in the results browser *Open
+  with…*, *Copy Path* and *Show in Finder/Explorer* pointed at that JPG, a star
+  rating you changed was written to the preview rather than the RAW (Lightroom never
+  saw it), and deleting a photo moved the preview to the trash and left the RAW in
+  place. Folders you have already processed are corrected automatically when you
+  open them; there is no need to process them again. The other folder layouts were
+  not affected.
+
+---
+
+# SuperPicky 4.6.4 RC2（中文）
+
+**RC1 以来的变化：**
+
+- **修复：「整理方式」选「平铺」时，对 RAW 照片的操作作用到了隐藏的预览图上，而不是
+  RAW 本身**（#118）。SuperPicky 把内部的预览 JPG（在 `.superpicky/cache` 里）记成了
+  RAW 照片的位置，于是在结果浏览器里「用外部应用打开」「复制路径」「在访达 / 资源
+  管理器中显示」指向的都是那张 JPG；改的星级写进了预览图而不是 RAW（Lightroom 看
+  不到）；删除照片时进回收站的是预览图，RAW 原地不动。
+  之前处理过的目录，打开时会自动纠正，不必重新处理。其他整理方式不受影响。
+
+---
+
 # SuperPicky 4.6.4 RC1
 
 **What's new since 4.6.3:**

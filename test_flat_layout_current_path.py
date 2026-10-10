@@ -6,8 +6,8 @@ Regression tests: current_path pointing at the cache preview under the flat layo
 动因：处理时 ai_model 把「送进 YOLO 的那张图」写成 current_path——RAW 照片就是
 .superpicky/cache/temp_preview/ 下的预览 JPG。正常布局在整理阶段用 RAW 的真实位置
 覆盖它；平铺布局不整理（organize_files=False），于是 current_path 一直是预览图，
-浏览器里「用外部应用打开 / 复制路径 / 改星级 / 删除 / 导入照片 App」作用的全是
-预览图而不是 RAW。这里锁住两道修复：
+浏览器里「用外部应用打开 / 复制路径 / 改星级 / 删除」作用的全是预览图而不是
+RAW（导入照片 App 会优先挑 RAW，不受影响）。这里锁住两道修复：
 1. 源头：build_path_update_data 让 current_path 指向原图本体；
 2. 存量：ReportDB 打开时把指向内部缓存的 current_path 纠正回 original_path。
 
