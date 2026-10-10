@@ -4,6 +4,8 @@
 
 SuperBirdID API 提供了HTTP REST API接口，允许外部程序（如Adobe Lightroom插件、批处理脚本等）调用鸟类识别功能。
 
+鸟名查询新增 `GET /birds/search`（列表/过滤）和 `GET /birds/detail`（指定鸟种详情），沿用 BirdID 服务端口，原识鸟协议不变。参数、拼音/稀有度/IUCN 字段、缺失数据语义见 [鸟名目录 API](bird_catalog_api.md)。
+
 ---
 
 ## 快速开始
