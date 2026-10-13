@@ -41,7 +41,7 @@ def compute_target_folder(
     rating: int,
     bird_name: Optional[str],
     layout: str = DEFAULT_LAYOUT,
-    other_birds_label: str = "其他鸟类",
+    other_birds_label: Optional[str] = None,
 ) -> str:
     """
     计算分类后的相对目录路径（不含 burst_xxx 部分）。
@@ -50,7 +50,15 @@ def compute_target_folder(
         rating: 星级（-1/0/1/2/3 自动评分；4/5 为浏览器内手动升星）
         bird_name: 鸟种名（None 或空字符串表示未识别/低置信度）
         layout: LAYOUT_RATING_FIRST / LAYOUT_SPECIES_FIRST / LAYOUT_FLAT
-        other_birds_label: 「其他鸟类」目录的本地化名称
+        other_birds_label: 「其他鸟类」目录的本地化名称；None（默认）表示取当前界面
+            语言的 logs.folder_other_birds，与首次处理时 photo_processor 建的目录
+            同名。曾经默认硬编码「其他鸟类」，处理后改星级/改鸟种的调用方都没传，
+            英文与繁体界面因此会多出一个简体中文目录。
+            Localized "Other Birds" folder name; None (default) uses the
+            current UI language's logs.folder_other_birds, matching the folder
+            processing created. It used to default to a hard-coded Simplified
+            Chinese name, which split English/Traditional users' low-star
+            photos into a second folder.
 
     Returns:
         相对路径，例如：
@@ -84,12 +92,42 @@ def compute_target_folder(
     if rating < 2:
         bird_name = None
 
+    if other_birds_label is None:
+        other_birds_label = _ui_other_birds_label()
     species = (bird_name or "").strip() or other_birds_label
 
     if layout == LAYOUT_SPECIES_FIRST:
         return os.path.join(species, base)
     # 默认 rating-first / Default: rating-first
     return os.path.join(base, species)
+
+
+def _ui_other_birds_label() -> str:
+    """
+    取当前界面语言下「其他鸟类」目录名（logs.folder_other_birds）。
+
+    与 constants.get_rating_folder_names 一样惰性读取 i18n 单例；i18n 不可用
+    （例如脱离应用的脚本环境）或缺词条时回退为简体「其他鸟类」，保持旧行为。
+
+    返回:
+    str: 目录名，如 "Other_Birds" / "其他鸟类" / "其他鳥類"
+
+    Return the "Other Birds" folder name for the current UI language. Reads
+    the i18n singleton lazily like get_rating_folder_names; falls back to the
+    old Simplified Chinese name if i18n is unavailable or the key is missing.
+
+    Return:
+    str: the folder name, e.g. "Other_Birds" / "其他鸟类" / "其他鳥類"
+    """
+    key = "logs.folder_other_birds"
+    try:
+        from tools.i18n import get_i18n
+        label = get_i18n().t(key)
+    except Exception:
+        return "其他鸟类"
+    if not label or label == key:
+        return "其他鸟类"
+    return label
 
 
 def normalize_layout(value: Optional[str]) -> str:

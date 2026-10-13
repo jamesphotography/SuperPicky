@@ -390,13 +390,19 @@ def show_country_picker_dialog(
     country_combo,
     country_list: dict,
     exclude_codes: set,
-    fallback_display: str,
+    fallback_code: Optional[str],
     more_item_text: Optional[str] = None,
 ) -> None:
     """
     弹出「更多国家」对话框：展示完整国家/大洲列表(含搜索框)。
     选中后将该国家插入 country_combo(若尚未在列表中)并设为当前选中项；
-    取消则将 country_combo 恢复为 fallback_display。
+    取消、或点 OK 却没有选中项时，把 country_combo 恢复到国家代码为 fallback_code
+    的那一项（屏蔽信号，不触发保存）。
+
+    按代码而不是显示名恢复（#122 跟进）：显示名可能是另一种界面语言的
+    （配置默认值是写死的中文「自动检测 (GPS)」），英文下拉里找不到时
+    setCurrentText 会静默失败，下拉就停在「更多国家」入口项上，随后任一
+    字段保存都会把入口项文字当成国家名存下来。
 
     抽取为模块级函数供 BirdIDDockWidget 与 SettingsCenter 共用，避免识鸟
     设置在两个入口能力不对等（此前设置中心的国家下拉只有 top10，仅识鸟
@@ -422,7 +428,8 @@ def show_country_picker_dialog(
         exclude_codes (set): 已在下拉别处出现、无需在本列表重复的代码集合
                               (通常是 top10 + "GLOBAL") / Codes already shown
                               elsewhere (typically top10 + "GLOBAL"), excluded here.
-        fallback_display (str): 取消时恢复的显示名 / Display name to restore on cancel.
+        fallback_code (str | None): 取消时恢复的国家代码（None = 自动检测 GPS）/
+                              Country code to restore on cancel (None = Auto GPS).
         more_item_text (str | None): 下拉中「更多国家」项的显示文本，用于定位
                               插入位置；缺省时新国家追加到下拉末尾 / Display text
                               of the "more countries" combo entry, used to locate
@@ -575,11 +582,39 @@ def show_country_picker_dialog(
     button_box.rejected.connect(dialog.reject)
     dlg_layout.addWidget(button_box)
 
+    def _restore_fallback() -> None:
+        """
+        把下拉恢复到 fallback_code 对应的项；屏蔽信号，避免触发保存与地区重置。
+        找不到（理论上不会：调用方已把已存国家放进下拉）时退回第 0 项。
+
+        Restore the combo to the fallback_code entry with signals blocked; fall
+        back to index 0 if it is somehow missing.
+        """
+        missing = object()
+        target = 0
+        for i in range(country_combo.count()):
+            if country_list.get(country_combo.itemText(i), missing) == fallback_code:
+                target = i
+                break
+        country_combo.blockSignals(True)
+        country_combo.setCurrentIndex(target)
+        country_combo.blockSignals(False)
+
     if dialog.exec() == QDialog.DialogCode.Accepted:
         selected = list_widget.currentItem()
+        if selected is None:
+            # 搜索后直接回车：过滤后只剩一项就用它 / Enter after a search with one match left
+            visible = [list_widget.item(i) for i in range(list_widget.count())
+                       if not list_widget.item(i).isHidden()]
+            if len(visible) == 1:
+                selected = visible[0]
+        if selected is None:
+            _restore_fallback()
+            return
         if selected:
             code_data = selected.data(USER_ROLE)
             if not isinstance(code_data, str):
+                _restore_fallback()
                 return
             display = selected.text()
             existing = [
@@ -596,7 +631,7 @@ def show_country_picker_dialog(
             country_combo.setCurrentText(display)
     else:
         # 取消 → 恢复上次保存的国家 / Cancel → restore the last saved country
-        country_combo.setCurrentText(fallback_display)
+        _restore_fallback()
 
 
 class BirdIDDockWidget(QDockWidget):
@@ -1488,7 +1523,7 @@ class BirdIDDockWidget(QDockWidget):
             country_combo=self.country_combo,
             country_list=self.country_list,
             exclude_codes=top10_and_global,
-            fallback_display=self.settings.get("selected_country", t("birdid.country_auto_gps")),
+            fallback_code=self.settings.get("country_code"),
             more_item_text=t("birdid.country_more"),
         )
 
