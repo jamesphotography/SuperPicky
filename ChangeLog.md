@@ -1,3 +1,73 @@
+# SuperPicky 4.6.4 RC3
+
+**What's new since RC2:**
+
+- **Closing the window now asks what you want** (#123). Until now, closing the main
+  window always kept SuperPicky running in the system tray (so the Lightroom bird ID
+  plugin keeps working), and on Windows it was easy to miss that it was still running.
+  The first time you close it, SuperPicky now asks whether to keep running in the tray
+  or quit completely, and remembers your choice. You can change it any time in
+  **Settings → External Apps → When closing the main window**.
+- **Only one copy of SuperPicky runs at a time** (#123). Launching it again brings the
+  existing window to the front (even when it is hidden in the tray) instead of starting
+  a second copy that loads every model again.
+- **Search species by their eBird and IOC English names** (#122). The species list keeps
+  its current names, but *Edit Species* and the bird name search now also find a species
+  by its eBird name and US spelling, for example *American Pipit* (listed as Buff-bellied
+  Pipit) or *Gray Catbird* (listed as Grey Catbird). About 2,300 species gain an
+  English search alias.
+- **Fixed: the Bird ID country could be saved as "── More Countries ──"** (#122). In
+  **Settings → Bird ID → Country / Region**, cancelling the *More Countries* list, or
+  pressing Enter after typing a country name without clicking it, left that entry
+  selected, and it was then saved as your country, so photos without GPS were identified
+  without a regional filter. Cancelling now keeps your previous country, and typing a
+  country name and pressing Enter selects it when only one country matches. If the
+  start-of-processing dialog shows "── More Countries ──" as your country, please pick
+  your country again.
+- **Fixed: dialogs said files would be moved when *Organize by* is *Flat*** (#120). The
+  start-of-processing dialog, the *Edit Species* dialog and the species merge
+  confirmation now say that files stay where they are. For the folder layouts, the
+  start-of-processing dialog now lists the actual folder names for your layout.
+- **Fixed: in English and Traditional Chinese, low-rated photos could end up in a
+  separate Simplified Chinese "其他鸟类" folder.** Changing a rating, the species, or
+  marking a photo as no bird in the results browser moved it into a new 其他鸟类
+  folder instead of the *Other_Birds* folder created during processing.
+- **Rarity corrected for a few recently split species** that were wrongly shown as
+  *Legendary*: Western Whistler, Brush Cuckoo, Arafura Shrikethrush, Japanese Tit and
+  Great Tit are now rated *Common*.
+
+---
+
+# SuperPicky 4.6.4 RC3（中文）
+
+**RC2 以来的变化：**
+
+- **关闭窗口时会先问你怎么处理**（#123）。之前关闭主窗口一律让慧眼选鸟留在系统托盘
+  继续运行（这样 Lightroom 识鸟插件才能用），在 Windows 上很容易以为已经退出了。现在
+  第一次关闭时会询问「留在托盘继续运行」还是「完全退出」，并记住你的选择；之后可在
+  **设置 → 外部应用 → 关闭主窗口时**随时修改。
+- **同一时间只运行一个慧眼选鸟**（#123）。再次启动时会把已经在运行的窗口调到前面
+  （包括藏在托盘里的情况），不再另起一个重新加载全部模型的进程。
+- **鸟种搜索支持 eBird 与 IOC 英文名**（#122）。鸟种列表的名字不变，但「修改鸟种」
+  和鸟名查询现在也能用 eBird 叫法和美式拼写找到鸟种，例如 *American Pipit*（列表里叫
+  Buff-bellied Pipit，黄腹鹨）、*Gray Catbird*（列表里叫 Grey Catbird）。约 2300 个
+  鸟种因此多了英文搜索名。
+- **修复：识鸟国家可能被存成「── 更多国家 ──」**（#122）。在**设置 → 识鸟 → 国家 /
+  地区**里，打开「更多国家」列表后取消，或者输入国家名后没点选就直接回车，下拉框会
+  停在这一项上，随后被当成国家保存——没有 GPS 的照片因此不做地区过滤。现在取消会保留
+  原来的国家；输入国家名后若只剩一个匹配，回车即选中。如果开始处理前的弹窗里国家显示
+  为「── 更多国家 ──」，请重新选一次国家。
+- **修复：「组织方式」选「平铺」时，弹窗仍说会移动文件**（#120）。开始处理前的说明、
+  「修改鸟种」弹窗和整种合并确认框，现在都会说明文件留在原处。其他组织方式下，开始
+  处理前的说明会列出实际会用到的文件夹名。
+- **修复：英文和繁体界面下，低星照片可能被移进一个单独的简体「其他鸟类」文件夹。**
+  在结果浏览器里改星级、改鸟种或标记为无鸟时，照片会被移进新建的「其他鸟类」，而不是
+  处理时建好的 *Other_Birds*（繁体为「其他鳥類」）。
+- **修正几个新拆分鸟种的罕见度**：西方啸鹟、灌丛杜鹃、棕鵙鹟、大山雀和欧亚大山雀
+  此前被误判为「传奇」，现在为「常见」。
+
+---
+
 # SuperPicky 4.6.4 RC2
 
 **What's new since RC1:**
