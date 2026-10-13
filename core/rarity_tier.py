@@ -116,6 +116,32 @@ HARDCODE_OVERRIDES = {
         "Common in Ecuador / W Colombia lowland forest; sparse cc-licensed "
         "GBIF data but reliable on local birding trips. [james 2026-05-30]",
     ),
+    "Pachycephala fuliginosa": (
+        6.24,
+        "西方啸鹟 — 拆分自金啸鹟（Pachycephala pectoralis，6.2 分「常见」），在澳中南部与西南部为常见留鸟。"
+        "GBIF backbone 仍多挂在旧学名下导致新组合 count 极低 (count=10) 误判为传奇 9.96。"
+        "此处按 Golden Whistler (Western) 定分 6.24（常见）。[james 2026-10-13]",
+    ),
+    "Pachycephala occidentalis": (
+        6.24,
+        "西方啸鹟（异名组合）— 同 Pachycephala fuliginosa。[james 2026-10-13]",
+    ),
+    "Cacomantis variolosus": (
+        15.23,
+        "灌丛杜鹃 — 拆分后新名导致 GBIF 数据稀少误判，按 Sahul Brush Cuckoo 定分 15.23。[james 2026-10-13]",
+    ),
+    "Colluricincla megarhyncha": (
+        32.36,
+        "棕鵙鹟 — 拆分自小鵙鹟，在澳洲北部为常见林鸟，按 Little Shrikethrush (Arafura) 定分 32.36。[james 2026-10-13]",
+    ),
+    "Parus minor": (
+        5.86,
+        "远东山雀 — 拆分自大山雀复合群，东亚最常见街边鸟之一，按 Cinereous Tit (Great Tit) 定分 5.86。[james 2026-10-13]",
+    ),
+    "Parus major": (
+        0.30,
+        "大山雀 — 欧洲最常见街边鸟之一，按 European Great Tit 定分 0.30。[james 2026-10-13]",
+    ),
 }
 
 
