@@ -126,7 +126,8 @@ def test_sync_writes_all_three_targets(tmp_path):
 
     assert _catalog(names) == [
         ("塔岛鹰鸮", "ta dao ying xiao", "TDYX", 0, None, "鸱鸮科"),
-        ("斑胸草雀", "ban xiong cao que", "BXCQ", 1, "巽他斑胸草雀", "梅花雀科"),
+        # IOC 15.1 英文名与显示名不同 → 作为搜索别名（issue #122）
+        ("斑胸草雀", "ban xiong cao que", "BXCQ", 1, "巽他斑胸草雀|Sunda Zebra Finch", "梅花雀科"),
         ("田鹨", "tian liu", "TL", 1, "理氏鹨", "鹡鸰科"),
     ]
     table = json.loads(py.read_text(encoding="utf-8"))
@@ -218,3 +219,30 @@ def test_model_species_missing_from_reference_is_fatal(tmp_path):
     before = (ref.read_bytes(), names.read_bytes())
     assert _run(tmp_path, root, master, ref, names, py) == 1
     assert (ref.read_bytes(), names.read_bytes()) == before
+
+
+def test_catalog_aliases_include_ebird_english_names(tmp_path):
+    """
+    主库 xref.ebird_en 进搜索别名（issue #122）：与显示名只差大小写的不加；
+    美式拼写（Gray）即使与英式（Grey）等价也要加，因为搜索是子串匹配。
+
+    eBird English names become search aliases; case-only differences are skipped,
+    US spellings are kept because search is substring-based.
+    """
+    root, master = _master(tmp_path)
+    con = sqlite3.connect(master)
+    con.executescript(
+        "INSERT INTO xref VALUES (1,'ebird_en','zebra finch'),"          # 只差大小写 / case only
+        "                        (2,'ebird_en','Richard''s Pipit (Gray)'),"
+        "                        (3,'ebird_en','Tasmanian Owl');")
+    con.commit()
+    con.close()
+    ref, names, py = _targets(tmp_path)
+    assert _run(tmp_path, root, master, ref, names, py) == 0
+
+    aliases = {row[0]: row[4] for row in _catalog(names)}
+    assert aliases == {
+        "塔岛鹰鸮": "Tasmanian Owl",
+        "斑胸草雀": "巽他斑胸草雀|Sunda Zebra Finch",
+        "田鹨": "理氏鹨|Richard's Pipit (Gray)",
+    }

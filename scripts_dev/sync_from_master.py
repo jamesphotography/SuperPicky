@@ -15,7 +15,9 @@ eBird 插件共用的唯一鸟名来源。改一只鸟的名字只改主库，�
    - 主库全部鸟种，名字与识鸟结果一致。识鸟参考库（BirdCountInfo）里有的记 in_model=1；
      主库里模型未收录的种（2026-10-05 起由主库统一提供：IOC 15.1 有、模型训练后才拆出
      或新增的种，此前由本脚本自行从 IOC 补）记 in_model=0，界面标「识鸟模型未收录」；
-   - search_aliases：主库别名 + 对应 IOC 中文名，搜旧名 / IOC 名也能找到现用名。
+   - search_aliases：主库别名 + 对应 IOC 中文名，搜旧名 / IOC 名也能找到现用名；
+     另加 IOC 英文名与 eBird 英文名（主库 xref.ebird_en，issue #122），北美用户按
+     eBird 叫法（American Pipit、Gray Catbird）也能搜到。显示名不变。
 
 写库前跑主库校验（有错误即中止），三个文件都先备份到 ~/Library/Caches。可重复运行。
 
@@ -122,16 +124,19 @@ def load_master(master_db: str) -> dict:
         species = {}
         # 一个鸟种在同一体系里理应只有一个代码（主库 check.py 会报多码）；万一多个取最小值
         # One code per species per system (check.py flags extras); MIN() if ever several.
-        for sid, sci, en, zh, tc, code, model, alpha4 in con.execute(
+        for sid, sci, en, zh, tc, code, model, alpha4, ebird_en in con.execute(
                 "SELECT s.id, s.scientific_name, s.english_name, s.zh_simplified, s.zh_traditional, "
                 "(SELECT MIN(code) FROM xref WHERE species_id = s.id AND system = 'ebird_code'), "
                 "EXISTS (SELECT 1 FROM xref WHERE species_id = s.id AND system = 'superpicky_model'), "
-                "(SELECT MIN(code) FROM xref WHERE species_id = s.id AND system = 'ibp_alpha4') "
+                "(SELECT MIN(code) FROM xref WHERE species_id = s.id AND system = 'ibp_alpha4'), "
+                "(SELECT MIN(code) FROM xref WHERE species_id = s.id AND system = 'ebird_en') "
                 "FROM species s"):
             # in_model：主库按 xref 标的「模型种」；名录的 in_model 列另按参考库判断
             # in_model: the master's model flag (xref); the catalog column uses the reference DB.
+            # ebird_en：eBird 对该代码的英文名，只进搜索别名（issue #122）
+            # ebird_en: eBird's English name for the code; search alias only (#122).
             species[sid] = {"sci": sci, "en": en, "zh": zh, "tc": tc or zh, "code": code,
-                            "in_model": bool(model), "alpha4": alpha4}
+                            "in_model": bool(model), "alpha4": alpha4, "ebird_en": ebird_en}
         aliases: Dict[int, List[str]] = {}
         for alias, sid in con.execute("SELECT alias, species_id FROM name_alias ORDER BY alias"):
             aliases.setdefault(sid, []).append(alias)
@@ -225,6 +230,16 @@ def build_catalog(name_db: str, master: dict, ref_ids: Set[int]) -> Tuple[List[t
         ioc_zh = (hit.get("chinese_name") or "").strip()
         if ioc_zh and ioc_zh != m["zh"] and ioc_zh not in alias:
             alias.append(ioc_zh)
+        # 英文别名（issue #122）：IOC 15.1 英文名与 eBird 英文名，与显示名只差大小写的不加。
+        # 不用 norm_en 比较——它把 Gray 视同 Grey，而搜索是子串匹配，"Gray Catbird" 搜不到
+        # "Grey Catbird"，美式拼写恰恰需要作为别名存进来。
+        # English aliases (#122): IOC 15.1 and eBird names, skipped when equal to the
+        # display name ignoring case. norm_en is not used on purpose: it folds Gray
+        # into Grey, but search is substring-based, so the US spelling must be stored.
+        for extra_en in ((hit.get("english_name") or "").strip(), (m.get("ebird_en") or "").strip()):
+            if (extra_en and extra_en.lower() != (m["en"] or "").strip().lower()
+                    and extra_en.lower() not in (a.lower() for a in alias)):
+                alias.append(extra_en)
         rows.append((m["zh"], m["en"], m["sci"], plain_syllables(toned),
                      master["initials"].get(m["zh"], "").upper(), m["tc"],
                      hit.get("order_en"), hit.get("family_en"), hit.get("genus_en"),
