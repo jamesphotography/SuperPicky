@@ -181,6 +181,23 @@ if os.environ.get("SP_MEMORY_MONITOR") == "1":
     _memory_monitor = MemoryMonitor(interval=30)
 
 _main_window = None
+# 单实例保护器，须在应用生命周期内保持引用，否则本地服务器会被回收（#123）
+# Single-instance guard; keep a reference for the app's lifetime (#123)
+_instance_guard = None
+
+
+def _activate_main_window() -> None:
+    """
+    响应第二次启动的请求：把（可能藏在托盘里的）主窗口调到前台（#123）。
+
+    主窗口尚未构造完成时什么也不做——它构造完会自己显示。
+
+    Answer a second launch by bringing the (possibly tray-hidden) main window
+    forward (#123). Does nothing before the window exists; it shows itself
+    once built.
+    """
+    if _main_window is not None:
+        _main_window._show_main_window()
 
 
 def main():
@@ -188,7 +205,7 @@ def main():
     启动 Qt 应用并创建主窗口。
     Start the Qt application and create the main window.
     """
-    global _main_window
+    global _main_window, _instance_guard
 
     # macOS 双击启动 GUI 时 cwd 可能是只读根目录 `/`，需要切回用户目录。
     # macOS GUI launches may start from the read-only `/`, so switch to the home dir.
@@ -230,6 +247,25 @@ def main():
     # The main window may hide while tray or child windows remain active, so do not
     # couple process lifetime to the last visible top-level window.
     app.setQuitOnLastWindowClosed(False)
+
+    # 单实例（#123）：已有实例在运行（可能藏在托盘里）时，让它把窗口调到前台，
+    # 本进程直接退出，不再加载第二套模型、留下第二个后台进程。
+    # 放在主窗口构造之前，避免白白初始化一遍。
+    # Single instance (#123): if one is already running (maybe hidden in the
+    # tray), bring it forward and exit before building a second main window.
+    from tools.single_instance import SingleInstanceGuard
+    if _instance_guard is None and not SingleInstanceGuard.disabled_by_env():
+        guard = SingleInstanceGuard()
+        if guard.notify_running_instance():
+            print("[SingleInstance] SuperPicky is already running; activated it and exiting.")
+            sys.exit(0)
+        # 立刻开始监听，覆盖主窗口构造期间（数秒）的重复启动；回调在触发时才取
+        # 主窗口，构造完成前收到的请求直接忽略（窗口本来就即将显示）。
+        # Listen right away so launches during the multi-second window build
+        # are caught too; the callback looks the window up when it fires.
+        guard.listen(on_activate=_activate_main_window)
+        app.aboutToQuit.connect(guard.close)
+        _instance_guard = guard
 
     icon_path = os.path.join(os.path.dirname(__file__), "img", "icon.png")
     if os.path.exists(icon_path):

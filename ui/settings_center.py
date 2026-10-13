@@ -54,6 +54,7 @@ from ui.icon_utils import (  # noqa: F401
 from ui.styles import COLORS  # noqa: F401
 from ui.combo_popup import style_combo_popup
 from ui.custom_dialogs import StyledMessageBox
+from advanced_config import CLOSE_ACTIONS
 
 
 # 各分页滚动内容容器的透明背景规则。
@@ -2431,7 +2432,47 @@ class SettingsCenter(QDialog):
         btn_row.addStretch(1)
         lay.addLayout(btn_row)
 
+        # ── 关闭主窗口时 / When closing the main window (#123) ────────────────
+        # 放在本页是因为「留在托盘」的主要用途是让 Lightroom 插件保持可用。
+        # Lives here because staying in the tray mainly serves the Lightroom plugin.
+        lay.addSpacing(8)
+        ca_title = QLabel(self.i18n.t("advanced_settings.close_action"))
+        ca_title.setStyleSheet(
+            f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
+        )
+        lay.addWidget(ca_title)
+
+        self._close_action_combo = QComboBox()
+        for value in CLOSE_ACTIONS:
+            self._close_action_combo.addItem(
+                self.i18n.t(f"advanced_settings.close_action_{value}"), value
+            )
+        ca_idx = self._close_action_combo.findData(cfg.close_action)
+        self._close_action_combo.setCurrentIndex(max(ca_idx, 0))
+        style_combo_popup(self._close_action_combo)
+        self._close_action_combo.currentIndexChanged.connect(self._on_close_action_changed)
+        ca_row = QHBoxLayout()
+        ca_row.addWidget(self._close_action_combo)
+        ca_row.addStretch(1)
+        lay.addLayout(ca_row)
+
+        ca_hint = QLabel(self.i18n.t("advanced_settings.close_action_hint"))
+        ca_hint.setWordWrap(True)
+        ca_hint.setStyleSheet(f"color:{COLORS['text_muted']};font-size:11px;")
+        lay.addWidget(ca_hint)
+
         return page
+
+    def _on_close_action_changed(self, _index: int) -> None:
+        """
+        关窗行为下拉变化 → 立即持久化（#123）。
+
+        Close-button behavior changed → persist immediately (#123).
+        """
+        from advanced_config import get_advanced_config
+        cfg = get_advanced_config()
+        cfg.set_close_action(self._close_action_combo.currentData())
+        cfg.save()
 
     def _refresh_apps_list(self) -> None:
         """

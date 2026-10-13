@@ -14,6 +14,11 @@ from tools.i18n import t as _t
 from config import get_app_config_dir, get_lazy_registry
 
 
+# 主窗口关闭按钮的合法取值（#123），设置页下拉框的选项与之一一对应
+# Valid close-button actions (#123); the settings combo mirrors these
+CLOSE_ACTIONS = ("ask", "tray", "quit")
+
+
 class AdvancedConfig:
     """高级配置类 - 管理所有硬编码参数"""
 
@@ -101,6 +106,13 @@ class AdvancedConfig:
         # V4.3 Phase 4: 默认改为 species-first，让视频和照片共享鸟种目录
         "folder_layout": "species-first",
         "burst_group_folders": True,  # 连拍归入 burst_NNN 子目录(关=按星级/鸟种常规归档,Paul P1)
+
+        # #123: 点主窗口关闭按钮时的行为。"ask"=首次关窗时询问并记住选择；
+        # "tray"=隐藏到托盘继续驻留（Lightroom 插件可用）；"quit"=完全退出。
+        # #123: what the main window's close button does. "ask" = ask on first
+        # close and remember; "tray" = hide to tray (Lightroom plugin keeps
+        # working); "quit" = exit the app.
+        "close_action": "ask",
 
         # V4.6: 无鸟补救扫描 (spec: docs/specs/2026-07-14-no-bird-rescue-scan-design.md)
         # V4.6: No-bird rescue scan
@@ -786,6 +798,31 @@ class AdvancedConfig:
 
     def set_delete_confirm(self, value: bool) -> None:
         self.config["delete_confirm"] = bool(value)
+
+    @property
+    def close_action(self) -> str:
+        """
+        主窗口关闭按钮的行为（#123）："ask" / "tray" / "quit"；非法值按 "ask" 处理。
+
+        Close-button behavior (#123): "ask" / "tray" / "quit"; invalid
+        values fall back to "ask".
+        """
+        value = self.config.get("close_action", "ask")
+        return value if value in CLOSE_ACTIONS else "ask"
+
+    def set_close_action(self, value: str) -> None:
+        """
+        设置主窗口关闭按钮的行为（不内部 save，由调用方保存）。
+
+        参数:
+        value (str): "ask" / "tray" / "quit"；其他值存为 "ask"
+
+        Set the close-button behavior (no internal save; the caller saves).
+
+        Parameters:
+        value (str): "ask" / "tray" / "quit"; anything else is stored as "ask"
+        """
+        self.config["close_action"] = value if value in CLOSE_ACTIONS else "ask"
 
     def set_ignored_update_version(self, value: Optional[str]) -> None:
         """设置要跳过提醒的版本号，传 None 清除。"""

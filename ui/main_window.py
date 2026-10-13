@@ -1458,6 +1458,44 @@ class SuperPickyMainWindow(QMainWindow):
             except Exception:
                 pass
 
+    def _ask_close_action(self) -> Optional[str]:
+        """
+        首次关闭主窗口时询问：留在托盘继续运行，还是完全退出（#123）。
+
+        之前关窗一律隐藏到托盘，Windows 用户普遍以为程序已经退出，任务管理器里
+        却还挂着进程。这里把两种选择及其后果讲清楚；选择会被记住，之后可在
+        设置中心「外部应用」页修改。
+
+        返回:
+        Optional[str]: "tray" / "quit"；用户直接关掉询问框时返回 None（取消关窗）
+
+        Ask on first close whether to keep running in the tray or quit
+        (#123). Closing used to always hide to the tray, so Windows users
+        believed the app had exited while the process kept running. The
+        choice is remembered and can be changed in Settings → External Apps.
+
+        Return:
+        Optional[str]: "tray" / "quit", or None when the dialog is dismissed
+        (the close is cancelled)
+        """
+        tray_value, quit_value = 2, 3
+        dlg = StyledMessageBox(
+            parent=self,
+            title=self.i18n.t("dialogs.close_action_title"),
+            message=self.i18n.t("dialogs.close_action_msg"),
+            dialog_type=StyledMessageBox.Question,
+            buttons=[
+                (self.i18n.t("dialogs.close_action_quit"), quit_value, "secondary"),
+                (self.i18n.t("dialogs.close_action_tray"), tray_value, "primary"),
+            ],
+        )
+        result = dlg.exec()
+        if result == tray_value:
+            return "tray"
+        if result == quit_value:
+            return "quit"
+        return None
+
     def _quit_app(self):
         """完全退出应用（清理由 aboutToQuit 信号统一处理）"""
         # 任务进行中时先确认，避免托盘"完全退出"误杀处理任务
@@ -4029,13 +4067,33 @@ class SuperPickyMainWindow(QMainWindow):
             and not saving_session
             and self._tray_resident_available()
         ):
+            # #123: 关窗行为由设置决定。"ask"（默认）首次关窗时询问并记住，
+            # 用户关掉询问框则视为取消、窗口保持打开。
+            # #123: the setting decides. "ask" (default) asks once and
+            # remembers; dismissing the question cancels the close.
+            cfg = get_advanced_config()
+            action = cfg.close_action
+            if action == "ask":
+                action = self._ask_close_action()
+                if action is None:
+                    event.ignore()
+                    return
+                cfg.set_close_action(action)
+                cfg.save()
+
+            event.ignore()
+            if action == "quit":
+                # 与托盘「完全退出」同一路径：任务进行中先确认，清理走 aboutToQuit
+                # Same path as the tray "Quit": confirm if busy, cleanup via aboutToQuit
+                self._quit_app()
+                return
+
             # 隐藏进托盘前保存窗口位置——此刻窗口仍可见，几何信息是准确的；
             # 之后从托盘重新显示时会复位保存标志（见 _show_main_window）。
             # Save placement before hiding to tray — the window is still
             # visible so geometry is accurate; the saved flag is reset when
             # the window is shown again (see _show_main_window).
             self._save_main_window_placement()
-            event.ignore()
             self._hide_to_tray()
             return
 
