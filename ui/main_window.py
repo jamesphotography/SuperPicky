@@ -2241,6 +2241,64 @@ class SuperPickyMainWindow(QMainWindow):
             return False
         return False
 
+    def _file_organization_text(self, layout: str, birdid_on: bool, extra_notes: str) -> str:
+        """
+        生成「开始处理」确认弹窗的正文（纯文本，调用方负责转义与换行）。
+
+        平铺布局只评分不移动文件，用独立文案说明「文件原地不动」；其余布局
+        逐级列出 3/2/1/0 星会进入的目录。目录名直接调用 compute_target_folder，
+        与 photo_processor 实际移动时的规则同源：按鸟种分时 2 星以上进
+        「<鸟种>」目录，低星与未识别统一进「其他鸟类」；关闭识鸟时全部进
+        「其他鸟类」。
+
+        参数:
+        layout (str): advanced_config.folder_layout 的值
+        birdid_on (bool): 是否开启自动识鸟（决定 2 星以上是否按鸟种分目录）
+        extra_notes (str): 原样填入 {extra_notes} 占位的附注（调用方传哨兵）
+
+        返回:
+        str: 当前界面语言的弹窗正文
+
+        Build the start-processing confirmation body (plain text; the caller
+        escapes it). Flat never moves files and gets its own text; other
+        layouts list the folder each star level lands in, computed by the same
+        compute_target_folder the move uses.
+
+        Parameters:
+        layout (str): advanced_config.folder_layout
+        birdid_on (bool): whether auto bird ID is on (species subfolders for 2★+)
+        extra_notes (str): passed through into the {extra_notes} placeholder
+
+        Return:
+        str: the dialog body in the current UI language
+        """
+        from core.folder_layout import LAYOUT_FLAT, compute_target_folder, normalize_layout
+
+        layout = normalize_layout(layout)
+        if layout == LAYOUT_FLAT:
+            return self.i18n.t("dialogs.file_organization_msg_flat", extra_notes=extra_notes)
+
+        other_birds = self.i18n.t("logs.folder_other_birds")
+        species = self.i18n.t("dialogs.file_organization_species") if birdid_on else None
+        rows = [
+            (self.i18n.t("dialogs.file_organization_star", n=3), 3),
+            (self.i18n.t("dialogs.file_organization_star", n=2), 2),
+            (self.i18n.t("dialogs.file_organization_star", n=1), 1),
+            (self.i18n.t("dialogs.file_organization_reject"), 0),
+        ]
+        # 目录分隔符统一显示为 "/"，Windows 下 os.path.join 产出的 "\" 也照此显示
+        # Show "/" as the separator on every platform for a consistent dialog
+        lines = [
+            f"• {label} → "
+            + compute_target_folder(rating, species, layout, other_birds).replace(os.sep, "/")
+            for label, rating in rows
+        ]
+        return self.i18n.t(
+            "dialogs.file_organization_msg",
+            folder_lines="\n".join(lines),
+            extra_notes=extra_notes,
+        )
+
     def _start_processing(self):
         """开始处理"""
         if not self._require_initialization_for_processing():
@@ -2337,8 +2395,15 @@ class SuperPickyMainWindow(QMainWindow):
             notes_block = "<br>" + "<br>".join(extra_notes) + "<br>"
 
         # 正文转富文本:escape + 换行→<br>,再把哨兵替换为已是 HTML 的附注块
+        # 正文按当前目录布局生成（#120）：平铺不移动文件，单独一段说明；其余布局
+        # 的目录清单由 compute_target_folder 现算，与实际移动的目标目录同源，
+        # 不再在语言包里手写一份会过时的目录名。
+        # Body follows the configured layout (#120): flat never moves files and
+        # gets its own text; other layouts list folders computed by the same
+        # compute_target_folder the move uses, so the names cannot drift.
         _sentinel = "@@EXTRA_NOTES@@"
-        _raw = self.i18n.t("dialogs.file_organization_msg", extra_notes=_sentinel)
+        _raw = self._file_organization_text(
+            _adv_confirm.folder_layout, _adv_confirm.birdid_auto_identify, _sentinel)
         base_msg = _esc(_raw).replace("\n", "<br>").replace(_sentinel, notes_block)
 
         reply = StyledMessageBox.question(
