@@ -105,8 +105,8 @@
   },
   "dialogs": {
     "file_organization_title": "File Organization",
-    "file_organization_msg": "After analysis, photos will be organized into folders:\n\n{folder_lines}\n{extra_notes}\nUse 'Reset' to restore original structure if needed.",
-    "file_organization_msg_flat": "Organize by: Flat. Photos stay where they are, and no files are moved.\n\nStar ratings are written to each photo's metadata.\n{extra_notes}\nUse 'Reset' to clear the ratings if needed.",
+    "file_organization_msg": "After analysis, photos will be organized into folders:\n\n{folder_lines}\n{extra_notes}\nResults and previews are kept in a hidden .superpicky folder inside this folder.\nUse 'Reset' to restore original structure if needed.",
+    "file_organization_msg_flat": "Organize by: Flat. Photos stay where they are, and no files are moved.\n\nStar ratings are written to each photo's metadata.\n{extra_notes}\nResults and previews are kept in a hidden .superpicky folder inside this folder.\nUse 'Reset' to clear the ratings if needed.",
     "file_organization_star": "{n}-Star",
     "file_organization_reject": "Rejects/No Bird",
     "file_organization_species": "<Species>",

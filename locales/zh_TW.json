@@ -105,8 +105,8 @@
   },
   "dialogs": {
     "file_organization_title": "檔案整理",
-    "file_organization_msg": "分析完成後，照片將分類到資料夾:\n\n{folder_lines}\n{extra_notes}\n如需恢復原始結構，可使用'重置'功能。",
-    "file_organization_msg_flat": "目前資料夾配置為「平鋪」：照片留在原處，不會移動任何檔案。\n\n星級會寫入每張照片的中繼資料。\n{extra_notes}\n如需清除評分，可使用'重置'功能。",
+    "file_organization_msg": "分析完成後，照片將分類到資料夾:\n\n{folder_lines}\n{extra_notes}\n分析結果與預覽圖儲存在該資料夾內隱藏的 .superpicky 資料夾裡。\n如需恢復原始結構，可使用'重置'功能。",
+    "file_organization_msg_flat": "目前資料夾配置為「平鋪」：照片留在原處，不會移動任何檔案。\n\n星級會寫入每張照片的中繼資料。\n{extra_notes}\n分析結果與預覽圖儲存在該資料夾內隱藏的 .superpicky 資料夾裡。\n如需清除評分，可使用'重置'功能。",
     "file_organization_star": "{n}星",
     "file_organization_reject": "0星/無鳥",
     "file_organization_species": "<鳥種>",

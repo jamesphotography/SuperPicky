@@ -57,6 +57,16 @@ Automatically set thresholds based on your experience:
 - **EXIF Write**: Writes ratings, flags, and scores to RAW metadata.
 - **Lightroom Compatible**: Sort and filter immediately after import.
 - **Undo**: One-click reset to restore original state.
+- **Working data (`.superpicky` folder)**: Each folder you process gets a hidden
+  `.superpicky` folder holding SuperPicky's own data: `report.db` (scores, ratings,
+  species and bursts, so the results browser can reopen the folder without
+  re-analysing) and `cache` (preview images and bird crops, most of the size). It is
+  hidden so it stays out of the way of Lightroom and your file browser; your photos
+  are never stored there. Deleting it doesn't lose your ratings or species names,
+  which are written into the photos' metadata (or XMP sidecars), but the folder would
+  need to be analysed again before you can browse it. To free up space and keep the
+  results, use **Settings → Output → Clear All Preview Caches**, which removes only
+  `cache`.
 
 ---
 
