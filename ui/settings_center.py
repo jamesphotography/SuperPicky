@@ -1128,12 +1128,12 @@ class SettingsCenter(QDialog):
             top10_and_global = {
                 "AU", "BR", "CN", "GB", "HK", "ID", "JP", "MY", "SG", "TW", "US", "GLOBAL",
             }
-            # 取消时恢复用户上次保存的选项(而非当前下拉文本——此刻它已是
-            # "更多国家"本身),与 birdid_dock 的既有行为一致。
-            # On cancel, restore the last SAVED selection (not the combo's
-            # current text, which is already "More countries" itself at this
-            # point) — matching the existing birdid_dock behavior.
-            fallback = get_advanced_config().birdid_selected_country or self.i18n.t("birdid.country_auto_gps")
+            # 取消时恢复用户上次保存的国家(而非当前下拉文本——此刻它已是
+            # "更多国家"本身)。按代码恢复，不依赖存下来的显示名的语言（#122 跟进）。
+            # On cancel, restore the last SAVED country by code (the combo's
+            # current text is already "More countries" itself at this point);
+            # codes don't depend on the stored display name's language.
+            fallback_code = get_advanced_config().birdid_country_code
             show_country_picker_dialog(
                 parent=self,
                 i18n=self.i18n,
@@ -1141,7 +1141,7 @@ class SettingsCenter(QDialog):
                 country_combo=self._bid_country,
                 country_list=self._bid_country_list,
                 exclude_codes=top10_and_global,
-                fallback_display=fallback,
+                fallback_code=fallback_code,
                 more_item_text=self.i18n.t("birdid.country_more"),
             )
             # show_country_picker_dialog 内部会重设 currentText,重新触发本回调
