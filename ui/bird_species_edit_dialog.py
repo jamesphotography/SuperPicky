@@ -186,8 +186,14 @@ class BirdSpeciesEditDialog(QDialog):
         root.setContentsMargins(16, 16, 16, 16)
         root.setSpacing(10)
 
-        # 标题提示
-        hint = QLabel(self.i18n.t("bird_species_edit.hint"))
+        # 标题提示：平铺布局不移动文件，提示与「无鸟」按钮说明都换成不提目录的版本（#120）
+        # Hint: the flat layout never moves files, so the hint and the no-bird
+        # tooltip use wording that does not mention folders (#120)
+        from advanced_config import get_advanced_config
+        from core.folder_layout import LAYOUT_FLAT
+        self._flat_layout = get_advanced_config().folder_layout == LAYOUT_FLAT
+        hint = QLabel(self.i18n.t(
+            "bird_species_edit.hint_flat" if self._flat_layout else "bird_species_edit.hint"))
         hint.setStyleSheet(
             f"color: {COLORS['text_secondary']}; font-size: 12px; background: transparent;"
         )
@@ -339,7 +345,9 @@ class BirdSpeciesEditDialog(QDialog):
         # having no bird at all. Kept visually secondary and far from Confirm.
         self._no_bird_btn = QPushButton(self.i18n.t("bird_species_edit.not_a_bird"))
         self._no_bird_btn.setFixedHeight(36)
-        self._no_bird_btn.setToolTip(self.i18n.t("bird_species_edit.not_a_bird_tip"))
+        self._no_bird_btn.setToolTip(self.i18n.t(
+            "bird_species_edit.not_a_bird_tip_flat" if self._flat_layout
+            else "bird_species_edit.not_a_bird_tip"))
         self._no_bird_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: transparent;

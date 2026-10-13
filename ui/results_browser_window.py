@@ -478,6 +478,39 @@ def _merge_target_folders(photos: list, new_bird_name: str, layout: str) -> list
     return sorted(folders)
 
 
+def _merge_folders_display(folders: list, i18n) -> str:
+    """
+    把 _merge_target_folders 的结果渲染成确认弹窗里的多行文本。
+
+    空串表示「移回批次根目录」（例如先按目录整理、之后把布局切到平铺的照片），
+    原样 join 会显示成一行空白（#120 截图），这里换成可读的说明文字；
+    目录分隔符统一显示为 "/"。
+
+    参数:
+    folders (list): 相对批次根目录的目标目录列表
+    i18n: 当前界面语言的 I18n 实例
+
+    返回:
+    str: 每行一个目录；列表为空时返回 "—"
+
+    Render target folders for the confirmation dialog. An empty string means
+    "the batch's top folder" and would otherwise show as a blank line (#120).
+
+    Parameters:
+    folders (list): target folders relative to each batch root
+    i18n: the I18n instance for the current UI language
+
+    Return:
+    str: one folder per line, or "—" when the list is empty
+    """
+    if not folders:
+        return "—"
+    return "\n".join(
+        f.replace(os.sep, "/") if f else i18n.t('browser.merge_folder_root')
+        for f in folders
+    )
+
+
 # 确认弹窗里最多逐个列出几个批次。批次名可能是「2026/03/15」这类嵌套路径，
 # 全列会把弹窗撑得看不完；超出的部分只报个数。
 # Max batches listed by name in the confirmation; the rest are counted.
@@ -2936,11 +2969,17 @@ class ResultsBrowserWindow(QMainWindow):
             else 'browser.merge_folders_label'
         )
 
-        body = i18n.t('browser.merge_confirm_body').format(
+        # 没有任何照片需要移动时（平铺布局，或照片都还在根目录未整理）不再
+        # 列目标目录、也不说「会移动文件」，改用只改鸟种的文案（#120）。
+        # When nothing will move (flat layout, or all photos still at the root),
+        # drop the folder list and the "moves files" warning (#120).
+        body_key = ('browser.merge_confirm_body' if folders
+                    else 'browser.merge_confirm_body_no_move')
+        body = i18n.t(body_key).format(
             old=old_name, count=len(targets), burst_note=burst_note,
             batch_note=batch_note, new=new_name,
             folders_label=folders_label,
-            folders="\n".join(folders) if folders else "—",
+            folders=_merge_folders_display(folders, i18n),
         )
         confirmed = StyledMessageBox.question(
             self, i18n.t('browser.merge_confirm_title'), body
@@ -3116,9 +3155,12 @@ class ResultsBrowserWindow(QMainWindow):
             i18n.t('browser.merge_burst_note').format(bursts=burst_count)
             if burst_count else ""
         )
-        body = i18n.t('browser.batch_species_confirm_body').format(
+        # 无文件移动时改用不提目录的文案（#120）/ No-move wording (#120)
+        body_key = ('browser.batch_species_confirm_body' if folders
+                    else 'browser.batch_species_confirm_body_no_move')
+        body = i18n.t(body_key).format(
             count=len(targets), burst_note=burst_note, new=new_name,
-            folders="\n".join(folders) if folders else "—",
+            folders=_merge_folders_display(folders, i18n),
         )
         if StyledMessageBox.question(
             self, i18n.t('browser.batch_species_confirm_title'), body
