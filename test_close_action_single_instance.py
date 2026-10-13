@@ -163,35 +163,102 @@ def test_ask_close_action_mapping(qapp, monkeypatch, button_value, expected):
 
 # ── 4. 单实例 / Single instance ─────────────────────────────────────────────
 
-def test_second_instance_activates_first(qapp):
-    """第一个实例监听；第二个能连上并触发激活。/ Second launch activates the first."""
+def _pump_until(qapp, cond, seconds: float = 2.0) -> None:
+    """处理事件直到 cond() 为真或超时。/ Pump events until cond() or timeout."""
+    import time
+    deadline = time.monotonic() + seconds
+    while not cond() and time.monotonic() < deadline:
+        qapp.processEvents()
+        time.sleep(0.01)
+
+
+def _run_notify_in_subprocess(name: str, token: str):
+    """
+    在子进程里调用 notify_running_instance（真实场景就是两个进程），主线程负责
+    处理服务端事件。子进程退出码 0 = 认定已有实例，1 = 照常启动。
+
+    Run notify in a child process (the real scenario is two processes) while
+    this process pumps the server's events. Exit 0 = verified instance, 1 = not.
+    """
+    import os
+    import subprocess
+    import sys
+    code = (
+        "import sys; sys.path.insert(0, sys.argv[1]);"
+        "from PySide6.QtCore import QCoreApplication; app = QCoreApplication([]);"
+        "from tools.single_instance import SingleInstanceGuard as G;"
+        "sys.exit(0 if G(sys.argv[2], token_path=sys.argv[3]).notify_running_instance() else 1)"
+    )
+    root = os.path.dirname(os.path.abspath(__file__))
+    return subprocess.Popen([sys.executable, "-c", code, root, name, token])
+
+
+def test_second_instance_activates_first(qapp, tmp_path):
+    """第一个实例监听；第二个能连上、验证令牌并触发激活。/ Verified activation."""
     from tools.single_instance import SingleInstanceGuard
 
     name = f"SuperPicky-test-{uuid.uuid4().hex[:8]}"
+    token = str(tmp_path / "token")
     activated = []
-    first = SingleInstanceGuard(name)
+    first = SingleInstanceGuard(name, token_path=token)
     try:
         assert first.notify_running_instance() is False     # 还没有实例 / none yet
         assert first.listen(on_activate=lambda: activated.append(True))
 
-        second = SingleInstanceGuard(name)
-        assert second.notify_running_instance() is True
-
-        for _ in range(200):                                # 最多约 2 秒 / up to ~2s
-            qapp.processEvents()
-            if activated:
-                break
-            import time
-            time.sleep(0.01)
+        proc = _run_notify_in_subprocess(name, token)
+        _pump_until(qapp, lambda: activated and proc.poll() is not None, seconds=15)
+        assert proc.wait(15) == 0
         assert activated == [True]
     finally:
         first.close()
 
     # 关闭后名称释放，新实例可以重新监听 / name is free again after close
-    third = SingleInstanceGuard(name)
+    third = SingleInstanceGuard(name, token_path=token)
     assert third.notify_running_instance() is False
     assert third.listen(on_activate=lambda: None)
     third.close()
+
+
+def test_squatter_cannot_block_startup(qapp, tmp_path):
+    """
+    抢占者先建同名服务器、回错误内容：新进程不认它，照常启动。
+
+    A squatter holding the name with a wrong reply must not stop startup.
+    """
+    from PySide6.QtNetwork import QLocalServer
+    import tools.single_instance as si
+
+    name = f"SuperPicky-test-{uuid.uuid4().hex[:8]}"
+    squatter = QLocalServer()
+    assert squatter.listen(name)
+
+    def _answer():
+        conn = squatter.nextPendingConnection()
+        conn.waitForReadyRead(500)
+        conn.readAll()
+        conn.write(b"ok:not-the-token")
+        conn.flush()
+    squatter.newConnection.connect(_answer)
+
+    token = str(tmp_path / "token")
+    si.SingleInstanceGuard(name, token_path=token)._ensure_token()   # 本用户有真令牌
+    proc = _run_notify_in_subprocess(name, token)
+    _pump_until(qapp, lambda: proc.poll() is not None, seconds=15)
+    squatter.close()
+    assert proc.wait(15) == 1
+
+
+def test_token_file_is_private(tmp_path):
+    """POSIX 下令牌文件权限为 600。/ Token file is mode 600 on POSIX."""
+    import os
+    import sys
+    from tools.single_instance import SingleInstanceGuard
+    path = tmp_path / "sub" / "token"
+    guard = SingleInstanceGuard("unused", token_path=str(path))
+    token = guard._ensure_token()
+    assert token and guard._ensure_token() == token          # 幂等 / stable
+    if sys.platform != "win32":
+        assert (os.stat(path).st_mode & 0o777) == 0o600
 
 
 def test_server_name_is_stable_and_short():

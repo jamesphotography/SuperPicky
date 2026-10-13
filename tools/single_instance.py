@@ -11,6 +11,11 @@
    "activate" 让它把窗口调到前台，然后本进程直接退出；
 2. 连不上则自己监听，之后收到 "activate" 就回调 on_activate。
 
+防抢占：管道名由用户名推导、可被预测，同机其他账户或程序可以抢先建同名管道，
+让本程序误以为「已有实例」而退出（打不开）。因此已有实例收到 "activate" 后必须
+回一个只存在本用户配置目录里的随机令牌（single_instance.token），新进程核对一致
+才认定是真实例；不一致或不回应就照常启动——最坏只是失去单实例保护。
+
 名称按当前系统用户区分，不同用户各自一个实例。QtNetwork 不可用或监听失败时
 不阻止启动（只是失去保护），保证这一层出错不会让程序打不开。
 开发调试可设环境变量 SUPERPICKY_ALLOW_MULTI_INSTANCE=1 关闭保护。
@@ -19,7 +24,10 @@ Uses QLocalServer/QLocalSocket (named pipes on Windows, Unix domain sockets
 on macOS/Linux). On start, try to connect to the per-user server: success
 means an instance is already running, so ask it to come forward and exit.
 Otherwise listen and call on_activate whenever a later launch asks. Any
-failure here degrades to "no guard" rather than blocking startup. Set
+failure here degrades to "no guard" rather than blocking startup. A running
+instance must answer with a random token kept in the user's config dir, so a
+squatter that pre-creates the predictable pipe name cannot make SuperPicky
+refuse to start; an unverified answer means "start normally". Set
 SUPERPICKY_ALLOW_MULTI_INSTANCE=1 to disable the guard for development.
 """
 
@@ -28,6 +36,7 @@ from __future__ import annotations
 import getpass
 import hashlib
 import os
+import secrets
 import sys
 from typing import Callable, Optional
 
@@ -37,7 +46,16 @@ from typing import Callable, Optional
 # side's event loop, so a busy instance still accepts within this window.
 CONNECT_TIMEOUT_MS = 1000
 
+# 等待已有实例回令牌的毫秒数。回令牌要等对方事件循环处理，主窗口构造期间
+# 主线程可能忙上几秒，所以比连接超时宽松；只在确有进程占着名字时才会等。
+# Wait for the token reply. The reply needs the other side's event loop, which
+# can be busy for seconds while its window is built; only paid when something
+# actually holds the name.
+REPLY_TIMEOUT_MS = 8000
+
 ACTIVATE_MESSAGE = b"activate"
+REPLY_PREFIX = b"ok:"
+TOKEN_FILE_NAME = "single_instance.token"
 
 ENV_ALLOW_MULTI = "SUPERPICKY_ALLOW_MULTI_INSTANCE"
 
@@ -81,15 +99,22 @@ class SingleInstanceGuard:
     not garbage-collected.
     """
 
-    def __init__(self, name: Optional[str] = None) -> None:
+    def __init__(self, name: Optional[str] = None, token_path: Optional[str] = None) -> None:
         """
         参数:
         name (Optional[str]): 本地服务器名称；默认用 server_name()（测试可注入）
+        token_path (Optional[str]): 令牌文件路径；默认放在应用配置目录（测试可注入）
 
         Parameters:
         name (Optional[str]): server name; defaults to server_name() (tests inject one)
+        token_path (Optional[str]): token file; defaults to the app config dir
         """
         self.name = name or server_name()
+        if token_path is None:
+            from config import get_app_config_dir
+            token_path = str(get_app_config_dir() / TOKEN_FILE_NAME)
+        self.token_path = token_path
+        self._token: Optional[bytes] = None
         self._server = None
         self._on_activate: Optional[Callable[[], None]] = None
 
@@ -102,19 +127,55 @@ class SingleInstanceGuard:
         """
         return os.environ.get(ENV_ALLOW_MULTI) == "1"
 
+    def _read_token(self) -> Optional[bytes]:
+        """
+        读令牌文件；不存在或读失败返回 None。
+
+        Read the token file; None if missing or unreadable.
+        """
+        try:
+            with open(self.token_path, "rb") as fh:
+                token = fh.read().strip()
+            return token or None
+        except OSError:
+            return None
+
+    def _ensure_token(self) -> Optional[bytes]:
+        """
+        取令牌，没有就生成一个随机令牌写入（POSIX 权限 600；Windows 的用户配置
+        目录本身只有本用户可读）。写失败返回 None，调用方据此放弃监听。
+
+        Return the token, creating a random one if missing (mode 600 on POSIX;
+        the Windows per-user config dir is already private). None on failure.
+        """
+        token = self._read_token()
+        if token:
+            return token
+        token = secrets.token_hex(16).encode("ascii")
+        try:
+            os.makedirs(os.path.dirname(self.token_path), exist_ok=True)
+            fd = os.open(self.token_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(token)
+        except OSError as e:
+            print(f"[SingleInstance] cannot write token, guard disabled: {e}")
+            return None
+        return token
+
     def notify_running_instance(self) -> bool:
         """
         尝试连接已运行的实例并请求它显示窗口。
 
         返回:
-        bool: True 表示已有实例在运行（调用方应退出）；False 表示没有，或
-              QtNetwork 不可用（调用方继续正常启动）
+        bool: True 表示已有实例在运行且回了正确令牌（调用方应退出）；False 表示
+              没有、对方无法验证（可能是抢占者），或 QtNetwork 不可用（照常启动）
 
         Try to reach a running instance and ask it to show its window.
 
         Return:
-        bool: True if another instance is running (the caller should exit);
-              False if none, or QtNetwork is unavailable (start normally)
+        bool: True if a verified instance is running (the caller should exit);
+              False if none, the responder is unverified (possibly a squatter),
+              or QtNetwork is unavailable (start normally)
         """
         try:
             from PySide6.QtNetwork import QLocalSocket
@@ -141,8 +202,19 @@ class SingleInstanceGuard:
         socket.write(ACTIVATE_MESSAGE)
         socket.flush()
         socket.waitForBytesWritten(CONNECT_TIMEOUT_MS)
+
+        # 核对令牌：真实例会回 "ok:<令牌>"；抢占者读不到本用户的令牌文件
+        # Verify: a genuine instance replies "ok:<token>"; a squatter cannot
+        # read this user's token file.
+        reply = b""
+        if socket.waitForReadyRead(REPLY_TIMEOUT_MS):
+            reply = bytes(socket.readAll().data())
         socket.disconnectFromServer()
-        return True
+        token = self._read_token()
+        if token and reply.strip() == REPLY_PREFIX + token:
+            return True
+        print("[SingleInstance] responder did not prove it is SuperPicky; starting normally.")
+        return False
 
     def listen(self, on_activate: Callable[[], None]) -> bool:
         """
@@ -175,6 +247,10 @@ class SingleInstanceGuard:
             print(f"[SingleInstance] QtNetwork unavailable, guard disabled: {e}")
             return False
 
+        token = self._ensure_token()
+        if token is None:
+            return False
+        self._token = token
         self._on_activate = on_activate
         QLocalServer.removeServer(self.name)
         server = QLocalServer()
@@ -204,9 +280,15 @@ class SingleInstanceGuard:
             if conn.bytesAvailable() == 0:
                 conn.waitForReadyRead(CONNECT_TIMEOUT_MS)
             data = bytes(conn.readAll().data())
+            is_activate = data.startswith(ACTIVATE_MESSAGE)
+            if is_activate and self._token:
+                # 先回令牌证明身份，再激活 / prove identity first, then activate
+                conn.write(REPLY_PREFIX + self._token)
+                conn.flush()
+                conn.waitForBytesWritten(CONNECT_TIMEOUT_MS)
             conn.disconnectFromServer()
             conn.deleteLater()
-            if data.startswith(ACTIVATE_MESSAGE) and self._on_activate is not None:
+            if is_activate and self._on_activate is not None:
                 try:
                     self._on_activate()
                 except Exception as e:
