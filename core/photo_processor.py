@@ -1113,12 +1113,29 @@ class PhotoProcessor:
         self._log(self.i18n.t("logs.raw_conversion_start", count=len(raw_files_to_convert), threads=max_workers))
         
         def convert_single(args):
+            """
+            转换单个 RAW，返回 (key, 是否成功, JPEG 路径或错误信息)。
+
+            raw_to_jpeg 在所有提取方式都失败时返回 None（例如 Topaz 导出的线性
+            DNG 没有内嵌预览），并已自行记录原因；这里必须视为失败、只跳过这一张。
+            此前把 None 当成功，后面 os.path.relpath(None) 抛 TypeError，整批
+            处理中止（#125）。错误信息为 None 表示原因已记录、无需再报。
+
+            Convert one RAW; returns (key, success, jpeg_path_or_error).
+            raw_to_jpeg returns None (after logging why) when every extraction
+            path fails, e.g. Topaz linear DNGs without an embedded preview. That
+            must count as a per-file failure; treating it as success crashed the
+            whole run in os.path.relpath(None) (#125). A None error means the
+            reason was already logged.
+            """
             key, raw_path = args
             try:
                 jpg_path = raw_to_jpeg(raw_path)
-                return (key, True, jpg_path)
             except Exception as e:
                 return (key, False, str(e))
+            if not jpg_path:
+                return (key, False, None)
+            return (key, True, jpg_path)
         
         # 进度节流：每 total/20 张、或距上次输出满 3 秒时报一次。
         # 两个条件取「或」——rawpy 快路径靠张数节流(全程约 20 条不刷屏)，
@@ -1137,6 +1154,10 @@ class PhotoProcessor:
             }
             converted_count = 0
             done = 0
+            # 取不到预览而被跳过的文件名（每张的原因已写进日志文件，界面只在阶段末汇总一次）
+            # Files skipped for lack of a readable preview; per-file reasons go to
+            # the log file, the UI gets one summary line at the end of the stage.
+            skipped_names = []
 
             try:
                 for future in as_completed(future_to_raw):
@@ -1149,6 +1170,9 @@ class PhotoProcessor:
                         files_tbr.append(jpeg_filename)
                         self.temp_converted_jpegs.add(jpeg_filename)  # 标记为临时文件
                         converted_count += 1
+                    elif result is None:
+                        # raw_to_jpeg 已记录跳过原因，这里只收集文件名 / reason already logged
+                        skipped_names.append(os.path.basename(future_to_raw[future][1]))
                     else:
                         self._log(f"  ❌ {self.i18n.t('logs.batch_failed', start=key, end=key, error=result)}", "error")
 
@@ -1174,6 +1198,15 @@ class PhotoProcessor:
             except ProcessingCancelled:
                 executor.shutdown(wait=False, cancel_futures=True)
                 raise
+
+        if skipped_names:
+            # 最多列 10 个文件名，避免几百张时刷屏 / list at most 10 names
+            shown = ", ".join(sorted(skipped_names)[:10])
+            if len(skipped_names) > 10:
+                shown += ", …"
+            self._log(self.i18n.t(
+                "logs.raw_no_preview_summary", count=len(skipped_names), names=shown,
+            ), "warning")
 
         raw_time = time.time() - raw_start
         avg_time = raw_time / len(raw_files_to_convert) if len(raw_files_to_convert) > 0 else 0

@@ -238,6 +238,8 @@
     "caffeinate_stopped": "☕ Sleep prevention deactivated",
     "caffeinate_failed": "⚠️  Sleep prevention activation failed: {error} (processing will continue normally)",
     "scan_time": "⏱️  File scan time: {time:.1f}ms",
+    "raw_no_preview_skipped": "⚠️ Cannot read a preview image from {name} (unsupported RAW format, or no embedded preview — e.g. a DNG exported by Topaz). Skipped this file.",
+    "raw_no_preview_summary": "⚠️ {count} RAW file(s) had no readable preview image and were skipped (left in place, not rated): {names}",
     "raw_conversion_start": "🔄 Starting parallel conversion of {count} RAW files ({threads} threads)...",
     "raw_conversion_progress": "   ⏳ Extracted {done}/{total} ({rate:.1f}/s, ~{eta} left)",
     "raw_converted": "  ✅ Converted {current}/{total}",

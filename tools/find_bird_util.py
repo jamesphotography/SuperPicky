@@ -143,10 +143,13 @@ def _raw_to_jpeg_via_exiftool(raw_file_path, jpg_file_path, directory_path):
             log_message(f"ExifTool {tag} fallback failed for {os.path.basename(raw_file_path)}: {e}", directory_path)
             continue
 
-    # 所有方法均失败——记录友好信息，不 raise 让流程继续
+    # 所有方法均失败——记录友好信息（跟随界面语言），不 raise，返回 None 由调用方跳过这张。
+    # 典型场景：Topaz 等软件导出的线性 DNG 没有内嵌预览（#125）。
+    # All methods failed: log a UI-language message and return None so the
+    # caller skips this file. Typical case: linear DNGs from Topaz (#125).
+    from .i18n import get_i18n
     log_message(
-        f"暂不支持此 RAW 格式 ({os.path.basename(raw_file_path)})，"
-        "将在后续版本修复。建议使用无压缩 RAW 或 JPEG 拍摄。",
+        get_i18n().t("logs.raw_no_preview_skipped", name=os.path.basename(raw_file_path)),
         directory_path
     )
     return None

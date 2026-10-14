@@ -238,6 +238,8 @@
     "caffeinate_stopped": "☕ 已停止防休眠保護",
     "caffeinate_failed": "⚠️  防休眠啟動失敗: {error}（不影響正常處理）",
     "scan_time": "⏱️  檔案掃描耗時: {time:.1f}ms",
+    "raw_no_preview_skipped": "⚠️ 無法從 {name} 讀取預覽圖（不支援的 RAW 格式，或檔案沒有內嵌預覽，例如 Topaz 匯出的 DNG），已略過這張。",
+    "raw_no_preview_summary": "⚠️ 有 {count} 個 RAW 檔案讀不到預覽圖，已略過（原地保留，未評分）：{names}",
     "raw_conversion_start": "🔄 開始並行轉換 {count} 個RAW檔案（{threads}執行緒）...",
     "raw_conversion_progress": "   ⏳ 已提取 {done}/{total} 張（{rate:.1f} 張/秒，約剩 {eta}）",
     "raw_converted": "  ✅ 已轉換 {current}/{total} 張",
