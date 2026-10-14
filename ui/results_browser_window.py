@@ -170,6 +170,44 @@ _RATING_KEYS = (
     Qt.Key_Up, Qt.Key_Down,
 )
 
+# Ctrl(macOS 为 Command)+1…9：用设置里第 1…9 个外部应用打开当前照片（#128）
+# Ctrl(Cmd)+1…9 opens the current photo with external app 1…9 (#128)
+_EXTERNAL_APP_KEYS = (
+    Qt.Key_1, Qt.Key_2, Qt.Key_3, Qt.Key_4, Qt.Key_5,
+    Qt.Key_6, Qt.Key_7, Qt.Key_8, Qt.Key_9,
+)
+
+
+def _valid_external_apps() -> list:
+    """
+    设置里配置的外部应用中名称与路径都齐全的那些，顺序即快捷键编号。
+
+    External apps from settings that have both a name and a path; their
+    order defines the Ctrl/Cmd+N numbering.
+    """
+    from advanced_config import get_advanced_config
+    return [a for a in get_advanced_config().get_external_apps()
+            if a.get("name") and a.get("path")]
+
+
+def _open_with_external_app(filepath: str, app_path: str) -> None:
+    """
+    用外部应用打开一个文件（右键「用 XX 打开」与 Ctrl/Cmd+N 快捷键共用）。
+
+    Open a file with an external app; shared by the context menu and the
+    Ctrl/Cmd+N shortcut.
+
+    参数 / Parameters:
+        filepath (str): 要打开的文件 / file to open.
+        app_path (str): 设置里配置的应用路径 / configured application path.
+    """
+    if not filepath or not app_path:
+        return
+    if sys.platform == "darwin":
+        subprocess.Popen(["open", "-a", _resolve_app_path(app_path), filepath])
+    elif sys.platform == "win32":
+        QProcess.startDetached(app_path, [filepath])
+
 
 def _rating_key_action(key: int, current_rating) -> Optional[int]:
     """
@@ -1287,25 +1325,23 @@ def _build_context_menu(parent_widget, photo: dict, directory: str):
         merge_action.triggered.connect(_merge_species)
         menu.addAction(merge_action)
 
-    # 用户配置的外部应用列表（设置 → 外部应用）
-    external_apps = get_advanced_config().get_external_apps()
+    # 用户配置的外部应用列表（设置 → 外部应用）。前 9 个显示 Ctrl/Cmd+N 快捷键提示，
+    # 浏览器窗口的 keyPressEvent 负责真正响应快捷键（#128）。
+    # External apps from settings; the first nine show their Ctrl/Cmd+N hint,
+    # the browser's keyPressEvent handles the actual shortcut (#128).
+    external_apps = _valid_external_apps()
     if external_apps:
+        from PySide6.QtGui import QKeySequence
         menu.addSeparator()
-        for app in external_apps:
-            app_name = app.get("name", "")
-            app_path = app.get("path", "")
-            if not app_name or not app_path:
-                continue
-            act = QAction(_i18n.t('browser.ctx_open_with').format(app_name=app_name), parent_widget)
+        for idx, app in enumerate(external_apps):
+            act = QAction(_i18n.t('browser.ctx_open_with').format(app_name=app["name"]), parent_widget)
             act.setEnabled(bool(filepath))
+            if idx < len(_EXTERNAL_APP_KEYS):
+                act.setShortcut(QKeySequence(f"Ctrl+{idx + 1}"))
+                act.setShortcutVisibleInContextMenu(True)
 
-            def _open_in_app(_checked=False, _fp=filepath, _ap=app_path):
-                import subprocess
-                if sys.platform == "darwin" and _fp:
-                    ap = _resolve_app_path(_ap)
-                    subprocess.Popen(["open", "-a", ap, _fp])
-                elif sys.platform == "win32" and _fp:
-                    QProcess.startDetached(_ap, [_fp])
+            def _open_in_app(_checked=False, _fp=filepath, _ap=app["path"]):
+                _open_with_external_app(_fp, _ap)
 
             act.triggered.connect(_open_in_app)
             menu.addAction(act)
@@ -1326,6 +1362,29 @@ def _build_context_menu(parent_widget, photo: dict, directory: str):
             QApplication.clipboard().setText(_fp)
         copy_action.triggered.connect(_copy_path)
     menu.addAction(copy_action)
+
+    # 删除（#130）：范围规则与「修改鸟种」相同——点中的照片在勾选集里就删整个
+    # 勾选集，否则只删这一张；全屏只删当前这张。走浏览器唯一的删除实现，
+    # 确认框（含「以后不再询问」）与附属文件清理都与 Delete 键一致。
+    # Delete (#130): same scope rule as Edit Species; goes through the single
+    # browser delete path, so confirmation and companion cleanup match the key.
+    delete_handler = getattr(parent_widget, "_delete_photos", None)
+    if callable(delete_handler):
+        _del_targets = _species_edit_targets(parent_widget, photo)
+        _del_label = (
+            _i18n.t('browser.ctx_delete_batch').format(count=len(_del_targets))
+            if len(_del_targets) > 1 else _i18n.t('browser.ctx_delete')
+        )
+        menu.addSeparator()
+        delete_action = QAction(_del_label, parent_widget)
+
+        def _delete(_checked=False, _targets=_del_targets):
+            stack = getattr(parent_widget, "_stack", None)
+            in_fullscreen = bool(stack is not None and stack.currentIndex() == _PAGE_FULLSCREEN)
+            delete_handler(list(_targets), in_fullscreen=in_fullscreen)
+
+        delete_action.triggered.connect(_delete)
+        menu.addAction(delete_action)
 
     return menu
 
@@ -1405,6 +1464,85 @@ def _move_to_trash(filepath: str) -> bool:
     except Exception as e:
         print(f"⚠️ 移入回收站失败: {e}")
         return False
+
+
+def _photo_companion_files(photo: dict) -> tuple:
+    """
+    列出删除一张照片时要一并清理的附属文件（不含照片本体）。
+
+    此前删除只把 RAW 放进回收站，XMP 边车留在原目录成了孤儿，.superpicky 里
+    这张照片的缓存图也一直留着（#131）。
+
+    - 移入回收站（可找回）：
+      - 与本体同目录同名的 .xmp 边车（SuperPicky / Lightroom 写的元数据）；
+      - RAW+JPEG 拍摄的配套相机 JPEG——界面上两者显示为同一张照片，删除
+        这张照片就应当两个文件一起删（用户已拍板）。
+      两者都只按本体的目录 + 主名推导，不信任数据库路径。
+    - 直接删除：本照片根目录 .superpicky 内的预览 / 裁切 / YOLO 调试图，
+      可随时重新生成；范围之外的路径一律忽略。
+
+    List the files to clean up alongside a deleted photo (#131). Trashed
+    (recoverable): the same-stem .xmp sidecar and the paired camera JPEG of a
+    RAW+JPEG shot, which the UI shows as one photo. Removed outright: the
+    regenerable internal .superpicky cache images.
+
+    参数 / Parameters:
+        photo (dict): 经 _resolve_photo_paths 解析的照片记录（含 _base_dir）
+            / photo record resolved by _resolve_photo_paths (with _base_dir).
+
+    返回 / Returns:
+        tuple[list[str], list[str]]: (要移入回收站的文件, 要直接删除的缓存)
+        (files to trash, cache files to remove); only existing files, never
+        the main file itself.
+    """
+    from core.rating_mover import _is_internal_cache_path
+    from tools.file_utils import sibling_jpeg
+
+    main = os.path.normpath(photo.get("current_path") or photo.get("original_path") or "")
+
+    def _is_main(path: str) -> bool:
+        """同一个文件（含大小写不敏感文件系统）/ same file as the main one."""
+        try:
+            return os.path.samefile(path, main)
+        except OSError:
+            return os.path.normcase(path) == os.path.normcase(main)
+
+    to_trash = []
+
+    def _add_trash(path: str) -> None:
+        if path and os.path.isfile(path):
+            path = os.path.normpath(path)
+            if not _is_main(path) and path not in to_trash:
+                to_trash.append(path)
+
+    # 安全：要删的用户文件只按「与本体同目录、同主名」推导，不信任数据库里记录的
+    # 路径——report.db 可能随别人分享的文件夹而来或被篡改，否则可借 temp_jpeg_path
+    # 把任意文件移进回收站。RAW+JPEG 的配套 JPEG 本来就与 RAW 同目录同名。
+    # Security: derive deletable user files from the main file's directory and
+    # stem only; never trust DB-recorded paths (a shared or tampered report.db
+    # could otherwise point temp_jpeg_path at any file).
+    if main and main != ".":
+        _add_trash(os.path.splitext(main)[0] + ".xmp")
+        _add_trash(sibling_jpeg(main) or "")
+
+    # 缓存只删本照片根目录下 .superpicky 里的文件（直接删除不进回收站，范围必须锁死）
+    # Caches are removed outright, so confine them to this photo's own
+    # <base_dir>/.superpicky tree.
+    caches = []
+    base_dir = photo.get("_base_dir") or ""
+    cache_root = os.path.realpath(os.path.join(base_dir, ".superpicky")) if base_dir else ""
+    for key in ("temp_jpeg_path", "debug_crop_path", "yolo_debug_path"):
+        path = photo.get(key) or ""
+        if not (cache_root and path and _is_internal_cache_path(path) and os.path.isfile(path)):
+            continue
+        real = os.path.realpath(path)
+        try:
+            inside = os.path.commonpath([real, cache_root]) == cache_root
+        except ValueError:      # Windows 不同盘符 / different drives on Windows
+            inside = False
+        if inside and real != cache_root and real not in caches:
+            caches.append(real)
+    return to_trash, caches
 
 
 class ResultsBrowserWindow(QMainWindow):
@@ -2474,14 +2612,16 @@ class ResultsBrowserWindow(QMainWindow):
         self._fullscreen_nav_photos = list(nav_photos) if nav_photos is not None else list(self._filtered_photos)
         self._fullscreen.set_photo_list(self._fullscreen_nav_photos)
         self._fullscreen.show_photo(photo)
-        if self._stack.currentIndex() == 1:
-            # 全屏导航中:详情面板被盖住不可见,只同步元数据不解码大图
-            # (每次方向键少解码一整张;退出全屏时 _switch_view 刷新一次)。
-            # During fullscreen navigation the panel is hidden — sync
-            # metadata only; the image reloads once on fullscreen exit.
-            self._detail_panel.set_current_photo(photo)
-        else:
+        # 详情面板在 QStackedWidget 之外，全屏时照样显示右上角的裁切 / YOLO 图，
+        # 必须跟着刷新图片（#127）；只有被 Tab 键隐藏时才省掉解码，重新显示时
+        # 由 keyPressEvent 的 Tab 分支补刷一次。
+        # The detail panel sits outside the stack and stays visible in
+        # fullscreen, so its crop/YOLO image must follow (#127). Skip decoding
+        # only while it is hidden via Tab; the Tab branch refreshes on re-show.
+        if self._detail_panel.isVisible():
             self._detail_panel.show_photo(photo)
+        else:
+            self._detail_panel.set_current_photo(photo)
 
         if any(_photo_identity(p) == _photo_identity(photo) for p in self._filtered_photos):
             self._thumb_grid.select_photo(photo)
@@ -2555,23 +2695,19 @@ class ResultsBrowserWindow(QMainWindow):
 
     @Slot()
     def _prev_photo(self):
+        # select_prev 会发 photo_selected → _on_photo_selected 已刷新详情面板
+        # select_prev emits photo_selected, which already refreshes the panel
         photo = self._thumb_grid.select_prev()
-        if photo:
-            if self._stack.currentIndex() == 1:   # 全屏模式:同步大图,面板只同步元数据
-                self._fullscreen.show_photo(photo)
-                self._detail_panel.set_current_photo(photo)
-            else:
-                self._detail_panel.show_photo(photo)
+        if photo and self._stack.currentIndex() == 1:   # 全屏模式:同步大图
+            self._fullscreen.show_photo(photo)
 
     @Slot()
     def _next_photo(self):
+        # select_next 会发 photo_selected → _on_photo_selected 已刷新详情面板
+        # select_next emits photo_selected, which already refreshes the panel
         photo = self._thumb_grid.select_next()
-        if photo:
-            if self._stack.currentIndex() == 1:   # 全屏模式:同步大图,面板只同步元数据
-                self._fullscreen.show_photo(photo)
-                self._detail_panel.set_current_photo(photo)
-            else:
-                self._detail_panel.show_photo(photo)
+        if photo and self._stack.currentIndex() == 1:   # 全屏模式:同步大图
+            self._fullscreen.show_photo(photo)
 
     @Slot(dict)
     def _enter_fullscreen(self, photo: dict):
@@ -3673,6 +3809,35 @@ class ResultsBrowserWindow(QMainWindow):
         base_dir = photo.get('_base_dir', self._directory)
         _show_context_menu_impl(self, photo, pos, base_dir)
 
+    def _open_current_with_app(self, index: int) -> bool:
+        """
+        用第 index 个外部应用打开当前照片（全屏为大图那张，网格为当前选中那张）。
+
+        Open the current photo (the fullscreen one, or the grid's current
+        photo) with external app number `index` (0-based).
+
+        参数 / Parameters:
+            index (int): 外部应用序号，从 0 开始 / 0-based app index.
+
+        返回 / Returns:
+            bool: 是否发起了打开 / whether an open was launched.
+        """
+        apps = _valid_external_apps()
+        if not (0 <= index < len(apps)):
+            return False
+        if self._stack.currentIndex() == _PAGE_FULLSCREEN:
+            photo = getattr(self._fullscreen, "_current_photo", None)
+        else:
+            photo = getattr(self._detail_panel, "_current_photo", None)
+        if not photo:
+            return False
+        photo = self._resolve_photo_paths(photo)
+        filepath = photo.get("current_path") or photo.get("original_path") or ""
+        if not filepath:
+            return False
+        _open_with_external_app(filepath, apps[index]["path"])
+        return True
+
     @Slot(dict, object)
     def _on_fullscreen_context_menu(self, photo: dict, global_pos):
         """全屏大图右键菜单。"""
@@ -3680,214 +3845,194 @@ class ResultsBrowserWindow(QMainWindow):
 
     @Slot(dict)
     def _on_delete_photo(self, photo: dict):
-        """全屏模式删除图片：确认 → 回收站 → DB 删除 → 缩略图同步 → 跳下一张。"""
-        from advanced_config import get_advanced_config
-        cfg = get_advanced_config()
-        filename = photo.get("filename", "")
-        if not filename:
-            return
-
-        # 1. 确认弹窗（可勾选「以后不再询问」）
-        if cfg.delete_confirm:
-            from PySide6.QtWidgets import QCheckBox
-            msg_box = QMessageBox(self)
-            msg_box.setWindowTitle(self.i18n.t("browser.delete_title"))
-            msg_box.setText(self.i18n.t("browser.delete_msg").format(filename=filename))
-            msg_box.setIcon(QMessageBox.Warning)
-            yes_btn = msg_box.addButton(self.i18n.t("browser.delete_confirm_btn"), QMessageBox.AcceptRole)
-            msg_box.addButton(self.i18n.t("browser.delete_cancel_btn"), QMessageBox.RejectRole)
-            cb = QCheckBox(self.i18n.t("browser.delete_no_ask"))
-            msg_box.setCheckBox(cb)
-            msg_box.exec()
-            if msg_box.clickedButton() != yes_btn:
-                return
-            if cb.isChecked():
-                cfg.set_delete_confirm(False)
-                cfg.save()
-
-        # 2. 移入回收站
-        filepath = photo.get("current_path") or photo.get("original_path") or ""
-        if filepath and not _move_to_trash(filepath):
-            QMessageBox.warning(
-                self,
-                self.i18n.t("browser.delete_failed"),
-                self.i18n.t("browser.delete_failed_msg").format(error=filepath)
-            )
-            return
-
-        # 3. DB 删除
-        if self._db:
-            self._db.delete_photo(_photo_db_key(photo))
-
-        # 4. 从内存列表移除
-        target_identity = _photo_identity(photo)
-        # 记录被删除照片在过滤列表中的位置，用于删除后正确跳转
-        _del_identities = [_photo_identity(p) for p in self._filtered_photos]
-        try:
-            _deleted_idx = _del_identities.index(_photo_identity(photo))
-        except ValueError:
-            _deleted_idx = 0
-        self._filtered_photos = [p for p in self._filtered_photos if _photo_identity(p) != target_identity]
-        self._all_photos = [p for p in self._all_photos if _photo_identity(p) != target_identity]
-
-        # 5. 缩略图同步
-        self._thumb_grid.remove_photo(photo)
-        self._fullscreen.set_photo_list(self._filtered_photos)
-        # 导入按钮的可用性取决于 _filtered_photos 是否为空，删空后必须同步禁用，
-        # 否则点击只会弹「没有可导入文件」。
-        # The import action keys off _filtered_photos; refresh it after deletion
-        # so an emptied list disables the button instead of failing on click.
-        self._update_apple_photos_button()
-
-        # 6. 跳转逻辑：跳到被删除位置的下一张，已是末尾则跳上一张
-        if self._filtered_photos:
-            next_idx = min(_deleted_idx, len(self._filtered_photos) - 1)
-            nxt = self._filtered_photos[next_idx]
-            self._thumb_grid.select_photo(nxt)
-            self._fullscreen.show_photo(nxt)
-            self._detail_panel.show_photo(nxt)
-        else:
-            self._exit_fullscreen()
-
-        # 7. 更新状态栏
-        self._update_status(len(self._all_photos), len(self._filtered_photos))
+        """全屏模式删除当前图片（Delete / X 键、工具栏按钮）。/ Fullscreen delete."""
+        if photo:
+            self._delete_photos([photo], in_fullscreen=True)
 
     def _delete_selected_photos(self):
-        """Delete currently selected photo(s) in grid view or fullscreen view with Command + Backspace."""
+        """
+        Delete 键 / Command(Ctrl) + Backspace：删除网格勾选的照片（无勾选则当前
+        选中的那张）或全屏当前图片。
+
+        用严格勾选集 get_explicitly_selected_photos：get_multi_selected_photos
+        是给双图对比用的，只勾一张时会补入未勾选的锚点，拿它删除会多删一张
+        用户没勾的照片。
+
+        Delete key / Cmd(Ctrl)+Backspace: delete the checked grid photos (or the
+        current one), or the fullscreen photo. Uses the strict checked set —
+        the comparison getter injects an unchecked anchor photo.
+        """
         in_fullscreen = (self._stack.currentIndex() == 1)
-        
-        # 1. Gather target photos to delete
         if in_fullscreen:
-            if not self._fullscreen._current_photo:
-                return
-            target_photos = [self._fullscreen._current_photo]
+            current = getattr(self._fullscreen, "_current_photo", None)
+            target_photos = [current] if current else []
         else:
-            target_photos = self._thumb_grid.get_multi_selected_photos()
+            target_photos = self._thumb_grid.get_explicitly_selected_photos()
             if not target_photos and self._detail_panel._current_photo:
                 target_photos = [self._detail_panel._current_photo]
-                
-        if not target_photos:
-            return
+        if target_photos:
+            self._delete_photos(target_photos, in_fullscreen=in_fullscreen)
 
+    def _confirm_delete(self, target_photos: list) -> bool:
+        """
+        删除前确认（可勾选「以后不再询问」）；设置里关闭确认时直接返回 True。
+
+        Ask before deleting (with "don't ask again"); True when confirmation is
+        disabled in settings.
+        """
         from advanced_config import get_advanced_config
         cfg = get_advanced_config()
-        
-        # 2. Confirmation Dialog (if enabled in config)
-        if cfg.delete_confirm:
-            from PySide6.QtWidgets import QCheckBox
-            msg_box = QMessageBox(self)
-            msg_box.setWindowTitle(self.i18n.t("browser.delete_title"))
-            msg_box.setIcon(QMessageBox.Warning)
-            yes_btn = msg_box.addButton(self.i18n.t("browser.delete_confirm_btn"), QMessageBox.AcceptRole)
-            msg_box.addButton(self.i18n.t("browser.delete_cancel_btn"), QMessageBox.RejectRole)
-            cb = QCheckBox(self.i18n.t("browser.delete_no_ask"))
-            msg_box.setCheckBox(cb)
-            
-            if len(target_photos) == 1:
-                filename = target_photos[0].get("filename", "")
-                msg_box.setText(self.i18n.t("browser.delete_msg").format(filename=filename))
-            else:
-                count = len(target_photos)
-                msg_box.setText(self.i18n.t("browser.delete_multi_msg", count=count))
-                
-            msg_box.exec()
-            if msg_box.clickedButton() != yes_btn:
-                return
-            if cb.isChecked():
-                cfg.set_delete_confirm(False)
-                cfg.save()
-                
-        # 3. Perform Deletion
+        if not cfg.delete_confirm:
+            return True
+        from PySide6.QtWidgets import QCheckBox
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle(self.i18n.t("browser.delete_title"))
+        msg_box.setIcon(QMessageBox.Warning)
+        yes_btn = msg_box.addButton(self.i18n.t("browser.delete_confirm_btn"), QMessageBox.AcceptRole)
+        msg_box.addButton(self.i18n.t("browser.delete_cancel_btn"), QMessageBox.RejectRole)
+        cb = QCheckBox(self.i18n.t("browser.delete_no_ask"))
+        msg_box.setCheckBox(cb)
+        if len(target_photos) == 1:
+            msg_box.setText(self.i18n.t("browser.delete_msg").format(
+                filename=target_photos[0].get("filename", "")))
+        else:
+            msg_box.setText(self.i18n.t("browser.delete_multi_msg", count=len(target_photos)))
+        msg_box.exec()
+        if msg_box.clickedButton() != yes_btn:
+            return False
+        if cb.isChecked():
+            cfg.set_delete_confirm(False)
+            cfg.save()
+        return True
+
+    def _trash_photo_files(self, photo: dict) -> bool:
+        """
+        把照片本体移入回收站，成功后再清理它的 XMP 边车、配套相机 JPEG 与内部缓存（#131）。
+
+        附属文件清理失败只记日志、不算删除失败——本体已经进了回收站。
+
+        Trash the photo, then its sidecar, paired JPEG and cache files (#131). Failing to
+        clean a companion is logged but does not fail the delete.
+
+        返回 / Returns:
+            bool: 本体是否已删除（无路径的数据库残留记录也算成功）
+            whether the photo itself is gone (a path-less DB row counts as done).
+        """
+        photo = self._resolve_photo_paths(photo)
+        filepath = photo.get("current_path") or photo.get("original_path") or ""
+        if not filepath:
+            return True
+        # 先算附属文件：本体移走后就无法再确认同名关系
+        # Collect companions before the main file disappears
+        companions, caches = _photo_companion_files(photo)
+        if not _move_to_trash(filepath):
+            return False
+        from tools.utils import log_message
+        for path in companions:
+            if not _move_to_trash(path):
+                log_message(f"[Delete] companion not trashed: {path}")
+        for path in caches:
+            try:
+                os.remove(path)
+            except OSError as e:
+                log_message(f"[Delete] cache not removed: {path}: {e}")
+        return True
+
+    def _delete_photos(self, target_photos: list, in_fullscreen: bool) -> None:
+        """
+        删除照片的唯一实现：确认 → 回收站 → DB → 四份内存列表 → 网格 → 跳到相邻一张。
+
+        此前全屏 Delete 键与 Ctrl+Backspace 各有一份实现，都漏改了全屏方向键
+        使用的导航列表 _fullscreen_nav_photos 和第三份缓存 _raw_filtered_photos：
+        删掉的照片用方向键还能翻回来，再删一次就报错（#132），展开 / 收起连拍
+        后也会重新出现。
+
+        Single delete implementation. The two former copies both missed the
+        fullscreen arrow-key list (_fullscreen_nav_photos) and the
+        _raw_filtered_photos cache, so a deleted photo came back via the arrow
+        keys and a second delete failed (#132).
+
+        参数 / Parameters:
+            target_photos (list): 要删除的照片 / photos to delete.
+            in_fullscreen (bool): 是否在全屏查看器中删除 / deleting from fullscreen.
+        """
+        target_photos = [p for p in target_photos if p and p.get("filename")]
+        if not target_photos or not self._confirm_delete(target_photos):
+            return
+
         deleted_photos = []
         failed_paths = []
         for photo in target_photos:
-            filepath = photo.get("current_path") or photo.get("original_path") or ""
-            if filepath:
-                if _move_to_trash(filepath):
-                    deleted_photos.append(photo)
-                else:
-                    failed_paths.append(filepath)
-            else:
-                # If no filepath (rare DB fallback), count as deleted from DB at least
+            if self._trash_photo_files(photo):
                 deleted_photos.append(photo)
-                
-        # If any failed to move to trash, alert the user and stop DB/memory sync for them
+            else:
+                failed_paths.append(photo.get("current_path") or photo.get("original_path") or "")
         if failed_paths:
             QMessageBox.warning(
                 self,
                 self.i18n.t("browser.delete_failed"),
                 self.i18n.t("browser.delete_failed_msg").format(error="\n".join(failed_paths))
             )
-            
         if not deleted_photos:
             return
-            
-        # 4. DB Deletion
+
         if self._db:
             for photo in deleted_photos:
                 self._db.delete_photo(_photo_db_key(photo))
-                
-        # 5. Memory & UI Sync
-        deleted_identities = {_photo_identity(p) for p in deleted_photos}
-        
-        # If we are in fullscreen and deleting the current photo, determine the next photo to show
-        next_photo = None
-        if in_fullscreen and self._fullscreen._current_photo:
-            curr_id = _photo_identity(self._fullscreen._current_photo)
-            if curr_id in deleted_identities:
-                # Find its index in filtered photos list
-                _del_identities = [_photo_identity(p) for p in self._filtered_photos]
-                try:
-                    curr_idx = _del_identities.index(curr_id)
-                except ValueError:
-                    curr_idx = 0
-                # Filter out all deleted photos
-                remaining_photos = [p for p in self._filtered_photos if _photo_identity(p) not in deleted_identities]
-                if remaining_photos:
-                    next_idx = min(curr_idx, len(remaining_photos) - 1)
-                    next_photo = remaining_photos[next_idx]
-                    
-        # Update our in-memory lists
-        self._filtered_photos = [p for p in self._filtered_photos if _photo_identity(p) not in deleted_identities]
-        self._all_photos = [p for p in self._all_photos if _photo_identity(p) not in deleted_identities]
-        
-        # Sync the grid UI
-        for photo in deleted_photos:
-            self._thumb_grid.remove_photo(photo)
 
-        # 同上：批量删除后同步导入按钮可用性。
-        # As above: refresh the import action after a batch deletion.
+        deleted = {_photo_identity(p) for p in deleted_photos}
+
+        # 删除后要显示的相邻一张：在当前导航列表里取第一个被删位置上的下一张，
+        # 已到末尾则取上一张。全屏按全屏导航列表（可能是连拍序列），网格按显示列表。
+        # Neighbour to show next: the item now at the first deleted position in
+        # the active navigation list (fullscreen list or grid list).
+        nav = list(self._fullscreen_nav_photos) if in_fullscreen else list(self._filtered_photos)
+        nav_ids = [_photo_identity(p) for p in nav]
+        first_pos = next((i for i, pid in enumerate(nav_ids) if pid in deleted), 0)
+        remaining_nav = [p for p in nav if _photo_identity(p) not in deleted]
+        next_photo = remaining_nav[min(first_pos, len(remaining_nav) - 1)] if remaining_nav else None
+
+        def _keep(photos: list) -> list:
+            return [p for p in photos if _photo_identity(p) not in deleted]
+
+        self._all_photos = _keep(self._all_photos)
+        self._raw_filtered_photos = _keep(self._raw_filtered_photos)
+        remaining_fullscreen_nav = _keep(self._fullscreen_nav_photos)
+
+        if any(p.get("burst_id") is not None for p in deleted_photos):
+            # 删到连拍成员：组的张数 / 代表图都会变，增量删卡片无法正确表达，
+            # 按 _raw_filtered_photos 重建显示列表（它会重置全屏导航列表，下面恢复）。
+            # Burst members changed: group counts/representatives shift, so
+            # rebuild the display list (it resets the fullscreen list; restored below).
+            self._update_display_list()
+            if next_photo is not None:
+                nid = _photo_identity(next_photo)
+                next_photo = next(
+                    (p for p in (remaining_fullscreen_nav if in_fullscreen else self._filtered_photos)
+                     if _photo_identity(p) == nid),
+                    next_photo,
+                )
+        else:
+            self._filtered_photos = _keep(self._filtered_photos)
+            self._thumb_grid.remove_photos(deleted_photos)
+        self._fullscreen_nav_photos = remaining_fullscreen_nav
+        self._thumb_grid.clear_multi_select()
+        self._fullscreen.set_photo_list(self._fullscreen_nav_photos)
+        # 导入按钮的可用性取决于 _filtered_photos 是否为空，删空后必须同步禁用。
+        # The import action keys off _filtered_photos; refresh it after deletion.
         self._update_apple_photos_button()
 
-
-        # Reset selection if it was deleted
-        if self._thumb_grid._selected_key in deleted_identities:
-            self._thumb_grid._selected_key = None
-            
-        # Clear grid multi-select state
-        self._thumb_grid.clear_multi_select()
-        
-        # Sync fullscreen viewer list
-        self._fullscreen.set_photo_list(self._filtered_photos)
-        
-        # 6. Navigation / Transition UI state
         if in_fullscreen:
             if next_photo:
-                self._thumb_grid.select_photo(next_photo)
-                self._fullscreen.show_photo(next_photo)
-                self._detail_panel.show_photo(next_photo)
+                self._show_fullscreen_photo(next_photo, nav_photos=self._fullscreen_nav_photos)
             else:
                 self._exit_fullscreen()
+        elif next_photo:
+            self._thumb_grid.select_photo(next_photo)
+            self._detail_panel.show_photo(next_photo)
         else:
-            # If not in fullscreen, just select the first available photo or clear panel
-            if self._filtered_photos:
-                first_remaining = self._filtered_photos[0]
-                self._thumb_grid.select_photo(first_remaining)
-                self._detail_panel.show_photo(first_remaining)
-            else:
-                self._detail_panel.show_photo(None)
-                
-        # 7. Update Status bar
+            self._detail_panel.clear()
+
         self._update_status(len(self._all_photos), len(self._filtered_photos))
 
     def _enter_comparison(self):
@@ -3927,6 +4072,10 @@ class ResultsBrowserWindow(QMainWindow):
                 self._fullscreen_next()
             else:
                 self._next_photo()
+        elif key in _EXTERNAL_APP_KEYS and (event.modifiers() & Qt.ControlModifier):
+            # 必须排在打星分支之前：打星分支不看修饰键，否则 Ctrl+1 会被当成打 1 星
+            # Must precede the rating branch, which ignores modifiers
+            self._open_current_with_app(_EXTERNAL_APP_KEYS.index(key))
         elif key in _RATING_KEYS:
             # 键盘打星(Paul P0-3):Up/Down 由翻图改为星级±1,数字键 0-5 直设。
             # Keyboard rating: Up/Down now step the rating; digits set it.
@@ -3941,8 +4090,12 @@ class ResultsBrowserWindow(QMainWindow):
                     else:
                         self._detail_panel.show_photo(photo)
         elif key == Qt.Key_Tab:
-            # Tab: 开关右侧详情面板
-            self._detail_panel.setVisible(not self._detail_panel.isVisible())
+            # Tab: 开关右侧详情面板；隐藏期间全屏翻页不解码面板图片，重新显示时补刷一次
+            # Tab toggles the panel; refresh its image on re-show (skipped while hidden)
+            show = not self._detail_panel.isVisible()
+            self._detail_panel.setVisible(show)
+            if show:
+                self._detail_panel._refresh_image()
         elif key == Qt.Key_Plus or key == Qt.Key_Equal:
             self._size_slider.setValue(min(300, self._size_slider.value() + 20))
         elif key == Qt.Key_Minus:
@@ -3972,7 +4125,10 @@ class ResultsBrowserWindow(QMainWindow):
         elif key == Qt.Key_A and (event.modifiers() & Qt.ControlModifier):
             if not in_fullscreen and self._stack.currentIndex() != 2:
                 self._thumb_grid.select_all()
-        elif key == Qt.Key_Backspace and (event.modifiers() & Qt.ControlModifier):
+        elif key == Qt.Key_Delete or (key == Qt.Key_Backspace and (event.modifiers() & Qt.ControlModifier)):
+            # Delete 键（Windows 用户的习惯，#129）与 macOS 的 Command+Backspace
+            # （Qt 在 macOS 上把 Command 映射为 ControlModifier）都删除选中照片。
+            # Delete (Windows habit, #129) and Cmd/Ctrl+Backspace both delete.
             self._delete_selected_photos()
         else:
             super().keyPressEvent(event)
