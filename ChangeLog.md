@@ -1,3 +1,64 @@
+# SuperPicky 4.6.4 RC4
+
+**What's new since RC3:**
+
+- **Fixed: a folder with DNG files exported by Topaz stopped the whole run** (#125). A RAW
+  file with no readable preview image (for example a linear DNG from Topaz, which has no
+  embedded preview) made processing fail with an error. Such files are now skipped and
+  left where they are, the rest of the folder is processed normally, and the log lists
+  the skipped files at the end of the preview stage. The message now follows the
+  interface language.
+- **Deleting in the results browser** (#127 #129 #130 #131 #132 #133):
+  - Press **Delete** in the grid to delete the selected photos (⌘/Ctrl+Backspace still
+    works).
+  - The right-click menu has a new **Delete…** item. If the photo you right-click is one
+    of the checked photos, all checked photos are deleted; otherwise just that photo.
+    The confirmation dialog with *Don't ask again* is unchanged.
+  - Deleting a photo now also moves its .xmp sidecar and, for RAW+JPEG shots, the camera
+    JPEG to the Trash / Recycle Bin, and removes its cached previews inside the hidden
+    .superpicky folder.
+  - Fixed: after deleting in the full-size view, the deleted photo could come back when
+    using the arrow keys, and deleting it again showed an error.
+  - Fixed: the grid kept an empty gap where a deleted photo had been until the window
+    was resized.
+  - Fixed: with one photo checked, a keyboard delete could also delete the unchecked
+    photo kept for side-by-side comparison.
+- **Fixed: arrow keys in the full-size view did not update the crop / YOLO image** in the
+  side panel (#127).
+- **Open with an external app from the keyboard** (#128): **⌘1…⌘9** (Ctrl+1…Ctrl+9 on
+  Windows) opens the current photo with the 1st…9th app in **Settings → External Apps**.
+  The right-click menu shows the shortcut next to each *Open with* item. Previously
+  Ctrl+number set a star rating by mistake.
+- **The HTML report** title now starts with *SuperPicky* and the report has the
+  SuperPicky icon in the browser tab (#134).
+
+---
+
+# SuperPicky 4.6.4 RC4（中文）
+
+**RC3 以来的变化：**
+
+- **修复：文件夹里有 Topaz 导出的 DNG 时整批处理报错中止**（#125）。读不到预览图的
+  RAW（例如 Topaz 导出的线性 DNG 不带内嵌预览）会让处理直接报错停止。现在这类文件会被
+  跳过并原地保留，其余照片照常处理，预览提取阶段结束时日志里列出被跳过的文件；提示
+  文字也改为跟随界面语言。
+- **结果浏览器里的删除**（#127 #129 #130 #131 #132 #133）：
+  - 网格里选中照片后按 **Delete** 键即可删除（⌘/Ctrl+Backspace 仍然可用）。
+  - 右键菜单新增 **删除…**：右键点中的照片在勾选里，就删除所有勾选的照片；否则只删
+    这一张。删除确认框（含「以后不再询问」）保持不变。
+  - 删除照片时，同名 .xmp 边车以及 RAW+JPEG 拍摄的相机 JPEG 会一起移入回收站，
+    隐藏文件夹 .superpicky 里这张照片的缓存图也会删掉。
+  - 修复：在大图模式下删除后，用方向键还能翻回被删的照片，再删一次会报错。
+  - 修复：删除后网格里留下一个空格，要调整窗口大小才会消失。
+  - 修复：只勾选一张时用键盘删除，可能把双图对比用的另一张（未勾选）也一起删掉。
+- **修复：大图模式下用方向键翻页，右侧的裁切 / YOLO 图不跟着更新**（#127）。
+- **用快捷键调用外部应用打开**（#128）：**⌘1…⌘9**（Windows 为 Ctrl+1…Ctrl+9）用
+  **设置 → 外部应用**里第 1…9 个应用打开当前照片，右键菜单的「用 XX 打开」旁边会显示
+  对应快捷键。此前按 Ctrl+数字会被误当成打星。
+- **HTML 报告**的标题改为以 *SuperPicky* 开头，浏览器标签页上也会显示慧眼选鸟图标（#134）。
+
+---
+
 # SuperPicky 4.6.4 RC3
 
 **What's new since RC2:**

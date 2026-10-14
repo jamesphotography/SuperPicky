@@ -1206,16 +1206,81 @@ class ThumbnailGrid(QScrollArea):
             card._draw_overlays()
 
     def remove_photo(self, photo_or_key):
-        """从网格中移除指定缩略图卡片（不重新加载全部数据）。"""
-        photo_key = _photo_key(photo_or_key) if isinstance(photo_or_key, dict) else photo_or_key
-        card = self._cards.pop(photo_key, None)
-        if card:
-            self._grid.removeWidget(card)
-            card.deleteLater()
-        self._photos = [p for p in self._photos if _photo_key(p) != photo_key]
-        self._multi_selected.discard(photo_key)
-        if self._selected_key == photo_key:
+        """从网格中移除指定缩略图卡片（不重新加载全部数据）。/ Remove one card."""
+        self.remove_photos([photo_or_key])
+
+    def remove_photos(self, photos_or_keys) -> None:
+        """
+        从网格中移除若干缩略图卡片，并把后面的卡片前移补位（不重新加载全部数据）。
+
+        QGridLayout 的格子按 (行, 列) 固定，只拿掉卡片会在原位置留下空格，要等
+        窗口尺寸变化触发重排才会补上（#133）。这里在移除后从第一个被删位置起
+        重新排布已建好的卡片；仍在分批构建中的卡片由 _current_batch_idx 回退后
+        按新下标继续生成。
+
+        Remove cards and shift the following ones back so no gap is left.
+        QGridLayout cells are fixed (row, col), so removing a card alone left a
+        hole until a resize forced a rebuild (#133).
+
+        参数 / Parameters:
+            photos_or_keys: photo dict 或身份键的可迭代对象 / photo dicts or identity keys.
+        """
+        keys = {
+            _photo_key(item) if isinstance(item, dict) else item
+            for item in photos_or_keys
+        }
+        if not keys:
+            return
+        old_keys = [_photo_key(p) for p in self._photos]
+        removed_idx = [i for i, k in enumerate(old_keys) if k in keys]
+        if not removed_idx:
+            return
+        first_idx = removed_idx[0]
+        # 已建好卡片中被删掉的数量，用于回退分批构建进度
+        # Removed cards that were already built; rewinds the batch cursor
+        built_removed = sum(1 for i in removed_idx if i < self._current_batch_idx)
+
+        for key in keys:
+            card = self._cards.pop(key, None)
+            if card:
+                self._grid.removeWidget(card)
+                card.deleteLater()
+            self._multi_selected.discard(key)
+        if self._selected_key in keys:
             self._selected_key = None
+        self._photos = [p for p in self._photos if _photo_key(p) not in keys]
+        self._current_batch_idx = max(0, self._current_batch_idx - built_removed)
+        self._reflow_cards(first_idx)
+
+    def _reflow_cards(self, start_idx: int) -> None:
+        """
+        从 start_idx 起按当前列数重新排布已建好的卡片，并重设尾部弹簧行。
+
+        Re-place built cards from start_idx using the current column count and
+        reset the trailing stretch row.
+
+        参数 / Parameters:
+            start_idx (int): 第一个需要挪位的下标 / first index to re-place.
+        """
+        col_count = max(1, self._current_col_count)
+        built = min(self._current_batch_idx, len(self._photos))
+        for idx in range(start_idx, built):
+            card = self._cards.get(_photo_key(self._photos[idx]))
+            if card is None:
+                continue
+            row, col = divmod(idx, col_count)
+            self._grid.removeWidget(card)
+            self._grid.addWidget(card, row, col)
+
+        # 行数变少后，清掉多出来的行高与旧的尾部弹簧，避免底部留一大片空白
+        # Rows shrank: clear stale minimum heights and the old trailing stretch
+        last_row = (built - 1) // col_count if built else -1
+        for r in range(self._grid.rowCount()):
+            self._grid.setRowStretch(r, 0)
+            if r > last_row:
+                self._grid.setRowMinimumHeight(r, 0)
+        if built >= len(self._photos):
+            self._grid.setRowStretch(last_row + 1, 1)
 
     def select_photo(self, photo_or_key, ensure_visible: bool = True):
         """高亮选中指定照片卡片。"""
