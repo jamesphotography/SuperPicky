@@ -170,6 +170,44 @@ _RATING_KEYS = (
     Qt.Key_Up, Qt.Key_Down,
 )
 
+# Ctrl(macOS 为 Command)+1…9：用设置里第 1…9 个外部应用打开当前照片（#128）
+# Ctrl(Cmd)+1…9 opens the current photo with external app 1…9 (#128)
+_EXTERNAL_APP_KEYS = (
+    Qt.Key_1, Qt.Key_2, Qt.Key_3, Qt.Key_4, Qt.Key_5,
+    Qt.Key_6, Qt.Key_7, Qt.Key_8, Qt.Key_9,
+)
+
+
+def _valid_external_apps() -> list:
+    """
+    设置里配置的外部应用中名称与路径都齐全的那些，顺序即快捷键编号。
+
+    External apps from settings that have both a name and a path; their
+    order defines the Ctrl/Cmd+N numbering.
+    """
+    from advanced_config import get_advanced_config
+    return [a for a in get_advanced_config().get_external_apps()
+            if a.get("name") and a.get("path")]
+
+
+def _open_with_external_app(filepath: str, app_path: str) -> None:
+    """
+    用外部应用打开一个文件（右键「用 XX 打开」与 Ctrl/Cmd+N 快捷键共用）。
+
+    Open a file with an external app; shared by the context menu and the
+    Ctrl/Cmd+N shortcut.
+
+    参数 / Parameters:
+        filepath (str): 要打开的文件 / file to open.
+        app_path (str): 设置里配置的应用路径 / configured application path.
+    """
+    if not filepath or not app_path:
+        return
+    if sys.platform == "darwin":
+        subprocess.Popen(["open", "-a", _resolve_app_path(app_path), filepath])
+    elif sys.platform == "win32":
+        QProcess.startDetached(app_path, [filepath])
+
 
 def _rating_key_action(key: int, current_rating) -> Optional[int]:
     """
@@ -1287,25 +1325,23 @@ def _build_context_menu(parent_widget, photo: dict, directory: str):
         merge_action.triggered.connect(_merge_species)
         menu.addAction(merge_action)
 
-    # 用户配置的外部应用列表（设置 → 外部应用）
-    external_apps = get_advanced_config().get_external_apps()
+    # 用户配置的外部应用列表（设置 → 外部应用）。前 9 个显示 Ctrl/Cmd+N 快捷键提示，
+    # 浏览器窗口的 keyPressEvent 负责真正响应快捷键（#128）。
+    # External apps from settings; the first nine show their Ctrl/Cmd+N hint,
+    # the browser's keyPressEvent handles the actual shortcut (#128).
+    external_apps = _valid_external_apps()
     if external_apps:
+        from PySide6.QtGui import QKeySequence
         menu.addSeparator()
-        for app in external_apps:
-            app_name = app.get("name", "")
-            app_path = app.get("path", "")
-            if not app_name or not app_path:
-                continue
-            act = QAction(_i18n.t('browser.ctx_open_with').format(app_name=app_name), parent_widget)
+        for idx, app in enumerate(external_apps):
+            act = QAction(_i18n.t('browser.ctx_open_with').format(app_name=app["name"]), parent_widget)
             act.setEnabled(bool(filepath))
+            if idx < len(_EXTERNAL_APP_KEYS):
+                act.setShortcut(QKeySequence(f"Ctrl+{idx + 1}"))
+                act.setShortcutVisibleInContextMenu(True)
 
-            def _open_in_app(_checked=False, _fp=filepath, _ap=app_path):
-                import subprocess
-                if sys.platform == "darwin" and _fp:
-                    ap = _resolve_app_path(_ap)
-                    subprocess.Popen(["open", "-a", ap, _fp])
-                elif sys.platform == "win32" and _fp:
-                    QProcess.startDetached(_ap, [_fp])
+            def _open_in_app(_checked=False, _fp=filepath, _ap=app["path"]):
+                _open_with_external_app(_fp, _ap)
 
             act.triggered.connect(_open_in_app)
             menu.addAction(act)
@@ -3773,6 +3809,35 @@ class ResultsBrowserWindow(QMainWindow):
         base_dir = photo.get('_base_dir', self._directory)
         _show_context_menu_impl(self, photo, pos, base_dir)
 
+    def _open_current_with_app(self, index: int) -> bool:
+        """
+        用第 index 个外部应用打开当前照片（全屏为大图那张，网格为当前选中那张）。
+
+        Open the current photo (the fullscreen one, or the grid's current
+        photo) with external app number `index` (0-based).
+
+        参数 / Parameters:
+            index (int): 外部应用序号，从 0 开始 / 0-based app index.
+
+        返回 / Returns:
+            bool: 是否发起了打开 / whether an open was launched.
+        """
+        apps = _valid_external_apps()
+        if not (0 <= index < len(apps)):
+            return False
+        if self._stack.currentIndex() == _PAGE_FULLSCREEN:
+            photo = getattr(self._fullscreen, "_current_photo", None)
+        else:
+            photo = getattr(self._detail_panel, "_current_photo", None)
+        if not photo:
+            return False
+        photo = self._resolve_photo_paths(photo)
+        filepath = photo.get("current_path") or photo.get("original_path") or ""
+        if not filepath:
+            return False
+        _open_with_external_app(filepath, apps[index]["path"])
+        return True
+
     @Slot(dict, object)
     def _on_fullscreen_context_menu(self, photo: dict, global_pos):
         """全屏大图右键菜单。"""
@@ -4007,6 +4072,10 @@ class ResultsBrowserWindow(QMainWindow):
                 self._fullscreen_next()
             else:
                 self._next_photo()
+        elif key in _EXTERNAL_APP_KEYS and (event.modifiers() & Qt.ControlModifier):
+            # 必须排在打星分支之前：打星分支不看修饰键，否则 Ctrl+1 会被当成打 1 星
+            # Must precede the rating branch, which ignores modifiers
+            self._open_current_with_app(_EXTERNAL_APP_KEYS.index(key))
         elif key in _RATING_KEYS:
             # 键盘打星(Paul P0-3):Up/Down 由翻图改为星级±1,数字键 0-5 直设。
             # Keyboard rating: Up/Down now step the rating; digits set it.
