@@ -1418,7 +1418,9 @@ def _photo_companion_files(photo: dict) -> tuple:
       - 与本体同目录同名的 .xmp 边车（SuperPicky / Lightroom 写的元数据）；
       - RAW+JPEG 拍摄的配套相机 JPEG——界面上两者显示为同一张照片，删除
         这张照片就应当两个文件一起删（用户已拍板）。
-    - 直接删除：.superpicky 内部的预览 / 裁切 / YOLO 调试图，可随时重新生成。
+      两者都只按本体的目录 + 主名推导，不信任数据库路径。
+    - 直接删除：本照片根目录 .superpicky 内的预览 / 裁切 / YOLO 调试图，
+      可随时重新生成；范围之外的路径一律忽略。
 
     List the files to clean up alongside a deleted photo (#131). Trashed
     (recoverable): the same-stem .xmp sidecar and the paired camera JPEG of a
@@ -1426,7 +1428,8 @@ def _photo_companion_files(photo: dict) -> tuple:
     regenerable internal .superpicky cache images.
 
     参数 / Parameters:
-        photo (dict): 已解析成绝对路径的照片记录 / photo record with absolute paths.
+        photo (dict): 经 _resolve_photo_paths 解析的照片记录（含 _base_dir）
+            / photo record resolved by _resolve_photo_paths (with _base_dir).
 
     返回 / Returns:
         tuple[list[str], list[str]]: (要移入回收站的文件, 要直接删除的缓存)
@@ -1453,22 +1456,33 @@ def _photo_companion_files(photo: dict) -> tuple:
             if not _is_main(path) and path not in to_trash:
                 to_trash.append(path)
 
+    # 安全：要删的用户文件只按「与本体同目录、同主名」推导，不信任数据库里记录的
+    # 路径——report.db 可能随别人分享的文件夹而来或被篡改，否则可借 temp_jpeg_path
+    # 把任意文件移进回收站。RAW+JPEG 的配套 JPEG 本来就与 RAW 同目录同名。
+    # Security: derive deletable user files from the main file's directory and
+    # stem only; never trust DB-recorded paths (a shared or tampered report.db
+    # could otherwise point temp_jpeg_path at any file).
     if main and main != ".":
         _add_trash(os.path.splitext(main)[0] + ".xmp")
         _add_trash(sibling_jpeg(main) or "")
-    # 数据库记录的配套 JPEG（不在 .superpicky 缓存里的才是用户文件）
-    # The DB-recorded companion JPEG, when it is a user file rather than cache
-    jpeg = photo.get("temp_jpeg_path") or ""
-    if jpeg and not _is_internal_cache_path(jpeg):
-        _add_trash(jpeg)
 
+    # 缓存只删本照片根目录下 .superpicky 里的文件（直接删除不进回收站，范围必须锁死）
+    # Caches are removed outright, so confine them to this photo's own
+    # <base_dir>/.superpicky tree.
     caches = []
+    base_dir = photo.get("_base_dir") or ""
+    cache_root = os.path.realpath(os.path.join(base_dir, ".superpicky")) if base_dir else ""
     for key in ("temp_jpeg_path", "debug_crop_path", "yolo_debug_path"):
         path = photo.get(key) or ""
-        if path and _is_internal_cache_path(path) and os.path.isfile(path):
-            path = os.path.normpath(path)
-            if path not in caches:
-                caches.append(path)
+        if not (cache_root and path and _is_internal_cache_path(path) and os.path.isfile(path)):
+            continue
+        real = os.path.realpath(path)
+        try:
+            inside = os.path.commonpath([real, cache_root]) == cache_root
+        except ValueError:      # Windows 不同盘符 / different drives on Windows
+            inside = False
+        if inside and real != cache_root and real not in caches:
+            caches.append(real)
     return to_trash, caches
 
 

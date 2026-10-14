@@ -109,7 +109,7 @@ def test_companions_never_include_the_main_file(tmp_path):
     main = tmp_path / "IMG_9.JPG"
     main.write_text("")
     (tmp_path / "IMG_9.xmp").write_text("")
-    trash, caches = _photo_companion_files({"current_path": str(main)})
+    trash, caches = _photo_companion_files({"current_path": str(main), "_base_dir": str(tmp_path)})
     assert [os.path.basename(p) for p in trash] == ["IMG_9.xmp"]
     assert caches == []
 
@@ -161,3 +161,39 @@ def test_fullscreen_arrow_keys_refresh_detail_panel_image(browser, monkeypatch):
 
     current = win._fullscreen._current_photo["filename"]
     assert refreshed and refreshed[-1] == current
+
+
+def test_companions_ignore_db_paths_outside_the_photo(tmp_path):
+    """
+    安全：数据库里伪造的路径不能让删除波及无关文件。
+    temp_jpeg_path 指向别处的用户文件 → 不删；缓存路径指向别的文件夹的
+    .superpicky（或借 .. 跳出）→ 不删。
+
+    Security: forged DB paths must not widen the delete to unrelated files.
+    """
+    from ui.results_browser_window import _photo_companion_files
+    shoot = tmp_path / "shoot"
+    other = tmp_path / "other"
+    (shoot / ".superpicky").mkdir(parents=True)
+    (other / ".superpicky").mkdir(parents=True)
+    main = shoot / "IMG_1.CR3"
+    main.write_text("")
+    victim = other / "precious.jpg"
+    victim.write_text("")
+    foreign_cache = other / ".superpicky" / "x.jpg"
+    foreign_cache.write_text("")
+    own_cache = shoot / ".superpicky" / "IMG_1.jpg"
+    own_cache.write_text("")
+
+    trash, caches = _photo_companion_files({
+        "current_path": str(main), "_base_dir": str(shoot),
+        "temp_jpeg_path": str(victim),
+        "debug_crop_path": str(foreign_cache),
+        "yolo_debug_path": str(shoot / ".superpicky" / ".." / ".." / "other" / ".superpicky" / "x.jpg"),
+    })
+    assert trash == []
+    assert caches == []
+
+    _, caches = _photo_companion_files({
+        "current_path": str(main), "_base_dir": str(shoot), "temp_jpeg_path": str(own_cache)})
+    assert caches == [os.path.realpath(own_cache)]
