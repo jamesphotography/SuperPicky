@@ -1598,6 +1598,8 @@
     "ctx_show_in_finder": "在 Finder 中顯示",
     "ctx_open_with": "用 {app_name} 開啟",
     "ctx_add_external_app": "在設定中新增外部應用…",
+    "ctx_delete": "刪除…",
+    "ctx_delete_batch": "刪除選取的 {count} 張…",
     "ctx_copy_path": "複製檔案路徑",
     "ctx_edit_species_batch": "修改選取 {count} 張的鳥種…",
     "ctx_edit_species": "修改鳥種…",

@@ -1327,6 +1327,29 @@ def _build_context_menu(parent_widget, photo: dict, directory: str):
         copy_action.triggered.connect(_copy_path)
     menu.addAction(copy_action)
 
+    # 删除（#130）：范围规则与「修改鸟种」相同——点中的照片在勾选集里就删整个
+    # 勾选集，否则只删这一张；全屏只删当前这张。走浏览器唯一的删除实现，
+    # 确认框（含「以后不再询问」）与附属文件清理都与 Delete 键一致。
+    # Delete (#130): same scope rule as Edit Species; goes through the single
+    # browser delete path, so confirmation and companion cleanup match the key.
+    delete_handler = getattr(parent_widget, "_delete_photos", None)
+    if callable(delete_handler):
+        _del_targets = _species_edit_targets(parent_widget, photo)
+        _del_label = (
+            _i18n.t('browser.ctx_delete_batch').format(count=len(_del_targets))
+            if len(_del_targets) > 1 else _i18n.t('browser.ctx_delete')
+        )
+        menu.addSeparator()
+        delete_action = QAction(_del_label, parent_widget)
+
+        def _delete(_checked=False, _targets=_del_targets):
+            stack = getattr(parent_widget, "_stack", None)
+            in_fullscreen = bool(stack is not None and stack.currentIndex() == _PAGE_FULLSCREEN)
+            delete_handler(list(_targets), in_fullscreen=in_fullscreen)
+
+        delete_action.triggered.connect(_delete)
+        menu.addAction(delete_action)
+
     return menu
 
 
@@ -3763,17 +3786,23 @@ class ResultsBrowserWindow(QMainWindow):
 
     def _delete_selected_photos(self):
         """
-        Command/Ctrl + Backspace：删除网格多选（无多选则当前选中）或全屏当前图片。
+        Delete 键 / Command(Ctrl) + Backspace：删除网格勾选的照片（无勾选则当前
+        选中的那张）或全屏当前图片。
 
-        Delete the grid multi-selection (or the current photo), or the
-        fullscreen photo.
+        用严格勾选集 get_explicitly_selected_photos：get_multi_selected_photos
+        是给双图对比用的，只勾一张时会补入未勾选的锚点，拿它删除会多删一张
+        用户没勾的照片。
+
+        Delete key / Cmd(Ctrl)+Backspace: delete the checked grid photos (or the
+        current one), or the fullscreen photo. Uses the strict checked set —
+        the comparison getter injects an unchecked anchor photo.
         """
         in_fullscreen = (self._stack.currentIndex() == 1)
         if in_fullscreen:
             current = getattr(self._fullscreen, "_current_photo", None)
             target_photos = [current] if current else []
         else:
-            target_photos = self._thumb_grid.get_multi_selected_photos()
+            target_photos = self._thumb_grid.get_explicitly_selected_photos()
             if not target_photos and self._detail_panel._current_photo:
                 target_photos = [self._detail_panel._current_photo]
         if target_photos:
@@ -4027,7 +4056,10 @@ class ResultsBrowserWindow(QMainWindow):
         elif key == Qt.Key_A and (event.modifiers() & Qt.ControlModifier):
             if not in_fullscreen and self._stack.currentIndex() != 2:
                 self._thumb_grid.select_all()
-        elif key == Qt.Key_Backspace and (event.modifiers() & Qt.ControlModifier):
+        elif key == Qt.Key_Delete or (key == Qt.Key_Backspace and (event.modifiers() & Qt.ControlModifier)):
+            # Delete 键（Windows 用户的习惯，#129）与 macOS 的 Command+Backspace
+            # （Qt 在 macOS 上把 Command 映射为 ControlModifier）都删除选中照片。
+            # Delete (Windows habit, #129) and Cmd/Ctrl+Backspace both delete.
             self._delete_selected_photos()
         else:
             super().keyPressEvent(event)

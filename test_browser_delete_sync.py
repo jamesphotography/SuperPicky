@@ -197,3 +197,66 @@ def test_companions_ignore_db_paths_outside_the_photo(tmp_path):
     _, caches = _photo_companion_files({
         "current_path": str(main), "_base_dir": str(shoot), "temp_jpeg_path": str(own_cache)})
     assert caches == [os.path.realpath(own_cache)]
+
+
+def _check(win, photos) -> None:
+    """在网格里勾选这些照片（蓝色勾选集）/ Check these photos in the grid."""
+    from ui.thumbnail_grid import _photo_key
+    for p in photos:
+        win._thumb_grid._multi_selected.add(_photo_key(p))
+
+
+def test_delete_key_in_grid_deletes_checked_photos(browser):
+    """#129：网格里按 Delete 键删除勾选的照片。"""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QKeyEvent
+    win, _, trashed = browser
+    _check(win, win._filtered_photos[1:3])
+    win.keyPressEvent(QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key_Delete, Qt.NoModifier))
+
+    assert sorted(n for n in trashed if n.endswith(".CR3")) == ["IMG_1.CR3", "IMG_2.CR3"]
+    assert _names(win._filtered_photos) == ["IMG_0", "IMG_3", "IMG_4"]
+
+
+def test_single_check_does_not_delete_unchecked_anchor(browser):
+    """
+    只勾一张时只删这一张：不能把双图对比用的未勾选锚点一起删掉。
+
+    With one checked photo, the unchecked comparison anchor must not be deleted.
+    """
+    win, _, trashed = browser
+    win._thumb_grid._anchor_photo = win._filtered_photos[0]   # 未勾选的锚点 / unchecked anchor
+    _check(win, [win._filtered_photos[3]])
+    win._delete_selected_photos()
+    assert [n for n in trashed if n.endswith(".CR3")] == ["IMG_3.CR3"]
+
+
+def test_context_menu_delete_follows_selection_scope(browser):
+    """#130：右键点中勾选集里的照片 → 删整个勾选集；点中勾选集外的 → 只删那一张。"""
+    from ui.results_browser_window import _build_context_menu
+    from tools.i18n import get_i18n
+    win, root, trashed = browser
+    i18n = get_i18n()
+    photos = list(win._filtered_photos)
+    _check(win, photos[0:2])
+
+    def _delete_action(photo):
+        menu = _build_context_menu(win, photo, root)
+        return next(a for a in menu.actions()
+                    if a.text() in (i18n.t("browser.ctx_delete"),
+                                    i18n.t("browser.ctx_delete_batch").format(count=2)))
+
+    # 勾选集外的 IMG_4：只删它 / outside the selection: just IMG_4
+    action = _delete_action(photos[4])
+    assert action.text() == i18n.t("browser.ctx_delete")
+    action.trigger()
+    assert [n for n in trashed if n.endswith(".CR3")] == ["IMG_4.CR3"]
+
+    # 删除后勾选会被清空，重新勾选 / a delete clears the checks; re-check
+    _check(win, photos[0:2])
+    # 勾选集内的 IMG_0：删 IMG_0 和 IMG_1 / inside: the whole selection
+    action = _delete_action(photos[0])
+    assert action.text() == i18n.t("browser.ctx_delete_batch").format(count=2)
+    action.trigger()
+    assert sorted(n for n in trashed if n.endswith(".CR3")) == ["IMG_0.CR3", "IMG_1.CR3", "IMG_4.CR3"]
+    assert _names(win._filtered_photos) == ["IMG_2", "IMG_3"]

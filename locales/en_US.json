@@ -1598,6 +1598,8 @@
     "ctx_show_in_finder": "Show in Finder",
     "ctx_open_with": "Open with {app_name}",
     "ctx_add_external_app": "Add external app in Settings…",
+    "ctx_delete": "Delete…",
+    "ctx_delete_batch": "Delete {count} Selected…",
     "ctx_copy_path": "Copy File Path",
     "ctx_edit_species_batch": "Edit Species of {count} Selected…",
     "ctx_edit_species": "Edit Species…",
