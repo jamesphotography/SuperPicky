@@ -340,6 +340,24 @@ def test_html_escapes_hostile_dir_name():
     assert "&lt;script&gt;" in html
 
 
+def test_title_prefixed_with_superpicky_and_has_favicon():
+    """
+    #134：<title> 以 SuperPicky 开头，并内嵌 PNG 网站图标（单文件报告不能引用外部文件）。
+
+    The title starts with SuperPicky and a PNG favicon is embedded inline.
+    """
+    import re
+    data = replace(aggregate([_photo()]), dir_name="2026-10-11 Kakadu")
+    html = build_html(data, {})
+    assert "<title>SuperPicky – 2026-10-11 Kakadu</title>" in html
+    m = re.search(r'<link rel="icon" type="image/png" href="(data:image/png;base64,[^"]+)">', html)
+    assert m, "favicon missing"
+
+    # 没有目录名时只显示 SuperPicky / no folder name -> plain SuperPicky
+    html = build_html(replace(data, dir_name=""), {})
+    assert "<title>SuperPicky</title>" in html
+
+
 def test_html_escapes_hostile_filename():
     """文件名同样来自外部，必须转义。"""
     data = aggregate([_photo(filename="a<b>.NEF")])
