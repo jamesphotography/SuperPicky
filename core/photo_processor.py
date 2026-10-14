@@ -795,6 +795,9 @@ class PhotoProcessor:
         heif_dict = {}               # HIF/HEIF 文件暂存
         heif_processed_as_raw = set() # 被当作 RAW 处理的 HIF 前缀
         files_tbr = []
+        # 同一主文件名可能有多种 RAW（如相机原片 X.CR3 与 Topaz 导出的 X.dng），
+        # 先全部收集，扫描完再按优先级选一个 / collect all, pick one after the scan
+        raw_candidates: Dict[str, List[str]] = {}
         
         for filename in os.listdir(self.dir_path):
             if filename.startswith('.'):
@@ -810,7 +813,7 @@ class PhotoProcessor:
             
             file_prefix, file_ext = os.path.splitext(filename)
             if file_ext.lower() in RAW_EXTENSIONS:
-                raw_dict[file_prefix] = file_ext
+                raw_candidates.setdefault(file_prefix, []).append(file_ext)
             elif file_ext.lower() in HEIF_EXTENSIONS:
                 # HEIF/HIF: 仅当同名前缀没有 RAW 时才加入（RAW 优先）
                 heif_dict[file_prefix] = file_ext
@@ -818,6 +821,27 @@ class PhotoProcessor:
                 jpg_dict[file_prefix] = file_ext
                 files_tbr.append(filename)
         
+        # 同名多种 RAW 只处理一个：相机原生 RAW 优先于 DNG。此前以主文件名为键
+        # 直接覆盖，留哪个取决于 os.listdir 的顺序——常见结果是 Topaz 导出的 DNG
+        # 顶替了 CR3 原片：原片不评分、不整理，同名 XMP 还被 DNG 带进星级目录。
+        # 其余同名 RAW 原地不动，并在日志里列出。
+        # One photo per stem: camera-native RAW beats DNG. The old code let
+        # whichever file os.listdir returned last win, so a Topaz DNG often
+        # replaced the original CR3 (left unrated, its XMP carried off with
+        # the DNG). The other same-stem RAWs are left untouched and logged.
+        skipped_same_name = []
+        for prefix, exts in raw_candidates.items():
+            ordered = sorted(exts, key=lambda e: (e.lower() == '.dng', e.lower(), e))
+            raw_dict[prefix] = ordered[0]
+            skipped_same_name.extend(prefix + e for e in ordered[1:])
+        if skipped_same_name:
+            shown = ", ".join(sorted(skipped_same_name)[:10])
+            if len(skipped_same_name) > 10:
+                shown += ", …"
+            self._log(self.i18n.t(
+                "logs.same_name_raw_skipped", count=len(skipped_same_name), names=shown,
+            ), "warning")
+
         # 将 HIF 作为 RAW 处理（仅对同名前缀无 RAW 文件的）
         for prefix, ext in heif_dict.items():
             if prefix not in raw_dict:

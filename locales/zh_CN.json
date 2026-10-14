@@ -237,6 +237,7 @@
     "caffeinate_started": "☕ 已启动防休眠保护（处理期间Mac不会休眠或启动屏幕保护程序）",
     "caffeinate_stopped": "☕ 已停止防休眠保护",
     "caffeinate_failed": "⚠️  防休眠启动失败: {error}（不影响正常处理）",
+    "same_name_raw_skipped": "⚠️ 有 {count} 个 RAW 与另一个 RAW 同名，同名的只处理一个（相机原生 RAW 优先于 DNG）。以下文件原地保留、未评分：{names}",
     "scan_time": "⏱️  文件扫描耗时: {time:.1f}ms",
     "raw_no_preview_skipped": "⚠️ 无法从 {name} 读取预览图（不支持的 RAW 格式，或文件没有内嵌预览，例如 Topaz 导出的 DNG），已跳过这张。",
     "raw_no_preview_summary": "⚠️ 有 {count} 个 RAW 文件读不到预览图，已跳过（原地保留，未评分）：{names}",

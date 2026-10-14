@@ -237,6 +237,7 @@
     "caffeinate_started": "☕ Sleep prevention activated (Mac won't sleep or start screen saver during processing)",
     "caffeinate_stopped": "☕ Sleep prevention deactivated",
     "caffeinate_failed": "⚠️  Sleep prevention activation failed: {error} (processing will continue normally)",
+    "same_name_raw_skipped": "⚠️ {count} RAW file(s) share a file name with another RAW; only one per name is processed (camera RAW before DNG). Left in place, not rated: {names}",
     "scan_time": "⏱️  File scan time: {time:.1f}ms",
     "raw_no_preview_skipped": "⚠️ Cannot read a preview image from {name} (unsupported RAW format, or no embedded preview — e.g. a DNG exported by Topaz). Skipped this file.",
     "raw_no_preview_summary": "⚠️ {count} RAW file(s) had no readable preview image and were skipped (left in place, not rated): {names}",
