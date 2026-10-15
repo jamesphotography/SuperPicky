@@ -9,7 +9,7 @@ import json
 import os
 from pathlib import Path
 import sys
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 from tools.i18n import t as _t
 from config import get_app_config_dir, get_lazy_registry
 
@@ -113,6 +113,14 @@ class AdvancedConfig:
         # close and remember; "tray" = hide to tray (Lightroom plugin keeps
         # working); "quit" = exit the app.
         "close_action": "ask",
+
+        # #126: 处理哪些文件格式。"all"=全部；"selected"=只处理 format_filter_groups
+        # 里勾选的分组（分组定义见 core/format_filter.py）。与 RAW 同名的 JPG 跟随 RAW。
+        # #126: which file formats to process. "all" = everything; "selected" =
+        # only the checked groups (see core/format_filter.py). A JPG paired
+        # with a RAW follows that RAW.
+        "format_filter_mode": "all",
+        "format_filter_groups": None,   # None = 默认勾选（除单独的 JPEG 外全部）/ defaults
 
         # V4.6: 无鸟补救扫描 (spec: docs/specs/2026-07-14-no-bird-rescue-scan-design.md)
         # V4.6: No-bird rescue scan
@@ -823,6 +831,65 @@ class AdvancedConfig:
         value (str): "ask" / "tray" / "quit"; anything else is stored as "ask"
         """
         self.config["close_action"] = value if value in CLOSE_ACTIONS else "ask"
+
+    @property
+    def format_filter_mode(self) -> str:
+        """
+        处理文件格式筛选模式（#126）："all" / "selected"；非法值按 "all" 处理。
+
+        File-format filter mode (#126): "all" / "selected"; invalid -> "all".
+        """
+        from core.format_filter import FORMAT_FILTER_MODES
+        value = self.config.get("format_filter_mode", "all")
+        return value if value in FORMAT_FILTER_MODES else "all"
+
+    def set_format_filter_mode(self, value: str) -> None:
+        """
+        设置文件格式筛选模式（不内部 save，由调用方保存）。
+
+        参数:
+        value (str): "all" / "selected"；其他值存为 "all"
+
+        Set the file-format filter mode (no internal save).
+        """
+        from core.format_filter import FORMAT_FILTER_MODES
+        self.config["format_filter_mode"] = value if value in FORMAT_FILTER_MODES else "all"
+
+    @property
+    def format_filter_groups(self) -> List[str]:
+        """
+        「只处理勾选的格式」时勾选的分组 id；从未设置过时返回默认勾选
+        （除「单独的 JPEG」外全部）。
+
+        Checked format groups for "selected" mode; defaults to every group
+        except standalone JPEG when never set.
+        """
+        from core.format_filter import DEFAULT_FORMAT_GROUPS, normalize_groups
+        value = self.config.get("format_filter_groups")
+        if not isinstance(value, list):
+            return list(DEFAULT_FORMAT_GROUPS)
+        return normalize_groups(value)
+
+    def set_format_filter_groups(self, groups: List[str]) -> None:
+        """
+        设置勾选的格式分组（去掉未知 id；不内部 save，由调用方保存）。
+
+        参数:
+        groups (List[str]): 分组 id 列表，允许为空（此时不处理任何照片）
+
+        Set the checked format groups (unknown ids dropped; no internal save).
+        """
+        from core.format_filter import normalize_groups
+        self.config["format_filter_groups"] = normalize_groups(groups)
+
+    def get_allowed_extensions(self):
+        """
+        当前设置下允许处理的扩展名集合；None 表示不筛选。
+
+        Allowed extensions under the current setting; None = no filtering.
+        """
+        from core.format_filter import allowed_extensions
+        return allowed_extensions(self.format_filter_mode, self.format_filter_groups)
 
     def set_ignored_update_version(self, value: Optional[str]) -> None:
         """设置要跳过提醒的版本号，传 None 清除。"""

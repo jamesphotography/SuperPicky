@@ -21,7 +21,7 @@ import subprocess
 import shutil
 import threading
 import queue
-from collections import deque
+from collections import Counter, deque
 import numpy as np
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -819,7 +819,31 @@ class PhotoProcessor:
                 heif_dict[file_prefix] = file_ext
             if file_ext.lower() in JPG_EXTENSIONS:
                 jpg_dict[file_prefix] = file_ext
-                files_tbr.append(filename)
+
+        # #126 格式筛选：None = 处理全部；否则只处理允许的扩展名。先筛再挑主文件——
+        # 设了「只处理 DNG」时同名的 CR3 被筛掉，DNG 才是这组的主文件。
+        # #126 format filter (None = everything). Filter before picking the
+        # main file, so "DNG only" makes the DNG the main file of its group.
+        allowed_exts = get_advanced_config().get_allowed_extensions()
+        # 筛选前有 RAW / HEIF 的主文件名，用来判断 JPG 是否属于某张被筛掉的照片
+        # Stems that had a RAW/HEIF before filtering (to classify paired JPGs)
+        raw_candidates_all = set(raw_candidates)
+        heif_all = set(heif_dict)
+
+        def _allowed(ext: str) -> bool:
+            return allowed_exts is None or ext.lower() in allowed_exts
+
+        filtered_out: List[str] = []   # 按设置跳过的文件名 / skipped by the filter
+        for prefix in list(raw_candidates):
+            kept = [e for e in raw_candidates[prefix] if _allowed(e)]
+            filtered_out.extend(prefix + e for e in raw_candidates[prefix] if not _allowed(e))
+            if kept:
+                raw_candidates[prefix] = kept
+            else:
+                del raw_candidates[prefix]
+        for prefix in list(heif_dict):
+            if not _allowed(heif_dict[prefix]):
+                filtered_out.append(prefix + heif_dict.pop(prefix))
         
         # 同名多种 RAW 只处理一个：相机原生 RAW 优先于 DNG。此前以主文件名为键
         # 直接覆盖，留哪个取决于 os.listdir 的顺序——常见结果是 Topaz 导出的 DNG
@@ -847,6 +871,37 @@ class PhotoProcessor:
             if prefix not in raw_dict:
                 raw_dict[prefix] = ext
                 heif_processed_as_raw.add(prefix)
+
+        # JPG：与 RAW / HEIF 同名的是那张照片的一部分，跟随主文件；主文件被筛掉
+        # 时这张 JPG 也不处理。没有同名 RAW / HEIF 的才是「单独的 JPEG」，按 jpeg
+        # 分组决定。
+        # JPG: a same-stem JPG belongs to its RAW/HEIF and follows it (dropped
+        # when the main file was filtered out); only a JPG without one is a
+        # standalone JPEG, governed by the jpeg group.
+        main_stems = set(raw_candidates_all) | set(heif_all)
+        for prefix in list(jpg_dict):
+            ext = jpg_dict[prefix]
+            if prefix in raw_dict:
+                keep = True
+            elif prefix in main_stems:
+                keep = False
+            else:
+                keep = _allowed(ext)
+            if keep:
+                files_tbr.append(prefix + ext)
+            else:
+                filtered_out.append(prefix + jpg_dict.pop(prefix))
+
+        if filtered_out:
+            # 筛选是长期设置，必须看得见：列出跳过的数量与格式
+            # The filter persists across runs, so always say what it skipped
+            by_ext = Counter(os.path.splitext(n)[1].lower() for n in filtered_out)
+            detail = ", ".join(f"{ext} ×{n}" for ext, n in sorted(by_ext.items()))
+            self._log(self.i18n.t(
+                "logs.format_filter_skipped", count=len(filtered_out), detail=detail,
+            ), "warning")
+            if not raw_dict and not files_tbr:
+                self._log(self.i18n.t("logs.format_filter_nothing_left"), "warning")
 
         scan_time = (time.time() - scan_start) * 1000
         self._log(self.i18n.t("logs.scan_time", time=scan_time))
