@@ -31,15 +31,10 @@ build/
 *.swo
 
 # 测试和临时文件
-# test_*.py 不再忽略：测试文件一律纳入版本控制（此前这条规则让新测试默认不进 git，
-# 本机曾有 3 个正经测试从未提交）。临时脚本请放 scratchpad，不要用 test_ 前缀。
-# test_*.py is no longer ignored: every test belongs in version control.
-!test_about_version_check.py
-# 使用统计遥测回归测试 / Keep usage-analytics telemetry regression coverage
-!test_telemetry_config.py
-!test_telemetry_send.py
-!test_telemetry_settings_ui.py
-!test_no_countly_residue.py
+# 回归测试一律放 tests/ 并纳入版本控制（issue #135）；临时脚本请放 scratchpad，
+# 不要用 test_ 前缀，也不要放仓库根目录。
+# Regression tests live in tests/ and are tracked (issue #135); throwaway
+# scripts go to a scratchpad, never the repo root and never with a test_ prefix.
 analyze_*.py
 add_*.py
 write_*.py
@@ -114,9 +109,9 @@ pkg_scripts/
 entitlements.plist
 exif_args.txt
 
-# 开发/实验/测试目录（本地调试用，不上传）
+# 开发/实验目录（本地调试用，不上传）
+# Local experiments (not tracked)
 experiments/
-tests/
 
 # scripts_dev 里的脚本要进版本库，只忽略它们产生的缓存与工作目录
 # Scripts in scripts_dev are tracked; only their caches / work dirs are ignored
