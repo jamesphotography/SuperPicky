@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -555,6 +556,8 @@ class SettingsCenter(QDialog):
         self._cull_rescue.setStyleSheet(self._checkbox_qss())
         self._cull_rescue.stateChanged.connect(self._on_rescue_changed)
         lay.addWidget(self._cull_rescue)
+
+        self._build_format_filter_section(lay, cfg)
 
         lay.addStretch(1)
 
@@ -1538,6 +1541,97 @@ class SettingsCenter(QDialog):
         cfg.set_rescue_scan_enabled(self._cull_rescue.isChecked())
         cfg.save()
 
+    def _build_format_filter_section(self, lay: QVBoxLayout, cfg) -> None:
+        """
+        精选页「处理的文件格式」区（#126）：下拉选「全部」或「只处理勾选的格式」，
+        后者展开按品牌分组的勾选列表。改动即时保存。
+
+        与 RAW 同名的 JPG 跟随 RAW，不受「单独的 JPEG」影响——提示文字说明这一点。
+
+        The "File formats to process" section (#126): a combo for "All" vs
+        "Only checked formats", the latter revealing per-brand checkboxes.
+        Changes persist immediately.
+
+        参数 / Parameters:
+            lay (QVBoxLayout): 精选页主布局 / culling page layout.
+            cfg: AdvancedConfig 实例 / AdvancedConfig instance.
+        """
+        from core.format_filter import BRAND_LABELS, FORMAT_GROUPS
+
+        lay.addSpacing(8)
+        title = QLabel(self.i18n.t("settings.culling_formats_section"))
+        title.setStyleSheet(f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;")
+        lay.addWidget(title)
+
+        self._format_mode_combo = QComboBox()
+        for value in ("all", "selected"):
+            self._format_mode_combo.addItem(self.i18n.t(f"settings.culling_formats_{value}"), value)
+        self._format_mode_combo.setCurrentIndex(
+            max(self._format_mode_combo.findData(cfg.format_filter_mode), 0))
+        style_combo_popup(self._format_mode_combo)
+        self._format_mode_combo.currentIndexChanged.connect(self._on_format_mode_changed)
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(self._format_mode_combo)
+        mode_row.addStretch(1)
+        lay.addLayout(mode_row)
+
+        self._format_groups_box = QWidget()
+        grid = QGridLayout(self._format_groups_box)
+        grid.setContentsMargins(24, 4, 0, 0)
+        grid.setHorizontalSpacing(24)
+        grid.setVerticalSpacing(6)
+        checked = set(cfg.format_filter_groups)
+        self._format_checks: dict[str, QCheckBox] = {}
+        for i, (gid, exts) in enumerate(FORMAT_GROUPS):
+            # 相机品牌后面列出扩展名；DNG / HEIF / JPEG 的名字本身就是格式，不再重复
+            # Brands list their extensions; DNG/HEIF/JPEG names already are formats
+            if gid in BRAND_LABELS and gid != "dng":
+                ext_text = " ".join(e.upper().lstrip(".") for e in exts)
+                label = f"{BRAND_LABELS[gid]}  ({ext_text})"
+            else:
+                label = BRAND_LABELS.get(gid) or self.i18n.t(f"settings.culling_formats_{gid}")
+            cb = QCheckBox(label)
+            cb.setChecked(gid in checked)
+            cb.setStyleSheet(self._checkbox_qss())
+            cb.stateChanged.connect(self._on_format_groups_changed)
+            self._format_checks[gid] = cb
+            # 单独的 JPEG 独占最后一行，与相机格式分开 / standalone JPEG on its own row
+            if gid == "jpeg":
+                grid.addWidget(cb, len(FORMAT_GROUPS) // 2, 0, 1, 2)
+            else:
+                grid.addWidget(cb, i // 2, i % 2)
+        lay.addWidget(self._format_groups_box)
+
+        hint = QLabel(self.i18n.t("settings.culling_formats_hint"))
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"color:{COLORS['text_muted']};font-size:11px;")
+        lay.addWidget(hint)
+        self._format_groups_box.setVisible(cfg.format_filter_mode == "selected")
+
+    def _on_format_mode_changed(self, _index: int) -> None:
+        """
+        格式筛选模式变化 → 立即持久化，并显示 / 隐藏勾选列表（#126）。
+
+        Filter mode changed → persist and show/hide the checkbox list (#126).
+        """
+        from advanced_config import get_advanced_config
+        cfg = get_advanced_config()
+        mode = self._format_mode_combo.currentData()
+        cfg.set_format_filter_mode(mode)
+        cfg.save()
+        self._format_groups_box.setVisible(mode == "selected")
+
+    def _on_format_groups_changed(self, _state: int) -> None:
+        """
+        任一格式勾选变化 → 立即持久化勾选的分组（#126）。
+
+        A format checkbox changed → persist the checked groups (#126).
+        """
+        from advanced_config import get_advanced_config
+        cfg = get_advanced_config()
+        cfg.set_format_filter_groups([g for g, cb in self._format_checks.items() if cb.isChecked()])
+        cfg.save()
+
     def _toggle_culling_advanced(self) -> None:
         """展开/收起精选页底部「高级选项」区。/ Expand/collapse the Advanced disclosure."""
         self._advanced_expanded = not self._advanced_expanded
@@ -1572,6 +1666,9 @@ class SettingsCenter(QDialog):
         cfg.set_flight_check(self._cull_flight.isChecked())
         cfg.set_burst_check(self._cull_burst.isChecked())
         cfg.set_rescue_scan_enabled(self._cull_rescue.isChecked())
+        cfg.set_format_filter_mode(self._format_mode_combo.currentData())
+        cfg.set_format_filter_groups(
+            [g for g, cb in self._format_checks.items() if cb.isChecked()])
         cfg.set_skill_level(self._current_skill_key)
         # 当处于自定义档时同步写回 custom_* 字段，避免 CLI 路径读到陈旧值。
         # When in custom mode, also persist custom_* fields so CLI path reads fresh values.
