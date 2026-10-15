@@ -37,6 +37,10 @@ from PIL import Image
 app = Flask(__name__)
 CORS(app)  # 允许跨域请求
 
+# 新接口独立路由，保留原识鸟协议。 / Additive routes; recognition stays unchanged.
+from tools.bird_catalog_routes import catalog_api
+app.register_blueprint(catalog_api)
+
 # 全局配置
 DEFAULT_PORT = config.server.PORT
 DEFAULT_HOST = config.server.HOST
