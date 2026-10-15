@@ -467,6 +467,9 @@ class WorkerThread(threading.Thread):
                 f"  Metadata Mode      : {_adv.get_metadata_write_mode()}",
                 f"  Skill Level        : {_adv.skill_level}",
                 f"  Language           : {_adv.language or 'Auto'}",
+                f"  File Formats       : "
+                + ("All" if _adv.format_filter_mode != "selected"
+                   else (", ".join(_adv.format_filter_groups) or "(none)")),
             ])
             try:
                 from tools.system_logger import collect_system_info as _collect_sys
@@ -2279,6 +2282,30 @@ class SuperPickyMainWindow(QMainWindow):
             return False
         return False
 
+    def _format_filter_summary(self, cfg) -> str:
+        """
+        文件格式筛选生效时返回确认弹窗里的一句说明（如「…只处理 Canon、DNG…」），否则返回空串（#126）。
+
+        The confirmation-dialog line describing the active format filter
+        (e.g. "...only Canon, DNG..."), else "" (#126).
+
+        参数 / Parameters:
+            cfg: AdvancedConfig 实例 / AdvancedConfig instance.
+
+        返回 / Returns:
+            str: 摘要；未启用筛选时为空串 / summary, or "" when not filtering.
+        """
+        from core.format_filter import BRAND_LABELS
+        if cfg.format_filter_mode != "selected":
+            return ""
+        groups = cfg.format_filter_groups
+        if not groups:
+            # 一个格式都没勾：整句提示「不会处理任何照片」/ nothing checked
+            return self.i18n.t("dialogs.note_format_filter_none")
+        names = [BRAND_LABELS.get(g) or self.i18n.t(f"settings.culling_formats_{g}") for g in groups]
+        sep = ", " if self.i18n.current_lang.startswith("en") else "、"
+        return self.i18n.t("dialogs.note_format_filter", formats=sep.join(names))
+
     def _file_organization_text(self, layout: str, birdid_on: bool, extra_notes: str) -> str:
         """
         生成「开始处理」确认弹窗的正文（纯文本，调用方负责转义与换行）。
@@ -2426,6 +2453,15 @@ class SuperPickyMainWindow(QMainWindow):
                 _ico("square-stack.svg", _sec)
                 + _esc(self.i18n.t("dialogs.note_burst",
                                    count=_adv_confirm.burst_min_count))
+            )
+
+        # #126 文件格式筛选是长期设置，开始前必须明示，免得换相机后照片被悄悄跳过
+        # #126: the format filter persists, so state it before every run
+        _fmt_summary = self._format_filter_summary(_adv_confirm)
+        if _fmt_summary:
+            extra_notes.append(
+                _ico("file-search-corner.svg", _sec)
+                + _esc(_fmt_summary)
             )
 
         notes_block = ""

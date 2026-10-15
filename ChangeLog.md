@@ -1,3 +1,43 @@
+# SuperPicky 4.6.4 RC5
+
+**What's new since RC4:**
+
+- **Choose which file formats to process** (#126). **Settings → Culling → File formats
+  to process** can be switched from *All supported formats* to *Only the formats checked
+  below*, with one checkbox per camera brand (Canon, Nikon, Sony, Fujifilm, OM System /
+  Olympus, Panasonic, Pentax, Hasselblad, Phase One) plus DNG, HEIF and *Standalone
+  JPEG*. A JPEG with the same name as a RAW is part of that RAW photo and follows it;
+  *Standalone JPEG* (a JPEG without a RAW of the same name) is unchecked by default.
+  Files that are not processed stay where they are. Because the setting applies to
+  every folder until you change it, the start-of-processing dialog says when it is on,
+  and the log lists how many files of each format were skipped.
+- **Fixed: a RAW with the same name as another RAW could replace the original.** With
+  both `IMG_1234.CR3` and a `IMG_1234.dng` exported by Topaz in the same folder, only one
+  was processed, and which one depended on the file system — often the DNG. The CR3
+  was then left unrated, and its .xmp sidecar moved away with the DNG. Now the camera
+  RAW is always the one processed (or the DNG, if you only check DNG in the new format
+  setting); the other file stays where it is and is listed in the log.
+
+---
+
+# SuperPicky 4.6.4 RC5（中文）
+
+**RC4 以来的变化：**
+
+- **可以选择只处理哪些文件格式**（#126）。**设置 → 精选 → 处理的文件格式**可以从
+  「全部支持的格式」改成「只处理下面勾选的格式」，按相机品牌勾选（Canon、Nikon、Sony、
+  Fujifilm、OM System / Olympus、Panasonic、Pentax、Hasselblad、Phase One），另有
+  DNG、HEIF 和「单独的 JPEG」。与 RAW 同名的 JPEG 算作那张 RAW 的一部分，跟随它处理；
+  「单独的 JPEG」（没有同名 RAW 的 JPEG）默认不勾。不处理的文件原地保留。这个设置对
+  之后处理的每个文件夹都生效，所以开启时开始处理前的确认框会提示，日志里也会列出各格式
+  跳过了多少个文件。
+- **修复：与另一个 RAW 同名的 RAW 可能顶替原片。** 同一文件夹里同时有 `IMG_1234.CR3`
+  和 Topaz 导出的 `IMG_1234.dng` 时，只会处理其中一个，而且是哪个取决于文件系统——常常
+  是 DNG。于是 CR3 原片没有评分，它的 .xmp 边车还被 DNG 带走。现在总是处理相机原生 RAW
+  （在新的格式设置里只勾 DNG 时则处理 DNG），另一个文件原地保留并在日志中列出。
+
+---
+
 # SuperPicky 4.6.4 RC4
 
 **What's new since RC3:**
