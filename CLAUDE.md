@@ -24,6 +24,17 @@ This file is the rule source for AI coding assistants in this repository. The fo
 - For `.spec` changes: packaged startup smoke test.
 - For DB/threading changes: run a small multi-thread write/read stress check and confirm no transaction-state errors.
 
+## 测试文件位置 / Test Layout
+
+- 回归测试一律放 `tests/`，文件名 `test_*.py`，并纳入版本控制。**禁止在仓库根目录新建 `test_*.py`**（issue #135：根目录曾堆积 142 个）。
+  Regression tests go in `tests/` as `test_*.py` and are committed. Never create `test_*.py` at the repo root (issue #135).
+- 一次性排查 / 临时验证脚本放 scratchpad（不入库），不要用 `test_` 前缀。
+  One-off or exploratory scripts go to a scratchpad (untracked), never with a `test_` prefix.
+- 测试里需要仓库根目录时用 `Path(__file__).resolve().parent.parent`（或 `os.path.dirname(os.path.dirname(os.path.abspath(__file__)))`），不要用 `Path(__file__).parent`——那是 `tests/` 自己，扫描类测试会因此只扫 `tests/` 而静默假绿。
+  To reach the repo root from a test use `Path(__file__).resolve().parent.parent`; `Path(__file__).parent` is `tests/` itself, and a scan-the-repo test would silently pass.
+- 在仓库根目录运行 `python3 -m pytest`（`pytest.ini` 的 `testpaths = tests`）；共享夹具与全局防线在根目录 `conftest.py`。
+  Run `python3 -m pytest` from the repo root (`pytest.ini` sets `testpaths = tests`); shared fixtures live in the root `conftest.py`.
+
 ## 设置中心架构 / Settings Center Architecture
 
 所有用户设置统一由「设置中心」管理。改动任何设置相关代码前必读以下约定（违反这些约定正是本次重构前的混乱根源）：

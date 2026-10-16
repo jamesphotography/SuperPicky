@@ -198,7 +198,7 @@ def _check_legacy_refs() -> List[Check]:
     pattern = r"geo_distribution\.db|land_cells|cell_id_for|TIER_CELL|TIER_NEIGHBORHOOD|import reverse_geocoder"
     out = subprocess.run(
         ["git", "grep", "-n", "-E", pattern, "--", "*.py", "*.spec",
-         ":!scripts_dev/validate_ebird_regions.py", ":!test_*.py"],
+         ":!scripts_dev/validate_ebird_regions.py", ":!tests/"],
         cwd=PROJECT_ROOT, capture_output=True, text=True, encoding="utf-8",
     ).stdout.strip()
     return [("legacy_refs", not out, out[:500] or "none")]
