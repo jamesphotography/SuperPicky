@@ -1,0 +1,309 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+core/rating_quota.py(评星 V2:批内相对 + 配额)单元测试。
+
+钉住:硬门槛链、配额切分、3★ 锐度兜底、眼睛可见度封顶、连拍组 3★ 上限、
+技能等级配额映射、空批次/全淘汰批次的边界行为。
+
+Unit tests for the batch-relative quota rating core: hard-gate chain, quota
+split, the 3-star sharpness floor, the eye-visibility cap, the per-burst
+3-star cap, skill-quota mapping, and empty/degenerate batches.
+"""
+
+import os
+import sys
+import unittest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from core.rating_quota import (
+    PhotoMetricsV2, assign_ratings, gate_photo, get_quota3_for_skill,
+    get_quota2_for_skill, DEFAULT_QUOTA3, DEFAULT_QUOTA2,
+    SKILL_QUOTA3, SKILL_QUOTA2,
+)
+
+
+def make_photo(key, sharp=500.0, topiq=5.0, **kw):
+    """构造通过全部硬门槛的默认照片 / a photo passing every hard gate."""
+    defaults = dict(detected=True, confidence=0.9, norm_sharpness=sharp,
+                    topiq=topiq, best_eye=0.9, beak_vis=0.9)
+    defaults.update(kw)
+    return PhotoMetricsV2(key=key, **defaults)
+
+
+class TestHardGates(unittest.TestCase):
+    def test_gate_chain(self):
+        """硬门槛链与现行语义一致 / gate chain matches current semantics."""
+        cases = [
+            (make_photo("a", detected=False), -1),
+            (make_photo("b", confidence=0.3), 0),
+            (make_photo("c", best_eye=0.1, beak_vis=0.1), 1),   # 角度不佳
+            (make_photo("d", sharp=50.0), 0),                    # 真糊
+            (make_photo("e", topiq=3.0), 0),                     # 美学兜底
+        ]
+        for photo, expect in cases:
+            r = gate_photo(photo)
+            self.assertIsNotNone(r, photo.key)
+            self.assertEqual(r.rating, expect, photo.key)
+
+    def test_pass_returns_none(self):
+        self.assertIsNone(gate_photo(make_photo("ok")))
+
+
+class TestQuotaAssignment(unittest.TestCase):
+    def _batch(self, n=100):
+        """锐度/美学线性递减的 n 张照片 / n photos with descending quality."""
+        return [make_photo(f"p{i:03d}", sharp=800 - i * 5, topiq=6.5 - i * 0.02)
+                for i in range(n)]
+
+    def test_quota_split(self):
+        """3★=前20%、2★=接下来25%、其余1★ / 20/25/rest split."""
+        res = assign_ratings(self._batch(100), quota3=20, quota2=25)
+        stars = [res[f"p{i:03d}"].rating for i in range(100)]
+        self.assertEqual(stars[:20], [3] * 20)
+        self.assertEqual(stars[20:45], [2] * 25)
+        self.assertEqual(stars[45:], [1] * 55)
+
+    def test_sharp_floor_blocks_3star(self):
+        """整批全烂时,3★ 配额不凑数(锐度兜底) / floor prevents fake 3★."""
+        photos = [make_photo(f"p{i}", sharp=250 - i, topiq=5.0) for i in range(10)]
+        res = assign_ratings(photos, quota3=20, quota2=25)
+        self.assertTrue(all(r.rating < 3 for r in res.values()))
+
+    def test_eye_visibility_caps_at_2(self):
+        """眼睛可见度<0.5 → 封顶 2★ / low eye visibility caps stars at 2."""
+        photos = self._batch(10)
+        photos[0] = make_photo("p000", sharp=800, topiq=6.5, best_eye=0.4)
+        res = assign_ratings(photos, quota3=50, quota2=30)
+        self.assertEqual(res["p000"].rating, 2)
+        self.assertEqual(res["p000"].reason_key, "rating_v2.eye_capped")
+
+    def test_burst_cap(self):
+        """同连拍组 3★ 封顶 2 张,溢出者降 2★ / per-burst 3-star cap."""
+        photos = [make_photo(f"p{i}", sharp=800 - i, topiq=6.0, burst_id=7)
+                  for i in range(5)]
+        res = assign_ratings(photos, quota3=100, quota2=0, burst_cap3=2)
+        stars = sorted((r.rating for r in res.values()), reverse=True)
+        self.assertEqual(stars, [3, 3, 2, 2, 2])
+        capped = [k for k, r in res.items() if r.reason_key == "rating_v2.burst_capped"]
+        self.assertEqual(len(capped), 3)
+
+    def test_gated_photos_not_in_pool(self):
+        """被硬门槛淘汰者不占配额分母 / gated photos don't consume quota."""
+        photos = self._batch(10) + [make_photo(f"bad{i}", detected=False) for i in range(90)]
+        res = assign_ratings(photos, quota3=20, quota2=25)
+        three = [k for k, r in res.items() if r.rating == 3]
+        self.assertEqual(len(three), 2)  # 20% × 10(池内),而不是 ×100
+
+    def test_empty_and_all_gated(self):
+        self.assertEqual(assign_ratings([]), {})
+        res = assign_ratings([make_photo("x", detected=False)])
+        self.assertEqual(res["x"].rating, -1)
+
+    def test_q_monotonic_with_quality(self):
+        """Q 分随品质单调 / Q is monotonic with quality."""
+        res = assign_ratings(self._batch(50), quota3=20, quota2=25)
+        qs = [res[f"p{i:03d}"].q_score for i in range(50)]
+        self.assertEqual(qs, sorted(qs, reverse=True))
+
+
+class TestSpeciesQuota(unittest.TestCase):
+    def test_per_species_quota(self):
+        """识鸟开启时配额按鸟种独立执行 / quotas apply per species."""
+        # 80 张海鸥(高分) + 8 张塍鹬(低分):全局配额下塍鹬会全军覆没
+        gulls = [make_photo(f"g{i:02d}", sharp=800 - i, topiq=6.0, species="gull")
+                 for i in range(80)]
+        godwits = [make_photo(f"w{i}", sharp=400 - i, topiq=4.5, species="godwit")
+                   for i in range(8)]
+        res = assign_ratings(gulls + godwits, quota3=25, quota2=25)
+        gull3 = sum(1 for k, r in res.items() if k.startswith("g") and r.rating == 3)
+        godwit3 = sum(1 for k, r in res.items() if k.startswith("w") and r.rating == 3)
+        self.assertEqual(gull3, 20)    # ceil(80×25%)
+        self.assertEqual(godwit3, 2)   # ceil(8×25%) —— 不再与海鸥同池竞争
+        # 塍鹬进 3★ 的是种内 Q 最高者 / the godwit 3★s are its best shots
+        self.assertEqual(res["w0"].rating, 3)
+        self.assertEqual(res["w1"].rating, 3)
+
+    def test_rare_species_keeps_best_shot(self):
+        """小样本鸟种保底最好的 1 张(锐度兜底仍生效)/ singleton keeps its best."""
+        photos = [make_photo(f"g{i:02d}", sharp=800 - i, topiq=6.0, species="gull")
+                  for i in range(40)]
+        photos.append(make_photo("rare", sharp=350, topiq=4.2, species="rare_bird"))
+        photos.append(make_photo("rare_blurry", sharp=200, topiq=4.2, species="blurry_bird"))
+        res = assign_ratings(photos, quota3=20, quota2=25)
+        self.assertEqual(res["rare"].rating, 3)          # ceil(1×20%)=1 且过锐度兜底
+        self.assertLess(res["rare_blurry"].rating, 3)    # 锐度<300 兜底挡住
+
+    def test_no_species_falls_back_to_global(self):
+        """species 全为 None(未开识鸟)→ 单组,等价全局配额。"""
+        photos = [make_photo(f"p{i:03d}", sharp=800 - i * 5, topiq=6.5 - i * 0.02)
+                  for i in range(100)]
+        res = assign_ratings(photos, quota3=20, quota2=25)
+        self.assertEqual(sum(1 for r in res.values() if r.rating == 3), 20)
+
+
+class TestPendingRatingLog(unittest.TestCase):
+    def test_log_photo_result_accepts_none_rating(self):
+        """
+        rating=None(星级待收尾分配)的日志路径不得抛异常。
+
+        回归:T9 曾漏改 _log_photo_result_simple 的着色分级比较
+        (rating >= 3),None 触发 TypeError 导致所有排序池照片被误标
+        「处理异常已跳过」。此测试钉住该路径。
+
+        Regression: the pending-rating (None) log path must not raise;
+        a missed `rating >= 3` comparison once knocked out every pool photo.
+        """
+        from core.photo_processor import PhotoProcessor
+        logs = []
+        proc = object.__new__(PhotoProcessor)
+        proc._log = lambda msg, level="default": logs.append((msg, level))
+        from tools.i18n import get_i18n
+        proc.i18n = get_i18n()
+        # 全星级 + None 都不得抛异常 / every rating incl. None must not raise
+        for rating in (3, 2, 1, 0, -1, None):
+            PhotoProcessor._log_photo_result_simple(
+                proc, 1, 10, "x.jpg", rating, "reason", 123.0, True, False, "BEST")
+        self.assertEqual(len(logs), 6)
+        self.assertIn("⏳", logs[-1][0])          # None → 待定符号
+        self.assertEqual(logs[-1][1], "default")  # None → 普通着色
+
+
+class TestSkillQuota(unittest.TestCase):
+    def test_mapping(self):
+        # 2026-07-24 重定手感：新手 40 / 初级 30 / 大师 20
+        self.assertEqual(get_quota3_for_skill("beginner"), 40.0)
+        self.assertEqual(get_quota3_for_skill("intermediate"), 30.0)
+        self.assertEqual(get_quota3_for_skill("master"), 20.0)
+        self.assertEqual(get_quota3_for_skill("unknown"), DEFAULT_QUOTA3)
+
+    def test_quota3_monotonic_by_skill(self):
+        """档位越高要求越严：3★ 配额必须严格递减，别再手滑调反。"""
+        self.assertGreater(get_quota3_for_skill("beginner"),
+                           get_quota3_for_skill("intermediate"))
+        self.assertGreater(get_quota3_for_skill("intermediate"),
+                           get_quota3_for_skill("master"))
+
+    def test_custom_reads_config(self):
+        class Cfg:
+            custom_quota3 = 33.0
+        self.assertEqual(get_quota3_for_skill("custom", Cfg()), 33.0)
+
+    def test_presets_complete(self):
+        self.assertEqual(set(SKILL_QUOTA3), {"beginner", "intermediate", "master"})
+
+    def test_quota2_mapping(self):
+        # 2026-07-24：2★ 三档统一 30%，差异只体现在 3★ 与 1★ 余量上
+        self.assertEqual(get_quota2_for_skill("beginner"), 30.0)
+        self.assertEqual(get_quota2_for_skill("intermediate"), 30.0)
+        self.assertEqual(get_quota2_for_skill("master"), 30.0)
+        self.assertEqual(get_quota2_for_skill("unknown"), DEFAULT_QUOTA2)
+
+    def test_quota_sums_leave_room_for_one_star(self):
+        """3★+2★ 必须 ≤95，给 1★ 留余量（与 QuotaBar 的段约束一致）。"""
+        for lvl, one_star in (("beginner", 30), ("intermediate", 40), ("master", 50)):
+            q3 = get_quota3_for_skill(lvl)
+            q2 = get_quota2_for_skill(lvl)
+            self.assertLessEqual(q3 + q2, 95.0, f"{lvl} 配额之和超限")
+            self.assertEqual(100 - q3 - q2, one_star, f"{lvl} 的 1★ 余量不符")
+
+    def test_quota2_custom_reads_config(self):
+        class Cfg:
+            custom_quota2 = 18.0
+        self.assertEqual(get_quota2_for_skill("custom", Cfg()), 18.0)
+
+    def test_quota2_presets_complete(self):
+        self.assertEqual(set(SKILL_QUOTA2), {"beginner", "intermediate", "master"})
+
+    def test_default_matches_recommended_level(self):
+        """
+        DEFAULT_QUOTA* 是未知档位的 fallback,须始终等于推荐档 intermediate,
+        否则 fallback 会给出与「推荐」不一致的手感。
+
+        (原名 test_intermediate_matches_legacy_default,锁的是「与 V2 上线时
+        的硬编码默认一致」；2026-07-24 已按用户要求主动重定三档手感,该兼容
+        约束不再适用,改为锁定 fallback 与推荐档同步。)
+        """
+        self.assertEqual(get_quota3_for_skill("intermediate"), DEFAULT_QUOTA3)
+        self.assertEqual(get_quota2_for_skill("intermediate"), DEFAULT_QUOTA2)
+
+
+class TestQuotaBarConstraints(unittest.TestCase):
+    """QuotaBar 约束求解(纯逻辑,不建 Qt 控件)/ QuotaBar clamp (pure logic)."""
+
+    def _clamp(self, q3, q2):
+        from ui.quota_bar import QuotaBar
+        return QuotaBar._clamp(q3, q2)
+
+    def test_valid_passthrough(self):
+        self.assertEqual(self._clamp(20, 25), (20, 25))
+
+    def test_q3_clamped_to_range(self):
+        self.assertEqual(self._clamp(2, 25), (5, 25))    # 3★ 下限
+        self.assertEqual(self._clamp(80, 10), (50, 10))  # 3★ 上限
+
+    def test_q2_lower_bound(self):
+        self.assertEqual(self._clamp(20, 1), (20, 5))    # 2★ 下限
+
+    def test_joint_leaves_1star_min(self):
+        """3★+2★ 不得超过 95(保留 1★≥5%)/ q3+q2 capped at 95 so 1★≥5."""
+        q3, q2 = self._clamp(50, 60)
+        self.assertEqual(q3, 50)
+        self.assertEqual(q2, 45)                          # 100-5-50
+        self.assertEqual(100 - q3 - q2, 5)                # 1★ 恰为下限
+
+    def test_sum_never_exceeds_100(self):
+        for q3 in range(5, 51, 5):
+            for q2 in range(5, 61, 5):
+                cq3, cq2 = self._clamp(q3, q2)
+                self.assertLessEqual(cq3 + cq2, 95)
+                self.assertGreaterEqual(cq3, 5)
+                self.assertGreaterEqual(cq2, 5)
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+# ---- V2 对焦检查范围与仲裁门槛（2026-10-04）/ V2 focus-check scope & arbitration ----
+
+def _metrics(**kw):
+    """能过 V2 全部硬门槛的典型指标 / Metrics passing every V2 gate."""
+    from core.rating_quota import PhotoMetricsV2
+    base = dict(key="k", detected=True, confidence=0.9, norm_sharpness=580.0, topiq=5.9,
+                best_eye=0.99, beak_vis=0.9)
+    base.update(kw)
+    return PhotoMetricsV2(**base)
+
+
+def test_v2_checks_focus_for_ranked_photos_below_v1_threshold():
+    """
+    V1 预评分 0★（锐度低于用户 V1 门槛）但能进 V2 排名的照片，V2 必须检查对焦——
+    此前被跳过，精焦加分/脱焦减分从不生效。
+    """
+    from core.rating_quota import needs_focus_check
+    assert needs_focus_check(0, True, _metrics())
+    assert not needs_focus_check(0, False, _metrics())          # V1 维持原省时逻辑
+
+
+def test_focus_check_keeps_v1_scope_and_skips_v2_gated():
+    """并集：V1 预评分 ≥1★ 的照旧检查；V2 门槛淘汰且 V1 也是 0★ 的不检查。"""
+    from core.rating_quota import needs_focus_check
+    angle_poor = _metrics(best_eye=0.1, beak_vis=0.1)
+    assert needs_focus_check(1, True, angle_poor)
+    assert not needs_focus_check(0, True, _metrics(norm_sharpness=60.0))
+    assert not needs_focus_check(0, True, None)
+
+
+def test_v2_focus_arbitration_threshold_matches_field_review():
+    """V2 仲裁固定 520：557/573（肉眼清晰）不扣分，423/388（略软/明显糊）仍按脱焦。"""
+    from core.focus_point_detector import arbitrate_focus_weights
+    from core.rating_quota import FOCUS_ARBITRATION_SHARPNESS as thr
+    assert thr == 520.0
+    for sharp in (557.0, 573.0):
+        (w, _), arbitrated = arbitrate_focus_weights((0.5, 0.8), sharp, thr)
+        assert arbitrated and w == 0.9
+    for sharp in (423.0, 388.0):
+        (w, _), arbitrated = arbitrate_focus_weights((0.5, 0.8), sharp, thr)
+        assert not arbitrated and w == 0.5
