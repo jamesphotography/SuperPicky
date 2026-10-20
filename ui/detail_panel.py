@@ -21,7 +21,7 @@ from PySide6.QtGui import QPixmap, QFont, QGuiApplication, QImage, QImageReader
 
 from ui.styles import COLORS, FONTS
 from core.iso_sharpness import display_aesthetic, display_head_sharpness
-from ui.icon_utils import load_tinted_icon, stars_pixmap, tinted_png_path, glyph_png_path, ICON_IDLE, ICON_ACTIVE
+from ui.icon_utils import load_tinted_icon, stars_pixmap, tinted_png_path, glyph_png_path, ICON_IDLE, ICON_ACTIVE, ICON_DISABLED
 from core.rarity_tier import (gbif_score_to_tier, tier_name, tier_icon,
                               tier_color, format_rarity_values)
 from core.custom_rarity import lookup_index as lookup_custom_rarity
@@ -393,6 +393,10 @@ class DetailPanel(QWidget):
         next_btn.clicked.connect(self.next_requested)
         nb_layout.addWidget(prev_btn)
         nb_layout.addWidget(next_btn)
+        # 存引用供 set_nav_enabled 在首/末张时置灰（#137）
+        # Kept so set_nav_enabled can grey them out at either end (#137)
+        self._prev_btn = prev_btn
+        self._next_btn = next_btn
         layout.addWidget(nav_bar)
 
         # --- 元数据滚动区域 ---
@@ -866,7 +870,32 @@ class DetailPanel(QWidget):
             f" padding: 2px 8px; }}"
             f" QPushButton:hover {{ background-color: {COLORS['bg_card']};"
             f" border-color: {COLORS['accent']}; color: {COLORS['accent']}; }}"
+            f" QPushButton:disabled {{ color: {ICON_DISABLED}; border-color: #242424; }}"
         )
+
+    def set_nav_enabled(self, has_prev: bool, has_next: bool) -> None:
+        """
+        首张时置灰「上一张」、末张时置灰「下一张」（#137）。
+
+        由 ResultsBrowserWindow 在当前照片或照片列表变化后调用；判断依据是
+        缩略图网格的 adjacent_state()，与这两个按钮实际驱动的 select_prev/
+        select_next 同源。图标随之换成禁用灰，否则按钮文字灰了箭头还亮着。
+
+        参数 / Args:
+            has_prev (bool): 是否还有上一张
+            has_next (bool): 是否还有下一张
+
+        Grey out Previous on the first photo and Next on the last (#137).
+        The icon is re-tinted too, otherwise the arrow stays bright.
+        """
+        for btn, enabled, svg in (
+            (self._prev_btn, has_prev, "arrow-left.svg"),
+            (self._next_btn, has_next, "arrow-right.svg"),
+        ):
+            if btn.isEnabled() == enabled:
+                continue
+            btn.setEnabled(enabled)
+            btn.setIcon(load_tinted_icon(svg, ICON_IDLE if enabled else ICON_DISABLED, 16))
 
     def _active_btn_style(self) -> str:
         return (

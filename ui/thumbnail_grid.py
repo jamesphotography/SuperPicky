@@ -1303,18 +1303,45 @@ class ThumbnailGrid(QScrollArea):
         """选中上一张，返回 photo dict；已在开头则返回 None。"""
         return self._select_adjacent(-1)
 
+    def adjacent_state(self) -> tuple[bool, bool]:
+        """
+        当前选中项是否还有上一张 / 下一张，供「上一张/下一张」按钮置灰（#137）。
+
+        与 select_prev/select_next 共用 _selected_index，判断结果与按下按钮后
+        的实际行为严格一致：未选中任何照片时，「下一张」会跳到第一张，所以
+        只有列表为空时才两个都不可用。
+
+        返回 / Returns:
+            tuple[bool, bool]: (有上一张, 有下一张)
+
+        Whether the current selection has a previous / next photo, used to
+        disable the navigation buttons at either end (#137). Shares
+        _selected_index with select_prev/select_next so the state always
+        matches what pressing the button would do.
+        """
+        idx = self._selected_index()
+        return idx - 1 >= 0, idx + 1 < len(self._photos)
+
     # ------------------------------------------------------------------
     #  内部
     # ------------------------------------------------------------------
 
+    def _selected_index(self) -> int:
+        """
+        当前选中照片在 self._photos 中的下标；未选中或已不在列表里返回 -1。
+
+        Index of the selected photo in self._photos, or -1 if none / gone.
+        """
+        photo_keys = [_photo_key(p) for p in self._photos]
+        try:
+            return photo_keys.index(self._selected_key)
+        except ValueError:
+            return -1
+
     def _select_adjacent(self, delta: int) -> Optional[dict]:
         if not self._photos:
             return None
-        photo_keys = [_photo_key(p) for p in self._photos]
-        try:
-            idx = photo_keys.index(self._selected_key)
-        except ValueError:
-            idx = -1
+        idx = self._selected_index()
         new_idx = idx + delta
         if 0 <= new_idx < len(self._photos):
             photo = self._photos[new_idx]

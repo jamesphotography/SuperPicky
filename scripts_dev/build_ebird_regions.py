@@ -76,6 +76,14 @@ SENTINELS: Tuple[Tuple[str, str], ...] = (
     ("CN-11", "Charadrius dubius"),
     ("CN-11", "Charadrius mongolus"),
     ("US-CA", "Setophaga petechia"),
+    # eBird 2025 拆分出的新种要靠 ebird_overrides.json 对回模型旧种，否则这些常见鸟会从名录里消失
+    # Split species must map back to the model's pre-split class via ebird_overrides.json
+    ("AU-QLD", "Butorides striata"),       # Little Heron
+    ("AU-QLD", "Cinnyris jugularis"),      # Sahul Sunbird
+    ("AU-NSW", "Lophochroa leadbeateri"),  # Pink Cockatoo
+    ("CN-11", "Butorides striata"),        # Little Heron
+    ("CN-11", "Accipiter gentilis"),       # Eurasian Goshawk
+    ("CN", "Anthus rubescens"),            # Siberian Pipit
 )
 
 # 有物种清单却允许没有边界环的区域（显式、最小化；每项须写明为何无法制图）。

@@ -406,6 +406,13 @@ def compute_dropdown_species(db, use_en: bool, ratings=None):
     Decide dropdown contents: foldered species plus whether the "other birds"
     catch-all is needed under the active rating filter.
     """
+    # 星级「全不选」（空列表，#137）时网格本来就是空的，下拉按不限星级列出，
+    # 否则「其他鸟类」兜底项会消失，用户选中的它被重置成「全部鸟种」，再点亮
+    # 某一档时鸟种筛选就丢了。
+    # With no rating chip lit (#137) the grid is empty anyway; list the
+    # dropdown as unrestricted so a selected "other birds" item survives.
+    if ratings == []:
+        ratings = None
     species = db.get_distinct_species(use_en=use_en, ratings=ratings, foldered_only=True)
     key = "bird_species_en" if use_en else "bird_species_cn"
     probe = {key: SPECIES_FILTER_OTHER}
@@ -2434,6 +2441,7 @@ class ResultsBrowserWindow(QMainWindow):
         if not self._db:
             self._thumb_grid.load_photos([])
             self._update_status(0, 0)
+            self._refresh_nav_buttons()
             return
 
         # 动态刷新鸟种下拉：只显示当前星级筛选下有照片的鸟种
@@ -2536,6 +2544,7 @@ class ResultsBrowserWindow(QMainWindow):
         else:
             self._detail_panel.clear()
         self._update_apple_photos_button()
+        self._refresh_nav_buttons()
 
     @Slot(int)
     def _toggle_burst(self, burst_id: int):
@@ -2551,6 +2560,7 @@ class ResultsBrowserWindow(QMainWindow):
     @Slot(dict)
     def _on_photo_selected(self, photo: dict):
         self._detail_panel.show_photo(photo)
+        self._refresh_nav_buttons()
 
     def _build_burst_sequence(self, photo: dict) -> list:
         burst_id = photo.get("burst_id")
@@ -2625,6 +2635,7 @@ class ResultsBrowserWindow(QMainWindow):
 
         if any(_photo_identity(p) == _photo_identity(photo) for p in self._filtered_photos):
             self._thumb_grid.select_photo(photo)
+        self._refresh_nav_buttons()
 
     def _build_collapsed_burst_photo(self, photo: dict) -> Optional[dict]:
         burst_id = photo.get("burst_id")
@@ -2693,6 +2704,34 @@ class ResultsBrowserWindow(QMainWindow):
         self._stack.setCurrentIndex(1)
         self._fullscreen.setFocus()
 
+    def _refresh_nav_buttons(self) -> None:
+        """
+        按当前位置给两套「上一张/下一张」按钮置灰（#137）。
+
+        两套按钮驱动的列表不同，所以分开算，各自与实际跳转逻辑同源：
+        - 详情面板的按钮走 _prev_photo/_next_photo → 缩略图网格的
+          select_prev/select_next，状态取 ThumbnailGrid.adjacent_state()；
+        - 全屏底栏的按钮走 _fullscreen_prev/_fullscreen_next → 全屏导航列表
+          _fullscreen_nav_photos（连拍序列模式下只是该组），这里用同样的
+          「找不到当前照片记为 -1」规则判断。
+        凡是改变当前照片或导航列表的地方都要调用本方法。
+
+        Grey out both Previous/Next pairs at the ends of the list they
+        actually drive (#137): the detail-panel pair follows the thumbnail
+        grid, the fullscreen pair follows _fullscreen_nav_photos, using the
+        same "not found = -1" rule as _fullscreen_prev/_fullscreen_next.
+        Call it wherever the current photo or a navigation list changes.
+        """
+        self._detail_panel.set_nav_enabled(*self._thumb_grid.adjacent_state())
+
+        current_key = _photo_identity(getattr(self._fullscreen, "_current_photo", None) or {})
+        nav_keys = [_photo_identity(p) for p in self._fullscreen_nav_photos]
+        try:
+            idx = nav_keys.index(current_key)
+        except ValueError:
+            idx = -1
+        self._fullscreen.set_nav_enabled(idx - 1 >= 0, idx + 1 < len(nav_keys))
+
     @Slot()
     def _prev_photo(self):
         # select_prev 会发 photo_selected → _on_photo_selected 已刷新详情面板
@@ -2700,6 +2739,7 @@ class ResultsBrowserWindow(QMainWindow):
         photo = self._thumb_grid.select_prev()
         if photo and self._stack.currentIndex() == 1:   # 全屏模式:同步大图
             self._fullscreen.show_photo(photo)
+            self._refresh_nav_buttons()
 
     @Slot()
     def _next_photo(self):
@@ -2708,6 +2748,7 @@ class ResultsBrowserWindow(QMainWindow):
         photo = self._thumb_grid.select_next()
         if photo and self._stack.currentIndex() == 1:   # 全屏模式:同步大图
             self._fullscreen.show_photo(photo)
+            self._refresh_nav_buttons()
 
     @Slot(dict)
     def _enter_fullscreen(self, photo: dict):
@@ -2727,6 +2768,7 @@ class ResultsBrowserWindow(QMainWindow):
         self._stack.setCurrentIndex(0)
         self._fullscreen_nav_photos = list(self._filtered_photos)
         self._detail_panel._switch_view(False)  # 退出全屏 → 切回全图
+        self._refresh_nav_buttons()
         self.setFocus()  # 确保窗口拿回焦点
 
     @Slot()
@@ -4032,6 +4074,7 @@ class ResultsBrowserWindow(QMainWindow):
             self._detail_panel.show_photo(next_photo)
         else:
             self._detail_panel.clear()
+        self._refresh_nav_buttons()
 
         self._update_status(len(self._all_photos), len(self._filtered_photos))
 
