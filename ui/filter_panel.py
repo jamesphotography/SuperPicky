@@ -226,6 +226,9 @@ class FilterPanel(QWidget):
         self._sort_combo.addItem(self.i18n.t("browser.sort_rarity"), "rarity_desc")
         self._sort_combo.addItem(self.i18n.t("browser.sort_filename"), "filename")
         self._sort_combo.addItem(self.i18n.t("browser.sort_sharpness"), "sharpness_desc")
+        # 星级高→低，同星级按锐度：手动升的 4★/5★ 排最前（#137，替代加「4★+」筹码）
+        # Rating high→low, sharpness within a tier: manual 4★/5★ come first (#137)
+        self._sort_combo.addItem(self.i18n.t("browser.sort_rating"), "rating_desc")
         self._sort_combo.addItem(self.i18n.t("browser.sort_aesthetic"), "aesthetic_desc")
         self._sort_combo.addItem(self.i18n.t("browser.sort_species_beauty"), "species_beauty_desc")
         self._sort_combo.setStyleSheet(f"""

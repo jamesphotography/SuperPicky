@@ -1590,6 +1590,7 @@
     "sort_rarity": "Rarity",
     "sort_filename": "Filename",
     "sort_sharpness": "Sharpness",
+    "sort_rating": "Rating",
     "sort_aesthetic": "Aesthetic",
     "sort_species_beauty": "Species Beauty",
     "species_all": "— All —",
