@@ -1114,6 +1114,7 @@ class FullscreenViewer(QWidget):
             f" color: {COLORS['text_secondary']};"
             f" font-size: 12px;"
             f" padding: 2px 10px; }}"
+            f"QPushButton:disabled {{ color: {ICON_DISABLED}; border-color: #242424; }}"
         )
 
         prev_btn = QPushButton("  " + self.i18n.t("browser.prev"))
@@ -1134,10 +1135,39 @@ class FullscreenViewer(QWidget):
         next_btn.setStyleSheet(_nav_btn_style)
         next_btn.clicked.connect(self.next_requested)
         h.addWidget(next_btn)
+        # 存引用供 set_nav_enabled 在首/末张时置灰（#137）
+        # Kept so set_nav_enabled can grey them out at either end (#137)
+        self._prev_btn = prev_btn
+        self._next_btn = next_btn
 
         h.addStretch()
 
         return bar
+
+    def set_nav_enabled(self, has_prev: bool, has_next: bool) -> None:
+        """
+        首张时置灰底栏「上一张」、末张时置灰「下一张」（#137）。
+
+        由 ResultsBrowserWindow 按它持有的全屏导航列表（_fullscreen_nav_photos）
+        计算后调用，与 _fullscreen_prev/_fullscreen_next 的边界判断同源。
+        只影响按钮外观与可点性；左右方向键照常发信号，到头时由宿主窗口忽略。
+
+        参数 / Args:
+            has_prev (bool): 是否还有上一张
+            has_next (bool): 是否还有下一张
+
+        Grey out the bottom-bar Previous/Next at either end of the fullscreen
+        navigation list (#137). Arrow keys still emit; the host ignores them
+        at the ends as before.
+        """
+        for btn, enabled, svg in (
+            (self._prev_btn, has_prev, "arrow-left.svg"),
+            (self._next_btn, has_next, "arrow-right.svg"),
+        ):
+            if btn.isEnabled() == enabled:
+                continue
+            btn.setEnabled(enabled)
+            btn.setIcon(load_tinted_icon(svg, ICON_IDLE if enabled else ICON_DISABLED, 16))
 
     # ------------------------------------------------------------------
     #  焦点图层控制

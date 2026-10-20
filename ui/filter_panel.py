@@ -200,7 +200,7 @@ class FilterPanel(QWidget):
         layout.addWidget(self._divider())
 
         # --- 评分筛选（单选）---
-        layout.addWidget(_section_label(self.i18n.t("browser.filter_rating")))
+        layout.addWidget(self._build_rating_header())
         layout.addWidget(self._build_rating_buttons())
         # 「只看精选」与上排筹码语义不同(收窄而非并集),独立成行。
         # Narrowing filter, deliberately separated from the union chips above.
@@ -288,6 +288,47 @@ class FilterPanel(QWidget):
     # ------------------------------------------------------------------
     #  评分按钮（单选，横排）
     # ------------------------------------------------------------------
+
+    def _build_rating_header(self) -> QWidget:
+        """
+        评分区标题行：左边是「评分筛选」，右边是「全选 / 全不选」两个文字按钮（#137）。
+
+        筹码亮着 = 这一档显示，一个都不亮 = 什么都不显示，所以两个按钮是真正
+        的反义：「全选」点亮全部筹码，「全不选」全部熄灭（网格变空），用户
+        再点某一档就只看这一档，比逐个取消少点几下。
+
+        返回 / Return:
+            QWidget: 标题行容器。
+
+        Rating section header with "All" / "None" text buttons (#137). A lit
+        chip means that rating is shown and no lit chip shows nothing, so the
+        two buttons are true opposites; "None" then one click solos a rating.
+        """
+        w = QWidget()
+        w.setStyleSheet("background: transparent;")
+        row = QHBoxLayout(w)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(4)
+        row.addWidget(_section_label(self.i18n.t("browser.filter_rating")))
+        row.addStretch()
+
+        link_qss = (
+            f"QPushButton {{ background: transparent; border: none;"
+            f" color: {COLORS['text_tertiary']}; font-size: 11px; padding: 0 2px; }}"
+            f" QPushButton:hover {{ color: {COLORS['accent']}; }}"
+        )
+        for text_key, tip_key, slot in (
+            ("browser.rating_select_all", "browser.rating_select_all_tip", self._select_every_rating),
+            ("browser.rating_select_none", "browser.rating_select_none_tip", self._select_no_rating),
+        ):
+            btn = QPushButton(self.i18n.t(text_key))
+            btn.setToolTip(self.i18n.t(tip_key))
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setFlat(True)
+            btn.setStyleSheet(link_qss)
+            btn.clicked.connect(slot)
+            row.addWidget(btn)
+        return w
 
     def _build_rating_buttons(self) -> QWidget:
         """5个评分互斥单选按钮（精选/★★★/★★/★/0），横排。"""
@@ -430,15 +471,40 @@ class FilterPanel(QWidget):
     def _on_rating_btn(self, mode: str):
         if mode in self._active_ratings:
             self._active_ratings.discard(mode)
-            # 全取消时默认显示全部（不加限制），不强制恢复默认
+            # 全部取消 = 什么都不显示（#137：筹码亮灭与网格内容一致）
+            # Deselecting every chip shows nothing (#137: chips match the grid)
         else:
             self._active_ratings.add(mode)
+        self._set_active_ratings(self._active_ratings)
+
+    def _set_active_ratings(self, modes: set) -> None:
+        """
+        设置点亮的评分筹码、刷新筹码外观并发出筛选变化信号。
+
+        参数 / Args:
+            modes (set): 要点亮的筹码 mode 集合（_RATING_OPTIONS 的第一列）
+
+        Set the lit rating chips, restyle them and emit filters_changed.
+        """
+        self._active_ratings = set(modes)
+        self._restyle_rating_chips()
+        self._emit_filters()
+
+    def _restyle_rating_chips(self) -> None:
+        """按 self._active_ratings 刷新每个筹码的亮/灭外观 / Restyle chips."""
         for m, btn in self._rating_btns.items():
             _active = m in self._active_ratings
             btn.setStyleSheet(self._rating_btn_style(_active, m))
             if m in _ICONIZED_CHIPS:
                 self._apply_chip_icon(btn, m, _active)
-        self._emit_filters()
+
+    def _select_every_rating(self) -> None:
+        """「全选」：点亮全部评分筹码 / "All": light every rating chip."""
+        self._set_active_ratings({mode for mode, _, _ in _RATING_OPTIONS})
+
+    def _select_no_rating(self) -> None:
+        """「全不选」：熄灭全部评分筹码，网格变空 / "None": no chip lit, empty grid."""
+        self._set_active_ratings(set())
 
     # ------------------------------------------------------------------
     #  对焦 checkbox（多选）
@@ -598,12 +664,16 @@ class FilterPanel(QWidget):
 
     def get_filters(self) -> dict:
         """返回当前筛选条件字典。"""
-        # 评分：合并所有选中模式的 ratings（取并集），空选 = 不限星级（全选）
+        # 评分：合并所有选中模式的 ratings（取并集）。一个都没选 = 空列表 =
+        # 什么都不显示（#137），ReportDB.get_photos_by_filters 对空列表直接返回 []。
+        # 四个筹码合起来覆盖 -1~5 全部星级，所以「全选」与不限星级结果相同。
+        # Union of the lit chips. No chip lit = [] = show nothing (#137); the
+        # four chips together cover every rating from -1 to 5.
         selected_ratings_set: set = set()
         for mode, label, ratings in _RATING_OPTIONS:
             if mode in self._active_ratings:
                 selected_ratings_set.update(ratings)
-        selected_ratings = sorted(selected_ratings_set) if selected_ratings_set else None
+        selected_ratings = sorted(selected_ratings_set)
 
         # 对焦：所有勾选的 checkbox 对应的 statuses 合并
         selected_focus = []
@@ -646,11 +716,7 @@ class FilterPanel(QWidget):
         self._picked_only_cb.blockSignals(True)
         self._picked_only_cb.setChecked(False)
         self._picked_only_cb.blockSignals(False)
-        for m, btn in self._rating_btns.items():
-            _active = m in _DEFAULT_RATINGS
-            btn.setStyleSheet(self._rating_btn_style(_active, m))
-            if m in _ICONIZED_CHIPS:
-                self._apply_chip_icon(btn, m, _active)
+        self._restyle_rating_chips()
 
         # 对焦 → 默认全选
         _defaults = set(_DEFAULT_CHECKED_FOCUS)
@@ -683,7 +749,12 @@ class FilterPanel(QWidget):
 
     def select_all_ratings(self):
         """
-        回退：清空评分筛选，返回所有评分。用于默认筛选无结果时。
+        回退：点亮全部评分筹码，返回所有评分。用于默认筛选无结果时。
+
+        #137 起「一个筹码都不亮」表示什么都不显示，所以兜底必须点亮全部，
+        而不是像以前那样清空。
+        Since #137 an empty selection shows nothing, so the fallback lights
+        every chip instead of clearing them.
 
         必须同时解除「只看精选」，否则它作为 AND 条件（``picked = 1``）会继续
         把结果卡成空集——清空星级根本救不回来（旧目录 picked 列全为 0 时尤其
@@ -691,15 +762,10 @@ class FilterPanel(QWidget):
         The picked-only narrowing must be cleared as well: as an AND condition it
         would keep the result empty no matter how wide the rating filter gets.
         """
-        self._active_ratings = set()
         self._picked_only_cb.blockSignals(True)
         self._picked_only_cb.setChecked(False)
         self._picked_only_cb.blockSignals(False)
-        for m, btn in self._rating_btns.items():
-            btn.setStyleSheet(self._rating_btn_style(False, m))
-            if m in _ICONIZED_CHIPS:
-                self._apply_chip_icon(btn, m, False)
-        self._emit_filters()
+        self._select_every_rating()
 
     # ------------------------------------------------------------------
     #  信号
