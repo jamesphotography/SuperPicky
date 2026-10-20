@@ -14,6 +14,7 @@ ResultsBrowserWindow(QMainWindow): 三栏布局
 import os
 import subprocess
 import sys
+import threading
 from collections import Counter
 from dataclasses import replace
 from datetime import datetime
@@ -355,6 +356,13 @@ def _photo_bird_name(photo: dict, i18n) -> str:
                                i18n.current_lang)
 
 
+# 改星级的「移动文件 + 写元数据」全局串行：连续改同一张（先 4★ 再 5★）时，
+# 后一次必须等前一次搬完，才能拿到照片的新路径。
+# Rating-change "move + metadata write" jobs run one at a time, so a quick
+# second change (4★ then 5★) sees the path left by the first move.
+_RATING_IO_LOCK = threading.Lock()
+
+
 def _trigger_rating_move(
     dir_path: str,
     photo: dict,
@@ -362,10 +370,31 @@ def _trigger_rating_move(
     i18n,
     report_db,
     db_key,
+    caption: Optional[str] = None,
 ) -> None:
     """
-    在后台线程中执行因改星等引发的文件移动。
-    Spawn a daemon thread to move files after a rating change.
+    在后台线程中先移动文件、再把星级与题注写进元数据。
+
+    两步必须在同一线程里按这个顺序做：以前写元数据与移动是两个并发线程，移动常常
+    先把 RAW 和 .xmp 边车搬进「4星_精华」，exiftool 却还在写旧目录的 .xmp——于是
+    搬走的边车仍是 3★（Lightroom 读到 3★），旧目录只留下 ``*.xmp_exiftool_tmp``
+    或一个孤儿 .xmp（2026-10-20 实拍批次 5 张全中）。移动后 core 会把
+    photo["current_path"] 更新为新路径，写元数据用的就是它（与标记无鸟同一做法）。
+
+    Move first, then write rating + caption, in one thread. They used to be two
+    concurrent threads: the move often carried the RAW and its .xmp sidecar into the
+    4-star folder while exiftool was still writing the old path, so the moved sidecar
+    kept 3★ and the old folder got an ``*.xmp_exiftool_tmp`` or an orphan .xmp. The
+    mover updates photo["current_path"], which the write then uses.
+
+    参数 / Parameters:
+        dir_path (str): 照片所在根目录 / Root directory of the batch.
+        photo (dict): 照片记录（current_path 为绝对路径）/ Photo record.
+        new_rating (int): 新星级 / New rating.
+        i18n: 取鸟名目录用 / Used for the species folder name.
+        report_db: 移动后更新路径 / DB updated with the new path.
+        db_key: DB 主键 / DB key.
+        caption (Optional[str]): 新题注，None 表示不改 / New caption, None = unchanged.
     """
     from advanced_config import get_advanced_config
     from core.rating_mover import move_photo_on_metadata_change
@@ -374,15 +403,26 @@ def _trigger_rating_move(
     layout = get_advanced_config().folder_layout
 
     def _do() -> None:
-        try:
-            move_photo_on_metadata_change(
-                dir_path, photo, new_rating, bird_name, layout, report_db, db_key
-            )
-        except Exception as e:
-            from tools.utils import log_message
-            log_message(f"[rating_mover] move failed: {e}")
+        from tools.utils import log_message
+        with _RATING_IO_LOCK:
+            try:
+                move_photo_on_metadata_change(
+                    dir_path, photo, new_rating, bird_name, layout, report_db, db_key
+                )
+            except Exception as e:
+                log_message(f"[rating_mover] move failed: {e}")
+            # 移动失败或无需移动时 current_path 不变，照样写在原处
+            # On a failed or skipped move current_path is unchanged; write in place
+            path = photo.get("current_path") or photo.get("original_path") or ""
+            if not path or not os.path.exists(path):
+                log_message(f"[rating_mover] metadata write skipped, file missing: {path}")
+                return
+            try:
+                from tools.exiftool_manager import get_exiftool_manager
+                get_exiftool_manager().set_rating_and_pick(path, new_rating, caption=caption)
+            except Exception as e:
+                log_message(f"[rating_mover] metadata write failed for {path}: {e}")
 
-    import threading
     threading.Thread(target=_do, daemon=True).start()
 
 
@@ -2854,21 +2894,26 @@ class ResultsBrowserWindow(QMainWindow):
                         p["rating"] = new_rating
                         break
         self._thumb_grid.refresh_photo(current_photo or filename, new_rating)
-        # 异步写 EXIF（set_rating_and_pick 内部遵守 metadata_write_mode，none 时跳过）
-        file_path = self._get_photo_file_path(current_photo or filename)
-        if file_path:
-            import threading
-            from tools.exiftool_manager import get_exiftool_manager
-            threading.Thread(
-                target=get_exiftool_manager().set_rating_and_pick,
-                args=(file_path, new_rating),
-                kwargs={"caption": new_caption},
-                daemon=True,
-            ).start()
-        # 后台移动文件（仅已整理的照片；burst / 根目录 / 新旧相同 时内部自动跳过）
+        # 后台先移动文件、再写 EXIF（同一线程按序执行，见 _trigger_rating_move）。
+        # 移动仅对已整理的照片生效（burst / 根目录 / 新旧相同时内部跳过）；
+        # set_rating_and_pick 内部遵守 metadata_write_mode，none 时跳过。
+        # Move then write EXIF in one background thread (see _trigger_rating_move).
         if current_photo:
             base_dir = current_photo.get("_base_dir") or self._directory
-            _trigger_rating_move(base_dir, current_photo, new_rating, self.i18n, self._db, db_key)
+            _trigger_rating_move(base_dir, current_photo, new_rating, self.i18n, self._db, db_key,
+                                 caption=new_caption)
+        else:
+            # 只拿到文件名（老调用方）：不移动，只写 EXIF
+            # Filename-only callers: no move, metadata write only
+            file_path = self._get_photo_file_path(filename)
+            if file_path:
+                from tools.exiftool_manager import get_exiftool_manager
+                threading.Thread(
+                    target=get_exiftool_manager().set_rating_and_pick,
+                    args=(file_path, new_rating),
+                    kwargs={"caption": new_caption},
+                    daemon=True,
+                ).start()
 
     def _get_photo_file_path(self, photo_or_filename) -> "str | None":
         """根据 photo 或 filename 查找照片绝对路径。"""
