@@ -1,7 +1,111 @@
 {
-  "_comment": "map: eBird speciesCode -> 模型类别列表，人工结论优先于自动映射；allow_multi: 确认可以对应超过 3 个 eBird 物种的模型类别。",
+  "_comment": "map: eBird speciesCode -> 模型类别列表，人工结论优先于自动映射；allow_multi: 确认可以对应超过 3 个 eBird 物种的模型类别。eBird 2025 拆分出的新种（澳洲、中国名录）对回模型里拆分前的旧种；注意人工对照会占用类别，原本靠 epithet 步自动映射到同一类别的代码也要写进来（如 lessap2）。",
   "map": {
-    "magshr1": [6439]
+    "magshr1": [
+      6439
+    ],
+    "integr2": [
+      850
+    ],
+    "pincoc1": [
+      4013
+    ],
+    "strher1": [
+      830
+    ],
+    "eclpar4": [
+      4235
+    ],
+    "whiter4": [
+      1681
+    ],
+    "cresht3": [
+      6380
+    ],
+    "cresht2": [
+      6380
+    ],
+    "souboo3": [
+      2545
+    ],
+    "olbsun2": [
+      9309
+    ],
+    "sangra1": [
+      5816
+    ],
+    "cocboo1": [
+      890
+    ],
+    "rocpen3": [
+      550
+    ],
+    "lessap1": [
+      1533
+    ],
+    "casgul4": [
+      1731
+    ],
+    "norgos1": [
+      1107
+    ],
+    "sibpip1": [
+      9731
+    ],
+    "comhom2": [
+      7400
+    ],
+    "eurnut4": [
+      6828
+    ],
+    "crbwoo7": [
+      3806
+    ],
+    "olbsun4": [
+      9309
+    ],
+    "narfly3": [
+      9030
+    ],
+    "eurgol2": [
+      9924
+    ],
+    "tstlar1": [
+      7180
+    ],
+    "bkfbun2": [
+      10033
+    ],
+    "refblu2": [
+      9004
+    ],
+    "chgshr3": [
+      6462
+    ],
+    "vivnil2": [
+      8923
+    ],
+    "blwlea1": [
+      9155
+    ],
+    "bnwpar1": [
+      8184
+    ],
+    "bncscb1": [
+      7884
+    ],
+    "pacswa1": [
+      7384
+    ],
+    "sibbro2": [
+      4411
+    ],
+    "buebar1": [
+      3631
+    ],
+    "lessap2": [
+      1533
+    ]
   },
   "allow_multi": []
 }

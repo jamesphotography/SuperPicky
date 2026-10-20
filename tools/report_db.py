@@ -912,7 +912,7 @@ class ReportDB:
         # 数学函数，故查出后在 Python 里排序（见下方 sharpness_desc 分支）。
         # Sharpness/aesthetics sort on the displayed basis so the numbers line up;
         # the ISO normalization needs log2, so sharpness is sorted in Python below.
-        if sort_by == "sharpness_desc":
+        if sort_by in ("sharpness_desc", "rating_desc"):
             order_sql = "ORDER BY filename ASC"
         elif sort_by == "aesthetic_desc":
             order_sql = f"ORDER BY {picked_first}COALESCE(nima_score, -1e99) DESC, filename ASC"
@@ -932,7 +932,7 @@ class ReportDB:
             cursor = self._conn.execute(sql, params)
             results = [dict(row) for row in cursor.fetchall()]
 
-        if sort_by == "sharpness_desc":
+        if sort_by in ("sharpness_desc", "rating_desc"):
             from core.iso_sharpness import display_head_sharpness
 
             def _sharp_key(row: dict) -> tuple:
@@ -940,7 +940,16 @@ class ReportDB:
                 return (-int(row.get("picked") or 0),
                         -(v if v is not None else -1e99),
                         row.get("filename") or "")
-            results.sort(key=_sharp_key)
+
+            def _rating_key(row: dict) -> tuple:
+                # 星级排序（#137）：星级高→低（缺失按 -1 无鸟），同星级内沿用锐度排序
+                # 的键，精选仍在本档最前。手动升的 4★/5★ 因此排在最上面。
+                # Rating sort (#137): rating high→low (missing = -1), then the
+                # sharpness key within each tier, picked first.
+                r = row.get("rating")
+                return (-(int(r) if r is not None else -1),) + _sharp_key(row)
+
+            results.sort(key=_rating_key if sort_by == "rating_desc" else _sharp_key)
 
         return results
 

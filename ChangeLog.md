@@ -1,3 +1,48 @@
+# SuperPicky 4.6.4 RC6
+
+**What's new since RC5:**
+
+- **Rating filter: All / None buttons** (#137). The Rating Filter heading in the results
+  browser now has **All** and **None** on the right. The chips now follow one rule: a lit
+  chip is shown, an unlit chip is hidden. **Turning every chip off now shows no photos**
+  (it used to show everything), so *None* followed by one chip is the quickest way to look
+  at a single rating. When a folder opens and the default 3★ + 2★ filter finds nothing,
+  every chip is lit instead of cleared.
+- **Previous / Next are greyed out at either end** (#137), in the side panel and in the
+  full-screen viewer. In a burst opened in full screen, the ends are the burst's first and
+  last shot.
+- **New "Rating" sort** (#137): highest rating first, and within each rating picked photos
+  first, then the sharpest. Hand-promoted 4★ / 5★ shots come straight to the top. (4★ and
+  5★ are manual-only tiers; the 3★ chip includes them.)
+- **Fixed: common birds filtered out by the region list.** The eBird regional lists use
+  the 2025 taxonomy, and species from recent splits (Little Heron, Sahul Sunbird, Mongolian
+  Gull …) had no matching class in the model, so they were dropped from the list. Birds
+  such as Striated Heron, Olive-backed Sunbird and Northern Goshawk could be identified
+  correctly and then filtered out in Australia and China. 34 split species are now mapped
+  back to their pre-split class (Australia 927 → 933 species, Queensland 699 → 705,
+  China 1402 → 1412).
+
+---
+
+# SuperPicky 4.6.4 RC6（中文）
+
+**RC5 以来的变化：**
+
+- **评分筛选加「全选 / 全不选」**（#137）。结果浏览器「评分筛选」标题右侧新增「全选」「全不选」。
+  星级筹码改为统一规则：亮着的显示，熄灭的不显示。**筹码全部熄灭时现在一张都不显示**（以前是
+  全部显示），所以「全不选」再点亮某一档，就是只看这一档最快的方法。打开文件夹时如果默认的
+  3★ + 2★ 筛不出照片，改为点亮全部筹码（以前是全部清空）。
+- **「上一张 / 下一张」到头时置灰**（#137），详情面板和全屏查看器都是。全屏查看连拍组时，
+  首尾指的是这一组的第一张和最后一张。
+- **新增「星级」排序**（#137）：星级从高到低，同一星级内精选在前，其余按锐度从高到低。
+  手动升到 4★ / 5★ 的照片直接排在最前。（4★ 和 5★ 只能手动打，3★ 筹码包含它们。）
+- **修复：常见鸟被地区名录过滤掉。** eBird 地区名录用的是 2025 分类，近年新拆分出的物种
+  （Little Heron、Sahul Sunbird、Mongolian Gull……）在模型里没有对应类别，生成名录时被丢弃，
+  导致绿鹭、黄腹花蜜鸟、苍鹰等常见鸟在澳洲、中国即使识别对了也会被过滤掉。现已把 34 个拆分
+  物种对回拆分前的模型类别（澳洲 927 → 933 种、昆士兰 699 → 705、中国 1402 → 1412）。
+
+---
+
 # SuperPicky 4.6.4 RC5
 
 **What's new since RC4:**
