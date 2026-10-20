@@ -56,30 +56,38 @@ def test_focus_filter_labels_use_i18n_in_english_ui():
     panel.close()
 
 
-def test_tile_label_single_line_species_or_filename():
+def test_tile_label_species_or_filename(monkeypatch):
     """
-    RC8 起卡片标签单行:有鸟种显示鸟名(随界面语言),无鸟种显示文件名;
-    文件名不再进标签(改由整卡 tooltip 悬停查看),连拍后缀附于行尾。
-    Since RC8 the tile label is a single line — species name (localized) when
-    present, otherwise the filename; the filename lives in the hover tooltip.
+    卡片标签:有鸟种显示鸟名(随界面语言),无鸟种显示文件名;文件名不进标签(由整卡
+    tooltip 悬停查看),连拍后缀附在鸟名行尾。中文界面(简体、繁体)再换行显示英文名
+    消除歧义;英文界面只有一行。
+    Tile label: species name (localized) or the filename; the burst suffix trails
+    the name. Chinese UIs add the English name on a second line; English stays one line.
     """
-    from ui.thumbnail_grid import _tile_label_text, _display_name
+    from tools.i18n import get_i18n
+    from ui.thumbnail_grid import _tile_label_text
 
+    i18n = get_i18n()
     photo = {"filename": "DSC01234.ARW",
              "bird_species_cn": "白胸鸲鹟", "bird_species_en": "White-breasted Robin"}
-    text = _tile_label_text(photo)
-    # 单行显示鸟名(随语言),不含文件名 / single line = species, no filename
-    assert text == _display_name(photo)
-    assert "DSC01234.ARW" not in text
-    assert ("白胸鸲鹟" in text) or ("White-breasted Robin" in text)
-
     no_species = {"filename": "DSC09999.NEF"}
-    assert _tile_label_text(no_species) == "DSC09999.NEF"
+    candidate = {"filename": "DSC05555.NEF", "alt_species_cn": "哈氏弯嘴鹛",
+                 "alt_species_en": "Hall's Babbler", "alt_confidence": 45.0}
 
-    # 连拍后缀附在单行行尾,且不再有第二行 / suffix appended, no second line
-    text2 = _tile_label_text(photo, " (5)")
-    assert text2 == _display_name(photo) + " (5)"
-    assert "<br/>" not in text2
+    for lang in ("zh_CN", "zh_TW"):
+        monkeypatch.setattr(i18n, "current_lang", lang)
+        lines = _tile_label_text(photo, " (5)").split("\n")
+        assert len(lines) == 2 and lines[0].endswith(" (5)")
+        assert lines[1] == "White-breasted Robin"
+        assert "DSC01234.ARW" not in _tile_label_text(photo)
+        assert _tile_label_text(no_species) == "DSC09999.NEF"
+        assert _tile_label_text(candidate).endswith("\nHall's Babbler")
+        # 没有中文名、第一行已是英文名时不重复 / no duplicate when the name is English already
+        assert _tile_label_text({"filename": "x", "bird_species_en": "Barn Swallow"}) == "Barn Swallow"
+
+    monkeypatch.setattr(i18n, "current_lang", "en_US")
+    assert _tile_label_text(photo, " (5)") == "White-breasted Robin (5)"
+    assert _tile_label_text(no_species) == "DSC09999.NEF"
 
 
 def test_detail_panel_species_row_above_gbif():

@@ -52,24 +52,71 @@ def _display_name(photo: dict) -> str:
     return text or photo.get("filename", "")
 
 
+def _english_second_line(photo: dict, first_line: str) -> str:
+    """
+    中文界面（简体、繁体）下鸟名的英文名，用于换行显示、消除中文名歧义。
+
+    取与第一行同一个鸟种的英文名：有确认鸟种用确认鸟种，否则用正在显示的待确定候选。
+    英文界面、没有英文名、或第一行本身已是英文名（无中文名回退）时返回空串。
+
+    English name shown on a second line in Chinese UIs (Simplified and Traditional)
+    to disambiguate Chinese names. Uses the same species as the first line: the
+    confirmed species, else the displayed unconfirmed candidate. Empty on an English
+    UI, without an English name, or when the first line already is the English name.
+
+    参数 / Parameters:
+        photo (dict): 照片记录 / photo record.
+        first_line (str): 第一行显示的鸟名 / the first-line name.
+
+    返回 / Returns:
+        str: 英文名或空串 / English name or "".
+    """
+    if get_i18n().current_lang.startswith("en") or not first_line:
+        return ""
+    if (photo.get("bird_species_cn") or "").strip() or (photo.get("bird_species_en") or "").strip():
+        en = (photo.get("bird_species_en") or "").strip()
+    elif first_line != photo.get("filename", ""):
+        en = (photo.get("alt_species_en") or "").strip()
+    else:
+        en = ""
+    return "" if not en or first_line.startswith(en) else en
+
+
+def tile_footer_height() -> int:
+    """
+    卡片底部文字区高度：中文界面多留一行给英文名。卡片与网格行高都从这里取，保证一致。
+
+    Footer height of a tile: Chinese UIs reserve an extra line for the English name.
+    Both the card and the grid row height use this so they always agree.
+
+    返回 / Returns:
+        int: 像素 / pixels.
+    """
+    return 32 if get_i18n().current_lang.startswith("en") else 44
+
+
 def _tile_label_text(photo: dict, burst_suffix: str = "") -> str:
     """
-    卡片底部标签文本:单行显示——有鸟种时显示鸟名(跟随语言),无鸟种时显示
-    文件名,尾部附连拍数量后缀。文件名不再占第二行,改由整卡 tooltip 悬停查看。
+    卡片底部标签文本:有鸟种时显示鸟名(跟随语言),无鸟种时显示文件名,尾部附连拍
+    数量后缀;中文界面(简体、繁体)再换行显示英文名以消除歧义(见
+    _english_second_line)。文件名由整卡 tooltip 悬停查看。
 
-    Tile label text: a single line — the species name (localized) when the
-    photo has one, otherwise the filename, with the burst-count suffix
-    appended. The filename is no longer shown on a second line; it is
-    revealed via the card's hover tooltip instead.
+    Tile label text: the species name (localized) when the photo has one,
+    otherwise the filename, plus the burst-count suffix; Chinese UIs add the
+    English name on a second line to disambiguate. The filename is revealed via
+    the card's hover tooltip.
 
     参数 / Parameters:
         photo (dict): 照片记录 / photo record.
         burst_suffix (str): 连拍数量后缀,如 " (5)" / burst-count suffix.
 
     返回 / Returns:
-        str: QLabel 纯文本单行 / a single plain-text line for the QLabel.
+        str: QLabel 纯文本(中文界面可能两行) / plain text for the QLabel (two lines in Chinese UIs).
     """
-    return _display_name(photo) + burst_suffix
+    name = _display_name(photo)
+    en = _english_second_line(photo, name)
+    # 中文界面换行加英文名 / Chinese UIs add the English name on a second line
+    return name + burst_suffix + (f"\n{en}" if en else "")
 
 
 # 对焦状态指示颜色（WORST 不显示圆点）
@@ -502,7 +549,7 @@ class ThumbnailCard(QFrame):
         # Store rects for click detection
         self._badge_rect = QRect()
 
-        self.setFixedSize(thumb_size + 8, thumb_size + 32)
+        self.setFixedSize(thumb_size + 8, thumb_size + tile_footer_height())
         self.setStyleSheet(self._normal_style())
         self.setCursor(Qt.PointingHandCursor)
         self.setFocusPolicy(Qt.ClickFocus)
@@ -890,7 +937,7 @@ class ThumbnailGrid(QScrollArea):
         visible_top = y_offset
         visible_bottom = y_offset + viewport_height
         
-        row_h = self._thumb_size + 40
+        row_h = self._thumb_size + tile_footer_height() + 8
         start_row = max(0, (visible_top - 16) // row_h)
         end_row = (visible_bottom - 16) // row_h + 1
         
@@ -923,7 +970,7 @@ class ThumbnailGrid(QScrollArea):
         self._saved_scroll_index = -1.0
         if keep_scroll and self._photos:
             y_offset = self.verticalScrollBar().value()
-            row_h = self._thumb_size + 40
+            row_h = self._thumb_size + tile_footer_height() + 8
             # 计算当前位于第几行（浮点数，保留行内偏移）
             current_row_float = max(0.0, (y_offset - 16) / row_h)
             # 转换为相对于总列表的“虚拟索引”
@@ -1014,7 +1061,7 @@ class ThumbnailGrid(QScrollArea):
         # 2. 【关键优化】预设容器总高度，确保滚动条立即获得正确的 Range，防止 setValue 失效
         num_photos = len(self._photos)
         num_rows = (num_photos + self._current_col_count - 1) // self._current_col_count
-        row_h = self._thumb_size + 40
+        row_h = self._thumb_size + tile_footer_height() + 8
         total_h = num_rows * row_h + 32 # 16*2 margins
         self._container.setMinimumHeight(total_h)
 
@@ -1091,7 +1138,7 @@ class ThumbnailGrid(QScrollArea):
                 card.set_selected(True)
             
             # 强制设置行最小高度
-            self._grid.setRowMinimumHeight(row, self._thumb_size + 32)
+            self._grid.setRowMinimumHeight(row, self._thumb_size + tile_footer_height())
 
             cached = _thumb_cache.get(photo_key)
             if cached:
@@ -1459,7 +1506,7 @@ class ThumbnailGrid(QScrollArea):
             if new_col_count != self._current_col_count:
                 # 记录当前位置
                 y_offset = self.verticalScrollBar().value()
-                row_h = self._thumb_size + 40
+                row_h = self._thumb_size + tile_footer_height() + 8
                 current_row_float = max(0.0, (y_offset - 16) / row_h)
                 self._saved_scroll_index = current_row_float * self._current_col_count
                 
