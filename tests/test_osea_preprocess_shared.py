@@ -43,9 +43,9 @@ def test_temperature_single_source():
     sig_tta = inspect.signature(osea_classifier.OSEAClassifier.predict_with_tta)
     assert sig_tta.parameters["temperature"].default == OSEA_TEMPERATURE
 
-    # predict_bird 不得再内联硬编码温度，必须引用共享常量
-    # predict_bird must reference the shared constant, not an inline literal
-    src = inspect.getsource(bird_identifier.predict_bird)
+    # OSEA 推理（_class_probs）不得内联硬编码温度，必须引用共享常量
+    # OSEA inference (_class_probs) must reference the shared constant, not an inline literal
+    src = inspect.getsource(bird_identifier._class_probs)
     assert "OSEA_TEMPERATURE" in src
     assert "TEMPERATURE = 0.9" not in src
 

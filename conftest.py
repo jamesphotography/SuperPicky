@@ -151,6 +151,11 @@ def _isolate_global_state(tmp_path_factory):
     cfg_dir = tmp_path_factory.mktemp("sp_config")
     cfg = AdvancedConfig(config_file=str(cfg_dir / "advanced_config.json"))
     cfg.set_language(TEST_LANGUAGE)
+    # 识鸟默认是对比模式（会跑两个模型并往用户数据目录追加对比 CSV）；老用例都按单模型写，
+    # 这里固定为 osea。测对比模式 / BirdTrace 的用例用环境变量 SUPERPICKY_BIRDID_ENGINE 显式开启。
+    # The bird-ID default is compare mode (two models + a CSV in the user data dir); legacy tests
+    # assume one model, so pin osea here. Compare/BirdTrace tests opt in via SUPERPICKY_BIRDID_ENGINE.
+    cfg.set_birdid_engine("osea")
     registry.set("advanced_config.instance", cfg)
 
     get_i18n(TEST_LANGUAGE)
