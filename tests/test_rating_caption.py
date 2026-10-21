@@ -319,3 +319,17 @@ def test_tiny_pool_shows_values_without_percentiles():
     cap = build_caption(_ranked(pool_size=1, group_size=1, pct_sharp=0.0, pct_topiq=0.0), ZH)
     assert "本批" not in cap
     assert "· 头部锐度 631" in cap and "· 美学分 5.9 / 10" in cap
+
+
+def test_compare_mode_caption_names_model_and_check():
+    """对比模式：鸟种置信度写 BirdTrace，OSEA 验证一致 ✓ / 不一致 ✗，均带置信度。"""
+    agree = build_caption(_ranked(species_model="BirdTrace", verify_model="OSEA",
+                                  verify_name="冠翎鹑鸠", verify_confidence=99.6,
+                                  verify_agree=True), ZH)
+    assert "· 鸟种识别置信度 BirdTrace 92%" in agree
+    assert "✓ OSEA 验证一致：冠翎鹑鸠 100%" in agree
+    disagree = build_caption(_ranked(species_model="BirdTrace", verify_model="OSEA",
+                                     verify_name="茶色蛙口夜鹰", verify_confidence=26.1), EN)
+    assert "✗ OSEA check disagrees: OSEA says 茶色蛙口夜鹰 26%" in disagree
+    # 没开对比时不出现验证行 / no check line outside compare mode
+    assert "OSEA 验证" not in build_caption(_ranked(), ZH)

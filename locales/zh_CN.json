@@ -580,6 +580,12 @@
     "birdid_conf_label": "识别置信度",
     "birdid_section_source": "数据源",
     "birdid_source_ebird": "eBird（推荐）",
+    "birdid_section_engine": "识鸟模型",
+    "birdid_engine_compare": "对比：BirdTrace 识别，OSEA 验证（默认）",
+    "birdid_engine_birdtrace": "BirdTrace",
+    "birdid_engine_osea": "OSEA（旧模型）",
+    "birdid_engine_hint": "对比模式下，OSEA 的验证结果写在评分说明（题注）里，可在结果浏览器的详情里查看，也可用「只看分歧」筛选；逐张记录另存于：{path}",
+    "birdid_engine_missing": "BirdTrace 模型文件缺失，识鸟暂时只用 OSEA",
     "birdid_source_gbif": "全球 / 不限地区",
     "birdid_section_region": "国家 / 地区",
     "birdid_country_label": "国家",
@@ -1149,11 +1155,13 @@
     "under_exposed": "✗ 欠曝（减分）",
     "flying": "✓ 飞行中（加分）",
     "bird_confidence": "· 有鸟置信度 {conf}（YOLO 检测）",
-    "species_confidence": "· 鸟种识别置信度 OSEA {conf}",
-    "species_unconfirmed": "· 鸟种未确定：最可能是{name}，但识别置信度 OSEA {conf} 低于设置的 {thr}，不写入鸟种、不按它分目录",
-    "species_unconfirmed_ranked": "· 鸟种未确定：最可能是{name}，但识别置信度 OSEA {conf} 低于设置的 {thr}，不写入鸟种、不按它分目录；排名时仍和{name}的照片一起比较",
+    "species_confidence": "· 鸟种识别置信度 {model} {conf}",
+    "species_unconfirmed": "· 鸟种未确定：最可能是{name}，但识别置信度 {model} {conf} 低于设置的 {thr}，不写入鸟种、不按它分目录",
+    "species_unconfirmed_ranked": "· 鸟种未确定：最可能是{name}，但识别置信度 {model} {conf} 低于设置的 {thr}，不写入鸟种、不按它分目录；排名时仍和{name}的照片一起比较",
     "manual_rating": "手动改为 {stars}（下面是原评分说明）",
-    "manual_no_bird": "手动标记为无鸟（下面是原评分说明）"
+    "manual_no_bird": "手动标记为无鸟（下面是原评分说明）",
+    "verify_agree": "✓ {model} 验证一致：{name} {conf}",
+    "verify_disagree": "✗ {model} 验证不一致：{model} 认为是{name} {conf}"
   },
   "cli": {
     "banner": "  🐦 SuperPicky CLI v{version} - 慧眼选鸟 (命令行版)",
@@ -1687,7 +1695,9 @@
     "export_menu": "导出",
     "export_menu_tooltip": "把这批选鸟结果带出软件：生成分享报告、导出 eBird 记录，或导入「照片」App",
     "photos_import_hint": "勾选的照片；没勾选时为当前筛选出的照片",
-    "size_tooltip": "调整网格里缩略图的大小（也可以按 + / − 键）"
+    "size_tooltip": "调整网格里缩略图的大小（也可以按 + / − 键）",
+    "disagree_only": "只看分歧",
+    "disagree_only_tip": "识鸟对比模式：只显示 OSEA 验证结果与当前鸟种不一致的照片（在浏览器里改鸟种后随之更新）"
   },
   "video": {
     "title_phase1": "视频分析（Phase 1 · 仅 YOLO 有鸟/无鸟）",
