@@ -127,3 +127,38 @@ def test_tiers_run_model_once_and_reuse_probs(monkeypatch):
     assert found == [{"class_id": 5}] and tier == "none"
     assert calls == ["birdtrace"]                     # 只推理一次 / one inference
     assert len(seen) == 3 and all(p is probs for p in seen)
+
+
+def test_compare_false_runs_primary_only(tmp_path, monkeypatch):
+    """compare=False（补救扫描守门、视频逐帧）：只跑主模型，不写对比 CSV。"""
+    monkeypatch.setenv("SUPERPICKY_BIRDID_ENGINE", "compare")
+    monkeypatch.setattr(bi, "birdtrace_ready", lambda: True)
+    monkeypatch.setattr(bi, "get_user_data_dir", lambda: str(tmp_path))
+    engines = []
+
+    def predict(image, engine=None, **kw):
+        engines.append(engine)
+        return [{"cn_name": "褐鹰", "confidence": 90.0}]
+
+    monkeypatch.setattr(bi, "predict_bird", predict)
+    result = bi.identify_bird("", use_gps=False, use_geo_filter=False, preloaded_crop=object(), compare=False)
+    assert result["primary_engine"] == "birdtrace" and "compare" not in result
+    assert engines == ["birdtrace"]
+    assert not (tmp_path / "birdid_engine_compare.csv").exists()
+
+
+def test_birdid_adapter_requests_primary_only(monkeypatch):
+    """视频与补救扫描共用的适配器必须传 compare=False / The shared adapter passes compare=False."""
+    import numpy as np
+
+    from core.birdid_adapter import BirdIDAdapter
+
+    seen = {}
+
+    def fake_identify(**kwargs):
+        seen.update(kwargs)
+        return {"success": True, "results": []}
+
+    monkeypatch.setattr(bi, "identify_bird", fake_identify)
+    BirdIDAdapter().identify(np.zeros((64, 64, 3), dtype=np.uint8), top_k=3)
+    assert seen.get("compare") is False

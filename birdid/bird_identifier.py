@@ -1190,6 +1190,7 @@ def identify_bird(
     name_format: Optional[str] = None,
     preloaded_crop: Optional[Image.Image] = None,
     focus_point: Optional[Tuple[float, float]] = None,
+    compare: bool = True,
 ) -> Dict:
     result = {
         "success": False,
@@ -1300,6 +1301,12 @@ def identify_bird(
 
         setting = get_birdid_engine()
         primary, check = resolve_engines(setting)
+        # compare=False：只要主结果的调用方（无鸟补救扫描的守门、视频逐帧识别）不跑验证模型，
+        # 既省一次推理，也不往对比 CSV 写没有路径、没有地区的行。
+        # compare=False: callers needing only the primary result (rescue-scan gate, video frames)
+        # skip the check model, saving an inference and keeping path-less rows out of the CSV.
+        if not compare:
+            check = None
         results, result["geo_info"] = run(primary)
         result["engine"] = setting
         result["primary_engine"] = primary
