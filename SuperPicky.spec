@@ -101,6 +101,10 @@ a = Analysis(
         'timm',
         'timm.models',
         'timm.models.resnet',
+        # BirdTrace 识鸟模型（FastViT + safetensors 权重）/ BirdTrace model
+        'timm.models.fastvit',
+        'safetensors',
+        'safetensors.torch',
         'imageio',
         'rawpy',
         'imagehash',
