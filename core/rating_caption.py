@@ -14,7 +14,7 @@ report.db 的 caption 列，在结果浏览器的「选片备注」里显示—�
   没拿到 3★ 的写明卡在哪条规则；被硬门槛挡下的写出具体数值与最低要求；
 - 排名照片再加一行「排名靠什么」（锐度/美学权重与加减分项）；
 - 逐项依据：✓ 加分项 / ✗ 扣分项 / · 中性信息，数字后注明参照（本批位置、最低要求）；
-- 识别信息：有鸟置信度（YOLO 检测）、鸟种识别置信度（OSEA 模型）；识别置信度不够时说明如何处理。
+- 识别信息：有鸟置信度（YOLO 检测）、鸟种识别置信度（BirdTrace 模型）；识别置信度不够时说明如何处理。
 ISO 本身不是打分依据，不单独成行；只在 ISO 折算明显压低了锐度时，在锐度行注明。
 
 鸟种、IUCN 不写进题注：Lightroom 已有标题字段、浏览器有单独的鸟种行；而鸟种
@@ -125,12 +125,7 @@ class CaptionFacts:
     species_low_confidence: bool = False         # 识别置信度低于门槛（鸟种未确定）
     species_candidate: Optional[str] = None      # 未确定时最可能的鸟种名（按界面语言）
     species_threshold: Optional[float] = None    # 用户设置的识鸟置信度门槛 %
-    species_model: str = "OSEA"                  # 给出鸟种的识鸟模型名（OSEA / BirdTrace）
-    # —— 识鸟对比模式的验证模型 / Check model in Bird-ID compare mode ——
-    verify_model: Optional[str] = None           # 验证模型名，None 表示没开对比
-    verify_name: Optional[str] = None            # 验证模型第一名鸟种（按界面语言）
-    verify_confidence: Optional[float] = None    # 验证模型置信度 %（0-100）
-    verify_agree: bool = False                   # 与最终鸟种是否一致
+    species_model: str = "BirdTrace"             # 给出鸟种的识鸟模型名 / Bird-ID model name
 
 
 Translator = Callable[..., str]
@@ -338,12 +333,6 @@ def build_caption(f: CaptionFacts, t: Translator) -> str:
     elif f.species_confidence is not None:
         lines.append(t("caption.species_confidence", conf=f"{f.species_confidence:.0f}%",
                        model=f.species_model))
-    # 对比模式：验证模型的第一名与置信度，一致 ✓ / 不一致 ✗（浏览器里绿/红显示）
-    # Compare mode: the check model's top-1 and confidence, ✓ agree / ✗ disagree.
-    if f.verify_model and f.verify_name and f.verify_confidence is not None:
-        key = "caption.verify_agree" if f.verify_agree else "caption.verify_disagree"
-        lines.append(t(key, model=f.verify_model, name=f.verify_name,
-                       conf=f"{f.verify_confidence:.0f}%"))
     return "\n".join(lines)
 
 

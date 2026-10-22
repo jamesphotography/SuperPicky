@@ -114,7 +114,6 @@ class BirdIDAdapter(BirdClassifier):
             use_gps=False,                   # 视频帧无 EXIF GPS
             use_geo_filter=False,            # 同上
             top_k=top_k,
-            compare=False,                   # 只要主结果：不跑对比模式的验证模型 / primary result only
         )
         if self.name_format is not None:
             kwargs["name_format"] = self.name_format

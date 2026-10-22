@@ -515,7 +515,6 @@ def load_required_models() -> list[dict[str, str]]:
     # "missing" and fail the build.
 
     fallback = [
-        {"filename": "model20240824.pth", "dest_dir": "models"},
         {"filename": "birdtrace_fastvit_ma36_10k.safetensors", "dest_dir": "models"},
         {"filename": "superFlier_efficientnet.pth", "dest_dir": "models"},
         {"filename": "cub200_keypoint_resnet50_slim.pth", "dest_dir": "models"},

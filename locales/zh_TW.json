@@ -316,7 +316,6 @@
     "min_sharpness": "   最低銳度: {v}",
     "min_aesthetics": "   最低美學: {v}",
     "birdid_confidence_log": "   辨識確信度: {v}%",
-    "birdid_fallback_model": "[BirdID] 回退使用 birdid2024 模型",
     "birdid_waiting": "⏳ 正在等待剩餘 BirdID 辨識結果 ({count} 個任務)...",
     "birdid_low_confidence": "  🐦 低置信度 [{source}]：{name}（{confidence:.0f}% < {threshold}%）",
     "mps_cache_cleared": "  🧹 [第{index}張] MPS 視訊記憶體已清理",
@@ -580,12 +579,6 @@
     "birdid_conf_label": "辨識置信度",
     "birdid_section_source": "資料來源",
     "birdid_source_ebird": "eBird（推薦）",
-    "birdid_section_engine": "辨識鳥種模型",
-    "birdid_engine_compare": "對比：BirdTrace 辨識，OSEA 驗證（預設）",
-    "birdid_engine_birdtrace": "BirdTrace",
-    "birdid_engine_osea": "OSEA（舊模型）",
-    "birdid_engine_hint": "對比模式下，OSEA 的驗證結果寫在評分說明（題注）裡，可在結果瀏覽器的詳情裡查看，也可用「只看分歧」篩選；逐張紀錄另存於：{path}",
-    "birdid_engine_missing": "BirdTrace 模型檔案缺失，鳥種辨識暫時只用 OSEA",
     "birdid_source_gbif": "全球 / 不限地區",
     "birdid_section_region": "國家 / 地區",
     "birdid_country_label": "國家",
@@ -715,7 +708,7 @@
     "cleanup_forever": "永久保留",
     "name_format": "英文命名標準",
     "name_format_hint": "選擇鳥種辨識結果使用的英文命名標準",
-    "name_format_default": "預設（OSEA 模型）",
+    "name_format_default": "預設",
     "name_format_avilist": "AviList v2025",
     "name_format_clements": "Clements / eBird v2024",
     "name_format_birdlife": "BirdLife v9",
@@ -950,7 +943,7 @@
   "about": {
     "window_title": "關於",
     "subtitle": "AI 智慧選片助手",
-    "content": "開發者\n詹姆斯·于震 (James Yu)\n澳洲華裔職業攝影師\n《詹姆斯的風光攝影筆記》三部曲作者\n\n模型訓練：Jordan Yu\n開發團隊：小平, Lyapunov, osk.sh, yblpoi, jcchan23\n\n開源模型\nBirdTrace - 鳥類辨識 by Warden（CC BY-NC 4.0，iNaturalist 資料訓練；架構 FastViT by Apple）\nYOLO11 - 鳥類偵測 by Ultralytics\nOSEA - 鳥類辨識 by Sun Jiao\nTOPIQ - 美學評分 by Chaofeng Chen et al.\n\n資料來源\n鳥種顏值指數 - iRateBird 公民科學資料集 (CC-BY 4.0)\nSantangeli, A. 等 (2023), Scientific Data\n注: 評分以芬蘭及英語使用者為主, 反映西方審美視角\n鳥種代碼 - eBird 物種代碼（康乃爾鳥類學實驗室）；北美 4 位代碼 - IBP 鳥類族群研究所\n\n許可證: GPL-3.0\n© 2024-2025 詹姆斯·于震",
+    "content": "開發者\n詹姆斯·于震 (James Yu)\n澳洲華裔職業攝影師\n《詹姆斯的風光攝影筆記》三部曲作者\n\n模型訓練：Jordan Yu\n開發團隊：小平, Lyapunov, osk.sh, yblpoi, jcchan23\n\n開源模型\nBirdTrace - 鳥類辨識 by Warden（CC BY-NC 4.0，iNaturalist 資料訓練；架構 FastViT by Apple）\nYOLO11 - 鳥類偵測 by Ultralytics\nOSEA - 鳥種類別表 by Sun Jiao\nTOPIQ - 美學評分 by Chaofeng Chen et al.\n\n資料來源\n鳥種顏值指數 - iRateBird 公民科學資料集 (CC-BY 4.0)\nSantangeli, A. 等 (2023), Scientific Data\n注: 評分以芬蘭及英語使用者為主, 反映西方審美視角\n鳥種代碼 - eBird 物種代碼（康乃爾鳥類學實驗室）；北美 4 位代碼 - IBP 鳥類族群研究所\n\n許可證: GPL-3.0\n© 2024-2025 詹姆斯·于震",
     "birdtrace_link": "<a href=\"https://huggingface.co/warden123/BirdTrace-FastViT-MA36-10K\">BirdTrace 模型主頁（Hugging Face）</a>"
   },
   "birdid": {
@@ -1160,9 +1153,7 @@
     "species_unconfirmed": "· 鳥種未確定：最可能是{name}，但辨識置信度 {model} {conf} 低於設定的 {thr}，不寫入鳥種、不按它分資料夾",
     "species_unconfirmed_ranked": "· 鳥種未確定：最可能是{name}，但辨識置信度 {model} {conf} 低於設定的 {thr}，不寫入鳥種、不按它分資料夾；排名時仍和{name}的照片一起比較",
     "manual_rating": "手動改為 {stars}（下面是原評分說明）",
-    "manual_no_bird": "手動標記為無鳥（下面是原評分說明）",
-    "verify_agree": "✓ {model} 驗證一致：{name} {conf}",
-    "verify_disagree": "✗ {model} 驗證不一致：{model} 認為是{name} {conf}"
+    "manual_no_bird": "手動標記為無鳥（下面是原評分說明）"
   },
   "cli": {
     "banner": "  🐦 SuperPicky CLI v{version} - 慧眼選鳥 (命令列版)",
@@ -1361,7 +1352,6 @@
     "summary_avg_time": "  平均速度: {seconds:.1f}秒/張",
     "summary_exif_done": "✅ 所有照片已寫入中繼資料，可在 Lightroom 中檢視",
     "phase_scan": "📁 第一階段：掃描檔案",
-    "bid_model_osea": "🤖 模型: OSEA (10,964 物種)",
     "bid_scientific_name": "     學名: {scientific_name}",
     "bid_confidence_line": "     置信度: {confidence:.1f}% {ebird_match}",
     "bid_image_count": "\n📸 圖片數量: {count}",
@@ -1423,8 +1413,6 @@
     "bid_help_images": "圖片檔案路徑 (支援 glob 模式)",
     "bid_help_image": "圖片檔案路徑",
     "bid_help_top": "返回前 N 個結果 (預設: 5)",
-    "bid_help_model": "選擇模型: birdid2024 (預設) 或 osea",
-    "bid_help_tta": "啟用 TTA 模式 (僅 OSEA 模型，更準但更慢)",
     "bid_help_no_yolo": "禁用 YOLO 裁剪",
     "bid_help_no_gps": "禁用 GPS 自動偵測",
     "bid_help_no_ebird": "禁用 eBird 區域過濾",
@@ -1433,7 +1421,7 @@
     "bid_help_write_exif": "將辨識結果寫入 EXIF (Title, Caption, Keywords)",
     "bid_help_exif_threshold": "寫入EXIF的置信度閾值 (預設: 70%%)",
     "bid_help_batch": "批次模式 (簡化輸出)",
-    "bid_examples": "\nExamples:\n  %(prog)s bird.jpg                        # 辨識單張圖片 (birdid2024)\n  %(prog)s bird.jpg --model osea           # 使用 OSEA 模型辨識\n  %(prog)s bird.jpg --model osea --tta     # OSEA + TTA (更準但更慢)\n  %(prog)s bird.NEF --country AU           # 指定澳洲過濾 (birdid2024)\n  %(prog)s bird.jpg --region AU-SA         # 指定南澳州過濾\n  %(prog)s *.jpg --batch --write-exif      # 批次辨識並寫入EXIF\n  %(prog)s organize ~/Photos/Birds -y      # 按鳥種自動分資料夾\n  %(prog)s reset ~/Photos/Birds -y         # 恢復原始資料夾結構\n  %(prog)s list-countries                  # 列出國家程式碼\n        ",
+    "bid_examples": "\nExamples:\n  %(prog)s bird.jpg                        # 辨識單張圖片\n  %(prog)s bird.NEF --country AU           # 指定澳洲過濾\n  %(prog)s bird.jpg --region AU-SA         # 指定南澳州過濾\n  %(prog)s *.jpg --batch --write-exif      # 批次辨識並寫入EXIF\n  %(prog)s organize ~/Photos/Birds -y      # 按鳥種自動分資料夾\n  %(prog)s reset ~/Photos/Birds -y         # 恢復原始資料夾結構\n  %(prog)s list-countries                  # 列出國家程式碼\n        ",
     "bid_help_identify": "辨識鳥類 (預設)",
     "bid_help_organize": "批次辨識並按鳥種分資料夾",
     "bid_help_organize_threshold": "置信度閾值 (預設: 70%%)",
@@ -1696,9 +1684,7 @@
     "export_menu": "匯出",
     "export_menu_tooltip": "把這批選鳥結果帶出軟體：產生分享報告、匯出 eBird 記錄，或匯入「照片」App",
     "photos_import_hint": "勾選的照片；沒勾選時為目前篩選出的照片",
-    "size_tooltip": "調整網格裡縮圖的大小（也可以按 + / − 鍵）",
-    "disagree_only": "只看分歧",
-    "disagree_only_tip": "鳥種辨識對比模式：只顯示 OSEA 驗證結果與目前鳥種不一致的照片（在瀏覽器裡改鳥種後隨之更新）"
+    "size_tooltip": "調整網格裡縮圖的大小（也可以按 + / − 鍵）"
   },
   "video": {
     "title_phase1": "影片分析（Phase 1 · 僅 YOLO 有鳥/無鳥）",

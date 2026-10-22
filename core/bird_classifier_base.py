@@ -4,7 +4,7 @@
 SuperPicky V4.3 Phase 2 — 鸟类识别 ABC 接口层
 
 为视频分析的「鸟种识别 / 飞行检测」定义抽象接口，让 video_analyzer 不直接依赖
-具体的 birdid 或 FlightDetector 实现，便于未来替换为其他模型（OSEA / MegaDetector 等）。
+具体的 birdid 或 FlightDetector 实现，便于未来替换为其他模型（如 MegaDetector 等）。
 
 设计原则（参考 SuperVideo 项目）：
     - 输入统一为 numpy.ndarray（BGR 帧，cv2 直出）+ 可选 bbox
@@ -13,7 +13,7 @@ SuperPicky V4.3 Phase 2 — 鸟类识别 ABC 接口层
 
 ABC interface layer for bird species ID and flight detection.
 Decouples video_analyzer from concrete birdid/FlightDetector implementations,
-enabling future replacement with other models (OSEA / MegaDetector / etc.).
+enabling future replacement with other models (e.g. MegaDetector).
 """
 
 from __future__ import annotations
@@ -64,7 +64,7 @@ class BirdClassifier(ABC):
 
     实现者：
         - core/birdid_adapter.py: BirdIDAdapter（包装现有 birdid 模块）
-        - 未来可加：OSEAClassifier、MegaDetectorClassifier 等
+        - 未来可加：MegaDetectorClassifier 等
 
     Bird species classifier interface.
     Concrete implementations: BirdIDAdapter (wraps the in-tree birdid module).

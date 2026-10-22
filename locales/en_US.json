@@ -316,7 +316,6 @@
     "min_sharpness": "   Min sharpness: {v}",
     "min_aesthetics": "   Min aesthetics: {v}",
     "birdid_confidence_log": "   Bird ID confidence: {v}%",
-    "birdid_fallback_model": "[BirdID] Falling back to birdid2024 model",
     "birdid_waiting": "⏳ Waiting for {count} remaining BirdID results...",
     "birdid_low_confidence": "  🐦 Low confidence [{source}]: {name} ({confidence:.0f}% < {threshold}%)",
     "mps_cache_cleared": "  🧹 [Photo {index}] MPS memory cleared",
@@ -580,12 +579,6 @@
     "birdid_conf_label": "Identification Confidence",
     "birdid_section_source": "Data Source",
     "birdid_source_ebird": "eBird (Recommended)",
-    "birdid_section_engine": "Bird ID model",
-    "birdid_engine_compare": "Compare: BirdTrace identifies, OSEA checks (default)",
-    "birdid_engine_birdtrace": "BirdTrace",
-    "birdid_engine_osea": "OSEA (previous model)",
-    "birdid_engine_hint": "In compare mode the OSEA check is written into the rating note (caption), visible in the results browser details and via the \"Disagreements only\" filter; a per-photo log is also saved to: {path}",
-    "birdid_engine_missing": "BirdTrace model files are missing; Bird ID is using OSEA for now",
     "birdid_source_gbif": "Global / No region filter",
     "birdid_section_region": "Country / Region",
     "birdid_country_label": "Country",
@@ -715,7 +708,7 @@
     "cleanup_forever": "Keep forever",
     "name_format": "English Naming Standard",
     "name_format_hint": "Choose which English naming standard to use for bird species",
-    "name_format_default": "Default (OSEA Model)",
+    "name_format_default": "Default",
     "name_format_avilist": "AviList v2025",
     "name_format_clements": "Clements / eBird v2024",
     "name_format_birdlife": "BirdLife v9",
@@ -868,9 +861,7 @@
     "species_unconfirmed": "· Species unconfirmed: most likely {name}, but ID confidence {model} {conf} is below your setting of {thr}; not written as the species or used for folders",
     "species_unconfirmed_ranked": "· Species unconfirmed: most likely {name}, but ID confidence {model} {conf} is below your setting of {thr}; not written as the species or used for folders, yet still ranked together with {name} photos",
     "manual_rating": "Manually changed to {stars} (original explanation below)",
-    "manual_no_bird": "Manually marked as no bird (original explanation below)",
-    "verify_agree": "✓ {model} check agrees: {name} {conf}",
-    "verify_disagree": "✗ {model} check disagrees: {model} says {name} {conf}"
+    "manual_no_bird": "Manually marked as no bird (original explanation below)"
   },
   "lightroom_guide": {
     "title": "Lightroom Classic User Guide - How to View and Use SuperPicky Ratings",
@@ -1038,7 +1029,7 @@
   "about": {
     "window_title": "About James",
     "subtitle": "AI Bird Photo Culling Tool",
-    "content": "James Yu\nAustralian-Chinese Professional Photographer, Author of \"James' Landscape Photography Notes\" Trilogy\n\nModel Training: Jordan Yu\nDevelopment Team: Xiaoping, Lyapunov, osk.sh, yblpoi, jcchan23\n\nOpen Source Models\nBirdTrace - Bird Classification by Warden (CC BY-NC 4.0, trained on iNaturalist data; FastViT architecture by Apple)\nYOLO11 - Bird Detection by Ultralytics\nOSEA - Bird Classification by Sun Jiao\nTOPIQ - Aesthetic Scoring by Chaofeng Chen et al.\n\nData Sources\nSpecies Beauty Index - iRateBird Citizen Science Dataset (CC-BY 4.0)\nSantangeli, A. et al. (2023), Scientific Data\nNote: ratings skew toward Finnish and English-speaking users, reflecting a Western aesthetic perspective\nSpecies codes - eBird species codes (Cornell Lab of Ornithology); North American alpha codes - The Institute for Bird Populations (IBP)\n\nLicense: GPL-3.0\n© 2024-2025 James Yu",
+    "content": "James Yu\nAustralian-Chinese Professional Photographer, Author of \"James' Landscape Photography Notes\" Trilogy\n\nModel Training: Jordan Yu\nDevelopment Team: Xiaoping, Lyapunov, osk.sh, yblpoi, jcchan23\n\nOpen Source Models\nBirdTrace - Bird Classification by Warden (CC BY-NC 4.0, trained on iNaturalist data; FastViT architecture by Apple)\nYOLO11 - Bird Detection by Ultralytics\nOSEA - Species class list by Sun Jiao\nTOPIQ - Aesthetic Scoring by Chaofeng Chen et al.\n\nData Sources\nSpecies Beauty Index - iRateBird Citizen Science Dataset (CC-BY 4.0)\nSantangeli, A. et al. (2023), Scientific Data\nNote: ratings skew toward Finnish and English-speaking users, reflecting a Western aesthetic perspective\nSpecies codes - eBird species codes (Cornell Lab of Ornithology); North American alpha codes - The Institute for Bird Populations (IBP)\n\nLicense: GPL-3.0\n© 2024-2025 James Yu",
     "birdtrace_link": "<a href=\"https://huggingface.co/warden123/BirdTrace-FastViT-MA36-10K\">BirdTrace model page (Hugging Face)</a>"
   },
   "birdid": {
@@ -1361,7 +1352,6 @@
     "summary_avg_time": "  Average: {seconds:.1f}s per photo",
     "summary_exif_done": "✅ Metadata written for every photo; view the results in Lightroom",
     "phase_scan": "📁 Phase 1: File Scanning",
-    "bid_model_osea": "🤖 Model: OSEA (10,964 species)",
     "bid_scientific_name": "     Scientific name: {scientific_name}",
     "bid_confidence_line": "     Confidence: {confidence:.1f}% {ebird_match}",
     "bid_image_count": "\n📸 Images: {count}",
@@ -1423,8 +1413,6 @@
     "bid_help_images": "Image file paths (glob patterns supported)",
     "bid_help_image": "Image file path",
     "bid_help_top": "Return the top N results (default: 5)",
-    "bid_help_model": "Model: birdid2024 (default) or osea",
-    "bid_help_tta": "Enable TTA (OSEA only; more accurate but slower)",
     "bid_help_no_yolo": "Disable YOLO cropping",
     "bid_help_no_gps": "Disable GPS auto-detection",
     "bid_help_no_ebird": "Disable the eBird regional filter",
@@ -1433,7 +1421,7 @@
     "bid_help_write_exif": "Write the result to EXIF (Title, Caption, Keywords)",
     "bid_help_exif_threshold": "Confidence threshold for writing EXIF (default: 70%%)",
     "bid_help_batch": "Batch mode (compact output)",
-    "bid_examples": "\nExamples:\n  %(prog)s bird.jpg                        # Identify one image (birdid2024)\n  %(prog)s bird.jpg --model osea           # Use the OSEA model\n  %(prog)s bird.jpg --model osea --tta     # OSEA + TTA (more accurate, slower)\n  %(prog)s bird.NEF --country AU           # Filter to Australia (birdid2024)\n  %(prog)s bird.jpg --region AU-SA         # Filter to South Australia\n  %(prog)s *.jpg --batch --write-exif      # Batch identify and write EXIF\n  %(prog)s organize ~/Photos/Birds -y      # Sort into species folders\n  %(prog)s reset ~/Photos/Birds -y         # Restore the original folder structure\n  %(prog)s list-countries                  # List country codes\n        ",
+    "bid_examples": "\nExamples:\n  %(prog)s bird.jpg                        # Identify one image\n  %(prog)s bird.NEF --country AU           # Filter to Australia\n  %(prog)s bird.jpg --region AU-SA         # Filter to South Australia\n  %(prog)s *.jpg --batch --write-exif      # Batch identify and write EXIF\n  %(prog)s organize ~/Photos/Birds -y      # Sort into species folders\n  %(prog)s reset ~/Photos/Birds -y         # Restore the original folder structure\n  %(prog)s list-countries                  # List country codes\n        ",
     "bid_help_identify": "Identify birds (default)",
     "bid_help_organize": "Identify in batch and sort into species folders",
     "bid_help_organize_threshold": "Confidence threshold (default: 70%%)",
@@ -1696,9 +1684,7 @@
     "export_menu": "Export",
     "export_menu_tooltip": "Take these results out of SuperPicky: a shareable report, eBird records, or the Photos app",
     "photos_import_hint": "Checked photos; if none, the current filtered view",
-    "size_tooltip": "Change the thumbnail size in the grid (or press + / −)",
-    "disagree_only": "Disagreements only",
-    "disagree_only_tip": "Bird-ID compare mode: show only photos where the OSEA check differs from the current species (updates after species edits)"
+    "size_tooltip": "Change the thumbnail size in the grid (or press + / −)"
   },
   "video": {
     "title_phase1": "Video Analysis (Phase 1 · YOLO bird/no-bird only)",
