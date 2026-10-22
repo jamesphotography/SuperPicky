@@ -8,7 +8,17 @@ identify_bird 区域候选接线测试 / Wiring tests for region candidates in i
 Verifies widen-until-hit with a fake filter and predict, and that GPS location
 and manual selection reach the filter separately, without loading the model.
 """
+import pytest
+
 from birdid.geo_filter import TIER_COUNTRY, TIER_NONE, TIER_SUBNATIONAL
+
+
+@pytest.fixture(autouse=True)
+def _no_model(monkeypatch):
+    """每张图只推理一次（_class_probs），这里换成空桩，不加载真实模型 / Stub out the single inference."""
+    from birdid import bird_identifier as bi
+
+    monkeypatch.setattr(bi, "_class_probs", lambda image, is_yolo_cropped, engine: None)
 
 
 class FakeFilter:

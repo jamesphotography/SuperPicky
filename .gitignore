@@ -154,6 +154,7 @@ pkg_root/
 # Models and Data downloaded from Hugging Face
 models/*.pth
 models/*.onnx
+models/*.safetensors
 birdid/data/avonet.db
 
 # 自定义罕见指数：应用只提供接口，数据由用户自备且多半不可再分发。

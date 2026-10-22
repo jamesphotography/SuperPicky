@@ -205,6 +205,7 @@ class FilterPanel(QWidget):
         # 「只看精选」与上排筹码语义不同(收窄而非并集),独立成行。
         # Narrowing filter, deliberately separated from the union chips above.
         layout.addWidget(self._build_picked_only_check())
+        layout.addWidget(self._build_disagree_only_check())
 
         layout.addWidget(self._divider())
 
@@ -436,6 +437,59 @@ class FilterPanel(QWidget):
         row.addWidget(crown, 0)
         row.addStretch(1)
         return w
+
+    def _build_disagree_only_check(self) -> QWidget:
+        """
+        「只看分歧」开关（识鸟对比模式）。
+
+        与「只看精选」一样是 AND 收窄：只留下验证模型结果与当前鸟种不一致的照片
+        （判定在 ReportDB.get_photos_by_filters 里按当前鸟种现算）。默认隐藏，
+        浏览器载入文件夹后按有没有验证数据调用 set_disagree_available 决定显示。
+
+        返回 / Return:
+            QWidget: 承载 checkbox 的行容器（默认隐藏）。
+
+        "Disagreements only" switch (Bird-ID compare mode). Like "picked only" it narrows
+        the result set to photos whose check-model result differs from the current species.
+        Hidden by default; the browser calls set_disagree_available after loading a folder.
+        """
+        w = QWidget()
+        w.setObjectName("filterDisagreeOnlyRow")
+        w.setStyleSheet("QWidget#filterDisagreeOnlyRow { background: transparent; }")
+        row = QHBoxLayout(w)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
+
+        self._disagree_only_cb = QCheckBox(self.i18n.t("browser.disagree_only"))
+        self._disagree_only_cb.setToolTip(self.i18n.t("browser.disagree_only_tip"))
+        self._disagree_only_cb.setStyleSheet(
+            f"QCheckBox {{ color: {COLORS['error']}; font-size: 12px; spacing: 6px; }}"
+            + checkbox_indicator_qss(15, COLORS['text_muted'], COLORS['error'])
+        )
+        self._disagree_only_cb.setMinimumWidth(
+            self._disagree_only_cb.sizeHint().width() + 10
+        )
+        self._disagree_only_cb.stateChanged.connect(self._emit_filters)
+        row.addWidget(self._disagree_only_cb, 0)
+        row.addStretch(1)
+
+        self._disagree_row = w
+        w.setVisible(False)
+        return w
+
+    def set_disagree_available(self, available: bool) -> None:
+        """
+        当前文件夹有没有识鸟验证数据：没有就隐藏「只看分歧」并取消勾选（不触发筛选）。
+        Show "Disagreements only" only when the folder has check data; otherwise hide and untick it.
+
+        参数 / Parameters:
+            available (bool): 是否有验证数据 / Whether check data exists.
+        """
+        self._disagree_row.setVisible(bool(available))
+        if not available and self._disagree_only_cb.isChecked():
+            self._disagree_only_cb.blockSignals(True)
+            self._disagree_only_cb.setChecked(False)
+            self._disagree_only_cb.blockSignals(False)
 
     def _apply_chip_icon(self, btn, mode: str, active: bool) -> None:
         """给图标型筹码按激活态染色:激活=金,常态=灰。"""
@@ -705,6 +759,7 @@ class FilterPanel(QWidget):
             species_key:      bird_species,
             "sort_by":        sort_by,
             "picked_only":    self._picked_only_cb.isChecked(),
+            "disagree_only":  self._disagree_only_cb.isChecked(),
         }
 
     # ------------------------------------------------------------------
@@ -719,6 +774,9 @@ class FilterPanel(QWidget):
         self._picked_only_cb.blockSignals(True)
         self._picked_only_cb.setChecked(False)
         self._picked_only_cb.blockSignals(False)
+        self._disagree_only_cb.blockSignals(True)
+        self._disagree_only_cb.setChecked(False)
+        self._disagree_only_cb.blockSignals(False)
         self._restyle_rating_chips()
 
         # 对焦 → 默认全选
@@ -768,6 +826,9 @@ class FilterPanel(QWidget):
         self._picked_only_cb.blockSignals(True)
         self._picked_only_cb.setChecked(False)
         self._picked_only_cb.blockSignals(False)
+        self._disagree_only_cb.blockSignals(True)
+        self._disagree_only_cb.setChecked(False)
+        self._disagree_only_cb.blockSignals(False)
         self._select_every_rating()
 
     # ------------------------------------------------------------------

@@ -125,6 +125,12 @@ class CaptionFacts:
     species_low_confidence: bool = False         # 识别置信度低于门槛（鸟种未确定）
     species_candidate: Optional[str] = None      # 未确定时最可能的鸟种名（按界面语言）
     species_threshold: Optional[float] = None    # 用户设置的识鸟置信度门槛 %
+    species_model: str = "OSEA"                  # 给出鸟种的识鸟模型名（OSEA / BirdTrace）
+    # —— 识鸟对比模式的验证模型 / Check model in Bird-ID compare mode ——
+    verify_model: Optional[str] = None           # 验证模型名，None 表示没开对比
+    verify_name: Optional[str] = None            # 验证模型第一名鸟种（按界面语言）
+    verify_confidence: Optional[float] = None    # 验证模型置信度 %（0-100）
+    verify_agree: bool = False                   # 与最终鸟种是否一致
 
 
 Translator = Callable[..., str]
@@ -328,9 +334,16 @@ def build_caption(f: CaptionFacts, t: Translator) -> str:
     if f.species_low_confidence and f.species_candidate and f.species_confidence is not None:
         key = "caption.species_unconfirmed_ranked" if ranked else "caption.species_unconfirmed"
         lines.append(t(key, name=f.species_candidate, conf=f"{f.species_confidence:.0f}%",
-                       thr=f"{(f.species_threshold or 0):.0f}%"))
+                       thr=f"{(f.species_threshold or 0):.0f}%", model=f.species_model))
     elif f.species_confidence is not None:
-        lines.append(t("caption.species_confidence", conf=f"{f.species_confidence:.0f}%"))
+        lines.append(t("caption.species_confidence", conf=f"{f.species_confidence:.0f}%",
+                       model=f.species_model))
+    # 对比模式：验证模型的第一名与置信度，一致 ✓ / 不一致 ✗（浏览器里绿/红显示）
+    # Compare mode: the check model's top-1 and confidence, ✓ agree / ✗ disagree.
+    if f.verify_model and f.verify_name and f.verify_confidence is not None:
+        key = "caption.verify_agree" if f.verify_agree else "caption.verify_disagree"
+        lines.append(t(key, model=f.verify_model, name=f.verify_name,
+                       conf=f"{f.verify_confidence:.0f}%"))
     return "\n".join(lines)
 
 

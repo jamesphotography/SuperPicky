@@ -682,6 +682,9 @@ class SettingsCenter(QDialog):
         lay.setContentsMargins(24, 20, 24, 20)
         lay.setSpacing(16)
 
+        # ── 识鸟模型 / Bird-ID model ─────────────────────────────────────────
+        self._build_birdid_engine_section(lay)
+
         # ── 自动识鸟开关 / Auto-identify toggle ──────────────────────────────
         auto_title = QLabel(self.i18n.t("settings.birdid_section_auto"))
         auto_title.setStyleSheet(
@@ -1244,6 +1247,49 @@ class SettingsCenter(QDialog):
         if getattr(self, "_bid_applying", False):
             return
         self._save_birdid()
+
+    def _build_birdid_engine_section(self, lay: QVBoxLayout) -> None:
+        """
+        识鸟模型下拉框：对比（BirdTrace 识别、OSEA 验证，默认）/ BirdTrace / OSEA。
+        取值与 advanced_config.BIRDID_ENGINE_CHOICES 一致；改动立即保存，下次识别生效。
+        BirdTrace 模型文件缺失时说明文字提示「暂时只用 OSEA」（识别时会自动退回）。
+
+        Bird-ID model dropdown: Compare (BirdTrace identifies, OSEA checks; default) / BirdTrace / OSEA.
+        Values match advanced_config.BIRDID_ENGINE_CHOICES; saved immediately, used from the next run.
+        When the BirdTrace files are missing the hint says OSEA is used for now (automatic fallback).
+
+        参数 / Parameters:
+            lay (QVBoxLayout): 识鸟页布局 / Bird-ID page layout.
+        """
+        from advanced_config import BIRDID_ENGINE_CHOICES, get_advanced_config
+        from birdid.bird_identifier import birdtrace_ready, compare_csv_path
+
+        title = QLabel(self.i18n.t("settings.birdid_section_engine"))
+        title.setStyleSheet(f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;")
+        lay.addWidget(title)
+
+        self._bid_engine = QComboBox()
+        for value in BIRDID_ENGINE_CHOICES:
+            self._bid_engine.addItem(self.i18n.t(f"settings.birdid_engine_{value}"), value)
+        idx = self._bid_engine.findData(get_advanced_config().birdid_engine)
+        self._bid_engine.setCurrentIndex(idx if idx >= 0 else 0)
+        style_combo_popup(self._bid_engine)
+        self._bid_engine.currentIndexChanged.connect(self._on_birdid_engine_changed)
+        lay.addWidget(self._bid_engine)
+
+        hint = QLabel(self.i18n.t("settings.birdid_engine_hint", path=compare_csv_path()) if birdtrace_ready()
+                      else self.i18n.t("settings.birdid_engine_missing"))
+        hint.setWordWrap(True)
+        hint.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        hint.setStyleSheet(f"color:{COLORS['text_muted']};font-size:11px;")
+        lay.addWidget(hint)
+
+    def _on_birdid_engine_changed(self, _index: int) -> None:
+        """识鸟模型下拉变化 → 立即持久化，下次识别生效 / Persist immediately; used from the next run."""
+        from advanced_config import get_advanced_config
+        cfg = get_advanced_config()
+        cfg.set_birdid_engine(self._bid_engine.currentData())
+        cfg.save()
 
     def _on_name_format_changed(self, _index: int) -> None:
         """鸟名显示格式下拉变化 → 立即持久化。/ Persist immediately on change."""
@@ -2891,6 +2937,7 @@ class SettingsCenter(QDialog):
                 "Model Training: Jordan Yu\n"
                 "Development Team: Xiaoping, Lyapunov, osk.sh, yblpoi, jcchan23\n\n"
                 "Open Source Models\n"
+                "BirdTrace - Bird Classification by Warden (CC BY-NC 4.0)\n"
                 "YOLO11 - Bird Detection by Ultralytics\n"
                 "OSEA - Bird Classification by Sun Jiao\n"
                 "TOPIQ - Aesthetic Scoring by Chaofeng Chen et al.\n\n"
@@ -2910,6 +2957,14 @@ class SettingsCenter(QDialog):
         content_label.setWordWrap(True)
         content_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         lay.addWidget(content_label, 1)
+
+        # BirdTrace 模型署名链接（CC BY-NC 4.0 要求注明来源）/ BirdTrace attribution link (CC BY-NC 4.0)
+        if self.i18n:
+            birdtrace_link = QLabel(self.i18n.t("about.birdtrace_link"))
+            birdtrace_link.setTextFormat(Qt.RichText)
+            birdtrace_link.setOpenExternalLinks(True)
+            birdtrace_link.setStyleSheet(f"color:{COLORS['text_secondary']};font-size:13px;")
+            lay.addWidget(birdtrace_link)
 
         # 区域清单署名：获取日期从 ebird_regions.db 的 meta 表动态读取，因此不能并入
         # 静态的 about.content 文案。eBird 派生数据须附署名与条款说明（spec §2.3、§7.2）。

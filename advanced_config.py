@@ -18,6 +18,11 @@ from config import get_app_config_dir, get_lazy_registry
 # Valid close-button actions (#123); the settings combo mirrors these
 CLOSE_ACTIONS = ("ask", "tray", "quit")
 
+# 识鸟模型可选值（与设置中心下拉框、birdid.bird_identifier.BIRDID_ENGINES 一致）
+# Bird-ID engine choices (match the settings dropdown and birdid.bird_identifier.BIRDID_ENGINES).
+BIRDID_ENGINE_CHOICES = ("compare", "birdtrace", "osea")
+BIRDID_ENGINE_DEFAULT = "compare"
+
 
 class AdvancedConfig:
     """高级配置类 - 管理所有硬编码参数"""
@@ -216,6 +221,9 @@ class AdvancedConfig:
 
         # V4.4: 识鸟设置统一进 advanced_config(原 birdid_dock_settings.json)
         "birdid_auto_identify": False,
+        # 识鸟模型：compare（BirdTrace 为主、OSEA 验证，RC 默认）/ birdtrace / osea
+        # Bird-ID engine: compare (BirdTrace primary, OSEA check; RC default) / birdtrace / osea
+        "birdid_engine": "compare",
         "birdid_write_keywords": True,  # 识别后写鸟名到 XMP-dc:Subject(LR 关键字,Paul P1-1)
         "birdid_use_geo_filter": True,
         "birdid_country_code": None,
@@ -462,6 +470,28 @@ class AdvancedConfig:
     def set_birdid_confidence(self, value: int) -> None:
         """设置鸟种识别置信度阈值 (30-95)"""
         self.config["birdid_confidence"] = max(30, min(95, int(value)))
+
+    @property
+    def birdid_engine(self) -> str:
+        """
+        识鸟模型：compare（默认）/ birdtrace / osea；无效值（含 inside-tester 遗留的 merlin）读作 compare。
+        取值与设置中心「识鸟模型」下拉框一致。
+
+        Bird-ID engine: compare (default) / birdtrace / osea; invalid values (including a leftover
+        "merlin" from inside-tester) read as compare. Matches the settings dropdown.
+        """
+        value = str(self.config.get("birdid_engine", BIRDID_ENGINE_DEFAULT)).lower()
+        return value if value in BIRDID_ENGINE_CHOICES else BIRDID_ENGINE_DEFAULT
+
+    def set_birdid_engine(self, value: str) -> None:
+        """
+        设置识鸟模型；无效值存为默认 compare / Set the bird-ID engine; invalid values are stored as compare.
+
+        参数 / Parameters:
+            value (str): compare / birdtrace / osea
+        """
+        value = str(value).lower()
+        self.config["birdid_engine"] = value if value in BIRDID_ENGINE_CHOICES else BIRDID_ENGINE_DEFAULT
 
     def set_save_csv(self, value: bool) -> None:
         """设置是否保存CSV"""

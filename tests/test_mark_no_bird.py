@@ -363,7 +363,8 @@ def test_mark_no_bird_refreshes_card_caption(tmp_path, monkeypatch,
         root, [("DSC_1", "白喉抚蜜鸟/3星_优选/DSC_1.jpg", 3, None)])
     try:
         photo = next(p for p in win._filtered_photos if p["filename"] == "DSC_1")
-        assert _card_text(win, photo) == "白喉抚蜜鸟"
+        # 中文界面第二行是英文名 / second line is the English name in Chinese UIs
+        assert _card_text(win, photo) == "白喉抚蜜鸟\nWhite-throated Honeyeater"
 
         win._on_species_edit_requested(photo)
         _join_worker_threads()
@@ -388,12 +389,13 @@ def test_species_edit_refreshes_card_caption(tmp_path, monkeypatch,
         root, [("DSC_1", "白喉抚蜜鸟/3星_优选/DSC_1.jpg", 3, None)])
     try:
         photo = next(p for p in win._filtered_photos if p["filename"] == "DSC_1")
-        assert _card_text(win, photo) == "白喉抚蜜鸟"
+        # 中文界面第二行是英文名 / second line is the English name in Chinese UIs
+        assert _card_text(win, photo) == "白喉抚蜜鸟\nWhite-throated Honeyeater"
 
         win._on_species_edit_requested(photo)
         _join_worker_threads()
 
-        assert _card_text(win, photo) == "家燕", "卡片还挂着旧鸟名"
+        assert _card_text(win, photo) == "家燕\nBarn Swallow", "卡片还挂着旧鸟名"
     finally:
         _join_worker_threads()
         win.close()
