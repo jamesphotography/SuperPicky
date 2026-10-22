@@ -85,16 +85,38 @@ def test_widens_when_tier_empty(monkeypatch):
     assert results[0]["class_id"] == 3
 
 
-def test_falls_through_to_unfiltered(monkeypatch):
-    """所有层都无结果 → 不过滤 / Fall through to unfiltered."""
+def test_no_match_in_lists_gives_no_species(monkeypatch):
+    """名录内都没认出 → 不定鸟种，如实报告最后用的国家层，不放宽到全世界（2026-10-22 南澳回归）/
+    Nothing within the lists: no species, the last (country) tier is reported, never worldwide."""
+    from birdid import bird_identifier as bi
+
+    calls = []
+
+    def fake_predict(image, top_k=5, species_class_ids=None, **kw):
+        calls.append(species_class_ids)
+        return [{"class_id": 9, "confidence": 99.9}] if species_class_ids is None else []
+
+    monkeypatch.setattr(bi, "predict_bird", fake_predict)
+    monkeypatch.setattr(bi, "get_geo_filter", lambda: FakeFilter([
+        ({1, 2}, TIER_SUBNATIONAL, "AU-SA"),
+        ({1, 2, 3}, TIER_COUNTRY, "AU"),
+    ]))
+    results, tier, used, region = run_tiers(bi, manual_country="AU", manual_subnational="AU-SA")
+    assert results == []
+    assert (tier, used, region) == (TIER_COUNTRY, 3, "AU")
+    assert None not in calls                         # 从未不过滤识别 / never ran unfiltered
+
+
+def test_unfiltered_only_without_any_region(monkeypatch):
+    """没有任何可用名录（过滤器只给「不过滤」层）时照常识别 / Unfiltered only when no list exists."""
     from birdid import bird_identifier as bi
 
     def fake_predict(image, top_k=5, species_class_ids=None, **kw):
         return [{"class_id": 9, "confidence": 50.0}] if species_class_ids is None else []
 
     monkeypatch.setattr(bi, "predict_bird", fake_predict)
-    monkeypatch.setattr(bi, "get_geo_filter", lambda: FakeFilter([({5}, TIER_COUNTRY, "AU"), (None, TIER_NONE, None)]))
-    results, tier, used, region = run_tiers(bi, manual_country="AU")
+    monkeypatch.setattr(bi, "get_geo_filter", lambda: FakeFilter([(None, TIER_NONE, None)]))
+    results, tier, used, region = run_tiers(bi)
     assert (tier, used, region) == (TIER_NONE, None, None)
     assert results[0]["class_id"] == 9
 
