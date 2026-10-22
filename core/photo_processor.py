@@ -2518,6 +2518,12 @@ class PhotoProcessor:
                 # V3.2优化: 只读取原图一次，在关键点检测和NIMA计算中复用
                 orig_img = None  # 原图缓存
                 bird_crop_bgr = None  # 裁剪区域缓存（BGR）
+                # 识鸟专用方形裁剪：鸟框最长边 ×1.15 的正方形、真实背景，只有超出画面才补黑；
+                # 与识鸟面板/BirdTrace 作者的取法一致。上面的长方形裁剪直接压成 384×384 会把鸟拉伸。
+                # Square crop for Bird ID: 1.15 × the box's long side, real background, black only
+                # beyond the frame — matching the Bird ID panel and BirdTrace's author. Squashing the
+                # rectangular crop above to 384×384 would stretch the bird.
+                birdid_crop_bgr = None
                 bird_crop_mask = None # 裁剪区域掩码缓存
                 bird_mask_orig = None  # V3.9: 原图尺寸的分割掩码（用于对焦验证）
             
@@ -2544,6 +2550,21 @@ class PhotoProcessor:
                             w_orig_box = int(w * scale_x)
                             h_orig_box = int(h * scale_y)
                         
+                            if self.settings.auto_identify:
+                                try:
+                                    from tools.image_crop import smart_square_crop
+                                    # .copy()：裁剪完全落在画面内时返回的是 orig_img 的视图
+                                    # .copy(): a crop fully inside the frame is a view of orig_img
+                                    birdid_crop_bgr = smart_square_crop(
+                                        orig_img,
+                                        (x_orig, y_orig, x_orig + w_orig_box, y_orig + h_orig_box),
+                                        padding_ratio=0.15,
+                                    ).copy()
+                                except Exception as e:
+                                    self._log(f"[BirdID] 方形裁剪失败，改用整图识别 / square crop failed, "
+                                              f"using the full image: {e}", "warning")
+                                    birdid_crop_bgr = None
+
                             # V4.3: 与 BirdID 保持一致，加 15% padding
                             # 防止鸟头在 bbox 边缘时被裁切，导致关键点模型看不到眼睛
                             pad = int(max(w_orig_box, h_orig_box) * 0.15)
@@ -3202,12 +3223,12 @@ class PhotoProcessor:
                             )
                         ):
                             _birdid_crop_pil = None
-                            if bird_crop_bgr is not None:
+                            if birdid_crop_bgr is not None:
                                 try:
                                     from PIL import Image as _PILImage
                                     import cv2 as _cv2_birdid
                                     _birdid_crop_pil = _PILImage.fromarray(
-                                        _cv2_birdid.cvtColor(bird_crop_bgr, _cv2_birdid.COLOR_BGR2RGB)
+                                        _cv2_birdid.cvtColor(birdid_crop_bgr, _cv2_birdid.COLOR_BGR2RGB)
                                     )
                                 except Exception:
                                     pass
@@ -3256,12 +3277,12 @@ class PhotoProcessor:
                             )
                         ):
                             _birdid_crop_pil = None
-                            if bird_crop_bgr is not None:
+                            if birdid_crop_bgr is not None:
                                 try:
                                     from PIL import Image as _PILImage
                                     import cv2 as _cv2_birdid
                                     _birdid_crop_pil = _PILImage.fromarray(
-                                        _cv2_birdid.cvtColor(bird_crop_bgr, _cv2_birdid.COLOR_BGR2RGB)
+                                        _cv2_birdid.cvtColor(birdid_crop_bgr, _cv2_birdid.COLOR_BGR2RGB)
                                     )
                                 except Exception:
                                     pass
