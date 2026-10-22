@@ -427,6 +427,11 @@ def clean_state_dict(state_dict):
     return cleaned_state_dict
 
 
+# 美学权重文件名，按优先级排列：半精度存储版（scripts_dev/convert_weights_fp16.py 生成，随包分发）、原版 fp32。
+# Aesthetic weight filenames by priority: fp16-stored (shipped; see scripts_dev/convert_weights_fp16.py), original fp32.
+TOPIQ_WEIGHT_NAMES = ('cfanet_iaa_ava_res50_fp16.pth', 'cfanet_iaa_ava_res50-3cd62bb3.pth')
+
+
 def load_topiq_weights(model: CFANet, weight_path: str, device: torch.device) -> None:
     """
     加载 TOPIQ 预训练权重
@@ -472,37 +477,40 @@ def get_topiq_weight_path():
     支持:
     - PyInstaller 打包后的路径
     - 开发环境的 models/ 目录
+
+    优先找半精度存储的权重（随包分发的版本，体积减半，GPU 上分数与原权重逐位一致），
+    找不到再退回原版 fp32 权重（尚未重新下载模型的源码环境）。
+    Prefers the fp16-stored weights (what ships; half the size, bit-identical scores on GPU),
+    then falls back to the original fp32 file for source checkouts that have not re-downloaded.
     """
-    weight_name = 'cfanet_iaa_ava_res50-3cd62bb3.pth'
-    
-    search_paths = []
-    
-    if hasattr(sys, '_MEIPASS'):
-        search_paths.append(os.path.join(sys._MEIPASS, 'models', weight_name))
+    weight_names = TOPIQ_WEIGHT_NAMES
 
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    search_paths.append(os.path.join(base_dir, 'models', weight_name))
-    search_paths.append(os.path.join(base_dir, weight_name))
-
-    # 热补丁/开发overlay场景：__file__ 指向 code_updates/，遍历 sys.path 找项目根
-    for p in sys.path:
-        if p and os.path.isdir(p):
-            candidate = os.path.join(p, 'models', weight_name)
-            if candidate not in search_paths:
-                search_paths.append(candidate)
-
-    # 热补丁冻结场景：exe 目录 / macOS .app bundle Resources/
     exe_dir = os.path.dirname(os.path.abspath(sys.executable))
-    search_paths.append(os.path.join(exe_dir, 'models', weight_name))
-    resources_dir = os.path.join(exe_dir, '..', 'Resources', 'models', weight_name)
-    search_paths.append(os.path.normpath(resources_dir))
-    
+    search_paths = []
+    for weight_name in weight_names:
+        candidates = []
+        if hasattr(sys, '_MEIPASS'):
+            candidates.append(os.path.join(sys._MEIPASS, 'models', weight_name))
+        candidates.append(os.path.join(base_dir, 'models', weight_name))
+        candidates.append(os.path.join(base_dir, weight_name))
+        # 热补丁/开发overlay场景：__file__ 指向 code_updates/，遍历 sys.path 找项目根
+        for p in sys.path:
+            if p and os.path.isdir(p):
+                candidates.append(os.path.join(p, 'models', weight_name))
+        # 热补丁冻结场景：exe 目录 / macOS .app bundle Resources/
+        candidates.append(os.path.join(exe_dir, 'models', weight_name))
+        candidates.append(os.path.normpath(os.path.join(exe_dir, '..', 'Resources', 'models', weight_name)))
+        for c in candidates:
+            if c not in search_paths:
+                search_paths.append(c)
+
     for path in search_paths:
         if os.path.exists(path):
             return path
-    
+
     raise FileNotFoundError(
-        f"TOPIQ 权重文件未找到。请确保 models/{weight_name} 存在。\n"
+        f"TOPIQ 权重文件未找到。请确保 models/{weight_names[0]} 存在。\n"
         f"搜索路径: {search_paths}"
     )
 

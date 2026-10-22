@@ -199,6 +199,10 @@ class RegionFilter:
         - 省州必须隶属于同链的国家；未知或不一致的省州按「整个国家」处理，落到国家层
           （老配置里残留的省州代码因此不会让过滤失效，spec §2.5、§6.3）。
         - 空清单层被跳过。
+        - 最多放宽到国家，绝不放宽到全世界：只要有一层名录可用，就不再产出「不过滤」层；
+          国家名录里也没有的照片不定鸟种（2026-10-22 南澳实拍：BirdTrace 把概率押在外地近缘种上，
+          名录内全部跌破门槛，旧逻辑放宽到全世界，混进鹊鸲、灰燕鵙、猩红霸鹟等外地鸟）。
+          只有一层名录都用不上（没有 GPS 也没手选地区）时才不过滤。
 
         - Codes are case-insensitive: all four inputs are stripped and upper-cased
           ("au-nsw" equals "AU-NSW").
@@ -211,6 +215,11 @@ class RegionFilter:
         - A subnational code must belong to the chain's country; an unknown or
           mismatched one falls through to the country tier.
         - Empty tiers are skipped.
+        - Widening stops at the country, never the whole world: once any list tier is usable the
+          unfiltered tier is not yielded, and photos matching nothing in the country list get no
+          species (a 2026-10-22 South Australia batch leaked foreign sister species when BirdTrace
+          put nearly all its probability outside the list). Only with no usable list (no GPS and
+          no manual region) is the result unfiltered.
 
         参数 / Parameters:
             gps_country (Optional[str]): GPS 定位国家 / Country from GPS.
@@ -219,8 +228,8 @@ class RegionFilter:
             manual_subnational (Optional[str]): 手选省州 / Manual subnational.
 
         返回 / Returns:
-            Iterator[tuple]: (候选集或 None, 层标签, 区域代码或 None)，最后一项恒为
-                (None, TIER_NONE, None) / Last item is always the unfiltered tier.
+            Iterator[tuple]: (候选集或 None, 层标签, 区域代码或 None)；只有没有任何名录层时
+                才产出 (None, TIER_NONE, None) / (None, TIER_NONE, None) only when no list tier exists.
         """
         if not self.is_available():
             yield None, TIER_NONE, None
@@ -240,15 +249,20 @@ class RegionFilter:
         else:
             country, subnational = None, None
 
+        filtered = False
         if country and subnational and self.parent_of(subnational) == country:
             species = self.species_for(subnational)
             if species:
+                filtered = True
                 yield species, TIER_SUBNATIONAL, subnational
         if country:
             species = self.species_for(country)
             if species:
+                filtered = True
                 yield species, TIER_COUNTRY, country
-        yield None, TIER_NONE, None
+        # 有名录可用时到国家为止，不放宽到全世界 / with a usable list, stop at the country
+        if not filtered:
+            yield None, TIER_NONE, None
 
     def _country_or_implied(self, country: Optional[str], subnational: Optional[str]) -> Optional[str]:
         """

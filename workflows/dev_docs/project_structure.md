@@ -90,7 +90,7 @@ SuperPicky/
 | 文件 | 说明 | 大小 |
 |------|------|------|
 | `yolo11l-seg.pt` | YOLO 分割模型 | ~56MB |
-| `cfanet_iaa_ava_res50.pth` | 美学评分模型 | ~294MB |
+| `cfanet_iaa_ava_res50_fp16.pth` | 美学评分模型（半精度存储） | ~147MB |
 | `cub200_keypoint_resnet50.pth` | 关键点检测模型 | ~297MB |
 | `superFlier_efficientnet.pth` | 飞鸟检测模型 | ~43MB |
 

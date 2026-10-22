@@ -60,9 +60,13 @@ from PIL import Image
 
 from config import get_best_device
 from iqa_scorer import get_iqa_scorer
+from topiq_model import TOPIQ_WEIGHT_NAMES
 
 _REAL_PHOTO = "img/_Z9W0960.jpg"
-_TOPIQ_WEIGHT = "models/cfanet_iaa_ava_res50-3cd62bb3.pth"
+# 半精度版或原版权重任一存在即可 / either the fp16-stored or the original weights
+_TOPIQ_WEIGHT = next((os.path.join("models", n) for n in TOPIQ_WEIGHT_NAMES
+                      if os.path.exists(os.path.join("models", n))),
+                     os.path.join("models", TOPIQ_WEIGHT_NAMES[0]))
 
 
 def _reference_score_from_array(scorer, img_bgr):

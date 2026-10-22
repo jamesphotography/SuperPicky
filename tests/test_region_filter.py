@@ -38,48 +38,48 @@ def labels(items):
 
 
 def test_gps_subnational_then_country(region_filter):
-    """有 GPS：省州 → 国家 → 不过滤 / GPS: subnational, country, none."""
+    """有 GPS：省州 → 国家，到此为止，不放宽到全世界 / GPS: subnational, then country, never worldwide."""
     out = list(region_filter.iter_candidates("AU", "AU-NSW", None, None))
-    assert labels(out) == [(TIER_SUBNATIONAL, "AU-NSW"), (TIER_COUNTRY, "AU"), (TIER_NONE, None)]
-    assert out[0][0] == {1, 2} and out[1][0] == {1, 2, 3} and out[2][0] is None
+    assert labels(out) == [(TIER_SUBNATIONAL, "AU-NSW"), (TIER_COUNTRY, "AU")]
+    assert out[0][0] == {1, 2} and out[1][0] == {1, 2, 3}
 
 
 def test_gps_wins_over_manual(region_filter):
     """GPS 与手选同时存在时以 GPS 为准 / GPS beats the manual selection."""
     out = list(region_filter.iter_candidates("IS", None, "AU", "AU-NSW"))
-    assert labels(out) == [(TIER_COUNTRY, "IS"), (TIER_NONE, None)]
+    assert labels(out) == [(TIER_COUNTRY, "IS")]
 
 
 def test_no_gps_uses_manual_subnational(region_filter):
     """无 GPS 用手选省州（老配置 AU-NSW 回归，spec §2.5）/ Legacy AU-NSW works again."""
     out = list(region_filter.iter_candidates(None, None, "AU", "AU-NSW"))
-    assert labels(out) == [(TIER_SUBNATIONAL, "AU-NSW"), (TIER_COUNTRY, "AU"), (TIER_NONE, None)]
+    assert labels(out) == [(TIER_SUBNATIONAL, "AU-NSW"), (TIER_COUNTRY, "AU")]
 
 
 def test_manual_subnational_must_match_country(region_filter):
     """省州与国家不一致视为整个国家 / A mismatched subnational falls back to the country."""
     out = list(region_filter.iter_candidates(None, None, "IS", "AU-NSW"))
-    assert labels(out) == [(TIER_COUNTRY, "IS"), (TIER_NONE, None)]
+    assert labels(out) == [(TIER_COUNTRY, "IS")]
 
 
 def test_manual_subnational_alone_implies_country(region_filter):
-    """只给省州（CLI --region AU-NSW、迁移后国家为空）：省州 → 国家 → 不过滤 /
+    """只给省州（CLI --region AU-NSW、迁移后国家为空）：省州 → 国家 /
     A subnational alone implies its country."""
     out = list(region_filter.iter_candidates(None, None, None, "AU-NSW"))
-    assert labels(out) == [(TIER_SUBNATIONAL, "AU-NSW"), (TIER_COUNTRY, "AU"), (TIER_NONE, None)]
+    assert labels(out) == [(TIER_SUBNATIONAL, "AU-NSW"), (TIER_COUNTRY, "AU")]
     out = list(region_filter.iter_candidates(None, None, "GLOBAL", "AU-NSW"))
-    assert labels(out) == [(TIER_SUBNATIONAL, "AU-NSW"), (TIER_COUNTRY, "AU"), (TIER_NONE, None)]
+    assert labels(out) == [(TIER_SUBNATIONAL, "AU-NSW"), (TIER_COUNTRY, "AU")]
 
 
 def test_gps_subnational_alone_implies_country(region_filter):
     """GPS 链只有省州时同样推出国家，并优先于手选 / GPS subnational alone implies its country too."""
     out = list(region_filter.iter_candidates(None, "AU-NSW", "IS", None))
-    assert labels(out) == [(TIER_SUBNATIONAL, "AU-NSW"), (TIER_COUNTRY, "AU"), (TIER_NONE, None)]
+    assert labels(out) == [(TIER_SUBNATIONAL, "AU-NSW"), (TIER_COUNTRY, "AU")]
 
 
 def test_codes_are_case_insensitive(region_filter):
     """小写与带空白的代码等同于大写 / Lowercase and padded codes behave like upper case."""
-    expected = [(TIER_SUBNATIONAL, "AU-NSW"), (TIER_COUNTRY, "AU"), (TIER_NONE, None)]
+    expected = [(TIER_SUBNATIONAL, "AU-NSW"), (TIER_COUNTRY, "AU")]
     assert labels(region_filter.iter_candidates(None, None, "au", "au-nsw")) == expected
     assert labels(region_filter.iter_candidates(None, None, None, " au-nsw ")) == expected
     assert labels(region_filter.iter_candidates("au", "Au-Nsw", None, None)) == expected
@@ -89,7 +89,7 @@ def test_codes_are_case_insensitive(region_filter):
 def test_unknown_subnational_with_valid_country_uses_country_tier(region_filter):
     """未知省州 + 有效国家：只走国家层 / An unknown subnational falls through to the country tier."""
     out = list(region_filter.iter_candidates(None, None, "AU", "AU-XYZ"))
-    assert labels(out) == [(TIER_COUNTRY, "AU"), (TIER_NONE, None)]
+    assert labels(out) == [(TIER_COUNTRY, "AU")]
     assert labels(region_filter.iter_candidates(None, None, None, "AU-XYZ")) == [(TIER_NONE, None)]
 
 
@@ -102,14 +102,12 @@ def test_unknown_or_global_manual_is_unfiltered(region_filter):
 def test_unknown_gps_country_falls_back_to_manual(region_filter):
     """GPS 国家不在库里时改用手选 / An unknown GPS country falls back to manual."""
     out = list(region_filter.iter_candidates("ZZ", None, "AU", None))
-    assert labels(out) == [(TIER_COUNTRY, "AU"), (TIER_NONE, None)]
+    assert labels(out) == [(TIER_COUNTRY, "AU")]
 
 
 def test_empty_lists_are_skipped(region_filter):
-    """空清单层被跳过，不会屏蔽全部类别 / Empty lists are skipped."""
-    assert labels(region_filter.iter_candidates("AU", "AU-QLD", None, None)) == [
-        (TIER_COUNTRY, "AU"), (TIER_NONE, None)
-    ]
+    """空清单层被跳过，不会屏蔽全部类别；国家也空才不过滤 / Empty lists are skipped; unfiltered only if nothing is left."""
+    assert labels(region_filter.iter_candidates("AU", "AU-QLD", None, None)) == [(TIER_COUNTRY, "AU")]
     assert labels(region_filter.iter_candidates("JP", None, None, None)) == [(TIER_NONE, None)]
 
 
@@ -137,3 +135,10 @@ def test_describe_tier_covers_every_tier(monkeypatch, region_filter):
         text = describe_tier({"tier": tier, "species_count": 42, "region_code": region})
         assert text and not text.startswith("birdid."), f"{tier}: {text}"
     assert describe_tier(None) and not describe_tier(None).startswith("birdid.")
+
+
+def test_never_widens_to_worldwide_when_a_list_exists(region_filter):
+    """有名录可用就不产出「不过滤」层（2026-10-22 南澳外地鸟回归）/ No worldwide tier once a list exists."""
+    for args in (("AU", "AU-NSW", None, None), (None, None, "AU", None), ("IS", None, None, None)):
+        assert TIER_NONE not in [t for _, t, _ in region_filter.iter_candidates(*args)], args
+
