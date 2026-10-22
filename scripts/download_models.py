@@ -174,6 +174,20 @@ MODELS_TO_DOWNLOAD = [
         "sha256": "05e3f27d55ab1bfb1f01fa00a32e2a3308b2d9145954899ed34f6f5bc23666cc",
     },
     {
+        # BirdTrace FastViT-MA36（作者 Warden，CC BY-NC 4.0），镜像自
+        # https://huggingface.co/warden123/BirdTrace-FastViT-MA36-10K 的 model.safetensors（逐字节相同）。
+        # Mirror of BirdTrace's model.safetensors (by Warden, CC BY-NC 4.0), byte-identical.
+        "resource_id": "birdtrace_model",
+        "category": "Classification",
+        "repo_id": "jamesphotography/SuperPicky-models",
+        "filename": "birdtrace_fastvit_ma36_10k.safetensors",
+        "dest_dir": "models",
+        "packaged_dest_dir": "models",
+        "feature_tags": ["core_detection", "birdid"],
+        "required": True,
+        "sha256": "81d698a8457a9c40d67e6d20d18ebe24f9d164b7083717b9f18a08a99f9f0ca6",
+    },
+    {
         "resource_id": "flight_model",
         "category": "Flight Detection",
         "repo_id": "jamesphotography/SuperPicky-models",

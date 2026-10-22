@@ -580,6 +580,12 @@
     "birdid_conf_label": "辨識置信度",
     "birdid_section_source": "資料來源",
     "birdid_source_ebird": "eBird（推薦）",
+    "birdid_section_engine": "辨識鳥種模型",
+    "birdid_engine_compare": "對比：BirdTrace 辨識，OSEA 驗證（預設）",
+    "birdid_engine_birdtrace": "BirdTrace",
+    "birdid_engine_osea": "OSEA（舊模型）",
+    "birdid_engine_hint": "對比模式下，OSEA 的驗證結果寫在評分說明（題注）裡，可在結果瀏覽器的詳情裡查看，也可用「只看分歧」篩選；逐張紀錄另存於：{path}",
+    "birdid_engine_missing": "BirdTrace 模型檔案缺失，鳥種辨識暫時只用 OSEA",
     "birdid_source_gbif": "全球 / 不限地區",
     "birdid_section_region": "國家 / 地區",
     "birdid_country_label": "國家",
@@ -944,7 +950,8 @@
   "about": {
     "window_title": "關於",
     "subtitle": "AI 智慧選片助手",
-    "content": "開發者\n詹姆斯·于震 (James Yu)\n澳洲華裔職業攝影師\n《詹姆斯的風光攝影筆記》三部曲作者\n\n模型訓練：Jordan Yu\n開發團隊：小平, Lyapunov, osk.sh, yblpoi, jcchan23\n\n開源模型\nYOLO11 - 鳥類偵測 by Ultralytics\nOSEA - 鳥類辨識 by Sun Jiao\nTOPIQ - 美學評分 by Chaofeng Chen et al.\n\n資料來源\n鳥種顏值指數 - iRateBird 公民科學資料集 (CC-BY 4.0)\nSantangeli, A. 等 (2023), Scientific Data\n注: 評分以芬蘭及英語使用者為主, 反映西方審美視角\n鳥種代碼 - eBird 物種代碼（康乃爾鳥類學實驗室）；北美 4 位代碼 - IBP 鳥類族群研究所\n\n許可證: GPL-3.0\n© 2024-2025 詹姆斯·于震"
+    "content": "開發者\n詹姆斯·于震 (James Yu)\n澳洲華裔職業攝影師\n《詹姆斯的風光攝影筆記》三部曲作者\n\n模型訓練：Jordan Yu\n開發團隊：小平, Lyapunov, osk.sh, yblpoi, jcchan23\n\n開源模型\nBirdTrace - 鳥類辨識 by Warden（CC BY-NC 4.0，iNaturalist 資料訓練；架構 FastViT by Apple）\nYOLO11 - 鳥類偵測 by Ultralytics\nOSEA - 鳥類辨識 by Sun Jiao\nTOPIQ - 美學評分 by Chaofeng Chen et al.\n\n資料來源\n鳥種顏值指數 - iRateBird 公民科學資料集 (CC-BY 4.0)\nSantangeli, A. 等 (2023), Scientific Data\n注: 評分以芬蘭及英語使用者為主, 反映西方審美視角\n鳥種代碼 - eBird 物種代碼（康乃爾鳥類學實驗室）；北美 4 位代碼 - IBP 鳥類族群研究所\n\n許可證: GPL-3.0\n© 2024-2025 詹姆斯·于震",
+    "birdtrace_link": "<a href=\"https://huggingface.co/warden123/BirdTrace-FastViT-MA36-10K\">BirdTrace 模型主頁（Hugging Face）</a>"
   },
   "birdid": {
     "title": "鳥類辨識",
@@ -1149,11 +1156,13 @@
     "under_exposed": "✗ 欠曝（減分）",
     "flying": "✓ 飛行中（加分）",
     "bird_confidence": "· 有鳥置信度 {conf}（YOLO 偵測）",
-    "species_confidence": "· 鳥種辨識置信度 OSEA {conf}",
-    "species_unconfirmed": "· 鳥種未確定：最可能是{name}，但辨識置信度 OSEA {conf} 低於設定的 {thr}，不寫入鳥種、不按它分資料夾",
-    "species_unconfirmed_ranked": "· 鳥種未確定：最可能是{name}，但辨識置信度 OSEA {conf} 低於設定的 {thr}，不寫入鳥種、不按它分資料夾；排名時仍和{name}的照片一起比較",
+    "species_confidence": "· 鳥種辨識置信度 {model} {conf}",
+    "species_unconfirmed": "· 鳥種未確定：最可能是{name}，但辨識置信度 {model} {conf} 低於設定的 {thr}，不寫入鳥種、不按它分資料夾",
+    "species_unconfirmed_ranked": "· 鳥種未確定：最可能是{name}，但辨識置信度 {model} {conf} 低於設定的 {thr}，不寫入鳥種、不按它分資料夾；排名時仍和{name}的照片一起比較",
     "manual_rating": "手動改為 {stars}（下面是原評分說明）",
-    "manual_no_bird": "手動標記為無鳥（下面是原評分說明）"
+    "manual_no_bird": "手動標記為無鳥（下面是原評分說明）",
+    "verify_agree": "✓ {model} 驗證一致：{name} {conf}",
+    "verify_disagree": "✗ {model} 驗證不一致：{model} 認為是{name} {conf}"
   },
   "cli": {
     "banner": "  🐦 SuperPicky CLI v{version} - 慧眼選鳥 (命令列版)",
@@ -1687,7 +1696,9 @@
     "export_menu": "匯出",
     "export_menu_tooltip": "把這批選鳥結果帶出軟體：產生分享報告、匯出 eBird 記錄，或匯入「照片」App",
     "photos_import_hint": "勾選的照片；沒勾選時為目前篩選出的照片",
-    "size_tooltip": "調整網格裡縮圖的大小（也可以按 + / − 鍵）"
+    "size_tooltip": "調整網格裡縮圖的大小（也可以按 + / − 鍵）",
+    "disagree_only": "只看分歧",
+    "disagree_only_tip": "鳥種辨識對比模式：只顯示 OSEA 驗證結果與目前鳥種不一致的照片（在瀏覽器裡改鳥種後隨之更新）"
   },
   "video": {
     "title_phase1": "影片分析（Phase 1 · 僅 YOLO 有鳥/無鳥）",

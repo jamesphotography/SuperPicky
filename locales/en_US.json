@@ -580,6 +580,12 @@
     "birdid_conf_label": "Identification Confidence",
     "birdid_section_source": "Data Source",
     "birdid_source_ebird": "eBird (Recommended)",
+    "birdid_section_engine": "Bird ID model",
+    "birdid_engine_compare": "Compare: BirdTrace identifies, OSEA checks (default)",
+    "birdid_engine_birdtrace": "BirdTrace",
+    "birdid_engine_osea": "OSEA (previous model)",
+    "birdid_engine_hint": "In compare mode the OSEA check is written into the rating note (caption), visible in the results browser details and via the \"Disagreements only\" filter; a per-photo log is also saved to: {path}",
+    "birdid_engine_missing": "BirdTrace model files are missing; Bird ID is using OSEA for now",
     "birdid_source_gbif": "Global / No region filter",
     "birdid_section_region": "Country / Region",
     "birdid_country_label": "Country",
@@ -858,11 +864,13 @@
     "under_exposed": "✗ Underexposed (penalty)",
     "flying": "✓ In flight (bonus)",
     "bird_confidence": "· Bird confidence {conf} (YOLO detection)",
-    "species_confidence": "· Species ID confidence OSEA {conf}",
-    "species_unconfirmed": "· Species unconfirmed: most likely {name}, but ID confidence OSEA {conf} is below your setting of {thr}; not written as the species or used for folders",
-    "species_unconfirmed_ranked": "· Species unconfirmed: most likely {name}, but ID confidence OSEA {conf} is below your setting of {thr}; not written as the species or used for folders, yet still ranked together with {name} photos",
+    "species_confidence": "· Species ID confidence {model} {conf}",
+    "species_unconfirmed": "· Species unconfirmed: most likely {name}, but ID confidence {model} {conf} is below your setting of {thr}; not written as the species or used for folders",
+    "species_unconfirmed_ranked": "· Species unconfirmed: most likely {name}, but ID confidence {model} {conf} is below your setting of {thr}; not written as the species or used for folders, yet still ranked together with {name} photos",
     "manual_rating": "Manually changed to {stars} (original explanation below)",
-    "manual_no_bird": "Manually marked as no bird (original explanation below)"
+    "manual_no_bird": "Manually marked as no bird (original explanation below)",
+    "verify_agree": "✓ {model} check agrees: {name} {conf}",
+    "verify_disagree": "✗ {model} check disagrees: {model} says {name} {conf}"
   },
   "lightroom_guide": {
     "title": "Lightroom Classic User Guide - How to View and Use SuperPicky Ratings",
@@ -1030,7 +1038,8 @@
   "about": {
     "window_title": "About James",
     "subtitle": "AI Bird Photo Culling Tool",
-    "content": "James Yu\nAustralian-Chinese Professional Photographer, Author of \"James' Landscape Photography Notes\" Trilogy\n\nModel Training: Jordan Yu\nDevelopment Team: Xiaoping, Lyapunov, osk.sh, yblpoi, jcchan23\n\nOpen Source Models\nYOLO11 - Bird Detection by Ultralytics\nOSEA - Bird Classification by Sun Jiao\nTOPIQ - Aesthetic Scoring by Chaofeng Chen et al.\n\nData Sources\nSpecies Beauty Index - iRateBird Citizen Science Dataset (CC-BY 4.0)\nSantangeli, A. et al. (2023), Scientific Data\nNote: ratings skew toward Finnish and English-speaking users, reflecting a Western aesthetic perspective\nSpecies codes - eBird species codes (Cornell Lab of Ornithology); North American alpha codes - The Institute for Bird Populations (IBP)\n\nLicense: GPL-3.0\n© 2024-2025 James Yu"
+    "content": "James Yu\nAustralian-Chinese Professional Photographer, Author of \"James' Landscape Photography Notes\" Trilogy\n\nModel Training: Jordan Yu\nDevelopment Team: Xiaoping, Lyapunov, osk.sh, yblpoi, jcchan23\n\nOpen Source Models\nBirdTrace - Bird Classification by Warden (CC BY-NC 4.0, trained on iNaturalist data; FastViT architecture by Apple)\nYOLO11 - Bird Detection by Ultralytics\nOSEA - Bird Classification by Sun Jiao\nTOPIQ - Aesthetic Scoring by Chaofeng Chen et al.\n\nData Sources\nSpecies Beauty Index - iRateBird Citizen Science Dataset (CC-BY 4.0)\nSantangeli, A. et al. (2023), Scientific Data\nNote: ratings skew toward Finnish and English-speaking users, reflecting a Western aesthetic perspective\nSpecies codes - eBird species codes (Cornell Lab of Ornithology); North American alpha codes - The Institute for Bird Populations (IBP)\n\nLicense: GPL-3.0\n© 2024-2025 James Yu",
+    "birdtrace_link": "<a href=\"https://huggingface.co/warden123/BirdTrace-FastViT-MA36-10K\">BirdTrace model page (Hugging Face)</a>"
   },
   "birdid": {
     "title": "Bird ID",
@@ -1687,7 +1696,9 @@
     "export_menu": "Export",
     "export_menu_tooltip": "Take these results out of SuperPicky: a shareable report, eBird records, or the Photos app",
     "photos_import_hint": "Checked photos; if none, the current filtered view",
-    "size_tooltip": "Change the thumbnail size in the grid (or press + / −)"
+    "size_tooltip": "Change the thumbnail size in the grid (or press + / −)",
+    "disagree_only": "Disagreements only",
+    "disagree_only_tip": "Bird-ID compare mode: show only photos where the OSEA check differs from the current species (updates after species edits)"
   },
   "video": {
     "title_phase1": "Video Analysis (Phase 1 · YOLO bird/no-bird only)",

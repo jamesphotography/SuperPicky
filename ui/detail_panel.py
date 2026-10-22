@@ -562,14 +562,31 @@ class DetailPanel(QWidget):
         """)
         self._species_edit_btn.clicked.connect(self._on_species_edit_clicked)
 
-        species_row = QWidget()
-        species_row_lay = QHBoxLayout(species_row)
+        species_line = QWidget()
+        species_row_lay = QHBoxLayout(species_line)
         species_row_lay.setContentsMargins(0, 0, 0, 0)
         species_row_lay.setSpacing(4)
         species_row_lay.addWidget(self._val_species)
         species_row_lay.addWidget(self._val_species_pinyin)
         species_row_lay.addWidget(self._species_edit_btn)
         species_row_lay.addStretch(1)
+
+        # 中文界面（简体、繁体）在鸟名下面换行显示英文名，消除中文名歧义；英文界面隐藏。
+        # 独立 label，不并进 _val_species（那个 label 点击复制鸟名）。可选中复制。
+        # Chinese UIs show the English name on a line below to disambiguate; hidden on
+        # an English UI. Separate from the click-to-copy _val_species; selectable.
+        self._val_species_en = QLabel("")
+        self._val_species_en.setStyleSheet(
+            f"color: {COLORS['text_muted']}; font-size: 11px; background: transparent;")
+        self._val_species_en.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self._val_species_en.setVisible(False)
+
+        species_row = QWidget()
+        species_col = QVBoxLayout(species_row)
+        species_col.setContentsMargins(0, 0, 0, 0)
+        species_col.setSpacing(0)
+        species_col.addWidget(species_line)
+        species_col.addWidget(self._val_species_en)
 
         rows = [
             # 鸟类信息 4 行连续（鸟种 → 全球罕见度 → 鸟种颜值 → IUCN）
@@ -705,6 +722,8 @@ class DetailPanel(QWidget):
             self._val_filesize, self._val_filename, self._val_datetime,
         ):
             val.setText("—")
+        self._val_species_en.setText("")
+        self._val_species_en.setVisible(False)
         self._rating_label.setText("—")
         # 展开/收起状态保留用户的选择，不随清空重置
         # Keep the user's expand/collapse choice across photos
@@ -1160,6 +1179,14 @@ class DetailPanel(QWidget):
                                   self.i18n.current_lang) or _unknown
         self._val_species.setText(species)
         self._val_species.setToolTip(species)
+
+        # 中文界面换行显示英文名；与拼音一样必须无条件刷新，避免残留上一张的英文名
+        # English name below in Chinese UIs; always refreshed so no stale name lingers
+        species_en = (p.get("bird_species_en") or "").strip()
+        show_en = (not self.i18n.current_lang.startswith('en')
+                   and bool(species_en) and species != species_en)
+        self._val_species_en.setText(species_en if show_en else "")
+        self._val_species_en.setVisible(show_en)
 
         # 拼音跟着鸟种一起刷新，且**必须无条件 setText**：这个标签是复用的，
         # 只在查到时赋值的话，切到一张查不到拼音的照片时会留着上一只鸟的拼音，
