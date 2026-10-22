@@ -641,7 +641,7 @@
     "xmp_write": "XMP Sidecar Write",
     "xmp_write_hint": "When checked: write XMP sidecar only, do not modify RAW; when unchecked: write directly to ARW",
     "xmp_mode_embedded": "Embed in RAW",
-    "xmp_mode_embedded_hint": "Write directly to ARW/CR3 raw files",
+    "xmp_mode_embedded_hint": "JPEG, HEIF and DNG are written into the file. Proprietary RAW (CR3, NEF, ARW…) gets an .xmp sidecar unless the option below is on",
     "xmp_mode_sidecar": "XMP Sidecar",
     "xmp_mode_sidecar_hint": "Create separate .xmp file, preserve original RAW",
     "xmp_mode_sidecar_recommend": "Recommended - Fixes Sony viewer compatibility",

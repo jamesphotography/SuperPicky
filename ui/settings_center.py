@@ -51,6 +51,7 @@ from ui.icon_utils import (  # noqa: F401
     checkbox_indicator_qss,
     load_tinted_icon,
     radio_indicator_qss,
+    tinted_png_path,
 )
 from ui.styles import COLORS  # noqa: F401
 from ui.combo_popup import style_combo_popup
@@ -1866,10 +1867,47 @@ class SettingsCenter(QDialog):
         lay.addWidget(self._xmp_embedded)
 
         emb_hint = QLabel(self.i18n.t("advanced_settings.xmp_mode_embedded_hint"))
+        emb_hint.setWordWrap(True)
         emb_hint.setStyleSheet(
             f"color:{COLORS['text_muted']};font-size:11px;margin-left:24px;"
         )
         lay.addWidget(emb_hint)
+
+        # 专有 RAW 写本体开关。**默认关闭**，且必须留在这里说清楚例外：
+        # 上面的「写入文件」对 NEF/CR3/ARW 这些专有 RAW 一直不生效（只写边车，
+        # 快 ~190ms/张且不动原文件），界面此前只字不提，用户以为选了就写进文件。
+        # 打开它是给自家软件不读 XMP 边车的用户留的出口（如尼康 NX Studio）。
+        # 它是「写入文件」的子选项（只在该模式下生效，见
+        # advanced_config.get_arw_write_mode_for_file），所以紧挨着放在「写入文件」
+        # 下面并缩进，选了另外两项时置灰。此前它排在三个单选项之后、圆圈样式又
+        # 一样，用户把它当成了第四个互斥选项（issue #139）。
+        # Opt-in for writing into proprietary RAW bodies; off by default. It is
+        # a sub-option of "Write to file" (only effective there), so it sits
+        # indented under that radio and is disabled for the other two modes;
+        # placed after all three radios it read as a fourth choice (#139).
+        self._raw_embed = QCheckBox(
+            self.i18n.t("advanced_settings.raw_embed_metadata"))
+        muted_check = tinted_png_path("circle-check.svg", COLORS['text_muted'], 15)
+        self._raw_embed.setStyleSheet(
+            checkbox_indicator_qss()
+            + "QCheckBox { margin-left: 24px; }"
+            + f"QCheckBox:disabled {{ color: {COLORS['text_muted']}; }}"
+            + f"QCheckBox::indicator:checked:disabled {{ image: url({muted_check}); }}"
+        )
+        try:
+            self._raw_embed.setChecked(bool(cfg.raw_embed_metadata))
+        except Exception:
+            self._raw_embed.setChecked(False)
+        self._raw_embed.toggled.connect(self._on_raw_embed_changed)
+        lay.addWidget(self._raw_embed)
+
+        self._raw_embed_hint = QLabel(
+            self.i18n.t("advanced_settings.raw_embed_metadata_hint"))
+        self._raw_embed_hint.setWordWrap(True)
+        self._raw_embed_hint.setStyleSheet(
+            f"color:{COLORS['text_muted']};font-size:11px;margin-left:48px;"
+        )
+        lay.addWidget(self._raw_embed_hint)
 
         # 选项2: 侧车文件 / Sidecar
         self._xmp_sidecar = QRadioButton(
@@ -1907,30 +1945,9 @@ class SettingsCenter(QDialog):
         # 三选一互斥组：任一按钮的 toggled(True) 都对应一次实际切换 /
         # Any button's toggled(True) corresponds to one actual switch.
         self._xmp_button_group.buttonToggled.connect(self._on_xmp_mode_changed)
-
-        # 专有 RAW 写本体开关。**默认关闭**，且必须留在这里说清楚例外：
-        # 上面的「写入文件」对 NEF/CR3/ARW 这些专有 RAW 一直不生效（只写边车，
-        # 快 ~190ms/张且不动原文件），界面此前只字不提，用户以为选了就写进文件。
-        # 打开它是给自家软件不读 XMP 边车的用户留的出口（如尼康 NX Studio）。
-        # Opt-in for writing into proprietary RAW bodies; off by default. The
-        # radio above never applied to NEF/CR3/ARW and the UI used to hide that.
-        self._raw_embed = QCheckBox(
-            self.i18n.t("advanced_settings.raw_embed_metadata"))
-        self._raw_embed.setStyleSheet(checkbox_indicator_qss())
-        try:
-            self._raw_embed.setChecked(bool(cfg.raw_embed_metadata))
-        except Exception:
-            self._raw_embed.setChecked(False)
-        self._raw_embed.toggled.connect(self._on_raw_embed_changed)
-        lay.addWidget(self._raw_embed)
-
-        raw_embed_hint = QLabel(
-            self.i18n.t("advanced_settings.raw_embed_metadata_hint"))
-        raw_embed_hint.setWordWrap(True)
-        raw_embed_hint.setStyleSheet(
-            f"color:{COLORS['text_muted']};font-size:11px;"
-        )
-        lay.addWidget(raw_embed_hint)
+        # 专有 RAW 写本体开关只在「写入文件」下可用 / Sub-option enabled only under "Write to file"
+        self._xmp_embedded.toggled.connect(self._raw_embed.setEnabled)
+        self._raw_embed.setEnabled(self._xmp_embedded.isChecked())
 
         # ── 分隔线 / Divider ──────────────────────────────────────────────────
         lay.addWidget(self._divider())
