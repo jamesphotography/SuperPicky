@@ -11,7 +11,6 @@ def upload_to_hf():
     project_root = os.path.abspath(os.path.join(script_dir, ".."))
     
     files_to_upload = [
-        {"local_path": "models/model20240824.pth", "repo_path": "model20240824.pth"},
         {"local_path": "models/superFlier_efficientnet.pth", "repo_path": "superFlier_efficientnet.pth"},
         {"local_path": "models/cub200_keypoint_resnet50_slim.pth", "repo_path": "cub200_keypoint_resnet50_slim.pth"}
     ]

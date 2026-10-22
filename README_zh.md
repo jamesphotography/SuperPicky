@@ -186,7 +186,7 @@ SuperPicky 通过 **AviList v2025** 映射表支持多种英文鸟种命名标�
 
 | 格式 | 来源 |
 |------|------|
-| 默认（OSEA 模型） | 模型训练时的原始名称 |
+| 默认 | 鸟种库的原始名称 |
 | AviList v2025 | AviList 统一英文名 |
 | Clements / eBird v2024 | Cornell/eBird 分类法 |
 | BirdLife v9 | BirdLife International |
@@ -207,7 +207,8 @@ python scripts_dev/build_avilist_mapping.py
 
 本项目使用:
 - **YOLO11** by Ultralytics
-- **OSEA** by Sun Jiao (github.com/sun-jiao/osea)
+- **[BirdTrace FastViT-MA36](https://huggingface.co/warden123/BirdTrace-FastViT-MA36-10K)** by Warden — 鸟种识别，基于 [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/) 许可
+- **OSEA** by Sun Jiao (github.com/sun-jiao/osea) — 鸟种类别表（识别模型本身已不再随包分发）
 - **TOPIQ** by Chaofeng Chen et al.
 - **AviList**: AviList Core Team. 2025. AviList: The Global Avian Checklist, v2025. https://doi.org/10.2173/avilist.v2025 — 基于 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) 许可
 

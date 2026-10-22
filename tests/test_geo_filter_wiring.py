@@ -18,7 +18,7 @@ def _no_model(monkeypatch):
     """每张图只推理一次（_class_probs），这里换成空桩，不加载真实模型 / Stub out the single inference."""
     from birdid import bird_identifier as bi
 
-    monkeypatch.setattr(bi, "_class_probs", lambda image, is_yolo_cropped, engine: None)
+    monkeypatch.setattr(bi, "_class_probs", lambda image, is_yolo_cropped: None)
 
 
 class FakeFilter:

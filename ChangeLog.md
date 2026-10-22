@@ -1,3 +1,39 @@
+# SuperPicky 4.6.4 RC8
+
+**What's new since RC7:**
+
+- **BirdTrace is now the only bird-ID model.** The previous OSEA model, compare mode, the
+  Settings → Bird ID → **Bird ID model** choice and the results browser's **"Disagreements
+  only"** filter are gone. In our hand-checked batches BirdTrace was clearly more accurate
+  (Victoria 97% vs 89.7%), so a second opinion from the weaker model wasn't worth the extra
+  time. If you had picked a model in RC7, that setting is simply dropped. Lightroom captions
+  no longer carry the OSEA check line.
+- **Better framing for bird ID during culling.** Batch culling used to send BirdTrace a
+  rectangular crop squashed into a square, which stretched the bird. It now sends a square crop
+  around the bird with the real background, the same framing the Bird ID panel and BirdTrace's
+  author use. On the Victoria test batch: 97.1% instead of 96.0%, and fewer confident mistakes.
+- Installers are about 100 MB smaller than RC7 (the OSEA model is no longer bundled), and
+  culling with bird ID is back to about the speed of BirdTrace alone in RC7.
+- The command-line `--model` and `--tta` options were removed along with OSEA.
+
+---
+
+# SuperPicky 4.6.4 RC8（中文）
+
+**RC7 以来的变化：**
+
+- **识鸟只用 BirdTrace。** 原来的 OSEA 模型、对比模式、设置 → 识鸟 → **识鸟模型** 选项，以及结果
+  浏览器的 **「只看分歧」** 筛选都已删除。在我们人工核对过的批次里 BirdTrace 明显更准（维州 97% 对
+  89.7%），用较弱的模型再验证一遍不值得多花的时间。RC7 里选过的识鸟模型设置会自动丢弃。Lightroom
+  题注里不再有 OSEA 验证那一行。
+- **选片时识鸟的取图更准。** 以前批量选片送给 BirdTrace 的是长方形裁剪，被硬压成正方形，鸟会被拉伸
+  变形。现在改送以鸟为中心、带真实背景的正方形裁剪，和识鸟面板、BirdTrace 作者的做法一致。维州测试
+  批次：准确率从 96.0% 提到 97.1%，置信度高却认错的情况也更少。
+- 安装包比 RC7 小约 100 MB（不再带 OSEA 模型）；开着识鸟选片的速度回到 RC7 里只用 BirdTrace 的水平。
+- 命令行随 OSEA 一起去掉了 `--model` 和 `--tta` 参数。
+
+---
+
 # SuperPicky 4.6.4 RC7
 
 **What's new since RC6:**

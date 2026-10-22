@@ -115,12 +115,10 @@ PHOTO_COLUMNS = [
     ("alt_species_en",   "TEXT", None),
     ("alt_confidence",   "REAL", None),
 
-    # 识鸟对比模式：验证模型（RC 为 OSEA）的第一名，供浏览器「只看分歧」筛选。
-    # 不升 schema 版本号：旧库由 _reconcile_photo_columns 自动补列，老版本打开同一个库
-    # 只会多几列不用的字段，不影响它自己的版本迁移。
-    # Bird-ID compare mode: the check model's (OSEA in RC) top-1, for the browser's
-    # "disagreements only" filter. No schema version bump: legacy DBs get the columns via
-    # _reconcile_photo_columns, and older builds opening the same DB just see unused columns.
+    # 已停用：4.6.4 RC 期间识鸟对比模式（BirdTrace 识别、OSEA 验证）存的验证模型第一名。
+    # OSEA 已删除、不再写入也不再读取；列保留不删，免得为旧库做迁移。
+    # Retired: the check model's top-1 from the 4.6.4 RC Bird-ID compare mode (BirdTrace
+    # primary, OSEA check). OSEA is gone, nothing writes or reads these; kept to avoid a migration.
     ("verify_model",      "TEXT", None),
     ("verify_species_cn", "TEXT", None),
     ("verify_species_en", "TEXT", None),
@@ -826,7 +824,6 @@ class ReportDB:
             - bird_species_cn / bird_species_en: str
             - sort_by: filename | sharpness_desc | aesthetic_desc
             - picked_only: bool (如果为 True，则在结果集中筛选出 adj_topiq 和 adj_sharpness 均排名前 25% 的照片)
-            - disagree_only: bool（识鸟对比模式：只看 OSEA 验证与当前鸟种不一致的照片）
         """
         filters = filters or {}
 
@@ -900,18 +897,6 @@ class ReportDB:
         # 旧目录(未重跑选鸟)该列全为 0,需重跑后才有结果。
         if filters.get("picked_only", False):
             where_clauses.append("picked = 1")
-
-        # 只看分歧（识鸟对比模式）：有验证结果，且与当前鸟种（未确定时用候选鸟种）不同。
-        # 每次查询按当前鸟种现算，浏览器里改鸟种后筛选结果随之更新。
-        # Disagreements only (compare mode): a check result exists and differs from the
-        # current species (or the unconfirmed candidate). Computed live, so species edits
-        # in the browser are reflected immediately.
-        if filters.get("disagree_only", False):
-            where_clauses.append(
-                "(verify_species_cn IS NOT NULL AND TRIM(verify_species_cn) != '' "
-                "AND verify_species_cn IS NOT "
-                "COALESCE(NULLIF(TRIM(bird_species_cn), ''), alt_species_cn))"
-            )
 
         where_sql = ""
         if where_clauses:

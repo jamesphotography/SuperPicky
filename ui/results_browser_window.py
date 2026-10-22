@@ -2189,9 +2189,6 @@ class ResultsBrowserWindow(QMainWindow):
         self._all_photos = self._db.get_all_photos()
         self._compute_burst_ids()
         self._filter_panel.reset_all()
-        # 有识鸟验证数据（对比模式处理过）才显示「只看分歧」/ Show the filter only with check data
-        self._filter_panel.set_disagree_available(
-            any(p.get('verify_species_cn') for p in self._all_photos))
         species, has_other = compute_dropdown_species(
             self._db, use_en=self.i18n.current_lang.startswith('en')
         )
@@ -2243,9 +2240,6 @@ class ResultsBrowserWindow(QMainWindow):
         self._all_photos = self._db.get_all_photos()
         self._compute_burst_ids()
         self._filter_panel.reset_all()
-        # 有识鸟验证数据（对比模式处理过）才显示「只看分歧」/ Show the filter only with check data
-        self._filter_panel.set_disagree_available(
-            any(p.get('verify_species_cn') for p in self._all_photos))
         species, has_other = compute_dropdown_species(
             self._db, use_en=self.i18n.current_lang.startswith('en')
         )
