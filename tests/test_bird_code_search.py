@@ -108,3 +108,22 @@ def test_pinyin_initials_and_chinese_are_unchanged(search):
     assert search("btb")[0] == "白头鹎"
     assert search("田鹨")[0] == "田鹨"
     assert search("理氏鹨")[0] == "田鹨"
+
+
+@pytest.mark.parametrize("search", SEARCHES)
+@pytest.mark.parametrize("query, expected", [
+    ("GWTE", "美洲绿翅鸭"),   # 北美鸟友的 GWTE 指 A. carolinensis，不是欧亚的 A. crecca
+    ("EGWT", "绿翅鸭"),       # 欧亚一侧用亚种组代码
+    ("YEWA", "美洲黄林莺"),   # AOS Yellow Warbler 的北美一侧
+    ("MANW", "黄林莺"),       # Mangrove Warbler 用亚种组代码
+    ("NOPO", "北美鸺鹠"),
+    ("VEFL", "朱红霸鹟"),
+])
+def test_four_letter_codes_of_aos_lumps_point_at_the_american_taxon(search, query, expected):
+    """
+    AOS 合并、IOC 拆分的种，4 位代码指北美那一侧（issue #140）。
+
+    AOS-lumped species that IOC splits: the code means the North American taxon.
+    """
+    results = search(query)
+    assert results and results[0] == expected, results[:5]
