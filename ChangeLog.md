@@ -1,3 +1,68 @@
+# SuperPicky 4.6.4 RC7
+
+**What's new since RC6:**
+
+- **New bird-ID model: BirdTrace** (FastViT-MA36, about 10,000 species, by Warden,
+  [Hugging Face](https://huggingface.co/warden123/BirdTrace-FastViT-MA36-10K), CC BY-NC 4.0).
+  In our hand-checked test batches it was clearly more accurate than the previous OSEA model
+  (Victoria 97.4% vs 89.7%), and it knows recently split species that OSEA never learned
+  (Opalton Grasswren: 98% vs 0%).
+- **Compare mode is the default in this test build.** BirdTrace identifies the bird and OSEA
+  checks it. The Lightroom caption shows BirdTrace's confidence plus an extra line saying
+  whether OSEA agrees. Settings → Bird ID → **Bird ID model** lets you switch to BirdTrace
+  only or OSEA only. Every compared photo is also logged to `birdid_engine_compare.csv` in
+  the SuperPicky user-data folder.
+- **New "Disagreements only" filter** in the results browser. It appears only when the folder
+  has compare results, and shows the photos where OSEA's check differs from the current
+  species (it follows your species edits). Please tell us which model was right on those photos.
+- **Region filter never widens to the whole world.** If a photo matches nothing in your
+  state's eBird list, SuperPicky still widens to the country list, but it no longer drops the
+  filter altogether. A photo that matches nothing in the country list now gets no species
+  instead of a bird from another continent. (In a South Australia test batch, 12 of 1,784
+  identifications had fallen back to worldwide and produced Oriental Magpie-Robin, Ashy
+  Woodswallow, Vermilion Flycatcher and similar.) Without GPS or a chosen region, nothing
+  changes: there is no list to filter by.
+- **Chinese UI: English name under the Chinese bird name** on thumbnail cards and in the
+  detail panel, so similar Chinese names can't be confused.
+- **Fixed: Lightroom still read 3★ after promoting a photo to 4★ / 5★.** The rating is now
+  written after the file has been moved, not at the same time.
+- The aesthetic model's weights are now stored at half precision so the Windows CUDA
+  installer stays under GitHub's 2 GiB file limit. On Apple-silicon and NVIDIA GPUs the
+  scores are bit-identical (the model already ran at half precision there); CPU-only scores
+  differ by at most about 0.004.
+- Installers are about 200 MB larger (the BirdTrace model). On a Mac, processing is about 7%
+  slower with BirdTrace alone and about 14% slower in compare mode. **Speed on Windows
+  without an NVIDIA GPU has not been measured yet — please report it.**
+
+---
+
+# SuperPicky 4.6.4 RC7（中文）
+
+**RC6 以来的变化：**
+
+- **新识鸟模型 BirdTrace**（FastViT-MA36，约 1 万种，作者 Warden，
+  [Hugging Face](https://huggingface.co/warden123/BirdTrace-FastViT-MA36-10K)，CC BY-NC 4.0）。
+  在我们人工核对过的测试批次里明显比原来的 OSEA 准（维州 97.4% 对 89.7%），并且认得 OSEA
+  没学过的新拆分物种（锈色草鹩莺 98% 对 0%）。
+- **测试版默认「对比模式」**：BirdTrace 识别、OSEA 验证。Lightroom 题注里的置信度来自
+  BirdTrace，另有一行说明 OSEA 是否同意。设置 → 识鸟 → **识鸟模型** 可改成只用 BirdTrace
+  或只用 OSEA。每张对比过的照片还会记录到用户数据目录的 `birdid_engine_compare.csv`。
+- **结果浏览器新增「只看分歧」筛选**：文件夹里有对比结果时才出现，只显示 OSEA 验证结果与当前鸟种不同的
+  照片（以当前鸟种为准，手动改鸟种后随之更新）。欢迎告诉我们这些照片上哪个模型是对的。
+- **地区过滤不再放宽到全世界。** 照片在省州 eBird 名录里找不到对应鸟种时，仍会放宽到国家名录，
+  但不再完全取消过滤；国家名录里也没有的照片现在不定鸟种，而不是给出别的大洲的鸟。（南澳一批
+  测试照片的 1784 次识别里，有 12 次放宽到全世界，出现了鹊鸲、灰燕鵙、猩红霸鹟等外地鸟。）没有
+  GPS、也没手选地区时行为不变：本来就没有名录可用。
+- **中文界面在鸟名下换行显示英文名**（缩略图卡片和详情面板），避免相近的中文名混淆。
+- **修复：照片升到 4★ / 5★ 后 Lightroom 仍读到 3★。** 现在先移动文件、再写星级。
+- 美学模型权重改为半精度存储，让 Windows CUDA 安装包保持在 GitHub 单文件 2 GiB 上限以内。
+  在 Apple 芯片和 NVIDIA 显卡上分数逐位不变（那里本来就用半精度计算）；纯 CPU 计算最多差约
+  0.004 分。
+- 安装包约大 200 MB（BirdTrace 模型）。Mac 上只用 BirdTrace 处理约慢 7%，对比模式约慢 14%。
+  **没有 NVIDIA 显卡的 Windows 电脑速度还没测过，欢迎反馈。**
+
+---
+
 # SuperPicky 4.6.4 RC6
 
 **What's new since RC5:**

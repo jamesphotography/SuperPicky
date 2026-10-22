@@ -1125,12 +1125,14 @@ def _identify_with_tiers(
     """
     遍历区域候选层，命中即停 / Walk the region candidate tiers, stopping at the first hit.
 
-    注意 predict_bird 只有在 top-100 中无一落入候选集时才返回空，因此放宽只在候选集
-    完全不含相近种时发生；效果取决于候选集是否准确，而不是放宽机制。
+    注意 predict_bird 只有在 top-100 中无一落入候选集（≥0.3%）时才返回空，因此放宽只在候选集
+    完全不含相近种时发生；效果取决于候选集是否准确，而不是放宽机制。放宽最多到国家名录，
+    名录内都没有时返回空结果（不定鸟种），不会放宽到全世界（见 RegionFilter.iter_candidates）。
 
     predict_bird returns nothing only when none of its top 100 falls in the
-    candidate set, so widening happens only when the set lacks any similar
-    species; accuracy depends on the set, not on the widening.
+    candidate set (>=0.3%), so widening happens only when the set lacks any similar
+    species; accuracy depends on the set, not on the widening. Widening stops at the
+    country list; with no match there the result is empty (no species), never worldwide.
 
     参数 / Parameters:
         image: 待识别图像 / Image to identify.
@@ -1162,6 +1164,7 @@ def _identify_with_tiers(
         )
         return results, TIER_NONE, None, None
 
+    last = (TIER_NONE, None, None)
     for candidates, tier, region in geo.iter_candidates(
         gps_country, gps_subnational, manual_country, manual_subnational
     ):
@@ -1174,9 +1177,13 @@ def _identify_with_tiers(
             photo_country_code=photo_country_code,
             probs=probs,
         )
+        count = len(candidates) if candidates else None
         if results:
-            return results, tier, (len(candidates) if candidates else None), region
-    return [], TIER_NONE, None, None
+            return results, tier, count, region
+        last = (tier, count, region)
+    # 名录内都没认出（不再放宽到全世界）：结果为空，但如实报告最后用的是哪层名录。
+    # Nothing matched within the lists (no worldwide fallback): empty result, reporting the last tier used.
+    return [], last[0], last[1], last[2]
 
 
 def identify_bird(
