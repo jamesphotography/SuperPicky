@@ -11,11 +11,12 @@ import birdid.bird_identifier as bi
 
 
 class _StubModel:
-    """返回定值 logits：class_id 100 极高，其余 0。"""
-    def __call__(self, x):
-        v = torch.zeros(1, 10964)
-        v[0, 100] = 10.0
-        return v
+    """BirdTrace 桩：鸟种库类别上的概率，class_id 100 占绝大部分。"""
+    def probs(self, image, is_yolo_cropped):
+        v = torch.zeros(10964)
+        v[100] = 0.99
+        v[0] = 0.01
+        return v.numpy()
 
 
 class _FakeDB:

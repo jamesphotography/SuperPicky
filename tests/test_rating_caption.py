@@ -45,7 +45,7 @@ def test_top_photo_caption_zh():
     assert "✓ 美学分 5.9 / 10（本批前 9%）" in lines
     assert "✓ 眼睛清晰可见" in lines
     assert "· 有鸟置信度 88%（YOLO 检测）" in lines
-    assert "· 鸟种识别置信度 OSEA 92%" in lines
+    assert "· 鸟种识别置信度 BirdTrace 92%" in lines
     assert not any(l.startswith("ISO") for l in lines)   # ISO 不是打分依据，不单独成行
     for jargon in ("TOPIQ", "权重", "[修正]", "调整后", "AI 认鸟把握"):
         assert jargon not in cap
@@ -104,7 +104,7 @@ def test_low_confidence_species_explains_handling():
     """识别置信度不够：写出候选、置信度与门槛，以及「不写入鸟种、排名仍按候选比较」。"""
     cap = build_caption(_ranked(species_confidence=25.0, species_low_confidence=True,
                                 species_candidate="长尾草雀"), ZH)
-    assert ("· 鸟种未确定：最可能是长尾草雀，但识别置信度 OSEA 25% 低于设置的 50%，"
+    assert ("· 鸟种未确定：最可能是长尾草雀，但识别置信度 BirdTrace 25% 低于设置的 50%，"
             "不写入鸟种、不按它分目录；排名时仍和长尾草雀的照片一起比较") in cap
     assert "鸟种识别置信度" not in cap
 
@@ -321,15 +321,8 @@ def test_tiny_pool_shows_values_without_percentiles():
     assert "· 头部锐度 631" in cap and "· 美学分 5.9 / 10" in cap
 
 
-def test_compare_mode_caption_names_model_and_check():
-    """对比模式：鸟种置信度写 BirdTrace，OSEA 验证一致 ✓ / 不一致 ✗，均带置信度。"""
-    agree = build_caption(_ranked(species_model="BirdTrace", verify_model="OSEA",
-                                  verify_name="冠翎鹑鸠", verify_confidence=99.6,
-                                  verify_agree=True), ZH)
-    assert "· 鸟种识别置信度 BirdTrace 92%" in agree
-    assert "✓ OSEA 验证一致：冠翎鹑鸠 100%" in agree
-    disagree = build_caption(_ranked(species_model="BirdTrace", verify_model="OSEA",
-                                     verify_name="茶色蛙口夜鹰", verify_confidence=26.1), EN)
-    assert "✗ OSEA check disagrees: OSEA says 茶色蛙口夜鹰 26%" in disagree
-    # 没开对比时不出现验证行 / no check line outside compare mode
-    assert "OSEA 验证" not in build_caption(_ranked(), ZH)
+def test_caption_names_birdtrace_without_check_line():
+    """鸟种置信度写 BirdTrace；对比模式已删除，不再有验证行。"""
+    cap = build_caption(_ranked(), ZH)
+    assert "· 鸟种识别置信度 BirdTrace 92%" in cap
+    assert "验证" not in cap

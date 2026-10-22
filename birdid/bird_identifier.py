@@ -15,7 +15,6 @@ import numpy as np
 from PIL import Image, ImageEnhance, ImageFilter
 from PIL.ExifTags import TAGS, GPSTAGS
 import cv2
-import io
 import os
 import sys
 from typing import Any, Optional, List, Dict, Tuple, Set, cast
@@ -104,15 +103,13 @@ BIRDID_DIR = os.path.dirname(os.path.abspath(__file__))
 # Project root lookup: in code_updates overlay scenarios __file__ points to
 # code_updates/birdid/, so fall back to sys.path entries to locate the real root.
 def _find_project_root() -> str:
+    # 以识鸟模型权重为标记找根目录 / The Bird-ID weights mark the project root
+    marker = os.path.join("models", "birdtrace_fastvit_ma36_10k.safetensors")
     candidate = os.path.dirname(BIRDID_DIR)
-    if os.path.exists(os.path.join(candidate, "models", "model20240824.pth")):
+    if os.path.exists(os.path.join(candidate, marker)):
         return candidate
     for p in sys.path:
-        if (
-            p
-            and os.path.isdir(p)
-            and os.path.exists(os.path.join(p, "models", "model20240824.pth"))
-        ):
+        if p and os.path.isdir(p) and os.path.exists(os.path.join(p, marker)):
             return p
     return candidate
 
@@ -187,87 +184,26 @@ def get_user_data_dir() -> str:
     return user_data_dir
 
 
-MODEL_PATH = get_project_path("models/model20240824.pth")
-MODEL_PATH_LEGACY = get_birdid_path("models/birdid2024.pt")
-MODEL_PATH_ENC = get_birdid_path("models/birdid2024.pt.enc")
-OSEA_NUM_CLASSES = 11000
 DATABASE_PATH = get_birdid_path("data/bird_reference.sqlite")
 YOLO_MODEL_PATH = get_project_path("models/yolo11l-seg.pt")
 BIRDTRACE_WEIGHTS_PATH = get_project_path("models/birdtrace_fastvit_ma36_10k.safetensors")
 BIRDTRACE_CLASS_MAP_PATH = get_birdid_path("data/birdtrace_class_map.json")
 
 
-def decrypt_model(encrypted_path: str, password: str) -> bytes:
-    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-    from cryptography.hazmat.backends import default_backend
-    from cryptography.hazmat.primitives import hashes
-    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-
-    with open(encrypted_path, "rb") as f:
-        encrypted_data = f.read()
-
-    salt = encrypted_data[:16]
-    iv = encrypted_data[16:32]
-    ciphertext = encrypted_data[32:]
-
-    kdf = PBKDF2HMAC(
-        algorithm=hashes.SHA256(),
-        length=32,
-        salt=salt,
-        iterations=100000,
-        backend=default_backend(),
-    )
-    key = kdf.derive(password.encode())
-
-    cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
-    decryptor = cipher.decryptor()
-    plaintext_padded = decryptor.update(ciphertext) + decryptor.finalize()
-
-    padding_length = plaintext_padded[-1]
-    return plaintext_padded[:-padding_length]
-
-
-def _load_torchscript_from_bytes(model_data: bytes):
-    buffer = io.BytesIO(model_data)
-    return torch.jit.load(buffer, map_location="cpu")
-
-
 def get_classifier():
-    registry = get_lazy_registry()
+    """
+    识鸟分类器（BirdTrace）懒加载单例；预加载与识别共用同一个实例。
+    Lazily created Bird-ID classifier (BirdTrace), shared by preloading and identification.
 
-    def _factory():
-        import torchvision.models as models
+    返回 / Returns:
+        BirdTraceClassifier
 
-        if os.path.exists(MODEL_PATH):
-            model = models.resnet34(num_classes=OSEA_NUM_CLASSES)
-            state_dict = torch.load(MODEL_PATH, map_location="cpu", weights_only=True)
-            model.load_state_dict(state_dict)
-            model = model.to(device=CLASSIFIER_DEVICE)
-            model.eval()
-            return model
+    异常 / Raises:
+        FileNotFoundError: 缺 BirdTrace 权重或对照表 / BirdTrace weights or class map missing.
+    """
+    from birdid.birdtrace_classifier import get_birdtrace_classifier  # noqa: PLC0415  只在用到时加载 / lazy
 
-        SECRET_PASSWORD = "SuperBirdID_2024_AI_Model_Encryption_Key_v1"
-        if os.path.exists(MODEL_PATH_ENC):
-            model_data = decrypt_model(MODEL_PATH_ENC, SECRET_PASSWORD)
-            model = _load_torchscript_from_bytes(model_data)
-        elif os.path.exists(MODEL_PATH_LEGACY):
-            try:
-                model = torch.jit.load(MODEL_PATH_LEGACY, map_location="cpu")
-            except RuntimeError as e:
-                if "open file failed" not in str(e) or "fopen" not in str(e):
-                    raise
-                with open(MODEL_PATH_LEGACY, "rb") as f:
-                    model_data = f.read()
-                model = _load_torchscript_from_bytes(model_data)
-        else:
-            raise RuntimeError(f"未找到分类模型: {MODEL_PATH} 或 {MODEL_PATH_LEGACY}")
-
-        model = model.to(CLASSIFIER_DEVICE)
-        model.eval()  # noqa: model.eval() is a PyTorch API call, not Python eval()
-        print(_t("logs.birdid_fallback_model"))
-        return model
-
-    return registry.get_or_create("birdid.classifier", _factory)
+    return get_birdtrace_classifier(BIRDTRACE_WEIGHTS_PATH, BIRDTRACE_CLASS_MAP_PATH)
 
 
 def get_bird_model():
@@ -821,48 +757,6 @@ def apply_enhancement(image: Image.Image, method: str = "unsharp_mask") -> Image
     return image
 
 
-# V4.5: transform 与温度收敛到 birdid/osea_preprocess.py 单一事实源，
-# 与 osea_classifier.py 共享同一份定义，杜绝双份复制漂移。
-# V4.5: Transforms and temperature now come from the shared SSOT module
-# birdid/osea_preprocess.py, shared with osea_classifier.py — no more
-# duplicated definitions drifting apart.
-from birdid.osea_preprocess import (
-    OSEA_TEMPERATURE,
-    OSEA_TRANSFORM,
-    OSEA_TRANSFORM_DIRECT,
-)
-
-# 识鸟模型选项（设置项 birdid_engine，环境变量 SUPERPICKY_BIRDID_ENGINE 优先）：
-#   compare  = BirdTrace 出结果，OSEA 在同一裁剪图、同一地区名录上做验证（RC 默认）
-#   birdtrace / osea = 只用该模型
-# Bird-ID engine options (setting birdid_engine; SUPERPICKY_BIRDID_ENGINE wins):
-#   compare = BirdTrace primary, OSEA as a check on the same crop and region list (RC default);
-#   birdtrace / osea = that model only.
-BIRDID_ENGINES = ("compare", "birdtrace", "osea")
-DEFAULT_BIRDID_ENGINE = "compare"
-ENGINE_LABELS = {"osea": "OSEA", "birdtrace": "BirdTrace"}
-_BIRDTRACE_MISSING_LOGGED = False
-
-
-def get_birdid_engine() -> str:
-    """
-    当前识鸟模型设置：环境变量优先，其次设置中心的 birdid_engine；无效值按默认（compare）。
-    Current engine setting: env var first, then the settings value; invalid values read as compare.
-
-    返回 / Returns:
-        str: compare / birdtrace / osea
-    """
-    engine = os.environ.get("SUPERPICKY_BIRDID_ENGINE", "").strip().lower()
-    if not engine:
-        try:
-            from advanced_config import get_advanced_config  # noqa: PLC0415  避免循环导入 / avoid cycles
-
-            engine = get_advanced_config().birdid_engine
-        except Exception:  # noqa: BLE001
-            engine = DEFAULT_BIRDID_ENGINE
-    return engine if engine in BIRDID_ENGINES else DEFAULT_BIRDID_ENGINE
-
-
 def birdtrace_ready() -> bool:
     """
     BirdTrace 权重与对照表是否都在 / Whether the BirdTrace weights and class map are present.
@@ -875,62 +769,22 @@ def birdtrace_ready() -> bool:
     return birdtrace_available(BIRDTRACE_WEIGHTS_PATH, BIRDTRACE_CLASS_MAP_PATH)
 
 
-def resolve_engines(engine: str) -> Tuple[str, Optional[str]]:
+def _class_probs(image: Image.Image, is_yolo_cropped: bool) -> torch.Tensor:
     """
-    设置值 → (出主结果的模型, 验证模型或 None)。BirdTrace 文件缺失时退回只用 OSEA，并打一次日志。
-    Map the setting to (primary model, check model or None); without BirdTrace files fall back to OSEA.
-
-    参数 / Parameters:
-        engine (str): compare / birdtrace / osea
-
-    返回 / Returns:
-        tuple: 例如 ("birdtrace", "osea")、("birdtrace", None)、("osea", None)
-    """
-    global _BIRDTRACE_MISSING_LOGGED
-    if engine == "osea":
-        return "osea", None
-    if not birdtrace_ready():
-        if not _BIRDTRACE_MISSING_LOGGED:
-            print(f"[BirdTrace] 模型文件缺失，识鸟改用 OSEA / model files missing, using OSEA: "
-                  f"{BIRDTRACE_WEIGHTS_PATH}")
-            _BIRDTRACE_MISSING_LOGGED = True
-        return "osea", None
-    return "birdtrace", ("osea" if engine == "compare" else None)
-
-
-def _class_probs(image: Image.Image, is_yolo_cropped: bool, engine: str) -> torch.Tensor:
-    """
-    按模型算出鸟种库类别上的概率 / Class probabilities over species-DB classes for one model.
+    BirdTrace 算出鸟种库类别上的概率 / BirdTrace probabilities over species-DB classes.
 
     参数 / Parameters:
         image (Image.Image): RGB 图 / RGB image.
         is_yolo_cropped (bool): 是否已是 YOLO 方形裁剪 / Whether already a YOLO square crop.
-        engine (str): osea / birdtrace
 
     返回 / Returns:
         torch.Tensor: (10964,) 概率 / probabilities.
     """
     if image.mode != "RGB":
         image = image.convert("RGB")
-    if engine == "birdtrace":
-        from birdid.birdtrace_classifier import get_birdtrace_classifier  # noqa: PLC0415  只在用到时加载 / lazy
-
-        clf = get_birdtrace_classifier(BIRDTRACE_WEIGHTS_PATH, BIRDTRACE_CLASS_MAP_PATH)
-        return torch.from_numpy(clf.probs(image, is_yolo_cropped)).float()
-
-    model = get_classifier()
-    transform = OSEA_TRANSFORM_DIRECT if is_yolo_cropped else OSEA_TRANSFORM
-    transformed_tensor = cast(torch.Tensor, transform(image))
-    input_tensor = transformed_tensor.unsqueeze(0)
-
+    clf = get_classifier()
     with _CLASSIFIER_INFER_LOCK:
-        input_tensor = input_tensor.to(CLASSIFIER_DEVICE)
-        with torch.no_grad():
-            output = model(input_tensor)[0]
-
-    num_classes = min(10964, output.shape[0])
-    output = output[:num_classes]
-    return torch.nn.functional.softmax(output / OSEA_TEMPERATURE, dim=0)
+        return torch.from_numpy(clf.probs(image, is_yolo_cropped)).float()
 
 
 def predict_bird(
@@ -940,7 +794,6 @@ def predict_bird(
     is_yolo_cropped: bool = False,
     name_format: Optional[str] = None,
     photo_country_code: Optional[str] = None,
-    engine: Optional[str] = None,
     probs: Optional[torch.Tensor] = None,
 ) -> List[Dict]:
     """
@@ -954,7 +807,6 @@ def predict_bird(
         is_yolo_cropped (bool): 是否已是 YOLO 方形裁剪 / Whether already a YOLO square crop.
         name_format (Optional[str]): 鸟名格式 / Bird name format.
         photo_country_code (Optional[str]): 拍摄国家，供罕见度 / Shooting country for rarity.
-        engine (Optional[str]): osea / birdtrace；None 按设置 / None follows the setting.
         probs (Optional[torch.Tensor]): 已算好的类别概率（地区逐层放宽时复用，免得重复推理）/
             Precomputed probabilities, reused across region tiers to avoid re-running the model.
 
@@ -966,9 +818,7 @@ def predict_bird(
     if probs is not None:
         best_probs = probs
     else:
-        if engine is None:
-            engine = resolve_engines(get_birdid_engine())[0]
-        best_probs = _class_probs(image, is_yolo_cropped, engine)
+        best_probs = _class_probs(image, is_yolo_cropped)
 
     k = min(100 if species_class_ids else top_k, len(best_probs))
     top_probs, top_indices = torch.topk(best_probs, k)
@@ -1120,7 +970,6 @@ def _identify_with_tiers(
     is_yolo_cropped: bool,
     name_format: Optional[str],
     photo_country_code: Optional[str],
-    engine: str = "osea",
 ) -> Tuple[List[Dict], str, Optional[int], Optional[str]]:
     """
     遍历区域候选层，命中即停 / Walk the region candidate tiers, stopping at the first hit.
@@ -1144,13 +993,13 @@ def _identify_with_tiers(
         is_yolo_cropped (bool): 是否已由 YOLO 裁剪 / Whether YOLO already cropped.
         name_format (Optional[str]): 鸟名格式 / Bird name format.
         photo_country_code (Optional[str]): 拍摄国家，供罕见度使用 / Shooting country for rarity.
-        engine (str): osea / birdtrace；每张图只推理一次，各层复用概率 / one inference reused across tiers.
 
     返回 / Returns:
         tuple: (结果列表, 层标签, 该层候选数或 None, 该层区域代码或 None) /
             (results, tier label, candidate count or None, region code or None).
     """
-    probs = _class_probs(image, is_yolo_cropped, engine)
+    # 每张图只推理一次，各层名录复用同一份概率 / One inference, reused across region tiers.
+    probs = _class_probs(image, is_yolo_cropped)
     geo = get_geo_filter()
     if geo is None:
         results = predict_bird(
@@ -1197,7 +1046,6 @@ def identify_bird(
     name_format: Optional[str] = None,
     preloaded_crop: Optional[Image.Image] = None,
     focus_point: Optional[Tuple[float, float]] = None,
-    compare: bool = True,
 ) -> Dict:
     result = {
         "success": False,
@@ -1274,63 +1122,34 @@ def identify_bird(
         # Geo filter: use the photo's located subnational/country when available,
         # otherwise the manual selection. They are passed separately instead of
         # conflating a subnational code with a country code (root cause, spec 2.5).
-        def run(engine: str) -> Tuple[List[Dict], Dict]:
-            """同一张图、同一套地区过滤，用指定模型识别 / Identify with one model, same image and region filter."""
-            if use_geo_filter:
-                found, tier, count, used_region = _identify_with_tiers(
-                    image,
-                    top_k=top_k,
-                    gps_country=photo_country_code,
-                    gps_subnational=gps_subnational,
-                    manual_country=country_code,
-                    manual_subnational=region_code,
-                    is_yolo_cropped=is_yolo_cropped,
-                    name_format=name_format,
-                    photo_country_code=photo_country_code,
-                    engine=engine,
-                )
-                return found, {
-                    "enabled": tier != TIER_NONE,
-                    "tier": tier,
-                    "species_count": count,
-                    "region_code": used_region,
-                }
-            found = predict_bird(
+        if use_geo_filter:
+            results, tier, count, used_region = _identify_with_tiers(
+                image,
+                top_k=top_k,
+                gps_country=photo_country_code,
+                gps_subnational=gps_subnational,
+                manual_country=country_code,
+                manual_subnational=region_code,
+                is_yolo_cropped=is_yolo_cropped,
+                name_format=name_format,
+                photo_country_code=photo_country_code,
+            )
+            result["geo_info"] = {
+                "enabled": tier != TIER_NONE,
+                "tier": tier,
+                "species_count": count,
+                "region_code": used_region,
+            }
+        else:
+            results = predict_bird(
                 image,
                 top_k=top_k,
                 species_class_ids=None,
                 is_yolo_cropped=is_yolo_cropped,
                 name_format=name_format,
                 photo_country_code=photo_country_code,
-                engine=engine,
             )
-            return found, {"enabled": False, "tier": TIER_NONE, "species_count": None, "region_code": None}
-
-        setting = get_birdid_engine()
-        primary, check = resolve_engines(setting)
-        # compare=False：只要主结果的调用方（无鸟补救扫描的守门、视频逐帧识别）不跑验证模型，
-        # 既省一次推理，也不往对比 CSV 写没有路径、没有地区的行。
-        # compare=False: callers needing only the primary result (rescue-scan gate, video frames)
-        # skip the check model, saving an inference and keeping path-less rows out of the CSV.
-        if not compare:
-            check = None
-        results, result["geo_info"] = run(primary)
-        result["engine"] = setting
-        result["primary_engine"] = primary
-
-        # 对比模式：同一张裁剪图、同一套地区过滤再跑验证模型（不影响主结果）；选鸟流程把它写进题注，
-        # 同时逐张追加对比 CSV。验证模型出错只记在 compare.error，不让主结果失败。
-        # Compare mode: rerun the check model on the same crop and region filter (primary result
-        # unchanged); the pipeline writes it into the caption and a CSV row is appended. A check-model
-        # failure is only recorded in compare.error.
-        if check:
-            try:
-                check_results, check_geo = run(check)
-                result["compare"] = {"engine": check, "results": check_results, "geo_info": check_geo}
-                _append_compare_row(image_path, primary, results, check, check_results, result["geo_info"])
-            except Exception as compare_error:  # noqa: BLE001
-                print(f"[BirdID] 验证模型 {ENGINE_LABELS.get(check, check)} 出错 / check model failed: {compare_error}")
-                result["compare"] = {"engine": check, "error": str(compare_error)}
+            result["geo_info"] = {"enabled": False, "tier": TIER_NONE, "species_count": None, "region_code": None}
 
         result["success"] = True
         result["results"] = results
@@ -1339,67 +1158,6 @@ def identify_bird(
         result["error"] = str(e)
 
     return result
-
-
-_COMPARE_LOCK = threading.Lock()
-
-
-def compare_csv_path() -> str:
-    """
-    对比模式逐张记录的 CSV 路径（用户数据目录下）/ Per-photo comparison CSV in the user data dir.
-
-    返回 / Returns:
-        str
-    """
-    return os.path.join(get_user_data_dir(), "birdid_engine_compare.csv")
-
-
-def _append_compare_row(
-    image_path: str,
-    primary: str,
-    primary_results: List[Dict],
-    check: str,
-    check_results: List[Dict],
-    geo_info: Optional[Dict],
-) -> None:
-    """
-    追加一行主模型 / 验证模型对比 / Append one primary-vs-check row.
-
-    参数 / Parameters:
-        image_path (str): 照片路径 / Photo path.
-        primary (str): 主模型 / Primary model.
-        primary_results (list[dict]): 主模型结果 / Primary results.
-        check (str): 验证模型 / Check model.
-        check_results (list[dict]): 验证模型结果 / Check results.
-        geo_info (Optional[dict]): 地区过滤信息 / Region filter info.
-    """
-    import csv  # noqa: PLC0415
-    import datetime  # noqa: PLC0415
-
-    def top(rs: List[Dict], i: int) -> Tuple[str, str]:
-        if len(rs) <= i:
-            return "", ""
-        return rs[i].get("cn_name") or "", f"{rs[i].get('confidence', 0):.1f}"
-
-    p1, p1c = top(primary_results, 0)
-    c1, c1c = top(check_results, 0)
-    row = [
-        datetime.datetime.now().isoformat(timespec="seconds"), os.path.basename(image_path or ""),
-        ENGINE_LABELS.get(primary, primary), p1, p1c, top(primary_results, 1)[0],
-        ENGINE_LABELS.get(check, check), c1, c1c, top(check_results, 1)[0],
-        "1" if p1 and p1 == c1 else "0",
-        (geo_info or {}).get("region_code") or "", image_path or "",
-    ]
-    path = compare_csv_path()
-    with _COMPARE_LOCK:
-        new = not os.path.exists(path)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "a", newline="", encoding="utf-8-sig") as f:
-            w = csv.writer(f)
-            if new:
-                w.writerow(["时间", "文件", "主模型", "主模型第一", "主模型置信度", "主模型第二",
-                            "验证模型", "验证第一", "验证置信度", "验证第二", "第一名一致", "地区", "路径"])
-            w.writerow(row)
 
 
 def quick_identify(image_path: str, top_k: int = 3) -> List[Dict]:
@@ -1411,5 +1169,5 @@ if __name__ == "__main__":
     print("BirdIdentifier 模块测试")
     print(f"YOLO 可用: {YOLO_AVAILABLE}")
     print(f"RAW 支持: {RAW_SUPPORT}")
-    print(f"模型路径: {MODEL_PATH}")
+    print(f"模型路径: {BIRDTRACE_WEIGHTS_PATH}")
     print(f"数据库路径: {DATABASE_PATH}")

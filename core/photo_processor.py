@@ -1463,10 +1463,6 @@ class PhotoProcessor:
         bird_prefixes: Set[str] = set()                  # 检测到鸟的照片 / photos with a detected bird
         species_caption_jobs: List[Tuple[str, str]] = [] # 待写入的鸟种说明前缀 / pending caption prefixes
         unconfirmed_title_jobs: List[Tuple[str, List[str], str, str]] = []  # 待确定标题 / unconfirmed titles
-        # 识鸟对比模式：每张照片的主模型名与验证模型结果，收尾写题注、写 DB 时用
-        # Bird-ID compare mode: per-photo primary model and check-model result, for caption and DB.
-        birdid_models: Dict[str, str] = {}               # 前缀 → 主模型名 / prefix → primary model name
-        birdid_checks: Dict[str, Dict] = {}              # 前缀 → 验证模型第一名 / prefix → check top-1
 
         # V4.5: 统一工作单元进度——照片与识鸟任务同权重计入一个分数，
         # 使循环结束后的 BirdID 收尾阶段进度条持续前进，而非停在 100%。
@@ -1625,22 +1621,6 @@ class PhotoProcessor:
             )
             birdid_outcomes[file_prefix] = outcome
             birdid_sources[file_prefix] = source_display
-            from birdid.bird_identifier import ENGINE_LABELS
-            birdid_models[file_prefix] = ENGINE_LABELS.get(birdid_result.get('primary_engine'), "OSEA")
-            # 对比模式：记下验证模型的第一名；按单张照片记录，不随连拍统一改写
-            # Compare mode: keep the check model's top-1 per photo (not burst-unified).
-            check = birdid_result.get('compare') or {}
-            check_results = check.get('results') or []
-            if check_results:
-                check_top = check_results[0]
-                birdid_checks[file_prefix] = {
-                    'model': ENGINE_LABELS.get(check.get('engine'), str(check.get('engine'))),
-                    'cn_name': check_top.get('cn_name', '') or '',
-                    'en_name': check_top.get('en_name', '') or '',
-                    'confidence': check_top.get('confidence', 0) or 0,
-                }
-            elif check.get('error'):
-                self._log(f"  [BirdID] {source_display}: 验证模型出错 / check model failed: {check['error']}", "warning")
             if title_targets:
                 species_title_targets[file_prefix] = list(title_targets)
             bird_prefixes.add(file_prefix)
@@ -1812,23 +1792,6 @@ class PhotoProcessor:
                             self._log(self.i18n.t("logs.candidate_db_write_failed", file=file_prefix, error=_e), "warning")
                     # 备选鸟种不写进选片备注：浏览器鸟种行已显示「鸟名（待确定 N%）」
                     # The alt species is shown in the browser's species row, not the note
-
-            # 对比模式：验证模型第一名写入 DB，供浏览器「只看分歧」筛选；非对比模式写空，
-            # 清掉之前对比模式留下的旧值。
-            # Compare mode: store the check model's top-1 for the browser's disagreement
-            # filter; outside compare mode write NULLs to clear values from an earlier run.
-            if self.report_db:
-                check = birdid_checks.get(file_prefix)
-                try:
-                    self.report_db.update_photo(file_prefix, {
-                        'verify_model': check['model'] if check else None,
-                        'verify_species_cn': check['cn_name'] if check else None,
-                        'verify_species_en': check['en_name'] if check else None,
-                        'verify_confidence': check['confidence'] if check else None,
-                    })
-                except Exception as _e:
-                    self._log(f"  [BirdID] {file_prefix}: 验证结果写入数据库失败 / "
-                              f"check result DB write failed: {_e}", "warning")
 
         def collect_birdid_tasks(wait: bool = False):
             """Collect completed BirdID tasks.
@@ -2518,6 +2481,12 @@ class PhotoProcessor:
                 # V3.2优化: 只读取原图一次，在关键点检测和NIMA计算中复用
                 orig_img = None  # 原图缓存
                 bird_crop_bgr = None  # 裁剪区域缓存（BGR）
+                # 识鸟专用方形裁剪：鸟框最长边 ×1.15 的正方形、真实背景，只有超出画面才补黑；
+                # 与识鸟面板/BirdTrace 作者的取法一致。上面的长方形裁剪直接压成 384×384 会把鸟拉伸。
+                # Square crop for Bird ID: 1.15 × the box's long side, real background, black only
+                # beyond the frame — matching the Bird ID panel and BirdTrace's author. Squashing the
+                # rectangular crop above to 384×384 would stretch the bird.
+                birdid_crop_bgr = None
                 bird_crop_mask = None # 裁剪区域掩码缓存
                 bird_mask_orig = None  # V3.9: 原图尺寸的分割掩码（用于对焦验证）
             
@@ -2544,6 +2513,21 @@ class PhotoProcessor:
                             w_orig_box = int(w * scale_x)
                             h_orig_box = int(h * scale_y)
                         
+                            if self.settings.auto_identify:
+                                try:
+                                    from tools.image_crop import smart_square_crop
+                                    # .copy()：裁剪完全落在画面内时返回的是 orig_img 的视图
+                                    # .copy(): a crop fully inside the frame is a view of orig_img
+                                    birdid_crop_bgr = smart_square_crop(
+                                        orig_img,
+                                        (x_orig, y_orig, x_orig + w_orig_box, y_orig + h_orig_box),
+                                        padding_ratio=0.15,
+                                    ).copy()
+                                except Exception as e:
+                                    self._log(f"[BirdID] 方形裁剪失败，改用整图识别 / square crop failed, "
+                                              f"using the full image: {e}", "warning")
+                                    birdid_crop_bgr = None
+
                             # V4.3: 与 BirdID 保持一致，加 15% padding
                             # 防止鸟头在 bbox 边缘时被裁切，导致关键点模型看不到眼睛
                             pad = int(max(w_orig_box, h_orig_box) * 0.15)
@@ -3202,12 +3186,12 @@ class PhotoProcessor:
                             )
                         ):
                             _birdid_crop_pil = None
-                            if bird_crop_bgr is not None:
+                            if birdid_crop_bgr is not None:
                                 try:
                                     from PIL import Image as _PILImage
                                     import cv2 as _cv2_birdid
                                     _birdid_crop_pil = _PILImage.fromarray(
-                                        _cv2_birdid.cvtColor(bird_crop_bgr, _cv2_birdid.COLOR_BGR2RGB)
+                                        _cv2_birdid.cvtColor(birdid_crop_bgr, _cv2_birdid.COLOR_BGR2RGB)
                                     )
                                 except Exception:
                                     pass
@@ -3256,12 +3240,12 @@ class PhotoProcessor:
                             )
                         ):
                             _birdid_crop_pil = None
-                            if bird_crop_bgr is not None:
+                            if birdid_crop_bgr is not None:
                                 try:
                                     from PIL import Image as _PILImage
                                     import cv2 as _cv2_birdid
                                     _birdid_crop_pil = _PILImage.fromarray(
-                                        _cv2_birdid.cvtColor(bird_crop_bgr, _cv2_birdid.COLOR_BGR2RGB)
+                                        _cv2_birdid.cvtColor(birdid_crop_bgr, _cv2_birdid.COLOR_BGR2RGB)
                                     )
                                 except Exception:
                                     pass
@@ -3505,17 +3489,6 @@ class PhotoProcessor:
                         facts.species_candidate = species_display(
                             bird_info.get('cn_name'), bird_info.get('en_name'),
                             self.i18n.current_lang)
-                    facts.species_model = birdid_models.get(prefix, "OSEA")
-                    # 对比模式：验证模型的第一名与最终鸟种（连拍统一之后）比较
-                    # Compare mode: check model's top-1 vs the final (burst-unified) species.
-                    check = birdid_checks.get(prefix)
-                    if check and bird_info:
-                        facts.verify_model = check['model']
-                        facts.verify_name = species_display(
-                            check['cn_name'], check['en_name'], self.i18n.current_lang)
-                        facts.verify_confidence = check['confidence']
-                        facts.verify_agree = (check['cn_name'] == bird_info.get('cn_name')
-                                              and check['en_name'] == bird_info.get('en_name'))
                     final_caption = build_caption(facts, self.i18n.t)
                     self._caption_facts[prefix] = facts
                 for item in pend['items']:

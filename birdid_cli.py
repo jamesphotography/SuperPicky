@@ -48,20 +48,20 @@ def print_banner():
 
 
 def identify_single(args, image_path: str) -> dict:
-    """识别单张图片"""
-    model_type = getattr(args, 'model', 'birdid2024')
+    """
+    识别单张图片（BirdTrace，与 GUI 同一条识别路径）。
+    Identify one image with BirdTrace, using the same path as the GUI.
 
-    if model_type == 'osea':
-        return identify_single_osea(args, image_path)
-    else:
-        return identify_single_birdid2024(args, image_path)
+    参数 / Parameters:
+        args: argparse 结果 / Parsed CLI arguments.
+        image_path (str): 图片路径 / Image path.
 
-
-def identify_single_birdid2024(args, image_path: str) -> dict:
-    """使用 birdid2024 模型识别"""
+    返回 / Returns:
+        dict: identify_bird 的结果 / identify_bird result.
+    """
     from birdid.bird_identifier import identify_bird
 
-    result = identify_bird(
+    return identify_bird(
         image_path,
         use_yolo=args.yolo,
         use_gps=args.gps,
@@ -70,83 +70,6 @@ def identify_single_birdid2024(args, image_path: str) -> dict:
         region_code=args.region,
         top_k=args.top
     )
-
-    return result
-
-
-def identify_single_osea(args, image_path: str) -> dict:
-    """使用 OSEA 模型识别"""
-    from birdid.osea_classifier import get_osea_classifier
-    from birdid.bird_identifier import load_image, get_yolo_detector, YOLO_AVAILABLE
-
-    result = {
-        'success': False,
-        'image_path': image_path,
-        'results': [],
-        'yolo_info': None,
-        'model': 'osea',
-        'error': None
-    }
-
-    try:
-        # 加载图像
-        image = load_image(image_path)
-
-        # RAW 自动对焦点：多目标时优先选「对焦的鸟」，与选鸟模式对齐
-        # Auto-read RAW focus point so multi-subject selection matches picking mode
-        from birdid.bird_identifier import _read_focus_point_for_path
-        focus_point = _read_focus_point_for_path(image_path)
-
-        # YOLO 裁剪 (可选)
-        # V4.4: 记录是否真的裁剪成功，传给分类器选择对应的 transform
-        # （已裁剪用直接 resize，未裁剪用 Resize+CenterCrop），否则已经是紧凑
-        # 方形图的输入会被 CenterCrop 二次裁切，与 GUI 默认路径的结果不一致。
-        # V4.4: Track whether the YOLO crop actually succeeded so we can tell
-        # the classifier which transform to use (direct resize for an
-        # already-cropped image vs. Resize+CenterCrop otherwise); without this
-        # an already-tight square crop gets center-cropped a second time and
-        # diverges from the GUI's default recognition path.
-        is_yolo_cropped = False
-        if args.yolo and YOLO_AVAILABLE:
-            width, height = image.size
-            if max(width, height) > 640:
-                detector = get_yolo_detector()
-                if detector:
-                    cropped, info = detector.detect_and_crop_bird(
-                        image, focus_point=focus_point
-                    )
-                    if cropped:
-                        image = cropped
-                        is_yolo_cropped = True
-                        result['yolo_info'] = info
-                    else:
-                        # 严格模式：YOLO 未检测到鸟类，直接短路返回
-                        result['success'] = True
-                        result['results'] = []
-                        result['yolo_info'] = {'bird_count': 0}
-                        return result
-
-        # 获取 OSEA 分类器
-        classifier = get_osea_classifier()
-
-        # 预测
-        use_tta = getattr(args, 'tta', False)
-        if use_tta:
-            predictions = classifier.predict_with_tta(
-                image, top_k=args.top, is_yolo_cropped=is_yolo_cropped
-            )
-        else:
-            predictions = classifier.predict(
-                image, top_k=args.top, is_yolo_cropped=is_yolo_cropped
-            )
-
-        result['success'] = True
-        result['results'] = predictions
-
-    except Exception as e:
-        result['error'] = str(e)
-
-    return result
 
 
 def display_result(result: dict, verbose: bool = True):
@@ -157,11 +80,6 @@ def display_result(result: dict, verbose: bool = True):
     
     if verbose:
         print(f"\n{'─' * 50}")
-
-        # 显示使用的模型
-        model_name = result.get('model', 'birdid2024')
-        if model_name == 'osea':
-            print(t("cli.bid_model_osea"))
 
         if result.get('yolo_info'):
             print(t("cli.yolo_info", info=result['yolo_info']))
@@ -246,19 +164,15 @@ def cmd_identify(args):
         return 1
     
     # 显示设置
-    model_type = getattr(args, 'model', 'birdid2024')
-    use_tta = getattr(args, 'tta', False)
-
     print(t("cli.bid_image_count", count=len(images)))
-    print(t("cli.identify_model", model=model_type.upper()) + (" + TTA" if model_type == 'osea' and use_tta else ""))
+    print(t("cli.identify_model", model="BirdTrace"))
     print(t("cli.bid_yolo_crop", value=t("cli.yes") if args.yolo else t("cli.no")))
-    if model_type == 'birdid2024':
-        print(t("cli.bid_gps_auto", value=t("cli.yes") if args.gps else t("cli.no")))
-        print(t("cli.bid_ebird_filter", value=t("cli.yes") if args.ebird else t("cli.no")))
-        if args.country:
-            print(t("cli.birdid_country", country=args.country))
-        if args.region:
-            print(t("cli.birdid_region", region=args.region))
+    print(t("cli.bid_gps_auto", value=t("cli.yes") if args.gps else t("cli.no")))
+    print(t("cli.bid_ebird_filter", value=t("cli.yes") if args.ebird else t("cli.no")))
+    if args.country:
+        print(t("cli.birdid_country", country=args.country))
+    if args.region:
+        print(t("cli.birdid_region", region=args.region))
     print(t("cli.bid_top", top=args.top))
     if args.write_exif:
         print(t("cli.bid_write_exif_on", threshold=args.threshold))
@@ -704,12 +618,6 @@ def add_identify_arguments(parser, multi: bool = True):
         parser.add_argument('image', help=t("cli.bid_help_image"))
     parser.add_argument('-t', '--top', type=int, default=5,
                         help=t("cli.bid_help_top"))
-    # 模型选项
-    parser.add_argument('--model', '-m', type=str, default='birdid2024',
-                        choices=['birdid2024', 'osea'],
-                        help=t("cli.bid_help_model"))
-    parser.add_argument('--tta', action='store_true',
-                        help=t("cli.bid_help_tta"))
     # YOLO / GPS / eBird 选项
     parser.add_argument('--no-yolo', action='store_false', dest='yolo',
                         help=t("cli.bid_help_no_yolo"))

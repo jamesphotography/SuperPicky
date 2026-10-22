@@ -6,14 +6,14 @@ BirdTrace FastViT-MA36（作者 Warden，https://huggingface.co/warden123/BirdTr
 CC BY-NC 4.0，iNaturalist 数据自训）：10480 类、384×384 RGB 输入、输出原始 logits。
 
 推理：timm 自带的 fastvit_ma36 结构，经 timm 的 Apple 权重转换函数加载 BirdTrace 发布的 safetensors（Apple
-ml-fastvit 原始命名），再做 FastViT 推理融合（reparameterize，结果不变、实测 MPS 35→22 ms/张），跑在与 OSEA 相同的
+ml-fastvit 原始命名），再做 FastViT 推理融合（reparameterize，结果不变、实测 MPS 35→22 ms/张），跑在最佳
 设备上（Apple Silicon=MPS，Windows=CUDA，其余 CPU）。softmax 后按 birdtrace_class_map.json 把概率累加到鸟种库
-类别号（birdid.class_mapping），之后的取前 K 名、鸟名、地区过滤、罕见度与 OSEA 共用（见 bird_identifier）。
+类别号（birdid.class_mapping），之后的取前 K 名、鸟名、地区过滤、罕见度见 bird_identifier。
 
 BirdTrace FastViT-MA36 (by Warden, CC BY-NC 4.0, trained on iNaturalist): 10480 classes, 384x384 RGB input,
 raw logits. Built with timm's fastvit_ma36, loaded from the released safetensors (Apple ml-fastvit names) via
 timm's checkpoint converter, then reparameterised for inference (same outputs, MPS 35->22 ms per image), on the
-same device as OSEA. Softmax probabilities are summed onto species-DB class ids via birdtrace_class_map.json.
+best available device. Softmax probabilities are summed onto species-DB class ids via birdtrace_class_map.json.
 """
 import json
 import os
@@ -79,8 +79,8 @@ class BirdTraceClassifier:
 
     def __init__(self, weights_path: str, class_map_path: str) -> None:
         """
-        先在 CPU 上建模型、加载权重、推理融合，再搬到 OSEA 所用设备；搬设备或首推失败时退回 CPU。
-        Build, load and reparameterise on CPU first, then move to OSEA's device; fall back to CPU on failure.
+        先在 CPU 上建模型、加载权重、推理融合，再搬到最佳设备（get_best_device）；搬设备或首推失败时退回 CPU。
+        Build, load and reparameterise on CPU first, then move to the best device; fall back to CPU on failure.
 
         参数 / Parameters:
             weights_path (str): safetensors 权重路径 / Weights path.

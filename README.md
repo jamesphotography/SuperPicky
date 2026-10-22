@@ -126,7 +126,7 @@ SuperPicky supports multiple English naming standards for bird species via the *
 
 | Format | Source |
 |--------|--------|
-| Default (OSEA Model) | Original model training names |
+| Default | Original species-database names |
 | AviList v2025 | AviList unified English names |
 | Clements / eBird v2024 | Cornell/eBird taxonomy |
 | BirdLife v9 | BirdLife International |
@@ -149,7 +149,8 @@ Open sourced under **GPL-3.0 License**.
 
 This project uses:
 - **YOLO11** by Ultralytics
-- **OSEA** by Sun Jiao (github.com/sun-jiao/osea)
+- **[BirdTrace FastViT-MA36](https://huggingface.co/warden123/BirdTrace-FastViT-MA36-10K)** by Warden — bird species identification, licensed under [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)
+- **OSEA** by Sun Jiao (github.com/sun-jiao/osea) — species class list (the identification model itself is no longer bundled)
 - **[SuperEyes (SuperBirdEye)](https://github.com/triple333sR9/SuperBirdEye)** by [Jordan Yu (于若君)](https://github.com/triple333sR9)
 - **[SuperFlier](https://github.com/triple333sR9/SuperFlier)** by [Jordan Yu (于若君)](https://github.com/triple333sR9)
 - **TOPIQ** by Chaofeng Chen et al.

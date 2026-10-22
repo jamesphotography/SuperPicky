@@ -55,7 +55,8 @@ all_datas = [
     (os.path.join(base_path, 'locales', 'zh-Hant.lproj'), 'zh-Hant.lproj'),
     # Ultralytics 配置
     (os.path.join(ultralytics_base, 'ultralytics/cfg'), 'ultralytics/cfg'),
-    # V4.0.0: 鸟类识别模块数据 (V4.0.6: 移除旧 birdid/models，改用 models/model20240824.pth OSEA 模型)
+    # 鸟类识别模块数据（鸟种库、地区名录、BirdTrace 类别对照表）；模型权重在 models/ 下
+    # Bird-ID data (species DB, region lists, BirdTrace class map); weights live in models/
     (os.path.join(base_path, 'birdid/data'), 'birdid/data'),
     (os.path.join(base_path, 'ioc'), 'ioc'),
     # V4.0.0: Lightroom 插件

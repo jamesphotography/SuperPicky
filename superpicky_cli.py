@@ -437,7 +437,7 @@ def cmd_identify(args):
     """识别鸟类。
 
     委托给 birdid_cli 的共享实现（identify_single / display_result / write_exif），
-    与 `birdid_cli identify` 完全同一套逻辑（支持 osea/tta/ebird/country/region），
+    与 `birdid_cli identify` 完全同一套逻辑（支持 ebird/country/region），
     不再维护本地的简化版（已合并，消除分叉）。
     """
     import birdid_cli
@@ -445,8 +445,7 @@ def cmd_identify(args):
     print_banner()
     print(t("cli.identify_title"))
     print(t("cli.identify_image", image=args.image))
-    print(t("cli.identify_model", model=getattr(args, 'model', 'birdid2024').upper())
-          + (" + TTA" if getattr(args, 'model', '') == 'osea' and getattr(args, 'tta', False) else ""))
+    print(t("cli.identify_model", model="BirdTrace"))
     print(t("cli.identify_options", yolo=t("cli.yes") if args.yolo else t("cli.no"), gps=t("cli.yes") if args.gps else t("cli.no"), ebird=t("cli.yes") if getattr(args, 'ebird', True) else t("cli.no")))
     print(t("cli.identifying"))
 
@@ -716,7 +715,7 @@ def main():
     p_burst.set_defaults(phash=True)
 
     # ===== identify 命令 =====
-    # 与 birdid_cli 共用同一套参数（model/tta/ebird/country/region…）与识别逻辑，避免分叉。
+    # 与 birdid_cli 共用同一套参数（ebird/country/region…）与识别逻辑，避免分叉。
     import birdid_cli
     p_identify = subparsers.add_parser('identify', help=t("cli.cmd_identify"))
     birdid_cli.add_identify_arguments(p_identify, multi=False)
