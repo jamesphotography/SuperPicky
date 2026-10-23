@@ -97,7 +97,6 @@
     "support_format_hint": "支援 RAW / JPG · 拖曳資料夾或點選瀏覽",
     "view_results_arrow": "檢視選鳥結果",
     "dir_ready": "{dirname}    準備就緒",
-    "reprocess": "重新處理",
     "status_processing": "正在處理... {filename}",
     "status_processing_idle": "正在處理...",
     "status_processed": "已處理 {total} 張    ★★★ {n3}    ★★ {n2}    ★ {n1}",

@@ -2199,7 +2199,9 @@ class SuperPickyMainWindow(QMainWindow):
                 self.view_results_btn.setVisible(False)
         elif state == "has_results":
             self.reset_btn.setEnabled(True)
-            self.reset_btn.setText(self.i18n.t("labels.reprocess"))
+            # #146：同一个按钮做的始终是「重置目录」，不再在有结果时改叫「重新处理」
+            # #146: the button always resets the folder; no longer relabelled "Reprocess"
+            self.reset_btn.setText(self.i18n.t("labels.reset_short"))
             self.reset_btn.setObjectName("tertiary")
             self.start_btn.setEnabled(True)
             self.start_btn.setText(self.i18n.t("labels.start_processing"))
@@ -2741,6 +2743,16 @@ class SuperPickyMainWindow(QMainWindow):
         # run_reset (no longer gated on "no manifest"), because manifests can be
         # incomplete (e.g. burst members never recorded) and manifest-only restore
         # would otherwise strand files in species/rating/burst_ subdirs.
+        # #146：结果浏览器「返回主窗口」只是隐藏，report.db 连接还开着；Windows 上开着的
+        # 数据库删不掉，重置会留下 report.db / -wal / -shm。重置前先让它释放。
+        # #146: the hidden results browser still holds report.db open, which
+        # blocks deletion on Windows; release it before resetting.
+        if getattr(self, '_results_browser', None) is not None:
+            try:
+                self._results_browser.release_directory()
+            except Exception as e:
+                print(f"⚠️  Results browser release failed: {e}")
+
         self.log_text.clear()
         self.reset_btn.setEnabled(False)
         self.start_btn.setEnabled(False)
@@ -2967,20 +2979,15 @@ class SuperPickyMainWindow(QMainWindow):
                 # Quick Restore: 重新处理时保留 .superpicky 缓存（预览图复用，节省时间）
                 superpicky_dir = os.path.join(directory_path, ".superpicky")
                 if not _skip_exif_reset and os.path.exists(superpicky_dir):
-                    try:
-                        shutil.rmtree(superpicky_dir)
+                    # #146：跨平台删除（去只读 + 重试）；原兜底 `rm -rf` 在 Windows 上不存在
+                    # #146: cross-platform removal; the old `rm -rf` fallback does not exist on Windows
+                    from core.superpicky_dir import remove_superpicky_dir
+                    if remove_superpicky_dir(directory_path):
                         emit_log("  ✅ .superpicky/")
                         deleted_dirs += 1
-                    except Exception:
-                        # 尝试系统命令强制删除
-                        try:
-                            import subprocess
-                            subprocess.run(['rm', '-rf', superpicky_dir], check=True,
-                                           timeout=120)
-                            emit_log("  ✅ .superpicky/ (force)")
-                            deleted_dirs += 1
-                        except Exception as e2:
-                            emit_log(i18n.t("logs.reset_cache_delete_failed", error=e2))
+                    else:
+                        leftovers = ", ".join(sorted(os.listdir(superpicky_dir))[:5])
+                        emit_log(i18n.t("logs.reset_cache_delete_failed", error=leftovers))
                 elif _skip_exif_reset:
                     emit_log(i18n.t("logs.reset_cache_kept"))
                 

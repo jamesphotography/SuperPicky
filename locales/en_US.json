@@ -97,7 +97,6 @@
     "support_format_hint": "Supports RAW / JPG · Drag folder or click to browse",
     "view_results_arrow": "View Results",
     "dir_ready": "{dirname}    Ready",
-    "reprocess": "Reprocess",
     "status_processing": "Processing... {filename}",
     "status_processing_idle": "Processing...",
     "status_processed": "Processed {total}    ★★★ {n3}    ★★ {n2}    ★ {n1}",

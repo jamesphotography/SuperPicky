@@ -97,7 +97,6 @@
     "support_format_hint": "支持 RAW / JPG · 拖拽目录或点击浏览",
     "view_results_arrow": "查看选鸟结果",
     "dir_ready": "{dirname}    准备就绪",
-    "reprocess": "重新处理",
     "status_processing": "正在处理... {filename}",
     "status_processing_idle": "正在处理...",
     "status_processed": "已处理 {total} 张    ★★★ {n3}    ★★ {n2}    ★ {n1}",
