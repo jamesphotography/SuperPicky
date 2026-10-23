@@ -653,7 +653,6 @@ class SettingsCenter(QDialog):
         返回 / Returns:
             QWidget: 识鸟设置页 / Bird-ID settings page widget.
         """
-        from collections import OrderedDict
 
         from advanced_config import get_advanced_config
         from core.region_data import load_regions_data
@@ -776,48 +775,14 @@ class SettingsCenter(QDialog):
 
         # 构建国家列表 (OrderedDict: 显示名 → 代码)
         # Build country list (OrderedDict: display name → code)
-        is_english = self.i18n.current_lang.startswith("en")
-        country_list: OrderedDict[str, str | None] = OrderedDict()
-        country_list[self.i18n.t("birdid.country_auto_gps")] = None
-        country_list[self.i18n.t("birdid.country_global")] = "GLOBAL"
-        country_list["─" * 15] = "SEP1"
-
-        top10_codes = ["AU", "BR", "CN", "GB", "HK", "ID", "JP", "MY", "SG", "TW", "US"]
-        top10_i18n = {
-            "AU": "birdid.country_au",
-            "BR": "birdid.country_br",
-            "CN": "birdid.country_cn",
-            "GB": "birdid.country_gb",
-            "HK": "birdid.country_hk",
-            "ID": "birdid.country_id",
-            "JP": "birdid.country_jp",
-            "MY": "birdid.country_my",
-            "SG": "birdid.country_sg",
-            "TW": "birdid.country_tw",
-            "US": "birdid.country_us",
-        }
-        code_to_region = {
-            r.get("code"): r for r in regions_data.get("countries", [])
-        }
-        for code in top10_codes:
-            i18n_key = top10_i18n.get(code)
-            if i18n_key:
-                display_name = self.i18n.t(i18n_key)
-            else:
-                region_entry = code_to_region.get(code, {})
-                if is_english:
-                    display_name = region_entry.get("name", code)
-                else:
-                    display_name = region_entry.get("name_cn") or region_entry.get("name", code)
-            country_list[display_name] = code
-
-        # 「更多国家」入口(与识鸟面板 dock 能力对等):补上分隔符 + 完整列表入口,
-        # 选中后弹出 show_country_picker_dialog(含搜索框的完整国家/大洲列表)。
-        # "More countries" entry (parity with the Bird-ID dock): a separator
-        # plus a full-list entry that opens show_country_picker_dialog
-        # (a searchable full country/continent list) on selection.
-        country_list["─" * 15 + " "] = "SEP2"
-        country_list[self.i18n.t("birdid.country_more")] = "MORE"
+        # #143：短名单 = 本机国家 + 最近选过（都没有才回退默认），与识鸟面板共用；
+        # 末尾仍是「更多国家」入口（弹出带搜索的完整国家 / 大洲列表）
+        # #143: home country + recent picks, shared with the Bird-ID dock; the
+        # "More countries" entry still opens the searchable full list
+        from core.country_shortlist import build_country_entries, system_country_code
+        country_list = build_country_entries(
+            self.i18n.t, self.i18n.current_lang.startswith("en"), regions_data,
+            cfg.birdid_recent_countries, system_country_code())
 
         # 保存 country_list 供 _on_country_changed_birdid 使用
         # Store country_list for _on_country_changed_birdid to use
@@ -833,22 +798,17 @@ class SettingsCenter(QDialog):
         country_label.setFixedWidth(160)
 
         self._bid_country = QComboBox()
-        for display_name, code in country_list.items():
-            self._bid_country.addItem(display_name)
-            if code in ("SEP1", "SEP2"):
-                # 禁用分隔符项 / Disable separator item
-                idx = self._bid_country.count() - 1
-                model = cast(Any, self._bid_country.model())
-                item: QStandardItem | None = model.item(idx)
-                if item is not None:
-                    item.setEnabled(False)
-                    item.setSelectable(False)
+        self._fill_bid_country(country_list)
 
         country_row.addWidget(country_label)
         # 弹出列表容器需逐个接线，祖先样式表够不到顶层 popup（见 ui/combo_popup.py）。
         # Per-instance styling: ancestor sheets cannot reach a top-level popup.
         style_combo_popup(self._bid_country)
         country_row.addWidget(self._bid_country, 1)
+        # #143：编辑「常用国家」（最近选过的，可逐个移除）/ edit the shortlist
+        self._bid_edit_shortlist = QPushButton(self.i18n.t("settings.birdid_edit_shortlist"))
+        self._bid_edit_shortlist.clicked.connect(self._edit_country_shortlist)
+        country_row.addWidget(self._bid_edit_shortlist)
         lay.addLayout(country_row)
 
         # 生效条件提示：有 GPS 的照片按拍摄地自动判断省州/国家，手选不参与；
@@ -1097,6 +1057,57 @@ class SettingsCenter(QDialog):
             idx = self._bid_region.findText(cfg.birdid_selected_region or "")
         if idx >= 0:
             self._bid_region.setCurrentIndex(idx)
+
+    def _fill_bid_country(self, country_list: dict) -> None:
+        """
+        把 {显示名 → 代码} 填进国家下拉并禁用分隔符项（建页与编辑常用国家后共用）。
+        Fill the country combo and disable separators (used on build and after editing).
+        """
+        self._bid_country.clear()
+        for display_name, code in country_list.items():
+            self._bid_country.addItem(display_name)
+            if code in ("SEP1", "SEP2"):
+                # 禁用分隔符项 / Disable separator item
+                idx = self._bid_country.count() - 1
+                model = cast(Any, self._bid_country.model())
+                item: QStandardItem | None = model.item(idx)
+                if item is not None:
+                    item.setEnabled(False)
+                    item.setSelectable(False)
+
+    def _edit_country_shortlist(self) -> None:
+        """
+        #143：编辑常用国家后重建国家下拉，保留当前选中的国家。
+        #143: edit the shortlist, then rebuild the combo keeping the current country.
+        """
+        from advanced_config import get_advanced_config
+        from core.country_shortlist import build_country_entries, country_display_name, system_country_code
+        from ui.country_shortlist_dialog import CountryShortlistDialog
+
+        cfg = get_advanced_config()
+        regions = self._bid_regions_data
+        is_english = self.i18n.current_lang.startswith("en")
+        code_to_region = {r.get("code"): r for r in regions.get("countries", [])}
+        home = system_country_code()
+        codes = [c for c in cfg.birdid_recent_countries if c != home]
+        names = {c: country_display_name(c, self.i18n.t, is_english, code_to_region) or c for c in codes}
+        dlg = CountryShortlistDialog(self.i18n, codes, names, parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        cfg.set_birdid_recent_countries(dlg.result_codes())
+
+        current_code = self._bid_country_list.get(self._bid_country.currentText())
+        self._bid_country_list = build_country_entries(
+            self.i18n.t, is_english, regions, cfg.birdid_recent_countries, home)
+        self._bid_country.blockSignals(True)
+        try:
+            self._fill_bid_country(self._bid_country_list)
+            for display_name, code in self._bid_country_list.items():
+                if code == current_code:
+                    self._bid_country.setCurrentText(display_name)
+                    break
+        finally:
+            self._bid_country.blockSignals(False)
 
     def _on_bid_country_changed(self, country_display: str) -> None:
         """

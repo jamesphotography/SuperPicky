@@ -40,6 +40,9 @@ def english_center(monkeypatch, tmp_path):
     i18n.switch_language("en_US")
     cfg = AdvancedConfig(config_file=str(tmp_path / "cfg.json"))
     monkeypatch.setattr(_ac_mod, "get_advanced_config", lambda: cfg)
+    # #143 起短名单 = 本机国家 + 最近选过；固定本机为美国，下面的用例才能在下拉里选到美国
+    # Since #143 the shortlist is home + recent; pin home to the US so it is listed
+    monkeypatch.setattr("core.country_shortlist.system_country_code", lambda: "US")
     w = SettingsCenter(i18n)
     w.show_page("birdid")
     yield w, cfg, i18n
