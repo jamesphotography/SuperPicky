@@ -2543,7 +2543,8 @@ class SuperPickyMainWindow(QMainWindow):
             message, birdid_on = self._build_start_confirm_message()
             buttons = [(self.i18n.t("labels.no"), StyledMessageBox.No, "secondary")]
             if birdid_on:
-                buttons.append((self.i18n.t("dialogs.change_country"), START_CONFIRM_CHANGE_COUNTRY, "secondary"))
+                # 文字链接，放在正文下方（三个大按钮并排会挤坏布局）/ a link under the message
+                buttons.append((self.i18n.t("dialogs.change_country"), START_CONFIRM_CHANGE_COUNTRY, "link"))
             buttons.append((self.i18n.t("labels.yes"), StyledMessageBox.Yes, "primary"))
             reply = StyledMessageBox(
                 parent=self,

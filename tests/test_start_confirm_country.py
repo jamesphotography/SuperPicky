@@ -111,3 +111,32 @@ def test_change_country_hidden_without_birdid(i18n, monkeypatch):
     ok, shown, _ = _run_confirm(i18n, monkeypatch, [StyledMessageBox.Yes], birdid_on=False)
     assert ok is True
     assert i18n.t("dialogs.change_country") not in shown[0]
+
+
+def test_change_country_is_link_above_buttons_and_fits(i18n):
+    """
+    「更换国家…」是文字链接、单独一行在正文下方；「否 / 是」两个按钮不受影响，对话框不超宽。
+    三个 180 宽的按钮并排会超出对话框（最多 500 宽），曾把布局挤坏。
+
+    "Change country…" is a text link on its own row above the Yes/No buttons,
+    so the dialog stays within its maximum width (three 180-wide buttons
+    side by side overflowed it).
+    """
+    from PySide6.QtWidgets import QPushButton
+
+    box = StyledMessageBox(
+        title="Start", message="Country: Japan", dialog_type=StyledMessageBox.Question,
+        buttons=[(i18n.t("labels.no"), StyledMessageBox.No, "secondary"),
+                 (i18n.t("dialogs.change_country"), START_CONFIRM_CHANGE_COUNTRY, "link"),
+                 (i18n.t("labels.yes"), StyledMessageBox.Yes, "primary")])
+    box.show()
+    _app.processEvents()
+    btn = {b.text(): b for b in box.findChildren(QPushButton)}
+    link, yes, no = btn[i18n.t("dialogs.change_country")], btn[i18n.t("labels.yes")], btn[i18n.t("labels.no")]
+    assert link.width() < yes.width(), "链接不占 180 固定宽 / link is not fixed-width"
+    assert link.mapTo(box, link.rect().topLeft()).y() < yes.mapTo(box, yes.rect().topLeft()).y()
+    assert yes.width() == no.width() == 180
+    assert box.width() <= box.maximumWidth()
+    right_edge = yes.mapTo(box, yes.rect().topRight()).x()
+    assert right_edge <= box.width(), "按钮不超出对话框 / buttons stay inside"
+    box.close()
