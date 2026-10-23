@@ -224,9 +224,9 @@ class AdvancedConfig:
         "birdid_region_code": None,
         "birdid_selected_region": "整个国家",
         "birdid_dock_settings_migrated": False,
-        # #143 识鸟国家下拉的「最近选过」（最新在前，最多 10 个；见 core/country_shortlist.py）
-        # #143 recently picked Bird-ID countries (newest first, max 10)
-        "birdid_recent_countries": [],
+        # #143 识鸟国家下拉的「常用国家」；None = 从没调整过、跟随默认 11 国（见 core/country_shortlist.py）
+        # #143 Bird-ID country shortlist; None = never edited, follow the defaults
+        "birdid_country_shortlist": None,
 
         # 纠错样本提交：首次是否已弹过「自愿说明」/ Correction submission first-run consent
         "correction_consent_shown": False,
@@ -289,13 +289,21 @@ class AdvancedConfig:
                     # The 4.6.4 RC bird-ID engine choice went away with OSEA; only BirdTrace
                     # remains, so drop the stale value rather than leave a dead setting behind.
                     self.config.pop("birdid_engine", None)
-                    # #143：升级的老用户还没有「最近选过」，用当前选的国家打底，
-                    # 免得下拉里突然找不到正在用的国家（判断同样基于磁盘上的 loaded_config）
-                    # #143: seed upgrading users' recent list with their current country
-                    if "birdid_recent_countries" not in loaded_config:
-                        from core.country_shortlist import record_country
-                        self.config["birdid_recent_countries"] = record_country(
-                            [], loaded_config.get("birdid_country_code"))
+                    # #143：老用户正在用的国家若不在默认常用国家里（从「更多国家」选的），
+                    # 加进常用国家，免得下拉里找不到（判断同样基于磁盘上的 loaded_config）。
+                    # 开发版曾用过的 birdid_recent_countries 并进来后丢掉。
+                    # #143: keep an upgrading user's current non-default country in
+                    # the shortlist; fold in the dev-only birdid_recent_countries.
+                    if "birdid_country_shortlist" not in loaded_config:
+                        from core.country_shortlist import add_country, effective_shortlist, system_country_code
+                        picks = [loaded_config.get("birdid_country_code"),
+                                 *(loaded_config.get("birdid_recent_countries") or [])]
+                        base = effective_shortlist(None, system_country_code())
+                        shortlist = base
+                        for code in reversed(picks):
+                            shortlist = add_country(shortlist, code)
+                        self.config["birdid_country_shortlist"] = None if shortlist == base else shortlist
+                    self.config.pop("birdid_recent_countries", None)
                 print(f"✅ Advanced config loaded: {self.config_file}")
             except Exception as e:
                 print(_t("logs.config_load_failed", e=e))
@@ -1351,36 +1359,40 @@ class AdvancedConfig:
         self.config["birdid_selected_country"] = selected_country
         self.config["birdid_region_code"] = region_code
         self.config["birdid_selected_region"] = selected_region
-        # #143：所有选国家的入口最后都到这里，统一记进「最近选过」
-        # #143: every country picker ends here, so record the pick once
-        from core.country_shortlist import record_country
-        self.config["birdid_recent_countries"] = record_country(
-            self.birdid_recent_countries, country_code)
+        # #143：所有选国家的入口最后都到这里；选了常用国家以外的（来自「更多国家」）就加进常用
+        # #143: every picker ends here; a country outside the shortlist gets added
+        from core.country_shortlist import add_country, effective_shortlist, system_country_code
+        current = effective_shortlist(self.birdid_country_shortlist, system_country_code())
+        updated = add_country(current, country_code)
+        if updated != current:
+            self.config["birdid_country_shortlist"] = updated
         self.save()
 
     @property
-    def birdid_recent_countries(self) -> list:
+    def birdid_country_shortlist(self) -> Optional[list]:
         """
-        最近选过的识鸟国家代码（最新在前，最多 10 个）/ Recently picked countries.
+        识鸟常用国家；None 表示从没调整过、跟随默认 / Shortlist; None = follow defaults.
         """
-        value = self.config.get("birdid_recent_countries") or []
+        value = self.config.get("birdid_country_shortlist")
+        if value is None:
+            return None
         return [c for c in value if isinstance(c, str)]
 
-    def set_birdid_recent_countries(self, codes: list) -> None:
+    def set_birdid_country_shortlist(self, codes: Optional[list]) -> None:
         """
-        整体设置「最近选过」（编辑常用国家时用）：去重、去掉非国家项、最多 10 个，并保存。
+        设置常用国家（编辑框用）：None 恢复默认；否则去重、去掉非国家项、最多 20 个，并保存。
 
         参数:
-        codes (list): 国家代码，最新在前
+        codes (list or None): 国家代码，按显示顺序；None 表示恢复默认
 
-        Replace the recent list (used by the shortlist editor): dedupe, drop
-        non-countries, cap at 10, then save.
+        Set the shortlist (used by the editor): None restores the defaults;
+        otherwise dedupe, drop non-countries, cap at 20, then save.
         """
-        from core.country_shortlist import MAX_RECENT, record_country
-        cleaned: list = []
-        for code in reversed(list(codes)):
-            cleaned = record_country(cleaned, code)
-        self.config["birdid_recent_countries"] = cleaned[:MAX_RECENT]
+        if codes is None:
+            self.config["birdid_country_shortlist"] = None
+        else:
+            from core.country_shortlist import MAX_SHORTLIST, effective_shortlist
+            self.config["birdid_country_shortlist"] = effective_shortlist(list(codes), None)[:MAX_SHORTLIST]
         self.save()
 
     def migrate_birdid_dock_settings(self, legacy_path: str = None) -> bool:

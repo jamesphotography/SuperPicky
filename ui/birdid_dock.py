@@ -860,13 +860,13 @@ class BirdIDDockWidget(QDockWidget):
         返回 / Returns:
             OrderedDict: display_name(str) → code(str or None)
         """
-        # #143：与设置中心共用同一份短名单逻辑（本机国家 + 最近选过，都没有才回退默认）
-        # #143: shared with the Settings Center (home country + recent picks)
+        # #143：与设置中心共用同一份常用国家（默认 11 国，用户可调整）
+        # #143: same shortlist as the Settings Center (defaults, user adjustable)
         from advanced_config import get_advanced_config
-        from core.country_shortlist import build_country_entries, system_country_code
+        from core.country_shortlist import build_country_entries, effective_shortlist, system_country_code
         country_list: dict = build_country_entries(
             self.i18n.t, self.i18n.current_lang.startswith('en'), self.regions_data,
-            get_advanced_config().birdid_recent_countries, system_country_code())
+            effective_shortlist(get_advanced_config().birdid_country_shortlist, system_country_code()))
         return country_list
 
     def _populate_country_combo(self) -> None:
@@ -1486,7 +1486,9 @@ class BirdIDDockWidget(QDockWidget):
         返回 / Returns: None
         """
         t = self.i18n.t
-        top10_and_global = {"AU", "BR", "CN", "GB", "HK", "ID", "JP", "MY", "SG", "TW", "US", "GLOBAL"}
+        # 「更多国家」列出全部国家（含常用国家），只排除「全球」——常用国家用户可删，删掉的也得能在这里找回
+        # "More countries" lists every country (shortlisted ones too); only Global is excluded
+        top10_and_global = {"GLOBAL"}
         show_country_picker_dialog(
             parent=self,
             i18n=self.i18n,

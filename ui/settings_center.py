@@ -775,14 +775,14 @@ class SettingsCenter(QDialog):
 
         # 构建国家列表 (OrderedDict: 显示名 → 代码)
         # Build country list (OrderedDict: display name → code)
-        # #143：短名单 = 本机国家 + 最近选过（都没有才回退默认），与识鸟面板共用；
+        # #143：常用国家（默认 11 国，用户可调整），与识鸟面板共用；
         # 末尾仍是「更多国家」入口（弹出带搜索的完整国家 / 大洲列表）
-        # #143: home country + recent picks, shared with the Bird-ID dock; the
-        # "More countries" entry still opens the searchable full list
-        from core.country_shortlist import build_country_entries, system_country_code
+        # #143: the shortlist (defaults, user adjustable), shared with the
+        # Bird-ID dock; "More countries" still opens the searchable full list
+        from core.country_shortlist import build_country_entries, effective_shortlist, system_country_code
         country_list = build_country_entries(
             self.i18n.t, self.i18n.current_lang.startswith("en"), regions_data,
-            cfg.birdid_recent_countries, system_country_code())
+            effective_shortlist(cfg.birdid_country_shortlist, system_country_code()))
 
         # 保存 country_list 供 _on_country_changed_birdid 使用
         # Store country_list for _on_country_changed_birdid to use
@@ -1081,7 +1081,9 @@ class SettingsCenter(QDialog):
         #143: edit the shortlist, then rebuild the combo keeping the current country.
         """
         from advanced_config import get_advanced_config
-        from core.country_shortlist import build_country_entries, country_display_name, system_country_code
+        from core.country_shortlist import (
+            build_country_entries, country_display_name, effective_shortlist, system_country_code,
+        )
         from ui.country_shortlist_dialog import CountryShortlistDialog
 
         cfg = get_advanced_config()
@@ -1089,16 +1091,18 @@ class SettingsCenter(QDialog):
         is_english = self.i18n.current_lang.startswith("en")
         code_to_region = {r.get("code"): r for r in regions.get("countries", [])}
         home = system_country_code()
-        codes = [c for c in cfg.birdid_recent_countries if c != home]
-        names = {c: country_display_name(c, self.i18n.t, is_english, code_to_region) or c for c in codes}
-        dlg = CountryShortlistDialog(self.i18n, codes, names, parent=self)
+        codes = effective_shortlist(cfg.birdid_country_shortlist, home)
+        defaults = effective_shortlist(None, home)
+        names = {c: country_display_name(c, self.i18n.t, is_english, code_to_region) or c
+                 for c in [*codes, *defaults]}
+        dlg = CountryShortlistDialog(self.i18n, codes, names, default_codes=defaults, parent=self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
-        cfg.set_birdid_recent_countries(dlg.result_codes())
+        cfg.set_birdid_country_shortlist(dlg.result_codes())
 
         current_code = self._bid_country_list.get(self._bid_country.currentText())
         self._bid_country_list = build_country_entries(
-            self.i18n.t, is_english, regions, cfg.birdid_recent_countries, home)
+            self.i18n.t, is_english, regions, effective_shortlist(cfg.birdid_country_shortlist, home))
         self._bid_country.blockSignals(True)
         try:
             self._fill_bid_country(self._bid_country_list)
@@ -1140,9 +1144,9 @@ class SettingsCenter(QDialog):
             from advanced_config import get_advanced_config
             from ui.birdid_dock import show_country_picker_dialog
 
-            top10_and_global = {
-                "AU", "BR", "CN", "GB", "HK", "ID", "JP", "MY", "SG", "TW", "US", "GLOBAL",
-            }
+            # 「更多国家」列出全部国家（含常用国家），只排除「全球」——常用国家用户可删，
+            # 删掉的也得能在这里找回 / every country is listed; only Global is excluded
+            top10_and_global = {"GLOBAL"}
             # 取消时恢复用户上次保存的国家(而非当前下拉文本——此刻它已是
             # "更多国家"本身)。按代码恢复，不依赖存下来的显示名的语言（#122 跟进）。
             # On cancel, restore the last SAVED country by code (the combo's

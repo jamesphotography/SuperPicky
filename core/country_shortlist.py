@@ -1,27 +1,27 @@
 # -*- coding: utf-8 -*-
 """
-识鸟国家下拉的「常用国家」短名单（#143）/ Bird-ID country shortlist (#143).
+识鸟国家下拉的「常用国家」（#143）/ Bird-ID country shortlist (#143).
 
-此前设置中心与识鸟面板各自写死 11 个默认国家。现在短名单 = 本机所在国（操作系统的地区设置）
-+ 最近选过的国家（最新在前、最多 MAX_RECENT 个）；两者都没有时才回退 DEFAULT_SHORTLIST。
-本机所在国用系统地区而不是按 IP 查：不联网、不把 IP 交给第三方，各地网络状况也不影响。
+默认就是原来那 11 个国家；本机所在国（操作系统的地区设置，不联网）不在其中时排在最前。
+用户可以调整：在「更多国家」里选的新国家自动加到最前，编辑框里可移除或恢复默认。
+存储为 None 表示从没调整过、一直跟随默认（默认以后改了也会跟着变）。
 
-Previously the Settings Center and the Bird-ID dock each hard-coded 11
-countries. The shortlist is now: the user's own country (OS region setting)
-plus recently picked countries (newest first, at most MAX_RECENT), falling
-back to DEFAULT_SHORTLIST only when both are empty. The OS region is used
-instead of IP geolocation: no network call, no IP sent to a third party.
+The shortlist defaults to the original 11 countries, with the user's own
+country (OS region, no network) first when it is not among them. Users can
+adjust it: a new country picked in "More countries" is added to the front,
+and the editor removes entries or restores the defaults. A stored value of
+None means "never edited, follow the defaults".
 """
 from __future__ import annotations
 
 from collections import OrderedDict
 from typing import Callable, Dict, Iterable, List, Optional
 
-#: 旧版写死的默认国家，仅在既无本机国家也无最近记录时使用 / Legacy defaults, fallback only
+#: 默认常用国家（即原来写死的 11 个）/ Default shortlist (the original 11)
 DEFAULT_SHORTLIST: tuple = ("AU", "BR", "CN", "GB", "HK", "ID", "JP", "MY", "SG", "TW", "US")
 
-#: 最近选过的国家最多记几个 / How many recent picks to keep
-MAX_RECENT = 10
+#: 常用国家最多几个 / Maximum shortlist size
+MAX_SHORTLIST = 20
 
 #: 有专门译名的国家（其余用地区数据里的名字）/ Countries with dedicated translations
 COUNTRY_I18N_KEYS: Dict[str, str] = {
@@ -49,36 +49,39 @@ def _dedupe(codes: Iterable[Optional[str]]) -> List[str]:
     return out
 
 
-def shortlist_codes(recent: List[str], home: Optional[str]) -> List[str]:
+def effective_shortlist(stored: Optional[List[str]], home: Optional[str]) -> List[str]:
     """
-    短名单的国家代码顺序：本机国家在前，其后最近选过的；都没有时回退默认。
+    实际显示的常用国家：没调整过（stored 为 None）时用默认 11 国，本机国家不在其中则排最前；
+    调整过就按用户的列表（可以是空的）。
 
     参数:
-    recent (list[str]): 最近选过的国家（最新在前）
+    stored (list[str] or None): 配置里存的常用国家，None 表示从没调整过
     home (str or None): 本机所在国（系统地区），未知为 None
 
     返回:
     list[str]: 去重后的国家代码
 
-    Home country first, then recent picks; defaults only when both are empty.
+    The shortlist actually shown: the defaults (home first when not among
+    them) if never edited, otherwise the user's own list (possibly empty).
     """
-    codes = _dedupe([home, *recent])
-    return codes if codes else list(DEFAULT_SHORTLIST)
+    if stored is None:
+        return _dedupe([home, *DEFAULT_SHORTLIST])
+    return _dedupe(stored)
 
 
-def record_country(recent: List[str], code: Optional[str]) -> List[str]:
+def add_country(shortlist: List[str], code: Optional[str]) -> List[str]:
     """
-    记下一次选择：移到最前、超出 MAX_RECENT 的丢掉；非国家项（自动 / 全球等）不记。
-    Record a pick: move it to the front, cap at MAX_RECENT; non-countries are ignored.
+    把新选的国家加到最前；已在列表里的不挪位置（免得常用顺序被打乱）；非国家项不加。
+    Add a newly picked country to the front; existing entries keep their place.
     """
-    if not _is_country(code):
-        return list(recent)
-    return _dedupe([code, *recent])[:MAX_RECENT]
+    if not _is_country(code) or code in shortlist:
+        return list(shortlist)
+    return _dedupe([code, *shortlist])[:MAX_SHORTLIST]
 
 
-def remove_country(recent: List[str], code: str) -> List[str]:
-    """从最近记录里移除一个国家 / Remove a country from the recent list."""
-    return [c for c in recent if c != code]
+def remove_country(shortlist: List[str], code: str) -> List[str]:
+    """从常用国家里移除一个 / Remove a country from the shortlist."""
+    return [c for c in shortlist if c != code]
 
 
 def country_display_name(code: str, t: Callable[[str], str], is_english: bool,
@@ -99,7 +102,7 @@ def country_display_name(code: str, t: Callable[[str], str], is_english: bool,
 
 
 def build_country_entries(t: Callable[[str], str], is_english: bool, regions_data: dict,
-                          recent: List[str], home: Optional[str]) -> "OrderedDict[str, Optional[str]]":
+                          shortlist: List[str]) -> "OrderedDict[str, Optional[str]]":
     """
     组装国家下拉的 {显示名 → 代码}：自动（GPS）/ 全球 / 分隔 / 短名单 / 分隔 / 更多国家。
     设置中心与识鸟面板共用，两处顺序一致。
@@ -108,8 +111,7 @@ def build_country_entries(t: Callable[[str], str], is_english: bool, regions_dat
     t: 取译文的函数（i18n.t）
     is_english (bool): 是否英文界面
     regions_data (dict): load_regions_data() 的结果
-    recent (list[str]): 最近选过的国家
-    home (str or None): 本机所在国
+    shortlist (list[str]): 常用国家（effective_shortlist 的结果）
 
     返回:
     OrderedDict: 显示名 → 国家代码（自动为 None，分隔符为 SEP1 / SEP2，更多为 MORE）
@@ -122,7 +124,7 @@ def build_country_entries(t: Callable[[str], str], is_english: bool, regions_dat
     entries[t("birdid.country_auto_gps")] = None
     entries[t("birdid.country_global")] = "GLOBAL"
     entries["─" * 15] = "SEP1"
-    for code in shortlist_codes(recent, home):
+    for code in shortlist:
         name = country_display_name(code, t, is_english, code_to_region)
         if name and name not in entries:
             entries[name] = code
