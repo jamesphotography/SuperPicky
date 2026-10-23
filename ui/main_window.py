@@ -154,6 +154,7 @@ class WorkerSignals(QObject):
     log = Signal(str, str)  # message, tag
     finished = Signal(dict)
     cancelled = Signal(dict)  # #144 用户中途停止 / user stopped midway
+    status = Signal(str)  # 收尾 / 视频阶段的状态文字 / post-processing & video stage status
     error = Signal(str)
     crop_preview = Signal(object, object, object)  # 裁剪预览图(numpy BGR) + focus_status + rating(星级)
     update_check_done = Signal(bool, object)  # V4.2: 更新检测完成 (has_update, update_info)
@@ -278,9 +279,11 @@ class WorkerThread(threading.Thread):
             self.signals.log.emit(msg, level)
 
         def _progress_cb(cur: int, total: int):
-            # 视频阶段进度独立显示在状态条；总进度条由照片阶段已经占满
-            # Video stage progress shown in status bar; main bar stays at 100%.
-            pass
+            # 视频阶段进度显示在状态条；总进度条由照片阶段已经占满（此前这里是空函数，
+            # 用户只看到停在 100% 不动）
+            # Video stage progress goes to the status banner; the main bar is
+            # already full (this used to be a no-op, so users saw a frozen 100%).
+            self.signals.status.emit(self.i18n.t("labels.stage_video", done=cur, total=total))
 
         def _stop_cb() -> bool:
             return self._stop_event.is_set()
@@ -538,7 +541,8 @@ class WorkerThread(threading.Thread):
             log=log_callback,
             progress=progress_callback,
             should_stop=self._stop_event.is_set,
-            crop_preview=crop_preview_callback
+            crop_preview=crop_preview_callback,
+            status=self.signals.status.emit,
         )
 
         # Detect batch mode: check for subdirectories with photos
@@ -647,7 +651,8 @@ class WorkerThread(threading.Thread):
                     log=log_callback,
                     progress=make_progress_cb(dir_base, dir_count),
                     should_stop=self._stop_event.is_set,
-                    crop_preview=crop_preview_callback
+                    crop_preview=crop_preview_callback,
+                    status=self.signals.status.emit,
                 )
 
                 processor = PhotoProcessor(
@@ -2148,9 +2153,13 @@ class SuperPickyMainWindow(QMainWindow):
                     padding: 0 12px;
                 }}
             """)
-        elif state == "processing":
+        elif state in ("processing", "stage"):
+            # stage：收尾阶段文字原样显示，样式同处理中 / stage text shown as-is, same style
             filename = data or ""
-            text = self.i18n.t("labels.status_processing").format(filename=filename) if filename else self.i18n.t("labels.status_processing_idle")
+            if state == "stage":
+                text = filename
+            else:
+                text = self.i18n.t("labels.status_processing").format(filename=filename) if filename else self.i18n.t("labels.status_processing_idle")
             self._status_banner.setText(text)
             self._status_banner.setStyleSheet(f"""
                 QLabel {{
@@ -2412,6 +2421,14 @@ class SuperPickyMainWindow(QMainWindow):
         self.start_btn.setText(self.i18n.t("labels.stopping"))
         self._update_status(self.i18n.t("labels.stopping"), COLORS['warning'])
 
+    @Slot(str)
+    def _on_stage_status(self, text: str) -> None:
+        """
+        收尾 / 视频阶段：状态条直接显示阶段文字（如「正在写入评分 320/1200…」）。
+        Post-processing / video stages: show the stage text in the banner as-is.
+        """
+        self._update_status_banner("stage", text)
+
     @Slot(dict)
     def _on_cancelled(self, stats):
         """
@@ -2655,6 +2672,7 @@ class SuperPickyMainWindow(QMainWindow):
         self.worker_signals.log.connect(self._on_log)
         self.worker_signals.finished.connect(self._on_finished)
         self.worker_signals.cancelled.connect(self._on_cancelled)
+        self.worker_signals.status.connect(self._on_stage_status)
         self.worker_signals.error.connect(self._on_error)
         # V4.2: 裁剪预览信号连接到 BirdID Dock
         if hasattr(self, 'birdid_dock') and self.birdid_dock:
