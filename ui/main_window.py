@@ -10,7 +10,7 @@ import threading
 import subprocess
 from types import SimpleNamespace
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 
 def get_resource_path(relative_path):
@@ -148,11 +148,18 @@ def _format_wall_clock(ts: float) -> str:
     return _dt2.fromtimestamp(ts).strftime("%H:%M:%S")
 
 
+#: #145 开始确认框里「更换国家…」按钮的返回值（Yes=1 / No=0 之外）
+#: #145 return value of the "Change country…" button in the start confirmation
+START_CONFIRM_CHANGE_COUNTRY = 2
+
+
 class WorkerSignals(QObject):
     """工作线程信号"""
     progress = Signal(int)
     log = Signal(str, str)  # message, tag
     finished = Signal(dict)
+    cancelled = Signal(dict)  # #144 用户中途停止 / user stopped midway
+    status = Signal(str)  # 收尾 / 视频阶段的状态文字 / post-processing & video stage status
     error = Signal(str)
     crop_preview = Signal(object, object, object)  # 裁剪预览图(numpy BGR) + focus_status + rating(星级)
     update_check_done = Signal(bool, object)  # V4.2: 更新检测完成 (has_update, update_info)
@@ -195,10 +202,19 @@ class WorkerThread(threading.Thread):
             # V4.3 Phase 4: 照片处理完后追加视频处理（共用 signals/stop_event）
             # Phase 4: append video processing after photos (shared signals).
             self._process_videos()
-            self.signals.finished.emit(self.stats)
+            # #144：被要求停止的一律算取消（批量模式可能在目录之间停下、正常返回）
+            # #144: a requested stop is a cancel even if processing returned normally
+            if self._stop_event.is_set():
+                self.signals.log.emit(self.i18n.t("logs.processing_cancelled"), "warning")
+                self.signals.cancelled.emit(self.stats)
+            else:
+                self.signals.finished.emit(self.stats)
         except Exception as e:
             if e.__class__.__name__ == "ProcessingCancelled":
+                # #144：发 cancelled 让主窗口恢复按钮（此前只写日志，界面卡在「处理中」）
+                # #144: emit cancelled so the window leaves the processing state
                 self.signals.log.emit(self.i18n.t("logs.processing_cancelled"), "warning")
+                self.signals.cancelled.emit(self.stats)
             else:
                 self.signals.error.emit(str(e))
         finally:
@@ -268,9 +284,11 @@ class WorkerThread(threading.Thread):
             self.signals.log.emit(msg, level)
 
         def _progress_cb(cur: int, total: int):
-            # 视频阶段进度独立显示在状态条；总进度条由照片阶段已经占满
-            # Video stage progress shown in status bar; main bar stays at 100%.
-            pass
+            # 视频阶段进度显示在状态条；总进度条由照片阶段已经占满（此前这里是空函数，
+            # 用户只看到停在 100% 不动）
+            # Video stage progress goes to the status banner; the main bar is
+            # already full (this used to be a no-op, so users saw a frozen 100%).
+            self.signals.status.emit(self.i18n.t("labels.stage_video", done=cur, total=total))
 
         def _stop_cb() -> bool:
             return self._stop_event.is_set()
@@ -528,7 +546,8 @@ class WorkerThread(threading.Thread):
             log=log_callback,
             progress=progress_callback,
             should_stop=self._stop_event.is_set,
-            crop_preview=crop_preview_callback
+            crop_preview=crop_preview_callback,
+            status=self.signals.status.emit,
         )
 
         # Detect batch mode: check for subdirectories with photos
@@ -637,7 +656,8 @@ class WorkerThread(threading.Thread):
                     log=log_callback,
                     progress=make_progress_cb(dir_base, dir_count),
                     should_stop=self._stop_event.is_set,
-                    crop_preview=crop_preview_callback
+                    crop_preview=crop_preview_callback,
+                    status=self.signals.status.emit,
                 )
 
                 processor = PhotoProcessor(
@@ -1836,7 +1856,7 @@ class SuperPickyMainWindow(QMainWindow):
         self.start_btn = QPushButton(self.i18n.t("labels.start_processing"))
         self.start_btn.setMinimumWidth(140)
         self.start_btn.setMinimumHeight(40)
-        self.start_btn.clicked.connect(self._start_processing)
+        self.start_btn.clicked.connect(self._on_start_btn_clicked)
         btn_layout.addWidget(self.start_btn)
 
         parent_layout.addLayout(btn_layout)
@@ -2138,9 +2158,13 @@ class SuperPickyMainWindow(QMainWindow):
                     padding: 0 12px;
                 }}
             """)
-        elif state == "processing":
+        elif state in ("processing", "stage"):
+            # stage：收尾阶段文字原样显示，样式同处理中 / stage text shown as-is, same style
             filename = data or ""
-            text = self.i18n.t("labels.status_processing").format(filename=filename) if filename else self.i18n.t("labels.status_processing_idle")
+            if state == "stage":
+                text = filename
+            else:
+                text = self.i18n.t("labels.status_processing").format(filename=filename) if filename else self.i18n.t("labels.status_processing_idle")
             self._status_banner.setText(text)
             self._status_banner.setStyleSheet(f"""
                 QLabel {{
@@ -2199,7 +2223,9 @@ class SuperPickyMainWindow(QMainWindow):
                 self.view_results_btn.setVisible(False)
         elif state == "has_results":
             self.reset_btn.setEnabled(True)
-            self.reset_btn.setText(self.i18n.t("labels.reprocess"))
+            # #146：同一个按钮做的始终是「重置目录」，不再在有结果时改叫「重新处理」
+            # #146: the button always resets the folder; no longer relabelled "Reprocess"
+            self.reset_btn.setText(self.i18n.t("labels.reset_short"))
             self.reset_btn.setObjectName("tertiary")
             self.start_btn.setEnabled(True)
             self.start_btn.setText(self.i18n.t("labels.start_processing"))
@@ -2209,7 +2235,10 @@ class SuperPickyMainWindow(QMainWindow):
                 self.view_results_btn.setObjectName("")
         elif state == "processing":
             self.reset_btn.setEnabled(False)
-            self.start_btn.setEnabled(False)
+            # #144：处理中开始按钮变成「停止」/ the start button becomes Stop while processing
+            self.start_btn.setEnabled(True)
+            self.start_btn.setText(self.i18n.t("labels.stop_processing"))
+            self.start_btn.setObjectName("")
             if hasattr(self, 'view_results_btn'):
                 self.view_results_btn.setVisible(False)
         # 刷新样式（objectName 变化后需要 unpolish/polish）
@@ -2364,6 +2393,171 @@ class SuperPickyMainWindow(QMainWindow):
             extra_notes=extra_notes,
         )
 
+    def _on_start_btn_clicked(self):
+        """
+        开始按钮：没在处理时开始选片，处理中则是「停止」（#144）。
+        Start button: starts culling, or acts as Stop while processing (#144).
+        """
+        if self.worker and self.worker.is_alive():
+            self._request_stop_processing()
+        else:
+            self._start_processing()
+
+    def _request_stop_processing(self):
+        """
+        确认后请求工作线程停止；线程退出后经 cancelled 信号进 _on_cancelled 恢复界面。
+        已处理的照片保留评分，下次开始时由「未完成记录」提示继续或重来。
+
+        Ask the worker to stop after confirmation; the UI is restored in
+        _on_cancelled when the worker emits `cancelled`. Processed photos keep
+        their ratings and the resume prompt offers continue/restart next time.
+        """
+        reply = StyledMessageBox.question(
+            self,
+            self.i18n.t("messages.stop_confirm_title"),
+            self.i18n.t("messages.stop_confirm"),
+            yes_text=self.i18n.t("labels.stop_processing"),
+            no_text=self.i18n.t("buttons.cancel")
+        )
+        if reply != StyledMessageBox.Yes or not (self.worker and self.worker.is_alive()):
+            return
+        self.worker.request_stop()
+        self.start_btn.setEnabled(False)
+        self.start_btn.setText(self.i18n.t("labels.stopping"))
+        self._update_status(self.i18n.t("labels.stopping"), COLORS['warning'])
+
+    @Slot(str)
+    def _on_stage_status(self, text: str) -> None:
+        """
+        收尾 / 视频阶段：状态条直接显示阶段文字（如「正在写入评分 320/1200…」）。
+        Post-processing / video stages: show the stage text in the banner as-is.
+        """
+        self._update_status_banner("stage", text)
+
+    @Slot(dict)
+    def _on_cancelled(self, stats):
+        """
+        用户中途停止：恢复按钮与状态条（有 report.db 就显示已有结果）。
+        Stopped midway: restore buttons and banner (showing results if any).
+        """
+        self._update_status(self.i18n.t("labels.stopped"), COLORS['warning'])
+        self._check_report_csv()
+
+    def _burst_note(self, cfg) -> str:
+        """
+        确认框里的连拍说明。只有真会整理文件（非平铺且开了「连拍归入文件夹」）时才说合并进文件夹；
+        否则只识别连拍分组、不移动文件（#145）。张数取实际配置（burst_min_count 可配 3-10）。
+
+        The burst note: only claims files are merged into a folder when files
+        are actually organized (non-flat layout and burst folders on);
+        otherwise bursts are only grouped (#145).
+        """
+        from core.folder_layout import LAYOUT_FLAT
+        moves = cfg.folder_layout != LAYOUT_FLAT and cfg.burst_group_folders
+        key = "dialogs.note_burst" if moves else "dialogs.note_burst_detect_only"
+        return self.i18n.t(key, count=cfg.burst_min_count)
+
+    def _build_start_confirm_message(self) -> Tuple[str, bool]:
+        """
+        现读配置生成开始选片确认框的富文本（每次弹框都重读，换完国家能显示新国家）。
+
+        返回:
+        tuple: (HTML 正文, 是否开着识鸟)
+
+        Build the start-confirmation HTML from the current config (re-read on
+        every show so a changed country appears). Returns (html, birdid_on).
+        """
+        # 确认弹窗 - 动态构建消息(HTML:emoji 换 SVG 图标,QLabel 自动按富文本渲染)
+        import html as _html
+        from ui.styles import COLORS as _C
+        # 飞版图标用蓝，与 XMP:Label 映射一致 / flight icon in blue
+        _flight = _C.get("flight_blue", "#3b82f6")
+        _accent = _C.get("accent", "#00d4aa")
+        _sec = _C.get("text_secondary", "#a1a1a1")
+
+        def _ico(svg, color, size=14):
+            p = tinted_png_path(svg, color, size)
+            return f'<img src="{p}" width="{size}" height="{size}" style="vertical-align:middle"> '
+
+        def _esc(s):
+            return _html.escape(str(s), quote=False)
+
+        # Task 7: 从 advanced_config 读取开关状态，不再读取已删除的参数面板控件
+        # Task 7: read switch states from advanced_config; old panel widgets removed
+        _adv_confirm = get_advanced_config()
+        extra_notes = []
+        if _adv_confirm.flight_check:
+            extra_notes.append(_ico("bird.svg", _flight) + _esc(self.i18n.t("dialogs.note_flight")))
+        if _adv_confirm.birdid_auto_identify:
+            extra_notes.append(_ico("eye.svg", _accent) + _esc(self.i18n.t("dialogs.note_birdid")))
+            # 显示当前国家/区域设置（从 advanced_config 读取，Task 8 后不再依赖 dock 内控件）
+            # Show current country/region from advanced_config (Task 8: no longer reads dock widgets)
+            country_display = _adv_confirm.birdid_selected_country or ""
+            region_display = _adv_confirm.birdid_selected_region or ""
+            if country_display:
+                location_info = f"&nbsp;&nbsp;&nbsp;&nbsp;<b>{_esc(country_display)}"
+                if region_display and region_display != self.i18n.t("birdid.region_entire_country"):
+                    location_info += f" - {_esc(region_display)}"
+                extra_notes.append(location_info + "</b>")
+        if _adv_confirm.burst_check:
+            extra_notes.append(_ico("square-stack.svg", _sec) + _esc(self._burst_note(_adv_confirm)))
+
+        # #126 文件格式筛选是长期设置，开始前必须明示，免得换相机后照片被悄悄跳过
+        # #126: the format filter persists, so state it before every run
+        _fmt_summary = self._format_filter_summary(_adv_confirm)
+        if _fmt_summary:
+            extra_notes.append(
+                _ico("file-search-corner.svg", _sec)
+                + _esc(_fmt_summary)
+            )
+
+        notes_block = ""
+        if extra_notes:
+            notes_block = "<br>" + "<br>".join(extra_notes) + "<br>"
+
+        # 正文转富文本:escape + 换行→<br>,再把哨兵替换为已是 HTML 的附注块
+        # 正文按当前目录布局生成（#120）：平铺不移动文件，单独一段说明；其余布局
+        # 的目录清单由 compute_target_folder 现算，与实际移动的目标目录同源，
+        # 不再在语言包里手写一份会过时的目录名。
+        # Body follows the configured layout (#120): flat never moves files and
+        # gets its own text; other layouts list folders computed by the same
+        # compute_target_folder the move uses, so the names cannot drift.
+        _sentinel = "@@EXTRA_NOTES@@"
+        _raw = self._file_organization_text(
+            _adv_confirm.folder_layout, _adv_confirm.birdid_auto_identify, _sentinel)
+        return _esc(_raw).replace("\n", "<br>").replace(_sentinel, notes_block), bool(_adv_confirm.birdid_auto_identify)
+
+    def _confirm_start(self) -> bool:
+        """
+        开始选片确认框。开着识鸟时多一个「更换国家…」：打开设置中心识鸟页，关掉后重新弹出确认框、
+        显示新国家（#145，此前要点「否」→ 设置 → 识鸟 → 国家 → 更多国家 → 再点开始）。
+
+        返回:
+        bool: 用户确认开始返回 True
+
+        The start confirmation. With Bird ID on it adds "Change country…",
+        which opens the Bird-ID settings page and then shows the confirmation
+        again with the new country (#145). Returns True when confirmed.
+        """
+        while True:
+            message, birdid_on = self._build_start_confirm_message()
+            buttons = [(self.i18n.t("labels.no"), StyledMessageBox.No, "secondary")]
+            if birdid_on:
+                # 文字链接，放在正文下方（三个大按钮并排会挤坏布局）/ a link under the message
+                buttons.append((self.i18n.t("dialogs.change_country"), START_CONFIRM_CHANGE_COUNTRY, "link"))
+            buttons.append((self.i18n.t("labels.yes"), StyledMessageBox.Yes, "primary"))
+            reply = StyledMessageBox(
+                parent=self,
+                title=self.i18n.t("dialogs.file_organization_title"),
+                message=message,
+                dialog_type=StyledMessageBox.Question,
+                buttons=buttons,
+            ).exec()
+            if reply == START_CONFIRM_CHANGE_COUNTRY:
+                self._open_settings_center("birdid")
+                continue
+            return reply == StyledMessageBox.Yes
+
     def _start_processing(self):
         """开始处理"""
         if not self._require_initialization_for_processing():
@@ -2398,97 +2592,24 @@ class SuperPickyMainWindow(QMainWindow):
             )
             return
 
-        # 确认弹窗 - 动态构建消息(HTML:emoji 换 SVG 图标,QLabel 自动按富文本渲染)
-        import html as _html
-        from ui.styles import COLORS as _C
-        # 飞版图标用蓝，与 XMP:Label 映射一致 / flight icon in blue
-        _flight = _C.get("flight_blue", "#3b82f6")
-        _accent = _C.get("accent", "#00d4aa")
-        _sec = _C.get("text_secondary", "#a1a1a1")
-
-        def _ico(svg, color, size=14):
-            p = tinted_png_path(svg, color, size)
-            return f'<img src="{p}" width="{size}" height="{size}" style="vertical-align:middle"> '
-
-        def _esc(s):
-            return _html.escape(str(s), quote=False)
-
-        # Task 7: 从 advanced_config 读取开关状态，不再读取已删除的参数面板控件
-        # Task 7: read switch states from advanced_config; old panel widgets removed
+        # V4.3: 识鸟仍是「自动检测 (GPS)」时先问要不要去选国家
+        # V4.3: Prompt if Bird ID country is still in Auto GPS mode
         _adv_confirm = get_advanced_config()
-        extra_notes = []
-        if _adv_confirm.flight_check:
-            extra_notes.append(_ico("bird.svg", _flight) + _esc(self.i18n.t("dialogs.note_flight")))
-        if _adv_confirm.birdid_auto_identify:
-            extra_notes.append(_ico("eye.svg", _accent) + _esc(self.i18n.t("dialogs.note_birdid")))
-            # 显示当前国家/区域设置（从 advanced_config 读取，Task 8 后不再依赖 dock 内控件）
-            # Show current country/region from advanced_config (Task 8: no longer reads dock widgets)
-            country_display = _adv_confirm.birdid_selected_country or ""
-            region_display = _adv_confirm.birdid_selected_region or ""
-            if country_display:
-                location_info = f"&nbsp;&nbsp;&nbsp;&nbsp;{_esc(country_display)}"
-                if region_display and region_display != self.i18n.t("birdid.region_entire_country"):
-                    location_info += f" - {_esc(region_display)}"
-                extra_notes.append(location_info)
-            # V4.3: 检查是否选择了国家，如果是 Auto Detect GPS 则提示
-            # V4.3: Prompt if country is still in Auto GPS mode
-            country_code = _adv_confirm.birdid_country_code
-            if country_code is None:  # "自动检测 (GPS)" 模式 / Auto GPS mode
-                reply = StyledMessageBox.question(
-                    self,
-                    self.i18n.t("birdid.country_prompt_title"),
-                    self.i18n.t("birdid.country_prompt_message"),
-                    yes_text=self.i18n.t("labels.yes"),
-                    no_text=self.i18n.t("labels.no")
-                )
-                if reply == StyledMessageBox.Yes:
-                    # 用户选择现在配置国家：打开设置中心 birdid 页
-                    # User chose to configure now: open Settings Center on birdid page
-                    self._open_settings_center("birdid")
-                    return  # 等用户配置后再开始 / Wait for user to configure
-        if _adv_confirm.burst_check:
-            # 张数取实际配置(burst_min_count 可配 3-10),不写死 4——否则改了设置说明就在说谎。
-            # Use the configured minimum instead of a hard-coded 4.
-            extra_notes.append(
-                _ico("square-stack.svg", _sec)
-                + _esc(self.i18n.t("dialogs.note_burst",
-                                   count=_adv_confirm.burst_min_count))
+        if _adv_confirm.birdid_auto_identify and _adv_confirm.birdid_country_code is None:
+            reply = StyledMessageBox.question(
+                self,
+                self.i18n.t("birdid.country_prompt_title"),
+                self.i18n.t("birdid.country_prompt_message"),
+                yes_text=self.i18n.t("labels.yes"),
+                no_text=self.i18n.t("labels.no")
             )
+            if reply == StyledMessageBox.Yes:
+                # 用户选择现在配置国家：打开设置中心 birdid 页
+                # User chose to configure now: open Settings Center on birdid page
+                self._open_settings_center("birdid")
+                return  # 等用户配置后再开始 / Wait for user to configure
 
-        # #126 文件格式筛选是长期设置，开始前必须明示，免得换相机后照片被悄悄跳过
-        # #126: the format filter persists, so state it before every run
-        _fmt_summary = self._format_filter_summary(_adv_confirm)
-        if _fmt_summary:
-            extra_notes.append(
-                _ico("file-search-corner.svg", _sec)
-                + _esc(_fmt_summary)
-            )
-
-        notes_block = ""
-        if extra_notes:
-            notes_block = "<br>" + "<br>".join(extra_notes) + "<br>"
-
-        # 正文转富文本:escape + 换行→<br>,再把哨兵替换为已是 HTML 的附注块
-        # 正文按当前目录布局生成（#120）：平铺不移动文件，单独一段说明；其余布局
-        # 的目录清单由 compute_target_folder 现算，与实际移动的目标目录同源，
-        # 不再在语言包里手写一份会过时的目录名。
-        # Body follows the configured layout (#120): flat never moves files and
-        # gets its own text; other layouts list folders computed by the same
-        # compute_target_folder the move uses, so the names cannot drift.
-        _sentinel = "@@EXTRA_NOTES@@"
-        _raw = self._file_organization_text(
-            _adv_confirm.folder_layout, _adv_confirm.birdid_auto_identify, _sentinel)
-        base_msg = _esc(_raw).replace("\n", "<br>").replace(_sentinel, notes_block)
-
-        reply = StyledMessageBox.question(
-            self,
-            self.i18n.t("dialogs.file_organization_title"),
-            base_msg,
-            yes_text=self.i18n.t("labels.yes"),
-            no_text=self.i18n.t("labels.no")
-        )
-
-        if reply != StyledMessageBox.Yes:
+        if not self._confirm_start():
             return
 
         # V4.3 Phase 4: 视频首次提示 — 检测到视频且用户从未被提示过时弹一次
@@ -2597,6 +2718,8 @@ class SuperPickyMainWindow(QMainWindow):
         self.worker_signals.progress.connect(self._on_progress)
         self.worker_signals.log.connect(self._on_log)
         self.worker_signals.finished.connect(self._on_finished)
+        self.worker_signals.cancelled.connect(self._on_cancelled)
+        self.worker_signals.status.connect(self._on_stage_status)
         self.worker_signals.error.connect(self._on_error)
         # V4.2: 裁剪预览信号连接到 BirdID Dock
         if hasattr(self, 'birdid_dock') and self.birdid_dock:
@@ -2741,6 +2864,16 @@ class SuperPickyMainWindow(QMainWindow):
         # run_reset (no longer gated on "no manifest"), because manifests can be
         # incomplete (e.g. burst members never recorded) and manifest-only restore
         # would otherwise strand files in species/rating/burst_ subdirs.
+        # #146：结果浏览器「返回主窗口」只是隐藏，report.db 连接还开着；Windows 上开着的
+        # 数据库删不掉，重置会留下 report.db / -wal / -shm。重置前先让它释放。
+        # #146: the hidden results browser still holds report.db open, which
+        # blocks deletion on Windows; release it before resetting.
+        if getattr(self, '_results_browser', None) is not None:
+            try:
+                self._results_browser.release_directory()
+            except Exception as e:
+                print(f"⚠️  Results browser release failed: {e}")
+
         self.log_text.clear()
         self.reset_btn.setEnabled(False)
         self.start_btn.setEnabled(False)
@@ -2967,20 +3100,15 @@ class SuperPickyMainWindow(QMainWindow):
                 # Quick Restore: 重新处理时保留 .superpicky 缓存（预览图复用，节省时间）
                 superpicky_dir = os.path.join(directory_path, ".superpicky")
                 if not _skip_exif_reset and os.path.exists(superpicky_dir):
-                    try:
-                        shutil.rmtree(superpicky_dir)
+                    # #146：跨平台删除（去只读 + 重试）；原兜底 `rm -rf` 在 Windows 上不存在
+                    # #146: cross-platform removal; the old `rm -rf` fallback does not exist on Windows
+                    from core.superpicky_dir import remove_superpicky_dir
+                    if remove_superpicky_dir(directory_path):
                         emit_log("  ✅ .superpicky/")
                         deleted_dirs += 1
-                    except Exception:
-                        # 尝试系统命令强制删除
-                        try:
-                            import subprocess
-                            subprocess.run(['rm', '-rf', superpicky_dir], check=True,
-                                           timeout=120)
-                            emit_log("  ✅ .superpicky/ (force)")
-                            deleted_dirs += 1
-                        except Exception as e2:
-                            emit_log(i18n.t("logs.reset_cache_delete_failed", error=e2))
+                    else:
+                        leftovers = ", ".join(sorted(os.listdir(superpicky_dir))[:5])
+                        emit_log(i18n.t("logs.reset_cache_delete_failed", error=leftovers))
                 elif _skip_exif_reset:
                     emit_log(i18n.t("logs.reset_cache_kept"))
                 

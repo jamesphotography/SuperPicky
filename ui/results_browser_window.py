@@ -2287,6 +2287,24 @@ class ResultsBrowserWindow(QMainWindow):
     #  私有槽
     # ------------------------------------------------------------------
 
+    def release_directory(self) -> None:
+        """
+        关闭当前目录的 report.db 连接（窗口可能只是隐藏着）。主窗口重置目录前调用：
+        Windows 上开着的数据库删不掉，会留下 report.db / -wal / -shm（#146）。
+        之后再看结果会经 open_directory 重新打开。
+
+        Close this folder's report.db connection (the window may merely be
+        hidden). Called before the main window resets the folder, because on
+        Windows an open database cannot be deleted (#146). Viewing results
+        again reopens it through open_directory.
+        """
+        if self._db:
+            try:
+                self._db.close()
+            except Exception:
+                pass
+            self._db = None
+
     @Slot()
     def _go_back_to_main(self):
         """P2: 隐藏结果浏览器，通过 closed 信号通知主窗口恢复显示。"""

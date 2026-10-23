@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 import shutil
-from typing import Any, Optional, List, Dict
+from typing import Any, Callable, Optional, List, Dict, Tuple
 from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from constants import ALL_RATING_FOLDER_NAMES, SIDECAR_RAW_EXTENSIONS
@@ -322,6 +322,10 @@ def pick_flag_args(pick) -> List[str]:
 
 # 清除旗标时一并清掉的字段 / Flag fields cleared together on reset
 PICK_FLAG_CLEAR_ARGS = ['-XMP:Pick=', '-XMP-xmpDM:Good=']
+
+# 批量写入的空闲超时：两个文件结果之间最多等多少秒（慢不算卡，真卡才放弃）
+# Batch-write idle timeout: max seconds between two file results
+BATCH_IDLE_TIMEOUT = 60.0
 
 
 class ExifToolManager:
@@ -1445,6 +1449,40 @@ class ExifToolManager:
                 except Exception:
                     pass
 
+    @staticmethod
+    def _collect_batch_results(read_until_ready: Callable[..., bytes], num_executes: int,
+                               idle_timeout: float) -> Tuple[int, int, bool]:
+        """
+        逐个读取批量写入的 {ready} 结果；每一张都要在 idle_timeout 秒内写完才算还在进展。
+
+        此前用整批总时长（张数 × 5 秒，64 张即 320 秒）：ExifTool 一直无响应的机器上每批都
+        等满 5 分多钟；而慢但在进展的机器（大文件、网络盘）反倒可能被总时长误判超时。
+        改为空闲超时：慢不算卡，真卡 idle_timeout 秒内就发现。
+
+        参数:
+        read_until_ready: 读到下一个 {ready} 为止的函数，超时抛 TimeoutError
+        num_executes (int): 本批 -execute 数（文件数）
+        idle_timeout (float): 两个结果之间最多等多少秒
+
+        返回:
+        tuple: (出错张数, 已完成张数, 是否超时)
+
+        Read one {ready} per file; each must arrive within idle_timeout seconds.
+        Returns (errors, completed, timed_out). Replaces the old whole-batch
+        budget, which waited 320 s per stuck batch yet could misjudge a slow
+        but progressing machine.
+        """
+        errors = 0
+        for done in range(num_executes):
+            try:
+                output = read_until_ready(timeout=idle_timeout)
+            except TimeoutError:
+                return errors, done, True
+            decoded = output.decode('utf-8', errors='replace')
+            if "Error" in decoded and "Warning" not in decoded:
+                errors += 1
+        return errors, num_executes, False
+
     def batch_set_metadata(
         self,
         files_metadata: List[Dict[str, Any]]
@@ -1650,32 +1688,19 @@ class ExifToolManager:
 
                 # 读取输出：我们需要读取 N 次 {ready}
                 num_executes = args_list.count('-execute')
-                # 按文件数线性放大超时
-                total_timeout = max(30.0, num_executes * 5.0)
-                start_time = time.time()
-
-                error_count = 0
-                for _ in range(num_executes):
-                    elapsed = time.time() - start_time
-                    remaining = total_timeout - elapsed
-                    if remaining <= 0:
-                        raise TimeoutError(f"Batch timeout after {total_timeout}s")
-
-                    # 读取一次 {ready}
-                    output = wp.read_until_ready(timeout=remaining)
-
-                    # 简单的错误检测 (累积)
-                    decoded = output.decode('utf-8', errors='replace')
-                    if "Error" in decoded and "Warning" not in decoded:
-                        error_count += 1
-
-                stats['success'] += num_executes - error_count
-                stats['failed'] += error_count
+                total_timeout = BATCH_IDLE_TIMEOUT
+                error_count, done_count, timed_out = self._collect_batch_results(
+                    wp.read_until_ready, num_executes, BATCH_IDLE_TIMEOUT)
+                stats['success'] += done_count - error_count
+                stats['failed'] += error_count + (num_executes - done_count)
+                if timed_out:
+                    # 卡住的进程停掉，下一批重新拉起 / stop the stuck process; next batch restarts it
+                    stats['timed_out'] = True
+                    raise TimeoutError(f"no file finished within {BATCH_IDLE_TIMEOUT}s")
 
         except TimeoutError:
-            print(f"❌ Batch ExifTool timeout (>{total_timeout}s)")
+            print(f"❌ Batch ExifTool timeout (no progress for {total_timeout}s)")
             wp.stop()
-            stats['failed'] += num_executes
         except Exception as e:
             print(f"❌ Batch persistent error: {e}")
             wp.stop()

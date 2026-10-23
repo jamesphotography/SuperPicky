@@ -12,7 +12,6 @@ are provided; settings are persisted via advanced_config.
 
 import os
 import sys
-from collections import OrderedDict
 from typing import Any, Optional, cast
 
 from PySide6.QtWidgets import (
@@ -854,57 +853,20 @@ class BirdIDDockWidget(QDockWidget):
     def _build_country_list(self) -> dict:
         """
         构建有序国家列表字典 {显示名 → 国家代码}。
-        顺序：自动GPS / 全球 / 分隔符 / Top10 / 分隔符 / 更多国家。
+        顺序：自动GPS / 全球 / 分隔符 / 常用国家短名单 / 分隔符 / 更多国家。
         Build ordered country list dict {display_name → country_code}.
-        Order: Auto-GPS / Global / separator / Top10 / separator / More.
+        Order: Auto-GPS / Global / separator / shortlist / separator / More.
 
         返回 / Returns:
             OrderedDict: display_name(str) → code(str or None)
         """
-        t = self.i18n.t
-        is_english = self.i18n.current_lang.startswith('en')
-
-        country_list: dict = OrderedDict()
-
-        country_list[t("birdid.country_auto_gps")] = None
-        country_list[t("birdid.country_global")] = "GLOBAL"
-        country_list["─" * 15] = "SEP1"
-
-        top10_codes = ['AU', 'BR', 'CN', 'GB', 'HK', 'ID', 'JP', 'MY', 'SG', 'TW', 'US']
-        top10_i18n = {
-            'AU': 'birdid.country_au',
-            'BR': 'birdid.country_br',
-            'CN': 'birdid.country_cn',
-            'GB': 'birdid.country_gb',
-            'HK': 'birdid.country_hk',
-            'ID': 'birdid.country_id',
-            'JP': 'birdid.country_jp',
-            'MY': 'birdid.country_my',
-            'SG': 'birdid.country_sg',
-            'TW': 'birdid.country_tw',
-            'US': 'birdid.country_us',
-        }
-
-        # 建立 code→region 快速查找 / Quick lookup code→region
-        code_to_region: dict = {}
-        for region in self.regions_data.get('countries', []):
-            code_to_region[region.get('code')] = region
-
-        for code in top10_codes:
-            i18n_key = top10_i18n.get(code)
-            if i18n_key:
-                display_name = t(i18n_key)
-            else:
-                region = code_to_region.get(code, {})
-                if is_english:
-                    display_name = region.get('name', code)
-                else:
-                    display_name = region.get('name_cn') or region.get('name', code)
-            country_list[display_name] = code
-
-        country_list["─" * 15 + " "] = "SEP2"
-        country_list[t("birdid.country_more")] = "MORE"
-
+        # #143：与设置中心共用同一份常用国家（默认 11 国，用户可调整）
+        # #143: same shortlist as the Settings Center (defaults, user adjustable)
+        from advanced_config import get_advanced_config
+        from core.country_shortlist import build_country_entries, effective_shortlist, system_country_code
+        country_list: dict = build_country_entries(
+            self.i18n.t, self.i18n.current_lang.startswith('en'), self.regions_data,
+            effective_shortlist(get_advanced_config().birdid_country_shortlist, system_country_code()))
         return country_list
 
     def _populate_country_combo(self) -> None:
@@ -965,6 +927,15 @@ class BirdIDDockWidget(QDockWidget):
         # Guard prevents re-saving to advanced_config while refreshing widgets
         self._applying_settings = True
         try:
+            # #143：常用国家可能在设置中心改过，先重建下拉（选中项随后由 _apply_settings 恢复）
+            # #143: the shortlist may have changed; rebuild the combo first
+            if hasattr(self, "country_combo"):
+                self.country_list = self._build_country_list()
+                self.country_combo.blockSignals(True)
+                try:
+                    self._populate_country_combo()
+                finally:
+                    self.country_combo.blockSignals(False)
             # _apply_settings 会刷新 数据源/国家/区域 全部控件 / refreshes all controls
             if hasattr(self, "country_combo") and hasattr(self, "region_combo"):
                 self._apply_settings()
@@ -1515,7 +1486,9 @@ class BirdIDDockWidget(QDockWidget):
         返回 / Returns: None
         """
         t = self.i18n.t
-        top10_and_global = {"AU", "BR", "CN", "GB", "HK", "ID", "JP", "MY", "SG", "TW", "US", "GLOBAL"}
+        # 「更多国家」列出全部国家（含常用国家），只排除「全球」——常用国家用户可删，删掉的也得能在这里找回
+        # "More countries" lists every country (shortlisted ones too); only Global is excluded
+        top10_and_global = {"GLOBAL"}
         show_country_picker_dialog(
             parent=self,
             i18n=self.i18n,
