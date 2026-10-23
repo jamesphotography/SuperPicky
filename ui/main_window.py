@@ -10,7 +10,7 @@ import threading
 import subprocess
 from types import SimpleNamespace
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 
 def get_resource_path(relative_path):
@@ -146,6 +146,11 @@ def _format_wall_clock(ts: float) -> str:
     from datetime import datetime as _dt2
 
     return _dt2.fromtimestamp(ts).strftime("%H:%M:%S")
+
+
+#: #145 开始确认框里「更换国家…」按钮的返回值（Yes=1 / No=0 之外）
+#: #145 return value of the "Change country…" button in the start confirmation
+START_CONFIRM_CHANGE_COUNTRY = 2
 
 
 class WorkerSignals(QObject):
@@ -2438,6 +2443,120 @@ class SuperPickyMainWindow(QMainWindow):
         self._update_status(self.i18n.t("labels.stopped"), COLORS['warning'])
         self._check_report_csv()
 
+    def _burst_note(self, cfg) -> str:
+        """
+        确认框里的连拍说明。只有真会整理文件（非平铺且开了「连拍归入文件夹」）时才说合并进文件夹；
+        否则只识别连拍分组、不移动文件（#145）。张数取实际配置（burst_min_count 可配 3-10）。
+
+        The burst note: only claims files are merged into a folder when files
+        are actually organized (non-flat layout and burst folders on);
+        otherwise bursts are only grouped (#145).
+        """
+        from core.folder_layout import LAYOUT_FLAT
+        moves = cfg.folder_layout != LAYOUT_FLAT and cfg.burst_group_folders
+        key = "dialogs.note_burst" if moves else "dialogs.note_burst_detect_only"
+        return self.i18n.t(key, count=cfg.burst_min_count)
+
+    def _build_start_confirm_message(self) -> Tuple[str, bool]:
+        """
+        现读配置生成开始选片确认框的富文本（每次弹框都重读，换完国家能显示新国家）。
+
+        返回:
+        tuple: (HTML 正文, 是否开着识鸟)
+
+        Build the start-confirmation HTML from the current config (re-read on
+        every show so a changed country appears). Returns (html, birdid_on).
+        """
+        # 确认弹窗 - 动态构建消息(HTML:emoji 换 SVG 图标,QLabel 自动按富文本渲染)
+        import html as _html
+        from ui.styles import COLORS as _C
+        # 飞版图标用蓝，与 XMP:Label 映射一致 / flight icon in blue
+        _flight = _C.get("flight_blue", "#3b82f6")
+        _accent = _C.get("accent", "#00d4aa")
+        _sec = _C.get("text_secondary", "#a1a1a1")
+
+        def _ico(svg, color, size=14):
+            p = tinted_png_path(svg, color, size)
+            return f'<img src="{p}" width="{size}" height="{size}" style="vertical-align:middle"> '
+
+        def _esc(s):
+            return _html.escape(str(s), quote=False)
+
+        # Task 7: 从 advanced_config 读取开关状态，不再读取已删除的参数面板控件
+        # Task 7: read switch states from advanced_config; old panel widgets removed
+        _adv_confirm = get_advanced_config()
+        extra_notes = []
+        if _adv_confirm.flight_check:
+            extra_notes.append(_ico("bird.svg", _flight) + _esc(self.i18n.t("dialogs.note_flight")))
+        if _adv_confirm.birdid_auto_identify:
+            extra_notes.append(_ico("eye.svg", _accent) + _esc(self.i18n.t("dialogs.note_birdid")))
+            # 显示当前国家/区域设置（从 advanced_config 读取，Task 8 后不再依赖 dock 内控件）
+            # Show current country/region from advanced_config (Task 8: no longer reads dock widgets)
+            country_display = _adv_confirm.birdid_selected_country or ""
+            region_display = _adv_confirm.birdid_selected_region or ""
+            if country_display:
+                location_info = f"&nbsp;&nbsp;&nbsp;&nbsp;<b>{_esc(country_display)}"
+                if region_display and region_display != self.i18n.t("birdid.region_entire_country"):
+                    location_info += f" - {_esc(region_display)}"
+                extra_notes.append(location_info + "</b>")
+        if _adv_confirm.burst_check:
+            extra_notes.append(_ico("square-stack.svg", _sec) + _esc(self._burst_note(_adv_confirm)))
+
+        # #126 文件格式筛选是长期设置，开始前必须明示，免得换相机后照片被悄悄跳过
+        # #126: the format filter persists, so state it before every run
+        _fmt_summary = self._format_filter_summary(_adv_confirm)
+        if _fmt_summary:
+            extra_notes.append(
+                _ico("file-search-corner.svg", _sec)
+                + _esc(_fmt_summary)
+            )
+
+        notes_block = ""
+        if extra_notes:
+            notes_block = "<br>" + "<br>".join(extra_notes) + "<br>"
+
+        # 正文转富文本:escape + 换行→<br>,再把哨兵替换为已是 HTML 的附注块
+        # 正文按当前目录布局生成（#120）：平铺不移动文件，单独一段说明；其余布局
+        # 的目录清单由 compute_target_folder 现算，与实际移动的目标目录同源，
+        # 不再在语言包里手写一份会过时的目录名。
+        # Body follows the configured layout (#120): flat never moves files and
+        # gets its own text; other layouts list folders computed by the same
+        # compute_target_folder the move uses, so the names cannot drift.
+        _sentinel = "@@EXTRA_NOTES@@"
+        _raw = self._file_organization_text(
+            _adv_confirm.folder_layout, _adv_confirm.birdid_auto_identify, _sentinel)
+        return _esc(_raw).replace("\n", "<br>").replace(_sentinel, notes_block), bool(_adv_confirm.birdid_auto_identify)
+
+    def _confirm_start(self) -> bool:
+        """
+        开始选片确认框。开着识鸟时多一个「更换国家…」：打开设置中心识鸟页，关掉后重新弹出确认框、
+        显示新国家（#145，此前要点「否」→ 设置 → 识鸟 → 国家 → 更多国家 → 再点开始）。
+
+        返回:
+        bool: 用户确认开始返回 True
+
+        The start confirmation. With Bird ID on it adds "Change country…",
+        which opens the Bird-ID settings page and then shows the confirmation
+        again with the new country (#145). Returns True when confirmed.
+        """
+        while True:
+            message, birdid_on = self._build_start_confirm_message()
+            buttons = [(self.i18n.t("labels.no"), StyledMessageBox.No, "secondary")]
+            if birdid_on:
+                buttons.append((self.i18n.t("dialogs.change_country"), START_CONFIRM_CHANGE_COUNTRY, "secondary"))
+            buttons.append((self.i18n.t("labels.yes"), StyledMessageBox.Yes, "primary"))
+            reply = StyledMessageBox(
+                parent=self,
+                title=self.i18n.t("dialogs.file_organization_title"),
+                message=message,
+                dialog_type=StyledMessageBox.Question,
+                buttons=buttons,
+            ).exec()
+            if reply == START_CONFIRM_CHANGE_COUNTRY:
+                self._open_settings_center("birdid")
+                continue
+            return reply == StyledMessageBox.Yes
+
     def _start_processing(self):
         """开始处理"""
         if not self._require_initialization_for_processing():
@@ -2472,97 +2591,24 @@ class SuperPickyMainWindow(QMainWindow):
             )
             return
 
-        # 确认弹窗 - 动态构建消息(HTML:emoji 换 SVG 图标,QLabel 自动按富文本渲染)
-        import html as _html
-        from ui.styles import COLORS as _C
-        # 飞版图标用蓝，与 XMP:Label 映射一致 / flight icon in blue
-        _flight = _C.get("flight_blue", "#3b82f6")
-        _accent = _C.get("accent", "#00d4aa")
-        _sec = _C.get("text_secondary", "#a1a1a1")
-
-        def _ico(svg, color, size=14):
-            p = tinted_png_path(svg, color, size)
-            return f'<img src="{p}" width="{size}" height="{size}" style="vertical-align:middle"> '
-
-        def _esc(s):
-            return _html.escape(str(s), quote=False)
-
-        # Task 7: 从 advanced_config 读取开关状态，不再读取已删除的参数面板控件
-        # Task 7: read switch states from advanced_config; old panel widgets removed
+        # V4.3: 识鸟仍是「自动检测 (GPS)」时先问要不要去选国家
+        # V4.3: Prompt if Bird ID country is still in Auto GPS mode
         _adv_confirm = get_advanced_config()
-        extra_notes = []
-        if _adv_confirm.flight_check:
-            extra_notes.append(_ico("bird.svg", _flight) + _esc(self.i18n.t("dialogs.note_flight")))
-        if _adv_confirm.birdid_auto_identify:
-            extra_notes.append(_ico("eye.svg", _accent) + _esc(self.i18n.t("dialogs.note_birdid")))
-            # 显示当前国家/区域设置（从 advanced_config 读取，Task 8 后不再依赖 dock 内控件）
-            # Show current country/region from advanced_config (Task 8: no longer reads dock widgets)
-            country_display = _adv_confirm.birdid_selected_country or ""
-            region_display = _adv_confirm.birdid_selected_region or ""
-            if country_display:
-                location_info = f"&nbsp;&nbsp;&nbsp;&nbsp;{_esc(country_display)}"
-                if region_display and region_display != self.i18n.t("birdid.region_entire_country"):
-                    location_info += f" - {_esc(region_display)}"
-                extra_notes.append(location_info)
-            # V4.3: 检查是否选择了国家，如果是 Auto Detect GPS 则提示
-            # V4.3: Prompt if country is still in Auto GPS mode
-            country_code = _adv_confirm.birdid_country_code
-            if country_code is None:  # "自动检测 (GPS)" 模式 / Auto GPS mode
-                reply = StyledMessageBox.question(
-                    self,
-                    self.i18n.t("birdid.country_prompt_title"),
-                    self.i18n.t("birdid.country_prompt_message"),
-                    yes_text=self.i18n.t("labels.yes"),
-                    no_text=self.i18n.t("labels.no")
-                )
-                if reply == StyledMessageBox.Yes:
-                    # 用户选择现在配置国家：打开设置中心 birdid 页
-                    # User chose to configure now: open Settings Center on birdid page
-                    self._open_settings_center("birdid")
-                    return  # 等用户配置后再开始 / Wait for user to configure
-        if _adv_confirm.burst_check:
-            # 张数取实际配置(burst_min_count 可配 3-10),不写死 4——否则改了设置说明就在说谎。
-            # Use the configured minimum instead of a hard-coded 4.
-            extra_notes.append(
-                _ico("square-stack.svg", _sec)
-                + _esc(self.i18n.t("dialogs.note_burst",
-                                   count=_adv_confirm.burst_min_count))
+        if _adv_confirm.birdid_auto_identify and _adv_confirm.birdid_country_code is None:
+            reply = StyledMessageBox.question(
+                self,
+                self.i18n.t("birdid.country_prompt_title"),
+                self.i18n.t("birdid.country_prompt_message"),
+                yes_text=self.i18n.t("labels.yes"),
+                no_text=self.i18n.t("labels.no")
             )
+            if reply == StyledMessageBox.Yes:
+                # 用户选择现在配置国家：打开设置中心 birdid 页
+                # User chose to configure now: open Settings Center on birdid page
+                self._open_settings_center("birdid")
+                return  # 等用户配置后再开始 / Wait for user to configure
 
-        # #126 文件格式筛选是长期设置，开始前必须明示，免得换相机后照片被悄悄跳过
-        # #126: the format filter persists, so state it before every run
-        _fmt_summary = self._format_filter_summary(_adv_confirm)
-        if _fmt_summary:
-            extra_notes.append(
-                _ico("file-search-corner.svg", _sec)
-                + _esc(_fmt_summary)
-            )
-
-        notes_block = ""
-        if extra_notes:
-            notes_block = "<br>" + "<br>".join(extra_notes) + "<br>"
-
-        # 正文转富文本:escape + 换行→<br>,再把哨兵替换为已是 HTML 的附注块
-        # 正文按当前目录布局生成（#120）：平铺不移动文件，单独一段说明；其余布局
-        # 的目录清单由 compute_target_folder 现算，与实际移动的目标目录同源，
-        # 不再在语言包里手写一份会过时的目录名。
-        # Body follows the configured layout (#120): flat never moves files and
-        # gets its own text; other layouts list folders computed by the same
-        # compute_target_folder the move uses, so the names cannot drift.
-        _sentinel = "@@EXTRA_NOTES@@"
-        _raw = self._file_organization_text(
-            _adv_confirm.folder_layout, _adv_confirm.birdid_auto_identify, _sentinel)
-        base_msg = _esc(_raw).replace("\n", "<br>").replace(_sentinel, notes_block)
-
-        reply = StyledMessageBox.question(
-            self,
-            self.i18n.t("dialogs.file_organization_title"),
-            base_msg,
-            yes_text=self.i18n.t("labels.yes"),
-            no_text=self.i18n.t("labels.no")
-        )
-
-        if reply != StyledMessageBox.Yes:
+        if not self._confirm_start():
             return
 
         # V4.3 Phase 4: 视频首次提示 — 检测到视频且用户从未被提示过时弹一次

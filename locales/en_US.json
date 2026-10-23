@@ -127,6 +127,8 @@
     "note_format_filter": "File format filter is on: only {formats} (Settings → Culling)",
     "note_format_filter_none": "File format filter is on, but no format is checked: nothing will be processed (Settings → Culling)",
     "note_burst": "Smart Burst: Merged to highest-rated photo's folder (Min {count} photos)",
+    "note_burst_detect_only": "Smart Burst: Groups burst shots (files are not moved, min {count} photos)",
+    "change_country": "Change Country…",
     "unfinished_title": "Unfinished Task Detected",
     "unfinished_body": "This directory has an incomplete processing record. \"Continue\" resumes from where it stopped; \"Restart\" restores the directory first, then reprocesses.",
     "video_first_tip_title": "Video Processing — First-time Notice",

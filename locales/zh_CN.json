@@ -127,6 +127,8 @@
     "note_format_filter": "已启用文件格式筛选：只处理 {formats}（设置 → 精选）",
     "note_format_filter_none": "已启用文件格式筛选，但一个格式都没勾选：不会处理任何照片（设置 → 精选）",
     "note_burst": "连拍策略：自动合并至最高分照片所在目录（少于{count}张不分组）",
+    "note_burst_detect_only": "智能连拍：识别连拍分组（不移动文件，最少 {count} 张）",
+    "change_country": "更换国家…",
     "unfinished_title": "检测到未完成任务",
     "unfinished_body": "这个目录存在未完成的处理记录。选择“继续处理”会从上次中断的位置继续；选择“重新开始”会先恢复目录，再重新处理。",
     "video_first_tip_title": "视频处理 — 首次提示",
