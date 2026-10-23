@@ -153,6 +153,7 @@ class WorkerSignals(QObject):
     progress = Signal(int)
     log = Signal(str, str)  # message, tag
     finished = Signal(dict)
+    cancelled = Signal(dict)  # #144 用户中途停止 / user stopped midway
     error = Signal(str)
     crop_preview = Signal(object, object, object)  # 裁剪预览图(numpy BGR) + focus_status + rating(星级)
     update_check_done = Signal(bool, object)  # V4.2: 更新检测完成 (has_update, update_info)
@@ -195,10 +196,19 @@ class WorkerThread(threading.Thread):
             # V4.3 Phase 4: 照片处理完后追加视频处理（共用 signals/stop_event）
             # Phase 4: append video processing after photos (shared signals).
             self._process_videos()
-            self.signals.finished.emit(self.stats)
+            # #144：被要求停止的一律算取消（批量模式可能在目录之间停下、正常返回）
+            # #144: a requested stop is a cancel even if processing returned normally
+            if self._stop_event.is_set():
+                self.signals.log.emit(self.i18n.t("logs.processing_cancelled"), "warning")
+                self.signals.cancelled.emit(self.stats)
+            else:
+                self.signals.finished.emit(self.stats)
         except Exception as e:
             if e.__class__.__name__ == "ProcessingCancelled":
+                # #144：发 cancelled 让主窗口恢复按钮（此前只写日志，界面卡在「处理中」）
+                # #144: emit cancelled so the window leaves the processing state
                 self.signals.log.emit(self.i18n.t("logs.processing_cancelled"), "warning")
+                self.signals.cancelled.emit(self.stats)
             else:
                 self.signals.error.emit(str(e))
         finally:
@@ -1836,7 +1846,7 @@ class SuperPickyMainWindow(QMainWindow):
         self.start_btn = QPushButton(self.i18n.t("labels.start_processing"))
         self.start_btn.setMinimumWidth(140)
         self.start_btn.setMinimumHeight(40)
-        self.start_btn.clicked.connect(self._start_processing)
+        self.start_btn.clicked.connect(self._on_start_btn_clicked)
         btn_layout.addWidget(self.start_btn)
 
         parent_layout.addLayout(btn_layout)
@@ -2211,7 +2221,10 @@ class SuperPickyMainWindow(QMainWindow):
                 self.view_results_btn.setObjectName("")
         elif state == "processing":
             self.reset_btn.setEnabled(False)
-            self.start_btn.setEnabled(False)
+            # #144：处理中开始按钮变成「停止」/ the start button becomes Stop while processing
+            self.start_btn.setEnabled(True)
+            self.start_btn.setText(self.i18n.t("labels.stop_processing"))
+            self.start_btn.setObjectName("")
             if hasattr(self, 'view_results_btn'):
                 self.view_results_btn.setVisible(False)
         # 刷新样式（objectName 变化后需要 unpolish/polish）
@@ -2365,6 +2378,48 @@ class SuperPickyMainWindow(QMainWindow):
             folder_lines="\n".join(lines),
             extra_notes=extra_notes,
         )
+
+    def _on_start_btn_clicked(self):
+        """
+        开始按钮：没在处理时开始选片，处理中则是「停止」（#144）。
+        Start button: starts culling, or acts as Stop while processing (#144).
+        """
+        if self.worker and self.worker.is_alive():
+            self._request_stop_processing()
+        else:
+            self._start_processing()
+
+    def _request_stop_processing(self):
+        """
+        确认后请求工作线程停止；线程退出后经 cancelled 信号进 _on_cancelled 恢复界面。
+        已处理的照片保留评分，下次开始时由「未完成记录」提示继续或重来。
+
+        Ask the worker to stop after confirmation; the UI is restored in
+        _on_cancelled when the worker emits `cancelled`. Processed photos keep
+        their ratings and the resume prompt offers continue/restart next time.
+        """
+        reply = StyledMessageBox.question(
+            self,
+            self.i18n.t("messages.stop_confirm_title"),
+            self.i18n.t("messages.stop_confirm"),
+            yes_text=self.i18n.t("labels.stop_processing"),
+            no_text=self.i18n.t("buttons.cancel")
+        )
+        if reply != StyledMessageBox.Yes or not (self.worker and self.worker.is_alive()):
+            return
+        self.worker.request_stop()
+        self.start_btn.setEnabled(False)
+        self.start_btn.setText(self.i18n.t("labels.stopping"))
+        self._update_status(self.i18n.t("labels.stopping"), COLORS['warning'])
+
+    @Slot(dict)
+    def _on_cancelled(self, stats):
+        """
+        用户中途停止：恢复按钮与状态条（有 report.db 就显示已有结果）。
+        Stopped midway: restore buttons and banner (showing results if any).
+        """
+        self._update_status(self.i18n.t("labels.stopped"), COLORS['warning'])
+        self._check_report_csv()
 
     def _start_processing(self):
         """开始处理"""
@@ -2599,6 +2654,7 @@ class SuperPickyMainWindow(QMainWindow):
         self.worker_signals.progress.connect(self._on_progress)
         self.worker_signals.log.connect(self._on_log)
         self.worker_signals.finished.connect(self._on_finished)
+        self.worker_signals.cancelled.connect(self._on_cancelled)
         self.worker_signals.error.connect(self._on_error)
         # V4.2: 裁剪预览信号连接到 BirdID Dock
         if hasattr(self, 'birdid_dock') and self.birdid_dock:
