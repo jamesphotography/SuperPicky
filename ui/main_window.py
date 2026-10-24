@@ -513,6 +513,8 @@ class WorkerThread(threading.Thread):
                     _sys_lines.append(f"  VRAM               : {_si['gpu_vram_gb']} GB")
                 if 'cuda_version' in _si:
                     _sys_lines.append(f"  CUDA               : {_si['cuda_version']}")
+                if 'gpu_warning' in _si:
+                    _sys_lines.append(f"  ⚠️ GPU Fallback    : {_si['gpu_warning']}")
                 _session_header = _session_header + "\n" + "\n".join(_sys_lines)
             except Exception:
                 pass
