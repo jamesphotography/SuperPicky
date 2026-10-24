@@ -1,3 +1,24 @@
+# SuperPicky 4.6.4 RC10
+
+**What's new since RC9:**
+
+- **Correct Bird ID on RTX 50 series graphics cards.** With the CUDA build, RTX 5050/5060/5070/5080/5090
+  cards ran without errors but identified the wrong species, because this build has no GPU code for
+  them. SuperPicky now detects this and uses the CPU instead, so results are correct; the log says
+  so in the session header ("GPU Fallback"). A CUDA build for RTX 50 cards will follow.
+
+---
+
+# SuperPicky 4.6.4 RC10（中文）
+
+**RC9 以来的变化：**
+
+- **RTX 50 系列显卡识鸟恢复正确。** CUDA 版在 RTX 5050/5060/5070/5080/5090 上不报错，但识别出的鸟种是错的——
+  这个版本没有为这一代显卡编译 GPU 代码。现在会自动检测并改用 CPU，结果正确；日志开头会写明「GPU Fallback」。
+  适配 RTX 50 的 CUDA 版随后提供。
+
+---
+
 # SuperPicky 4.6.4 RC9
 
 **What's new since RC8:**
