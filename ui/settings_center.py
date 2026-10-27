@@ -51,6 +51,7 @@ from ui.icon_utils import (  # noqa: F401
     checkbox_indicator_qss,
     load_tinted_icon,
     radio_indicator_qss,
+    tinted_png_path,
 )
 from ui.styles import COLORS  # noqa: F401
 from ui.combo_popup import style_combo_popup
@@ -652,7 +653,6 @@ class SettingsCenter(QDialog):
         返回 / Returns:
             QWidget: 识鸟设置页 / Bird-ID settings page widget.
         """
-        from collections import OrderedDict
 
         from advanced_config import get_advanced_config
         from core.region_data import load_regions_data
@@ -775,48 +775,14 @@ class SettingsCenter(QDialog):
 
         # 构建国家列表 (OrderedDict: 显示名 → 代码)
         # Build country list (OrderedDict: display name → code)
-        is_english = self.i18n.current_lang.startswith("en")
-        country_list: OrderedDict[str, str | None] = OrderedDict()
-        country_list[self.i18n.t("birdid.country_auto_gps")] = None
-        country_list[self.i18n.t("birdid.country_global")] = "GLOBAL"
-        country_list["─" * 15] = "SEP1"
-
-        top10_codes = ["AU", "BR", "CN", "GB", "HK", "ID", "JP", "MY", "SG", "TW", "US"]
-        top10_i18n = {
-            "AU": "birdid.country_au",
-            "BR": "birdid.country_br",
-            "CN": "birdid.country_cn",
-            "GB": "birdid.country_gb",
-            "HK": "birdid.country_hk",
-            "ID": "birdid.country_id",
-            "JP": "birdid.country_jp",
-            "MY": "birdid.country_my",
-            "SG": "birdid.country_sg",
-            "TW": "birdid.country_tw",
-            "US": "birdid.country_us",
-        }
-        code_to_region = {
-            r.get("code"): r for r in regions_data.get("countries", [])
-        }
-        for code in top10_codes:
-            i18n_key = top10_i18n.get(code)
-            if i18n_key:
-                display_name = self.i18n.t(i18n_key)
-            else:
-                region_entry = code_to_region.get(code, {})
-                if is_english:
-                    display_name = region_entry.get("name", code)
-                else:
-                    display_name = region_entry.get("name_cn") or region_entry.get("name", code)
-            country_list[display_name] = code
-
-        # 「更多国家」入口(与识鸟面板 dock 能力对等):补上分隔符 + 完整列表入口,
-        # 选中后弹出 show_country_picker_dialog(含搜索框的完整国家/大洲列表)。
-        # "More countries" entry (parity with the Bird-ID dock): a separator
-        # plus a full-list entry that opens show_country_picker_dialog
-        # (a searchable full country/continent list) on selection.
-        country_list["─" * 15 + " "] = "SEP2"
-        country_list[self.i18n.t("birdid.country_more")] = "MORE"
+        # #143：常用国家（默认 11 国，用户可调整），与识鸟面板共用；
+        # 末尾仍是「更多国家」入口（弹出带搜索的完整国家 / 大洲列表）
+        # #143: the shortlist (defaults, user adjustable), shared with the
+        # Bird-ID dock; "More countries" still opens the searchable full list
+        from core.country_shortlist import build_country_entries, effective_shortlist, system_country_code
+        country_list = build_country_entries(
+            self.i18n.t, self.i18n.current_lang.startswith("en"), regions_data,
+            effective_shortlist(cfg.birdid_country_shortlist, system_country_code()))
 
         # 保存 country_list 供 _on_country_changed_birdid 使用
         # Store country_list for _on_country_changed_birdid to use
@@ -832,22 +798,17 @@ class SettingsCenter(QDialog):
         country_label.setFixedWidth(160)
 
         self._bid_country = QComboBox()
-        for display_name, code in country_list.items():
-            self._bid_country.addItem(display_name)
-            if code in ("SEP1", "SEP2"):
-                # 禁用分隔符项 / Disable separator item
-                idx = self._bid_country.count() - 1
-                model = cast(Any, self._bid_country.model())
-                item: QStandardItem | None = model.item(idx)
-                if item is not None:
-                    item.setEnabled(False)
-                    item.setSelectable(False)
+        self._fill_bid_country(country_list)
 
         country_row.addWidget(country_label)
         # 弹出列表容器需逐个接线，祖先样式表够不到顶层 popup（见 ui/combo_popup.py）。
         # Per-instance styling: ancestor sheets cannot reach a top-level popup.
         style_combo_popup(self._bid_country)
         country_row.addWidget(self._bid_country, 1)
+        # #143：编辑「常用国家」（最近选过的，可逐个移除）/ edit the shortlist
+        self._bid_edit_shortlist = QPushButton(self.i18n.t("settings.birdid_edit_shortlist"))
+        self._bid_edit_shortlist.clicked.connect(self._edit_country_shortlist)
+        country_row.addWidget(self._bid_edit_shortlist)
         lay.addLayout(country_row)
 
         # 生效条件提示：有 GPS 的照片按拍摄地自动判断省州/国家，手选不参与；
@@ -1097,6 +1058,61 @@ class SettingsCenter(QDialog):
         if idx >= 0:
             self._bid_region.setCurrentIndex(idx)
 
+    def _fill_bid_country(self, country_list: dict) -> None:
+        """
+        把 {显示名 → 代码} 填进国家下拉并禁用分隔符项（建页与编辑常用国家后共用）。
+        Fill the country combo and disable separators (used on build and after editing).
+        """
+        self._bid_country.clear()
+        for display_name, code in country_list.items():
+            self._bid_country.addItem(display_name)
+            if code in ("SEP1", "SEP2"):
+                # 禁用分隔符项 / Disable separator item
+                idx = self._bid_country.count() - 1
+                model = cast(Any, self._bid_country.model())
+                item: QStandardItem | None = model.item(idx)
+                if item is not None:
+                    item.setEnabled(False)
+                    item.setSelectable(False)
+
+    def _edit_country_shortlist(self) -> None:
+        """
+        #143：编辑常用国家后重建国家下拉，保留当前选中的国家。
+        #143: edit the shortlist, then rebuild the combo keeping the current country.
+        """
+        from advanced_config import get_advanced_config
+        from core.country_shortlist import (
+            build_country_entries, country_display_name, effective_shortlist, system_country_code,
+        )
+        from ui.country_shortlist_dialog import CountryShortlistDialog
+
+        cfg = get_advanced_config()
+        regions = self._bid_regions_data
+        is_english = self.i18n.current_lang.startswith("en")
+        code_to_region = {r.get("code"): r for r in regions.get("countries", [])}
+        home = system_country_code()
+        codes = effective_shortlist(cfg.birdid_country_shortlist, home)
+        defaults = effective_shortlist(None, home)
+        names = {c: country_display_name(c, self.i18n.t, is_english, code_to_region) or c
+                 for c in [*codes, *defaults]}
+        dlg = CountryShortlistDialog(self.i18n, codes, names, default_codes=defaults, parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        cfg.set_birdid_country_shortlist(dlg.result_codes())
+
+        current_code = self._bid_country_list.get(self._bid_country.currentText())
+        self._bid_country_list = build_country_entries(
+            self.i18n.t, is_english, regions, effective_shortlist(cfg.birdid_country_shortlist, home))
+        self._bid_country.blockSignals(True)
+        try:
+            self._fill_bid_country(self._bid_country_list)
+            for display_name, code in self._bid_country_list.items():
+                if code == current_code:
+                    self._bid_country.setCurrentText(display_name)
+                    break
+        finally:
+            self._bid_country.blockSignals(False)
+
     def _on_bid_country_changed(self, country_display: str) -> None:
         """
         国家下拉切换时动态填充地区下拉菜单；选中「更多国家」则弹出完整列表对话框；
@@ -1128,9 +1144,9 @@ class SettingsCenter(QDialog):
             from advanced_config import get_advanced_config
             from ui.birdid_dock import show_country_picker_dialog
 
-            top10_and_global = {
-                "AU", "BR", "CN", "GB", "HK", "ID", "JP", "MY", "SG", "TW", "US", "GLOBAL",
-            }
+            # 「更多国家」列出全部国家（含常用国家），只排除「全球」——常用国家用户可删，
+            # 删掉的也得能在这里找回 / every country is listed; only Global is excluded
+            top10_and_global = {"GLOBAL"}
             # 取消时恢复用户上次保存的国家(而非当前下拉文本——此刻它已是
             # "更多国家"本身)。按代码恢复，不依赖存下来的显示名的语言（#122 跟进）。
             # On cancel, restore the last SAVED country by code (the combo's
@@ -1866,10 +1882,47 @@ class SettingsCenter(QDialog):
         lay.addWidget(self._xmp_embedded)
 
         emb_hint = QLabel(self.i18n.t("advanced_settings.xmp_mode_embedded_hint"))
+        emb_hint.setWordWrap(True)
         emb_hint.setStyleSheet(
             f"color:{COLORS['text_muted']};font-size:11px;margin-left:24px;"
         )
         lay.addWidget(emb_hint)
+
+        # 专有 RAW 写本体开关。**默认关闭**，且必须留在这里说清楚例外：
+        # 上面的「写入文件」对 NEF/CR3/ARW 这些专有 RAW 一直不生效（只写边车，
+        # 快 ~190ms/张且不动原文件），界面此前只字不提，用户以为选了就写进文件。
+        # 打开它是给自家软件不读 XMP 边车的用户留的出口（如尼康 NX Studio）。
+        # 它是「写入文件」的子选项（只在该模式下生效，见
+        # advanced_config.get_arw_write_mode_for_file），所以紧挨着放在「写入文件」
+        # 下面并缩进，选了另外两项时置灰。此前它排在三个单选项之后、圆圈样式又
+        # 一样，用户把它当成了第四个互斥选项（issue #139）。
+        # Opt-in for writing into proprietary RAW bodies; off by default. It is
+        # a sub-option of "Write to file" (only effective there), so it sits
+        # indented under that radio and is disabled for the other two modes;
+        # placed after all three radios it read as a fourth choice (#139).
+        self._raw_embed = QCheckBox(
+            self.i18n.t("advanced_settings.raw_embed_metadata"))
+        muted_check = tinted_png_path("circle-check.svg", COLORS['text_muted'], 15)
+        self._raw_embed.setStyleSheet(
+            checkbox_indicator_qss()
+            + "QCheckBox { margin-left: 24px; }"
+            + f"QCheckBox:disabled {{ color: {COLORS['text_muted']}; }}"
+            + f"QCheckBox::indicator:checked:disabled {{ image: url({muted_check}); }}"
+        )
+        try:
+            self._raw_embed.setChecked(bool(cfg.raw_embed_metadata))
+        except Exception:
+            self._raw_embed.setChecked(False)
+        self._raw_embed.toggled.connect(self._on_raw_embed_changed)
+        lay.addWidget(self._raw_embed)
+
+        self._raw_embed_hint = QLabel(
+            self.i18n.t("advanced_settings.raw_embed_metadata_hint"))
+        self._raw_embed_hint.setWordWrap(True)
+        self._raw_embed_hint.setStyleSheet(
+            f"color:{COLORS['text_muted']};font-size:11px;margin-left:48px;"
+        )
+        lay.addWidget(self._raw_embed_hint)
 
         # 选项2: 侧车文件 / Sidecar
         self._xmp_sidecar = QRadioButton(
@@ -1907,30 +1960,9 @@ class SettingsCenter(QDialog):
         # 三选一互斥组：任一按钮的 toggled(True) 都对应一次实际切换 /
         # Any button's toggled(True) corresponds to one actual switch.
         self._xmp_button_group.buttonToggled.connect(self._on_xmp_mode_changed)
-
-        # 专有 RAW 写本体开关。**默认关闭**，且必须留在这里说清楚例外：
-        # 上面的「写入文件」对 NEF/CR3/ARW 这些专有 RAW 一直不生效（只写边车，
-        # 快 ~190ms/张且不动原文件），界面此前只字不提，用户以为选了就写进文件。
-        # 打开它是给自家软件不读 XMP 边车的用户留的出口（如尼康 NX Studio）。
-        # Opt-in for writing into proprietary RAW bodies; off by default. The
-        # radio above never applied to NEF/CR3/ARW and the UI used to hide that.
-        self._raw_embed = QCheckBox(
-            self.i18n.t("advanced_settings.raw_embed_metadata"))
-        self._raw_embed.setStyleSheet(checkbox_indicator_qss())
-        try:
-            self._raw_embed.setChecked(bool(cfg.raw_embed_metadata))
-        except Exception:
-            self._raw_embed.setChecked(False)
-        self._raw_embed.toggled.connect(self._on_raw_embed_changed)
-        lay.addWidget(self._raw_embed)
-
-        raw_embed_hint = QLabel(
-            self.i18n.t("advanced_settings.raw_embed_metadata_hint"))
-        raw_embed_hint.setWordWrap(True)
-        raw_embed_hint.setStyleSheet(
-            f"color:{COLORS['text_muted']};font-size:11px;"
-        )
-        lay.addWidget(raw_embed_hint)
+        # 专有 RAW 写本体开关只在「写入文件」下可用 / Sub-option enabled only under "Write to file"
+        self._xmp_embedded.toggled.connect(self._raw_embed.setEnabled)
+        self._raw_embed.setEnabled(self._xmp_embedded.isChecked())
 
         # ── 分隔线 / Divider ──────────────────────────────────────────────────
         lay.addWidget(self._divider())

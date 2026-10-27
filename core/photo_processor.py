@@ -202,6 +202,9 @@ class ProcessingCallbacks:
     progress: Optional[Callable[[int], None]] = None
     should_stop: Optional[Callable[[], bool]] = None
     crop_preview: Optional[Callable[[Any], None]] = None  # V4.2: 裁剪预览回调
+    # 收尾阶段状态文字（汇总识鸟 / 定星 / 写评分 x/y / 整理 / 清理），进度条此时停在 99%~100%
+    # Stage status text for the post-processing stages, while the bar sits at 99-100%
+    status: Optional[Callable[[str], None]] = None
 
 
 @dataclass
@@ -361,6 +364,18 @@ class PhotoProcessor:
         """内部进度更新"""
         if self.callbacks.progress:
             self.callbacks.progress(percent)
+
+    def _status(self, key: str, **kwargs) -> None:
+        """
+        收尾阶段状态（只显示在状态条，不进日志）；回调出错不影响处理。
+        Stage status for the banner only (not logged); callback errors are ignored.
+        """
+        if not self.callbacks.status:
+            return
+        try:
+            self.callbacks.status(self.i18n.t(key, **kwargs))
+        except Exception:
+            pass
 
     def request_stop(self) -> None:
         self._stop_requested = True
@@ -1339,6 +1354,15 @@ class PhotoProcessor:
         env_exif_batch = os.getenv("SUPERPICKY_EXIF_BATCH_SIZE", "").strip()
         if env_exif_batch.isdigit():
             metadata_batch_size = max(8, int(env_exif_batch))
+        # 收尾阶段改用小批次：V2 评星把星级写入全部挂到收尾才写，每批写完才报一次
+        # 进度；64 条一批时外接盘上第一批要很久，状态条长时间停在 0（#150）。
+        # 专有 RAW 本就逐条写边车，小批次几乎不增加开销。
+        # Smaller batches once finalizing starts: V2 parks every rating write
+        # until then and progress is reported per batch, so a 64-item first
+        # batch on a slow external drive sat at 0 for ages (#150). Proprietary
+        # RAWs are written one sidecar at a time anyway, so this costs little.
+        exif_final_batch_size = min(metadata_batch_size, 16)
+        metadata_batch_limit = [metadata_batch_size]
         
         metadata_async_enabled = os.getenv("SUPERPICKY_EXIF_ASYNC", "1").strip().lower() not in {"0", "false", "no", "off"}
         metadata_queue_max_batches = 6
@@ -1351,6 +1375,37 @@ class PhotoProcessor:
         metadata_writer_errors: List[Exception] = []
         metadata_writer_stats = {'flush_ms': 0.0, 'flush_count': 0}
         metadata_writer_stats_lock = threading.Lock()
+        # 收尾写评分的进度与「连续超时就停」；final_phase 置位后每批写完报一次状态
+        # End-of-run write progress and the stop-after-timeouts rule; once
+        # final_phase is set, each finished batch reports a status line.
+        from core.exif_write_guard import ExifWriteGuard
+        from tools.exiftool_manager import BATCH_IDLE_TIMEOUT
+        exif_guard = ExifWriteGuard()
+        exif_final_phase = threading.Event()
+        exif_abort_logged = [False]
+
+        def write_metadata_batch(batch: List[Dict]) -> None:
+            """
+            写一批评分并记账；已因连续超时停止时直接跳过。写入线程与同步写入共用。
+            Write one batch and account for it; skipped once writing was stopped.
+            """
+            batch_files = [it.get('file') for it in batch]
+            if exif_guard.aborted:
+                exif_guard.record_skipped(len(batch), batch_files)
+            else:
+                result = exiftool_mgr.batch_set_metadata(batch) or {}
+                exif_guard.record(len(batch), result, batch_files)
+                if result.get('timed_out'):
+                    self._log(self.i18n.t("logs.exif_batch_timeout", seconds=BATCH_IDLE_TIMEOUT,
+                                          count=int(result.get('failed', len(batch)) or 0)), "warning")
+                if exif_guard.aborted and not exif_abort_logged[0]:
+                    exif_abort_logged[0] = True
+                    self._log(self.i18n.t("logs.exif_write_aborted",
+                                          times=ExifWriteGuard.MAX_CONSECUTIVE_TIMEOUTS,
+                                          count=max(0, exif_guard.photos_total - exif_guard.photos_done)), "error")
+            if exif_final_phase.is_set():
+                self._status("labels.stage_exif_write", done=exif_guard.photos_done,
+                             total=exif_guard.photos_total)
         
         if metadata_async_enabled:
             def metadata_writer_worker():
@@ -1361,7 +1416,7 @@ class PhotoProcessor:
                         break
                     exif_start = time.time()
                     try:
-                        exiftool_mgr.batch_set_metadata(batch)
+                        write_metadata_batch(batch)
                     except Exception as e:
                         metadata_writer_errors.append(e)
                     finally:
@@ -1388,6 +1443,7 @@ class PhotoProcessor:
                 return
             batch = metadata_batch.copy()
             metadata_batch.clear()
+            exif_guard.add_queued(len(batch), [it.get('file') for it in batch])
             if metadata_async_enabled and metadata_queue is not None:
                 enqueue_start = time.time()
                 metadata_queue.put(batch)  # 队列满时会背压，避免内存无限增长
@@ -1396,7 +1452,7 @@ class PhotoProcessor:
                     self._perf_add_stage('exif_enqueue_wait', enqueue_wait_ms)
                 return
             exif_start = time.time()
-            exiftool_mgr.batch_set_metadata(batch)
+            write_metadata_batch(batch)
             exif_ms = (time.time() - exif_start) * 1000
             self._perf_add_stage('exif_flush', exif_ms)
             self._perf_stats['exif_flush_count'] += 1
@@ -1405,7 +1461,7 @@ class PhotoProcessor:
             if not item or not item.get('file'):
                 return
             metadata_batch.append(item)
-            if len(metadata_batch) >= metadata_batch_size:
+            if len(metadata_batch) >= metadata_batch_limit[0]:
                 flush_metadata_batch()
 
         def queue_star_metadata(item: Dict, original_prefix: str, in_pool: bool):
@@ -3357,6 +3413,11 @@ class PhotoProcessor:
                 pass
             raise ProcessingCancelled("Processing cancelled")
 
+        # 收尾开始：进度条此后停在 99%，状态条逐步说明在做什么
+        # Post-processing starts: the bar stays at 99%, the banner names each step
+        self._status("labels.stage_finalize_birdid")
+        metadata_batch_limit[0] = exif_final_batch_size
+
         if yolo_prefetch_thread is not None:
             try:
                 yolo_prefetch_thread.join(timeout=30)
@@ -3430,6 +3491,7 @@ class PhotoProcessor:
         # then back-fill parked EXIF items (rating + caption head line), rating
         # records, stats, and the report DB.
         if v2_enabled and v2_pending:
+            self._status("labels.stage_rating", count=len(v2_pending))
             # V4.6(rating-v2): 识鸟结果此刻已全部就绪(collect wait=True 在前),
             # 填入 species 后配额将按鸟种分组执行;未识别/未开识鸟为 None(单组)。
             # V4.6 (rating-v2): Bird ID results are all in by now; with species
@@ -3588,6 +3650,11 @@ class PhotoProcessor:
             pending_with_caption = sum(1 for it in metadata_batch if it.get('caption'))
             self._log(self.i18n.t("logs.exif_batch_submit",
                 count=len(metadata_batch), caption_count=pending_with_caption))
+        exif_final_phase.set()
+        if exif_guard.total:
+            self._status("labels.stage_exif_write", done=exif_guard.photos_done,
+                         total=exif_guard.photos_total)
+        exif_write_start = time.time()
         flush_metadata_batch()
         if metadata_async_enabled and metadata_queue is not None:
             pending_batches = metadata_queue.qsize()
@@ -3609,6 +3676,14 @@ class PhotoProcessor:
             self._perf_stats['exif_flush_count'] += async_flush_count
             if metadata_writer_errors:
                 self._log(self.i18n.t("logs.exif_writer_errors", count=len(metadata_writer_errors)), "warning")
+        # 汇总一行进日志（带时间戳），便于从 superpicky.log 看出收尾写入花了多久
+        # One summary line in superpicky.log showing how long the final writes took
+        if exif_guard.total:
+            # 按张汇报；失败数是条目数，封顶到张数，免得出现「写了 86 张、失败 100 张」
+            # Reported per photo; failures are item counts, capped at the photo count.
+            self._log(self.i18n.t("logs.exif_write_summary", done=exif_guard.photos_done,
+                                  seconds=time.time() - exif_write_start,
+                                  failed=min(exif_guard.failed, exif_guard.photos_total)))
         
         # SQLite 数据库会在 _update_csv_keypoint_data 中自动提交
         # 无需手动 flush
@@ -4183,6 +4258,8 @@ class PhotoProcessor:
             # 每 50 张或最后一张上报一次，让用户看到「100% 之后仍在整理文件」
             if idx % 50 == 0 or idx == total_to_move:
                 self._log(self.i18n.t("logs.organizing_progress", done=idx, total=total_to_move), "info")
+            if idx % 10 == 0 or idx == total_to_move:
+                self._status("labels.stage_organizing", done=idx, total=total_to_move)
 
         self._log(self.i18n.t("logs.organizing_complete", moved=moved_count), "info")
         
@@ -4229,6 +4306,7 @@ class PhotoProcessor:
         """V4.0.6: Clean up entire cache directory (temp_preview + yolo_debug + crop_debug)"""
         import shutil
         self._log(self.i18n.t("logs.cleaning_temp"))
+        self._status("labels.stage_cleanup")
 
         cache_dir = os.path.join(self.dir_path, ".superpicky", "cache")
         if os.path.exists(cache_dir):

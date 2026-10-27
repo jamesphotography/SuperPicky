@@ -117,3 +117,49 @@ def test_filter_panel_scoped_stylesheets_do_not_leak():
     panel = FilterPanel(get_i18n())
     sheet = panel.styleSheet()
     assert sheet.strip().startswith("QWidget#"), f"面板样式表缺选择器: {sheet}"
+
+
+def test_hovered_item_is_clearly_highlighted():
+    """
+    #149：接线后悬停项要用强调色高亮，而不是与底色几乎相同的 #262626。
+
+    Qt 默认的 QComboMenuDelegate 不认样式表的 ::item 规则；style_combo_popup
+    换成 QStyledItemDelegate 后，GLOBAL_STYLE 里的悬停规则才生效。
+
+    #149: after wiring, the hovered item uses the accent tint; the stock
+    menu delegate ignored ::item rules and hover was nearly invisible.
+    """
+    from PySide6.QtCore import QEvent, Qt
+    from PySide6.QtGui import QColor, QMouseEvent
+
+    previous_qss = _app.styleSheet()
+    _app.setStyleSheet(GLOBAL_STYLE)
+    combo = QComboBox()
+    combo.addItems([f"Item {i}" for i in range(6)])
+    style_combo_popup(combo)
+    assert combo.itemDelegate().metaObject().className() == "QStyledItemDelegate"
+
+    combo.show()
+    combo.showPopup()
+    QApplication.processEvents()
+    try:
+        view = combo.view()
+        pos = view.visualRect(view.model().index(3, 0)).center()
+        QApplication.sendEvent(view.viewport(), QMouseEvent(
+            QEvent.MouseMove, pos, view.viewport().mapToGlobal(pos),
+            Qt.NoButton, Qt.NoButton, Qt.NoModifier))
+        QApplication.processEvents()
+        img = view.viewport().grab().toImage()
+
+        def _bg(row: int) -> QColor:
+            rect = view.visualRect(view.model().index(row, 0))
+            return img.pixelColor(rect.left() + 3, rect.center().y())
+
+        hovered, plain = _bg(3), _bg(0)
+        # 强调色是青绿：悬停项绿通道要明显高于红通道，普通项则是中性灰
+        # The accent is teal: the hovered row is clearly green-tinted, plain rows are grey.
+        assert hovered.green() - hovered.red() >= 20, hovered.name()
+        assert abs(plain.green() - plain.red()) <= 2, plain.name()
+    finally:
+        combo.hidePopup()
+        _app.setStyleSheet(previous_qss)

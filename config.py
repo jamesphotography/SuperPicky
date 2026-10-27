@@ -756,6 +756,80 @@ def ensure_cv2_thread_pool() -> None:
         pass
 
 
+def cuda_arch_supported(torch_module) -> bool:
+    """
+    当前 torch 是否为 0 号显卡编译过 GPU 代码 / Whether this torch build has kernels for GPU 0.
+
+    同一主版本内高小版本能跑低小版本的二进制（sm_89 跑 sm_86），跨主版本不行；
+    只有 PTX（compute_XX）不算——RTX 50 配 cu118 靠 PTX 现编能跑，但识鸟结果是错的。
+    拿不到编译列表时按支持处理，不误伤。
+
+    Same-major binaries run on a higher minor (sm_89 runs sm_86), never across
+    majors. PTX alone does not count: RTX 50 on cu118 runs via PTX JIT but
+    produces wrong Bird ID results. An unavailable arch list is trusted.
+
+    参数:
+    torch_module: torch 模块 / The torch module.
+
+    返回:
+    bool: 支持为 True / True when supported.
+    """
+    try:
+        major, minor = torch_module.cuda.get_device_capability(0)
+        arch_list = torch_module.cuda.get_arch_list() or []
+    except Exception:
+        return True
+    if not arch_list:
+        return True
+    for arch in arch_list:
+        if not arch.startswith("sm_"):
+            continue
+        digits = arch[3:].rstrip("abf")
+        if len(digits) < 2 or not digits.isdigit():
+            continue
+        if int(digits[:-1]) == major and int(digits[-1]) <= minor:
+            return True
+    return False
+
+
+# None：未检测；否则为 (可用, 不可用原因) / None = not checked yet, else (usable, reason).
+_CUDA_SUPPORT_CACHE = None
+
+
+def _cuda_usable(torch_module) -> bool:
+    """
+    检测一次并缓存；不支持时记录原因、写一条警告日志 / Check once, cache, log a warning when unsupported.
+    """
+    global _CUDA_SUPPORT_CACHE
+    if _CUDA_SUPPORT_CACHE is None:
+        if cuda_arch_supported(torch_module):
+            _CUDA_SUPPORT_CACHE = (True, None)
+        else:
+            try:
+                major, minor = torch_module.cuda.get_device_capability(0)
+                name = torch_module.cuda.get_device_name(0)
+            except Exception:
+                major, minor, name = "?", "?", "GPU"
+            cuda_ver = getattr(getattr(torch_module, "version", None), "cuda", "?")
+            reason = (
+                f"{name} (sm_{major}{minor}) is not supported by this build "
+                f"(CUDA {cuda_ver}); using CPU — RTX 50 series needs the CUDA 12.8 build"
+            )
+            _CUDA_SUPPORT_CACHE = (False, reason)
+            logger.warning("[Device] %s", reason)
+    return _CUDA_SUPPORT_CACHE[0]
+
+
+def cuda_unsupported_reason() -> Optional[str]:
+    """
+    显卡因 torch 未编译其架构而被弃用时的原因，否则 None / Why CUDA was rejected, or None.
+    """
+    get_best_device()
+    if _CUDA_SUPPORT_CACHE is None:
+        return None
+    return _CUDA_SUPPORT_CACHE[1]
+
+
 def get_best_device():
     """
     返回当前环境下最合适的 Torch 设备对象 / Return the most appropriate Torch device object for the current environment.
@@ -788,7 +862,7 @@ def get_best_device():
                 return torch_module.device("mps")
             return torch_module.device("cpu")
 
-        if torch_module.cuda.is_available():
+        if torch_module.cuda.is_available() and _cuda_usable(torch_module):
             return torch_module.device("cuda")
         return torch_module.device("cpu")
     except Exception:

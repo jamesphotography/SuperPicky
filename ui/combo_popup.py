@@ -34,7 +34,7 @@ individually via :func:`style_combo_popup`.
 """
 from __future__ import annotations
 
-from PySide6.QtWidgets import QComboBox
+from PySide6.QtWidgets import QComboBox, QStyledItemDelegate
 
 from ui.styles import COLORS
 
@@ -98,6 +98,16 @@ def style_combo_popup(
     view = combo.view()
     if view is None:
         return False
+    # Qt 默认用 QComboMenuDelegate 按「菜单项」绘制条目，样式表的 ::item 规则对它
+    # 不生效，悬停只剩 #1a1a1a→#262626 的细微差别（#149）。换成 QStyledItemDelegate
+    # 后 GLOBAL_STYLE 里的 QComboBox QAbstractItemView::item:hover 才会生效。
+    # 只替换 Qt 默认委托，调用方自己装的委托不动。
+    # Qt's default QComboMenuDelegate ignores ::item stylesheet rules, leaving
+    # hover almost invisible (#149); QStyledItemDelegate honours the
+    # GLOBAL_STYLE hover rule. Only the stock delegate is replaced.
+    delegate = combo.itemDelegate()
+    if delegate is None or delegate.metaObject().className() == "QComboMenuDelegate":
+        combo.setItemDelegate(QStyledItemDelegate(combo))
     container = view.parentWidget()
     if container is None:
         return False

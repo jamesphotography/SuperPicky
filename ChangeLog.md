@@ -1,3 +1,120 @@
+# SuperPicky 4.6.4 RC11
+
+**What's new since RC10:**
+
+- **Open several photos in an external app at once.** **Open with …** in the right-click menu and
+  Ctrl/Cmd+1…9 now open every checked photo, not just one. Right-clicking a checked photo opens the
+  whole selection (the menu shows how many); right-clicking an unchecked photo opens only that one;
+  fullscreen opens the current photo. Opening more than 20 at once asks first.
+- **Star rating at the top of fullscreen is no longer stale.** After switching the rating filter to
+  0 stars, or using Previous/Next onto a 0-star photo, the top bar kept showing the previous
+  photo's stars. (#151)
+- **"Other birds" in the Species list works.** It only appears when the current rating filter has
+  such photos, so picking it no longer shows an empty grid and makes the item disappear. It is now
+  labelled "Other birds" instead of the folder name "Other_Birds". (#148)
+- **Correct photo count while writing ratings.** The last step of culling counted write jobs
+  instead of photos, so the total could be much larger than the number of photos. It now counts photos and updates more often,
+  instead of sitting at 0 on slower (e.g. external) drives. (#150)
+- **Visible hover in drop-down lists.** The item under the mouse in drop-down lists (Species,
+  Countries and others) is now highlighted in the accent colour, like the right-click menu. (#149)
+- **No more freeze after changing species in bulk.** After the move step, writing the new species
+  into the photos now runs in the background, with progress in the results browser's status bar
+  ("Writing species to photos 12/40…"). (#147)
+
+---
+
+# SuperPicky 4.6.4 RC11（中文）
+
+**RC10 以来的变化：**
+
+- **外部应用可一次打开多张照片。** 右键「用 … 打开」和 Ctrl/Cmd+1…9 现在会打开全部勾选的照片，不再只开一张。
+  右键点在勾选的照片上打开整个勾选集（菜单写明张数），点在未勾选的照片上只开这一张；全屏打开当前这张。
+  一次超过 20 张会先确认。
+- **全屏顶部星级不再残留。** 把评分筛选切到 0 星、或用上一张/下一张翻到 0 星照片时，顶部仍显示上一张的星级。（#151）
+- **鸟种下拉的「其他鸟类」恢复正常。** 只在当前星级筛选下确有这类照片时才出现，选中后不再是空白、选项也不会消失；
+  英文界面显示为「Other birds」，不再是目录名「Other_Birds」。（#148）
+- **写入评分的张数正确了。** 选片最后一步原来数的是写入任务而不是照片，总数会明显多于照片张数；现在按张数显示，
+  更新也更及时，外接盘上不会长时间停在 0。（#150）
+- **下拉列表有悬停效果。** 鸟种、国家等下拉列表里鼠标所在的一项会用强调色高亮，与右键菜单一致。（#149）
+- **批量改鸟种后界面不再卡住。** 移动文件之后，把新鸟名写入照片改在后台进行，结果浏览器底部状态栏显示进度
+  （「正在把鸟名写入照片 12/40…」）。（#147）
+
+---
+
+# SuperPicky 4.6.4 RC10
+
+**What's new since RC9:**
+
+- **Correct Bird ID on RTX 50 series graphics cards.** With the CUDA build, RTX 5050/5060/5070/5080/5090
+  cards ran without errors but identified the wrong species, because this build has no GPU code for
+  them. SuperPicky now detects this and uses the CPU instead, so results are correct; the log says
+  so in the session header ("GPU Fallback"). A CUDA build for RTX 50 cards will follow.
+
+---
+
+# SuperPicky 4.6.4 RC10（中文）
+
+**RC9 以来的变化：**
+
+- **RTX 50 系列显卡识鸟恢复正确。** CUDA 版在 RTX 5050/5060/5070/5080/5090 上不报错，但识别出的鸟种是错的——
+  这个版本没有为这一代显卡编译 GPU 代码。现在会自动检测并改用 CPU，结果正确；日志开头会写明「GPU Fallback」。
+  适配 RTX 50 的 CUDA 版随后提供。
+
+---
+
+# SuperPicky 4.6.4 RC9
+
+**What's new since RC8:**
+
+- **You can stop culling midway.** While culling runs, the **Start Culling** button becomes
+  **Stop**. Photos already processed keep their ratings; next time you start, you can continue
+  from where it stopped or restart. (#144)
+- **No more silent wait at "100%".** The last steps — finishing Bird ID, assigning star
+  ratings, writing ratings into the photos, organizing and cleaning up, and videos — now show
+  what they are doing and how far along they are (e.g. "Writing ratings to photos 320/1200…").
+  If ExifTool stops responding (often antivirus scanning the photo folder), SuperPicky now notices
+  within 60 seconds instead of waiting over 5 minutes per batch, stops after two timeouts in a
+  row and explains what to do. The log records how long writing ratings took.
+- **Change the country right from the start dialog.** When Bird ID is on, the Start Culling
+  confirmation has a **Change Country…** link; pick a country and the dialog comes back showing
+  it. The current country is shown in bold. (#145)
+- **Frequent countries you can edit.** The country list still starts with the usual countries,
+  plus your own country (from your computer's region setting). A new country you pick in
+  **More Countries** is added automatically, and **Edit…** next to the country list lets you
+  remove countries or restore the defaults. **More Countries** now lists every country. (#143)
+- **Reset now really clears the folder.** On Windows, three report files could be left behind
+  after a reset, so the main window still offered **View Results**. Fixed; the button is now
+  always called **Reset** (it no longer turns into "Reprocess"). (#146)
+- **Burst note is accurate.** With the flat layout, or with burst folders off, the start dialog
+  now says bursts are only grouped and no files are moved. (#145)
+- **GWTE finds Green-winged Teal.** The 4-letter code now points to the North American bird
+  (*Anas carolinensis*) instead of Eurasian Teal. (#140)
+- **Clearer "Write to file" wording.** It no longer claims ratings are written into CR3 and
+  other proprietary RAW files; the RAW option now sits under **Write to file**. (#139)
+
+---
+
+# SuperPicky 4.6.4 RC9（中文）
+
+**RC8 以来的变化：**
+
+- **选片中途可以停止。** 处理时「开始选片」按钮变成「停止」。已处理的照片保留评分；下次开始可以从停下的地方
+  继续，或重新开始。（#144）
+- **不再在「100%」干等。** 收尾几步——汇总识鸟、定星、把评分写入照片、整理与清理、视频——现在会显示在做什么、
+  做到哪（例如「正在把评分写入照片 320/1200…」）。ExifTool 没有响应时（常见是杀毒软件在扫描照片文件夹），
+  60 秒内就会发现，不再每批干等 5 分多钟；连续两次超时就停止并说明怎么办。日志里会记下写入评分用了多久。
+- **开始前可以直接换国家。** 开着识鸟时，开始选片的确认框里有「更换国家…」链接，选好国家会回到确认框并显示
+  新国家；当前国家加粗显示。（#145）
+- **常用国家可以编辑。** 国家列表仍以常用国家开头，你所在的国家（按电脑的地区设置）也会在里面。在「更多国家」
+  里选的新国家会自动加进来；国家列表旁的「编辑…」可以移除或恢复默认。「更多国家」现在列出全部国家。（#143）
+- **重置会真正清干净。** Windows 上重置后可能残留 3 个报告文件，主界面仍显示「查看结果」。已修复；按钮统一叫
+  「重置」，不再变成「重新处理」。（#146）
+- **连拍说明更准确。** 输出方式为平铺、或关闭「连拍归入文件夹」时，确认框说明只识别连拍分组、不移动文件。（#145）
+- **GWTE 能找到美洲绿翅鸭。** 4 位代码改为指向北美的绿翅鸭（*Anas carolinensis*），不再是欧亚绿翅鸭。（#140）
+- **「写入文件」说明更清楚。** 不再声称评分会写进 CR3 等专有 RAW 文件；RAW 选项挪到「写入文件」下。（#139）
+
+---
+
 # SuperPicky 4.6.4 RC8
 
 **What's new since RC7:**

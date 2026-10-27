@@ -650,10 +650,12 @@ class FilterPanel(QWidget):
         for number, sp in enumerate(species, 1):
             self.species_combo.addItem(f"{number}. {species_cn(sp, self.i18n.current_lang)}", sp)
         if has_other:
-            # 与磁盘上的「其他鸟类」目录同名，让下拉和目录结构对得上
-            # Same label as the on-disk folder so the two line up.
+            # 对应磁盘上的「其他鸟类」目录，但用易读文案：英文目录名 Other_Birds
+            # 带下划线，直接拿来当选项显示让人困惑（#148）。
+            # Maps to the on-disk "other birds" folder, but with a readable
+            # label: the English folder name Other_Birds has an underscore (#148).
             self.species_combo.addItem(
-                self.i18n.t("logs.folder_other_birds"), SPECIES_FILTER_OTHER
+                self.i18n.t("browser.species_other"), SPECIES_FILTER_OTHER
             )
         idx = self.species_combo.findData(current)
         if idx >= 0:

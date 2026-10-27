@@ -110,6 +110,42 @@ class StyledMessageBox(QDialog):
             content_layout.addWidget(msg_label)
 
         layout.addWidget(content_frame)
+
+        # 文字链接按钮（btn_style == "link"，如开始确认框的「更换国家…」）：单独一行放在正文下方、
+        # 左对齐，不占 180 固定宽——三个 180 宽按钮并排会超出对话框（最多 500 宽）把布局挤坏
+        # Link-style buttons (e.g. "Change country…") go on their own left-aligned
+        # row under the message; three 180-wide buttons would overflow the dialog.
+        link_buttons = [b for b in buttons if b[2] == "link"]
+        buttons = [b for b in buttons if b[2] != "link"]
+        if link_buttons:
+            layout.addSpacing(10)
+            link_layout = QHBoxLayout()
+            link_layout.setSpacing(16)
+            for btn_text, btn_value, _style in link_buttons:
+                link = QPushButton(btn_text)
+                link.setCursor(Qt.PointingHandCursor)
+                link.setFlat(True)
+                link.setStyleSheet(f"""
+                    QPushButton {{
+                        background: transparent;
+                        color: {COLORS['accent']};
+                        border: none;
+                        padding: 2px 0;
+                        font-size: 14px;
+                        font-weight: 500;
+                        font-family: {FONTS['sans']};
+                        text-align: left;
+                    }}
+                    QPushButton:hover {{
+                        color: {COLORS['accent_hover']};
+                        text-decoration: underline;
+                    }}
+                """)
+                link.clicked.connect(lambda checked, v=btn_value: self._on_button_clicked(v))
+                link_layout.addWidget(link)
+            link_layout.addStretch()
+            layout.addLayout(link_layout)
+
         layout.addSpacing(28)
 
         # 按钮区域

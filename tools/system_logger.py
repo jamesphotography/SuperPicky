@@ -112,7 +112,13 @@ def collect_system_info() -> dict:
             except Exception:
                 info['gpu_name'] = 'Apple GPU'
         elif torch.cuda.is_available():
-            info['ai_device'] = 'CUDA'
+            # RTX 50 配 cu118 等 torch 未编进该架构的组合会被 get_best_device 改用 CPU
+            # Combos such as RTX 50 + cu118 are routed to CPU by get_best_device
+            from config import cuda_unsupported_reason
+            gpu_warning = cuda_unsupported_reason()
+            info['ai_device'] = 'CPU (GPU unsupported)' if gpu_warning else 'CUDA'
+            if gpu_warning:
+                info['gpu_warning'] = gpu_warning
             info['gpu_name'] = torch.cuda.get_device_name(0)
             vram = torch.cuda.get_device_properties(0).total_memory / (1024**3)
             info['gpu_vram_gb'] = f"{vram:.1f}"
