@@ -14,13 +14,23 @@ in report.db and stay visible in the results browser.
 from __future__ import annotations
 
 import threading
-from typing import Dict
+from typing import Dict, Iterable, Optional
 
 
 class ExifWriteGuard:
     """
-    记录已排队 / 已完成 / 失败的张数，并判断是否该停止写入。线程安全（写入线程与主流程共用）。
+    记录已排队 / 已完成 / 失败的条数，并判断是否该停止写入。线程安全（写入线程与主流程共用）。
+
+    两套口径（#150）：
+    - total / done / failed 按「写入条目」计：连续超时判断与失败数用它；
+    - photos_total / photos_done 按「文件」去重计：给用户看的进度与汇总用它。
+      一张识别出鸟种的照片会排两条（星级一条、标题与鸟名一条），按条数显示时
+      86 张照片会显示成一百多，用户看不懂总数从哪来。
+
     Tracks queued / done / failed counts and whether to stop writing. Thread-safe.
+    Item counts (total/done/failed) drive the timeout rule; per-file counts
+    (photos_total/photos_done) are what users see — one identified photo
+    queues two items, so item counts overstated the photo total (#150).
     """
 
     #: 连续几批超时就停止写入 / stop after this many consecutive timed-out batches
@@ -33,24 +43,57 @@ class ExifWriteGuard:
         self.failed = 0
         self.consecutive_timeouts = 0
         self.aborted = False
+        # 每个文件还有几条没写完；值为 0 表示该文件已写完
+        # Outstanding items per file; 0 means that file is done.
+        self._pending: Dict[str, int] = {}
 
-    def add_queued(self, count: int) -> None:
-        """排队了 count 张 / count items were queued."""
+    @property
+    def photos_total(self) -> int:
+        """排过队的不同文件数 / distinct files queued so far."""
+        with self._lock:
+            return len(self._pending)
+
+    @property
+    def photos_done(self) -> int:
+        """所有条目都已写完（或跳过）的文件数 / files with no outstanding items."""
+        with self._lock:
+            return sum(1 for n in self._pending.values() if n <= 0)
+
+    def _settle_files(self, files: Optional[Iterable[str]]) -> None:
+        """一批里的文件各减一条待写（调用方已持锁）/ Decrement per-file pending (lock held)."""
+        for f in files or ():
+            if f in self._pending:
+                self._pending[f] -= 1
+
+    def add_queued(self, count: int, files: Optional[Iterable[str]] = None) -> None:
+        """
+        排队了 count 条。
+
+        参数:
+        count (int): 条数
+        files (Iterable[str] | None): 这些条目对应的文件路径（可重复），用于按张计进度
+
+        count items were queued; `files` (may repeat) feeds the per-photo progress.
+        """
         with self._lock:
             self.total += count
+            for f in files or ():
+                self._pending[f] = self._pending.get(f, 0) + 1
 
-    def record(self, count: int, result: Dict) -> None:
+    def record(self, count: int, result: Dict, files: Optional[Iterable[str]] = None) -> None:
         """
         记录一批的写入结果。
 
         参数:
-        count (int): 这批张数
+        count (int): 这批条数
         result (dict): batch_set_metadata 的返回（success / failed / 可选 timed_out）
+        files (Iterable[str] | None): 这批条目对应的文件路径，与 add_queued 传入的一致
 
         Record one batch's result; two consecutive timeouts abort further writes.
         """
         with self._lock:
             self.done += count
+            self._settle_files(files)
             self.failed += int(result.get("failed", 0) or 0)
             if result.get("timed_out"):
                 self.consecutive_timeouts += 1
@@ -59,8 +102,9 @@ class ExifWriteGuard:
             else:
                 self.consecutive_timeouts = 0
 
-    def record_skipped(self, count: int) -> None:
+    def record_skipped(self, count: int, files: Optional[Iterable[str]] = None) -> None:
         """已停止写入后跳过的一批，全算失败 / A batch skipped after aborting counts as failed."""
         with self._lock:
             self.done += count
             self.failed += count
+            self._settle_files(files)

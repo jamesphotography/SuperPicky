@@ -580,6 +580,20 @@ QComboBox QAbstractItemView {{
     selection-color: {COLORS['bg_void']};
 }}
 
+/* 下拉列表的悬停 / 当前项：与右键菜单（QMenu::item:selected）同一套强调色。
+   此前落到通用的 QListView::item:hover，悬停底色 bg_elevated 与下拉自身底色相同，
+   只剩 #1a1a1a→#262626 的细微差别，用户反映「没有悬停效果」（#149）。
+   弹出列表里鼠标移到哪一项，哪一项就成为当前项，所以 :selected 同样要用这套颜色。
+   Combo list hover / current item: the same accent pair as QMenu::item:selected.
+   The generic QListView::item:hover used bg_elevated — the combo's own
+   background — so hovering was nearly invisible (#149). In a combo popup the
+   item under the mouse becomes current, hence :selected matches too. */
+QComboBox QAbstractItemView::item:hover,
+QComboBox QAbstractItemView::item:selected {{
+    background-color: {COLORS['accent_dim']};
+    color: {COLORS['accent']};
+}}
+
 /* ==================== 工具提示 ==================== */
 QToolTip {{
     background-color: {COLORS['bg_card']};

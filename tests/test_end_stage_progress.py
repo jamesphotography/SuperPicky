@@ -87,6 +87,38 @@ def test_guard_success_resets_timeout_streak():
     assert not g.aborted
 
 
+def test_guard_counts_photos_not_items():
+    """
+    #150：一张照片两条（星级 + 标题），进度按张显示，不能把 2 张显示成 4。
+
+    #150: one photo queues two items; progress counts photos, not items.
+    """
+    from core.exif_write_guard import ExifWriteGuard
+
+    g = ExifWriteGuard()
+    g.add_queued(2, ["a.CR3", "b.CR3"])            # 标题条目 / title items
+    g.add_queued(2, ["a.CR3", "b.CR3"])            # 星级条目 / rating items
+    assert (g.total, g.photos_total, g.photos_done) == (4, 2, 0)
+    g.record(2, {"success": 2, "failed": 0}, ["a.CR3", "b.CR3"])
+    assert g.photos_done == 0, "每张还剩一条没写 / one item left per photo"
+    g.record(1, {"success": 1, "failed": 0}, ["a.CR3"])
+    assert g.photos_done == 1
+    g.record_skipped(1, ["b.CR3"])
+    assert (g.photos_done, g.photos_total) == (2, 2)
+
+
+def test_guard_photo_reopens_when_more_items_arrive():
+    """写完的照片又排了新条目时重新算作未完成，进度不会提前报满。"""
+    from core.exif_write_guard import ExifWriteGuard
+
+    g = ExifWriteGuard()
+    g.add_queued(1, ["a.CR3"])
+    g.record(1, {"success": 1, "failed": 0}, ["a.CR3"])
+    assert g.photos_done == 1
+    g.add_queued(1, ["a.CR3"])
+    assert (g.photos_done, g.photos_total) == (0, 1)
+
+
 # ---------- 状态回调与文案 / status channel and strings ----------
 
 def test_processing_callbacks_have_status():
