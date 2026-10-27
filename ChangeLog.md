@@ -1,3 +1,46 @@
+# SuperPicky 4.6.4 RC11
+
+**What's new since RC10:**
+
+- **Open several photos in an external app at once.** **Open with …** in the right-click menu and
+  Ctrl/Cmd+1…9 now open every checked photo, not just one. Right-clicking a checked photo opens the
+  whole selection (the menu shows how many); right-clicking an unchecked photo opens only that one;
+  fullscreen opens the current photo. Opening more than 20 at once asks first.
+- **Star rating at the top of fullscreen is no longer stale.** After switching the rating filter to
+  0 stars, or using Previous/Next onto a 0-star photo, the top bar kept showing the previous
+  photo's stars. (#151)
+- **"Other birds" in the Species list works.** It only appears when the current rating filter has
+  such photos, so picking it no longer shows an empty grid and makes the item disappear. It is now
+  labelled "Other birds" instead of the folder name "Other_Birds". (#148)
+- **Correct photo count while writing ratings.** The last step of culling counted write jobs
+  instead of photos, so the total could be much larger than the number of photos. It now counts photos and updates more often,
+  instead of sitting at 0 on slower (e.g. external) drives. (#150)
+- **Visible hover in drop-down lists.** The item under the mouse in drop-down lists (Species,
+  Countries and others) is now highlighted in the accent colour, like the right-click menu. (#149)
+- **No more freeze after changing species in bulk.** After the move step, writing the new species
+  into the photos now runs in the background, with progress in the results browser's status bar
+  ("Writing species to photos 12/40…"). (#147)
+
+---
+
+# SuperPicky 4.6.4 RC11（中文）
+
+**RC10 以来的变化：**
+
+- **外部应用可一次打开多张照片。** 右键「用 … 打开」和 Ctrl/Cmd+1…9 现在会打开全部勾选的照片，不再只开一张。
+  右键点在勾选的照片上打开整个勾选集（菜单写明张数），点在未勾选的照片上只开这一张；全屏打开当前这张。
+  一次超过 20 张会先确认。
+- **全屏顶部星级不再残留。** 把评分筛选切到 0 星、或用上一张/下一张翻到 0 星照片时，顶部仍显示上一张的星级。（#151）
+- **鸟种下拉的「其他鸟类」恢复正常。** 只在当前星级筛选下确有这类照片时才出现，选中后不再是空白、选项也不会消失；
+  英文界面显示为「Other birds」，不再是目录名「Other_Birds」。（#148）
+- **写入评分的张数正确了。** 选片最后一步原来数的是写入任务而不是照片，总数会明显多于照片张数；现在按张数显示，
+  更新也更及时，外接盘上不会长时间停在 0。（#150）
+- **下拉列表有悬停效果。** 鸟种、国家等下拉列表里鼠标所在的一项会用强调色高亮，与右键菜单一致。（#149）
+- **批量改鸟种后界面不再卡住。** 移动文件之后，把新鸟名写入照片改在后台进行，结果浏览器底部状态栏显示进度
+  （「正在把鸟名写入照片 12/40…」）。（#147）
+
+---
+
 # SuperPicky 4.6.4 RC10
 
 **What's new since RC9:**
