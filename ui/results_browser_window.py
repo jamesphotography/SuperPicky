@@ -2357,11 +2357,14 @@ class ResultsBrowserWindow(QMainWindow):
         self._dir_label.setToolTip(directory)
         self._all_photos = self._db.get_all_photos()
         self._compute_burst_ids()
+        # reset_all 会发出 filters_changed → _apply_filters，按当前星级筛选刷新鸟种下拉。
+        # 这里不能再按「不限星级」重算一遍：那会把只在其他星级才有的「其他鸟类」
+        # 兜底项加回来，选中后查出来是空的、选项随即消失（#148）。
+        # reset_all emits filters_changed -> _apply_filters, which refreshes the
+        # species dropdown for the active rating filter. Recomputing it here
+        # unrestricted re-added an "Other birds" item that is empty under that
+        # filter, so picking it showed nothing and the item vanished (#148).
         self._filter_panel.reset_all()
-        species, has_other = compute_dropdown_species(
-            self._db, use_en=self.i18n.current_lang.startswith('en')
-        )
-        self._filter_panel.update_species_list(species, has_other)
         if len(self._all_photos) > 0 and len(self._filtered_photos) == 0:
             self._filter_panel.select_all_ratings()
         self.setWindowTitle(f"{self.i18n.t('browser.title')} \u2014 {short_name}")
@@ -2408,11 +2411,14 @@ class ResultsBrowserWindow(QMainWindow):
         self._directory = root_dir
         self._all_photos = self._db.get_all_photos()
         self._compute_burst_ids()
+        # reset_all 会发出 filters_changed → _apply_filters，按当前星级筛选刷新鸟种下拉。
+        # 这里不能再按「不限星级」重算一遍：那会把只在其他星级才有的「其他鸟类」
+        # 兜底项加回来，选中后查出来是空的、选项随即消失（#148）。
+        # reset_all emits filters_changed -> _apply_filters, which refreshes the
+        # species dropdown for the active rating filter. Recomputing it here
+        # unrestricted re-added an "Other birds" item that is empty under that
+        # filter, so picking it showed nothing and the item vanished (#148).
         self._filter_panel.reset_all()
-        species, has_other = compute_dropdown_species(
-            self._db, use_en=self.i18n.current_lang.startswith('en')
-        )
-        self._filter_panel.update_species_list(species, has_other)
         if len(self._all_photos) > 0 and len(self._filtered_photos) == 0:
             self._filter_panel.select_all_ratings()
         # 合并根的名字说明不了用户在看哪几天（多半是「2026」这种年份文件夹，
