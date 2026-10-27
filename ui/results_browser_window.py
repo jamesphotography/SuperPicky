@@ -40,7 +40,7 @@ from ui.thumbnail_grid import ThumbnailGrid
 from ui.detail_panel import DetailPanel
 from ui.fullscreen_viewer import FullscreenViewer
 from ui.comparison_viewer import ComparisonViewer
-from typing import Optional
+from typing import Callable, Optional
 
 from tools.i18n import get_i18n
 from tools.report_db import ReportDB, SPECIES_FILTER_OTHER
@@ -966,6 +966,13 @@ def _species_metadata_title(bird_cn: str, bird_en: str) -> str:
                            get_i18n().current_lang).strip()
 
 
+# 后台写鸟名元数据的任务串行执行：连续两次批量改鸟种时，后一次必须在前一次写完之后
+# 才写，否则同一张照片最终留下的可能是先改的那个鸟名。
+# Background species-metadata jobs run one at a time, so a later batch edit
+# always lands after an earlier one on the same files.
+_SPECIES_METADATA_LOCK = threading.Lock()
+
+
 def _write_species_metadata(
     files: list,
     new_bird_cn: str,
@@ -974,6 +981,7 @@ def _write_species_metadata(
     old_bird_en: str,
     cfg,
     metadata_writer=None,
+    progress_cb: Optional[Callable[[int, int], None]] = None,
 ) -> None:
     """
     把新鸟名写进这些文件的 XMP 元数据（Title，按开关同步关键字）。
@@ -990,6 +998,9 @@ def _write_species_metadata(
         old_bird_cn / old_bird_en: 旧鸟名（中/英），用于删除旧关键字
         cfg: AdvancedConfig 实例（读 birdid_write_keywords 开关）
         metadata_writer: 写入器，None 时取常驻 ExifToolManager
+        progress_cb: 每写完一个文件调用一次 (已写, 总数)，可在工作线程里调用，
+                     回调里不能直接碰 Qt 控件 / called as (done, total) after
+                     each file, possibly from a worker thread.
     """
     new_title = _species_metadata_title(new_bird_cn, new_bird_en)
     if not new_title:
@@ -1002,7 +1013,8 @@ def _write_species_metadata(
         writer = get_exiftool_manager()
 
     write_keywords = bool(getattr(cfg, "birdid_write_keywords", False))
-    for path in files:
+    total = len(files)
+    for done, path in enumerate(files, 1):
         try:
             writer.update_species_metadata(
                 path, new_title, old_title=old_title or None,
@@ -1013,6 +1025,11 @@ def _write_species_metadata(
             log_message(
                 f"[species] metadata write failed [{os.path.basename(path)}]: {e}"
             )
+        if progress_cb is not None:
+            try:
+                progress_cb(done, total)
+            except Exception:
+                pass
 
 
 def _mark_no_bird_files(photo: dict) -> list:
@@ -1776,6 +1793,9 @@ class ResultsBrowserWindow(QMainWindow):
     # QTimer.singleShot silently never fires when called from a worker thread.
     bg_refresh_requested = Signal()
     species_change_failed = Signal(list)
+    # 后台写鸟名元数据的进度 (已写, 总数)，经信号回主线程更新状态栏（#147）
+    # Background species-metadata progress (done, total), routed to the status bar (#147)
+    species_metadata_progress = Signal(int, int)
     closed = Signal()   # 窗口关闭时通知主窗口
 
     def __init__(self, parent=None):
@@ -1875,6 +1895,7 @@ class ResultsBrowserWindow(QMainWindow):
         # 后台线程完成后的界面刷新与失败提示，一律经信号回主线程
         self.bg_refresh_requested.connect(self._refresh_after_background_change)
         self.species_change_failed.connect(self._show_species_change_failures)
+        self.species_metadata_progress.connect(self._on_species_metadata_progress)
 
         self._thumb_grid.photo_selected.connect(self._on_photo_selected)
         self._thumb_grid.photo_double_clicked.connect(self._enter_fullscreen)
@@ -3695,10 +3716,7 @@ class ResultsBrowserWindow(QMainWindow):
         # 文件现有的 Title 推断出来再删对应的旧关键字。
         # Metadata: the writer infers each file's old species from its own Title.
         if changed_files:
-            from advanced_config import get_advanced_config
-            _write_species_metadata(
-                changed_files, new_cn, new_en, "", "", get_advanced_config()
-            )
+            self._write_species_metadata_in_background(changed_files, new_cn, new_en)
 
         # 刷新：重新读库并重放当前筛选（_apply_filters 会顺带刷新鸟种下拉）
         self._all_photos = self._db.get_all_photos()
@@ -3726,6 +3744,69 @@ class ResultsBrowserWindow(QMainWindow):
         StyledMessageBox.information(
             self, i18n.t('browser.merge_result_title'), "\n".join(lines)
         )
+
+    def _write_species_metadata_in_background(self, files: list, new_cn: str,
+                                              new_en: str) -> None:
+        """
+        批量改鸟种后，把新鸟名写进照片元数据——放到后台线程，进度显示在状态栏。
+
+        此前这一步在主线程逐张调用 ExifTool，移动文件的进度框关掉之后界面就
+        卡住、没有任何反馈，照片在外接盘上时要卡很久（#147）。数据库与界面
+        此时已经是新鸟种，元数据只是同步到文件，放后台不影响正确性；与单张
+        改鸟种、「标记为无鸟」的后台写入节奏一致。
+
+        Write the new species into the photos' metadata on a worker thread,
+        with progress in the status bar. It used to run on the UI thread after
+        the move dialog closed, freezing the window with no feedback (#147).
+
+        参数 / Args:
+            files:  移动后的文件绝对路径 / post-move absolute paths
+            new_cn: 新中文鸟名 / new Chinese name
+            new_en: 新英文鸟名 / new English name
+        """
+        from advanced_config import get_advanced_config
+        cfg = get_advanced_config()
+        files = list(files)
+        self.species_metadata_progress.emit(0, len(files))
+
+        def _emit(done: int, total: int) -> None:
+            # 写入期间浏览器可能已被关闭销毁，此时发信号会抛 RuntimeError，忽略即可
+            # The browser may be closed mid-write; emitting then raises, ignore it.
+            try:
+                self.species_metadata_progress.emit(done, total)
+            except RuntimeError:
+                pass
+
+        def _do() -> None:
+            try:
+                with _SPECIES_METADATA_LOCK:
+                    _write_species_metadata(
+                        files, new_cn, new_en, "", "", cfg, progress_cb=_emit,
+                    )
+            except Exception as e:
+                from tools.utils import log_message
+                log_message(f"[species] background metadata write failed: {e}")
+            finally:
+                # 无论成败都发一次「写完」，让状态栏恢复张数统计
+                # Always signal completion so the status bar returns to the counts.
+                _emit(len(files), len(files))
+
+        threading.Thread(target=_do, daemon=True).start()
+
+    @Slot(int, int)
+    def _on_species_metadata_progress(self, done: int, total: int) -> None:
+        """
+        状态栏显示鸟名元数据写入进度；写完后恢复为张数统计（主线程槽）。
+
+        Show the species-metadata write progress in the status bar, then
+        restore the photo counts once finished (main-thread slot).
+        """
+        if total and done < total:
+            self._status_bar.showMessage(
+                self.i18n.t("browser.species_metadata_progress").format(done=done, total=total)
+            )
+        else:
+            self._update_status(len(self._all_photos), len(self._raw_filtered_photos))
 
     def _record_correction(self, photo: dict, new_cn: str, new_en: str,
                             new_latin: str) -> None:

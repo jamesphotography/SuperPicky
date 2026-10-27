@@ -1650,6 +1650,7 @@
     "merge_confirm_body_no_move": "「{old}」共 {count} 张{burst_note}，将全部改为「{new}」。\n{batch_note}\n文件留在原处，只更新鸟种。\n\n此操作不可撤销。确定继续吗？",
     "merge_burst_note": "（含 {bursts} 个连拍组）",
     "merge_progress_title": "正在合并…",
+    "species_metadata_progress": "正在把鸟名写入照片 {done}/{total}…",
     "merge_progress_label": "正在处理 {name}",
     "merge_result_title": "合并完成",
     "merge_result_moved": "已移动 {count} 张",
