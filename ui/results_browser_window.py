@@ -191,23 +191,187 @@ def _valid_external_apps() -> list:
             if a.get("name") and a.get("path")]
 
 
-def _open_with_external_app(filepath: str, app_path: str) -> None:
-    """
-    用外部应用打开一个文件（右键「用 XX 打开」与 Ctrl/Cmd+N 快捷键共用）。
+# 一次用外部应用打开超过这么多张时先确认：几百张一股脑丢给 Photoshop 会把它卡死很久
+# Ask first above this many files: hundreds at once can stall an editor for minutes
+_EXTERNAL_OPEN_CONFIRM_THRESHOLD = 20
 
-    Open a file with an external app; shared by the context menu and the
-    Ctrl/Cmd+N shortcut.
+# Windows 命令行总长上限 32767 字符（CreateProcess），留余量给 exe 路径与引号
+# Windows caps a command line at 32767 chars (CreateProcess); keep headroom
+_WIN_CMDLINE_BUDGET = 30000
+
+
+def _chunk_paths_for_cmdline(filepaths: list[str], app_path: str,
+                             budget: int = _WIN_CMDLINE_BUDGET) -> list[list[str]]:
+    """
+    把文件列表切成若干批，使每批拼成的命令行都不超过 budget 个字符。
+
+    每个参数按「加引号 + 空格分隔」估算长度（+3）；单个超长路径也独占一批，
+    绝不丢弃。
+
+    Split filepaths into batches whose assembled command line stays within
+    `budget` characters (each arg counted as quoted + separator, +3). A single
+    over-long path still gets its own batch; nothing is dropped.
 
     参数 / Parameters:
-        filepath (str): 要打开的文件 / file to open.
+        filepaths (list[str]): 要打开的文件 / files to open.
+        app_path (str): 应用路径，计入每批长度 / app path, counted per batch.
+        budget (int): 每批命令行字符上限 / per-batch character budget.
+
+    返回 / Returns:
+        list[list[str]]: 分好的批次，保持原顺序 / batches in original order.
+    """
+    base = len(app_path) + 3
+    batches: list[list[str]] = []
+    current: list[str] = []
+    length = base
+    for fp in filepaths:
+        cost = len(fp) + 3
+        if current and length + cost > budget:
+            batches.append(current)
+            current, length = [], base
+        current.append(fp)
+        length += cost
+    if current:
+        batches.append(current)
+    return batches
+
+
+def _open_with_external_app(filepaths: list[str], app_path: str) -> None:
+    """
+    用外部应用一次打开一个或多个文件（右键「用 XX 打开」与 Ctrl/Cmd+N 快捷键共用）。
+
+    macOS：`open -a App f1 f2 …` 把全部文件交给同一个应用实例。
+    Windows：`App.exe f1 f2 …`；路径多到超过命令行长度上限时拆成几批启动。
+
+    Open one or more files with an external app; shared by the context menu
+    and the Ctrl/Cmd+N shortcut. macOS hands every file to one app instance
+    via `open -a`; Windows passes them as arguments, split into batches when
+    they would exceed the command-line length limit.
+
+    参数 / Parameters:
+        filepaths (list[str]): 要打开的文件 / files to open.
         app_path (str): 设置里配置的应用路径 / configured application path.
     """
-    if not filepath or not app_path:
+    filepaths = [fp for fp in filepaths if fp]
+    if not filepaths or not app_path:
         return
     if sys.platform == "darwin":
-        subprocess.Popen(["open", "-a", _resolve_app_path(app_path), filepath])
+        subprocess.Popen(["open", "-a", _resolve_app_path(app_path), *filepaths])
     elif sys.platform == "win32":
-        QProcess.startDetached(app_path, [filepath])
+        for batch in _chunk_paths_for_cmdline(filepaths, app_path):
+            QProcess.startDetached(app_path, batch)
+
+
+def _photo_filepath(photo: dict, directory: str = "") -> str:
+    """
+    照片在磁盘上的实际文件路径：current_path（整理后）优先，original_path 兜底，
+    都没有时用 directory + filename 拼。
+
+    The photo's on-disk path: current_path first, then original_path, then
+    directory + filename.
+
+    参数 / Parameters:
+        photo (dict): 照片记录（路径应已解析为绝对路径）/ photo record.
+        directory (str): 最后兜底用的目录 / fallback directory.
+
+    返回 / Returns:
+        str: 文件路径，拿不到时为空串 / file path, or "" when unknown.
+    """
+    filepath = photo.get("current_path") or photo.get("original_path") or ""
+    if not filepath:
+        fn = photo.get("filename", "")
+        if fn and directory:
+            filepath = os.path.join(directory, fn)
+    return filepath
+
+
+def _external_open_paths(window, photos: list, directory: str = "") -> list[str]:
+    """
+    把一组照片换成要交给外部应用的文件路径（去重、保持顺序）。
+
+    网格里的照片记录可能是相对路径，窗口有 _resolve_photo_paths 时先解析成
+    绝对路径（对已是绝对路径的记录是幂等的）。
+
+    Turn photos into the file paths to hand to an external app (deduplicated,
+    order kept). Relative records are resolved via the window first.
+
+    参数 / Parameters:
+        window: 浏览器窗口（可无 _resolve_photo_paths）/ browser window.
+        photos (list): 照片记录 / photo records.
+        directory (str): 兜底目录 / fallback directory.
+
+    返回 / Returns:
+        list[str]: 文件路径列表 / file paths.
+    """
+    resolver = getattr(window, "_resolve_photo_paths", None)
+    paths: list[str] = []
+    seen: set[str] = set()
+    for photo in photos:
+        if not photo:
+            continue
+        if callable(resolver):
+            try:
+                photo = resolver(photo)
+            except Exception:
+                pass
+        fp = _photo_filepath(photo, directory)
+        if fp and fp not in seen:
+            seen.add(fp)
+            paths.append(fp)
+    return paths
+
+
+def _confirm_external_open(parent, count: int, app_name: str) -> bool:
+    """
+    张数超过 _EXTERNAL_OPEN_CONFIRM_THRESHOLD 时弹确认框；未超过直接放行。
+
+    Ask before opening more than _EXTERNAL_OPEN_CONFIRM_THRESHOLD files at
+    once; below that, proceed without asking.
+
+    参数 / Parameters:
+        parent: 对话框父窗口 / dialog parent.
+        count (int): 将打开的张数 / number of files.
+        app_name (str): 外部应用名称 / app display name.
+
+    返回 / Returns:
+        bool: 是否继续打开 / whether to proceed.
+    """
+    if count <= _EXTERNAL_OPEN_CONFIRM_THRESHOLD:
+        return True
+    i18n = get_i18n()
+    reply = QMessageBox.question(
+        parent,
+        i18n.t("browser.open_with_confirm_title"),
+        i18n.t("browser.open_with_confirm_body").format(app_name=app_name, count=count),
+        QMessageBox.Yes | QMessageBox.No,
+        QMessageBox.No,
+    )
+    return reply == QMessageBox.Yes
+
+
+def _open_photos_with_app(parent, photos: list, app: dict, directory: str = "") -> bool:
+    """
+    用外部应用打开一组照片：解析路径 → 张数多时确认 → 启动。
+
+    Open a set of photos with an external app: resolve paths, confirm when
+    there are many, then launch.
+
+    参数 / Parameters:
+        parent: 浏览器窗口（确认框父窗口 + 路径解析）/ browser window.
+        photos (list): 要打开的照片 / photos to open.
+        app (dict): 外部应用配置 {"name", "path"} / app config.
+        directory (str): 兜底目录 / fallback directory.
+
+    返回 / Returns:
+        bool: 是否发起了打开 / whether an open was launched.
+    """
+    paths = _external_open_paths(parent, photos, directory)
+    if not paths:
+        return False
+    if not _confirm_external_open(parent, len(paths), app.get("name", "")):
+        return False
+    _open_with_external_app(paths, app["path"])
+    return True
 
 
 def _rating_key_action(key: int, current_rating) -> Optional[int]:
@@ -1270,11 +1434,7 @@ def _build_context_menu(parent_widget, photo: dict, directory: str):
     from advanced_config import get_advanced_config
 
     # current_path 是整理后的实际位置（优先），original_path 是处理时的原始位置（兜底）
-    filepath = photo.get("current_path") or photo.get("original_path") or ""
-    if not filepath:
-        fn = photo.get("filename", "")
-        if fn and directory:
-            filepath = os.path.join(directory, fn)
+    filepath = _photo_filepath(photo, directory)
 
     menu = QMenu(parent_widget)
     menu.setStyleSheet(f"""
@@ -1376,19 +1536,28 @@ def _build_context_menu(parent_widget, photo: dict, directory: str):
     # 浏览器窗口的 keyPressEvent 负责真正响应快捷键（#128）。
     # External apps from settings; the first nine show their Ctrl/Cmd+N hint,
     # the browser's keyPressEvent handles the actual shortcut (#128).
+    # 范围规则与「修改鸟种」「删除」相同：点中的照片在勾选集里就打开整个勾选集，
+    # 否则只打开这一张；全屏只打开当前这张。多张时文案写明张数。
+    # Same scope rule as Edit Species / Delete; the label spells out the count.
     external_apps = _valid_external_apps()
     if external_apps:
         from PySide6.QtGui import QKeySequence
         menu.addSeparator()
+        _open_targets = _species_edit_targets(parent_widget, photo)
         for idx, app in enumerate(external_apps):
-            act = QAction(_i18n.t('browser.ctx_open_with').format(app_name=app["name"]), parent_widget)
+            if len(_open_targets) > 1:
+                _open_label = _i18n.t('browser.ctx_open_with_batch').format(
+                    app_name=app["name"], count=len(_open_targets))
+            else:
+                _open_label = _i18n.t('browser.ctx_open_with').format(app_name=app["name"])
+            act = QAction(_open_label, parent_widget)
             act.setEnabled(bool(filepath))
             if idx < len(_EXTERNAL_APP_KEYS):
                 act.setShortcut(QKeySequence(f"Ctrl+{idx + 1}"))
                 act.setShortcutVisibleInContextMenu(True)
 
-            def _open_in_app(_checked=False, _fp=filepath, _ap=app["path"]):
-                _open_with_external_app(_fp, _ap)
+            def _open_in_app(_checked=False, _targets=_open_targets, _app=app):
+                _open_photos_with_app(parent_widget, _targets, _app, directory)
 
             act.triggered.connect(_open_in_app)
             menu.addAction(act)
@@ -3916,10 +4085,12 @@ class ResultsBrowserWindow(QMainWindow):
 
     def _open_current_with_app(self, index: int) -> bool:
         """
-        用第 index 个外部应用打开当前照片（全屏为大图那张，网格为当前选中那张）。
+        用第 index 个外部应用打开照片：全屏为大图那张；网格有勾选时打开全部勾选的
+        照片，没有勾选则打开当前那张（与 Delete 键的范围一致）。
 
-        Open the current photo (the fullscreen one, or the grid's current
-        photo) with external app number `index` (0-based).
+        Open photos with external app number `index` (0-based): the fullscreen
+        photo, or in the grid every checked photo (falling back to the current
+        one) — the same scope as the Delete key.
 
         参数 / Parameters:
             index (int): 外部应用序号，从 0 开始 / 0-based app index.
@@ -3931,17 +4102,18 @@ class ResultsBrowserWindow(QMainWindow):
         if not (0 <= index < len(apps)):
             return False
         if self._stack.currentIndex() == _PAGE_FULLSCREEN:
-            photo = getattr(self._fullscreen, "_current_photo", None)
+            current = getattr(self._fullscreen, "_current_photo", None)
+            photos = [current] if current else []
         else:
-            photo = getattr(self._detail_panel, "_current_photo", None)
-        if not photo:
+            # 严格勾选集：get_multi_selected_photos 会为对比补入未勾选的锚点
+            # Strict checked set; the comparison getter injects an unchecked anchor
+            photos = list(self._thumb_grid.get_explicitly_selected_photos() or [])
+            if not photos:
+                current = getattr(self._detail_panel, "_current_photo", None)
+                photos = [current] if current else []
+        if not photos:
             return False
-        photo = self._resolve_photo_paths(photo)
-        filepath = photo.get("current_path") or photo.get("original_path") or ""
-        if not filepath:
-            return False
-        _open_with_external_app(filepath, apps[index]["path"])
-        return True
+        return _open_photos_with_app(self, photos, apps[index], self._directory)
 
     @Slot(dict, object)
     def _on_fullscreen_context_menu(self, photo: dict, global_pos):
