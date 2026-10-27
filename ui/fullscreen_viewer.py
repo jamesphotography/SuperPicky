@@ -1306,7 +1306,12 @@ class FullscreenViewer(QWidget):
         elif isinstance(rating, int) and rating >= 1:
             self._rating_label.setPixmap(stars_pixmap(rating, COLORS['star_gold'], size=16))
         else:
-            self._rating_label.setText("")
+            # 必须用 clear()：上一张留下的是星级图（pixmap），文字本来就为空，
+            # QLabel.setText("") 发现文字没变会直接返回，旧星级图就留在顶条上（#151）。
+            # Must be clear(): the label holds the previous photo's star pixmap
+            # and empty text, so setText("") is a no-op and the stale stars
+            # stayed on the top strip (#151).
+            self._rating_label.clear()
 
     def _species_display_name(self, photo: dict) -> str:
         """
