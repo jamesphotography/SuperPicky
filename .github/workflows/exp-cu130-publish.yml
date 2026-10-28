@@ -1,0 +1,57 @@
+# 实验：把 run 40636657458 产出的 cu130 分卷安装包发成测试用 Pre-release。
+# 不重新构建；tag 用 test-cu130-rc11（不匹配 v*.*.*，不触发正式发版），
+# 不标 Latest。只在推送 exp/cu130-size 且改到本文件或发布说明时运行。
+# Experiment: publish the split cu130 installer from run 40636657458 as a test
+# Pre-release. No rebuild; the tag does not match v*.*.* and Latest is untouched.
+name: Experiment cu130 publish test pre-release
+
+on:
+  push:
+    branches:
+      - exp/cu130-size
+    paths:
+      - .github/workflows/exp-cu130-publish.yml
+      - .github/exp/**
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Download split installer from the size run
+        uses: actions/download-artifact@v4
+        with:
+          name: exp-cu130-installers
+          run-id: 40636657458
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: assets
+
+      - name: Check assets
+        run: |
+          cp .github/exp/README_cu130_test.txt assets/
+          ls -l assets
+          test "$(ls assets/*.exe | wc -l)" -eq 1
+          test "$(ls assets/*.bin | wc -l)" -eq 2
+          for f in assets/*; do
+            size=$(stat -c %s "$f")
+            if [ "$size" -ge 2147483648 ]; then echo "$f exceeds 2 GiB"; exit 1; fi
+          done
+
+      - name: Create test pre-release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: test-cu130-rc11
+          target_commitish: ea9341bd8e86a722d363faea727b65b5954b76ff
+          name: SuperPicky 4.6.4 RC11 — CUDA 13 test build (RTX 50)
+          body_path: .github/exp/release_body_cu130_test.md
+          prerelease: true
+          make_latest: false
+          fail_on_unmatched_files: true
+          files: |
+            assets/*

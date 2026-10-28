@@ -4,10 +4,11 @@
 # Runs only on pushes to exp/cu130-size; never creates a tag or a Release.
 name: Experiment cu130 installer size
 
+# 体积实验已完成（run 40616343752 / 40636657458）；改为只能手动触发，
+# 免得后续推送这个分支时又重新构建 40 分钟。
+# Size runs are done; manual-only so later pushes don't rebuild for 40 minutes.
 on:
-  push:
-    branches:
-      - exp/cu130-size
+  workflow_dispatch:
 
 jobs:
   build-cuda-size:
