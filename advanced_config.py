@@ -142,6 +142,10 @@ class AdvancedConfig:
         # 可选值: "rarity_desc" | "filename" | "sharpness_desc" | "aesthetic_desc"
         "browser_sort": "rarity_desc",
 
+        # 浏览器「复制到文件夹」上次选择的目标文件夹（空 = 用户主目录）
+        # Last destination of the browser's "Copy to Folder" (empty = home folder)
+        "browser_copy_dir": "",
+
         # 为 0 星/无鸟照片补充详情面板元数据。关闭后保留早期退出以提升速度。
         # Populate detail-panel metadata for 0-star/no-bird photos. Disable to keep faster early exits.
         "detail_metadata_for_rejected": False,
@@ -777,6 +781,24 @@ class AdvancedConfig:
         if value in ("rarity_desc", "filename", "sharpness_desc", "rating_desc",
                      "aesthetic_desc", "species_beauty_desc"):
             self.config["browser_sort"] = value
+
+    def get_browser_copy_dir(self) -> str:
+        """
+        返回「复制到文件夹」上次的目标文件夹；空串表示没选过。
+
+        Return the last "Copy to Folder" destination; "" when never chosen.
+        """
+        value = self.config.get("browser_copy_dir", "")
+        return value if isinstance(value, str) else ""
+
+    def set_browser_copy_dir(self, value: str) -> None:
+        """
+        保存「复制到文件夹」的目标文件夹 / Save the "Copy to Folder" destination.
+
+        参数 / Parameters:
+            value (str): 文件夹路径 / folder path.
+        """
+        self.config["browser_copy_dir"] = str(value or "")
 
     def get_detail_metadata_for_rejected(self) -> bool:
         """
