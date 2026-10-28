@@ -73,6 +73,20 @@ def test_best_device_falls_back_to_cpu_on_unsupported_gpu(patched):
     assert reason and "sm_120" in reason and "11.8" in reason
 
 
+def test_fallback_hint_names_the_right_installer(patched):
+    """
+    回退提示指向能用的安装包：RTX 50 配 CUDA 11.8 版 → CUDA 13 版；GTX 10 配 CUDA 13 版 → CUDA 11.8 版。
+    The hint names the installer that works: RTX 50 → CUDA 13, GTX 10 → CUDA 11.8.
+    """
+    patched(_fake_torch((12, 0), CU118))
+    config.get_best_device()
+    assert "CUDA 13 installer" in config.cuda_unsupported_reason()
+
+    patched(_fake_torch((6, 1), CU128))
+    assert config.get_best_device().type == "cpu"
+    assert "CUDA 11.8 installer" in config.cuda_unsupported_reason()
+
+
 def test_best_device_keeps_cuda_on_supported_gpu(patched):
     patched(_fake_torch((8, 9), CU118))
     assert config.get_best_device().type == "cuda"

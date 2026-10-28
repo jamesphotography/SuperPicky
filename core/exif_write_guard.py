@@ -13,8 +13,29 @@ in report.db and stay visible in the results browser.
 """
 from __future__ import annotations
 
+import os
 import threading
 from typing import Dict, Iterable, Optional
+
+
+def _photo_key(path: str) -> str:
+    """
+    写入条目对应的照片键：同目录 + 主名（去掉扩展名，大小写按系统规则归一）。
+
+    RAW+JPEG 拍摄时同一张照片的 CR3 与 JPEG 都要写星级和标题，按文件路径去重会把
+    一组算成两张；按主名去重，一组 RAW+JPEG 只算一张（#150）。
+
+    Photo key for a write item: folder + stem (extension dropped, case folded per
+    platform). A RAW+JPEG pair writes both files, so keying by path counted one
+    photo twice; keying by stem counts the pair once (#150).
+
+    参数 / Parameters:
+        path (str): 写入目标文件路径 / target file path.
+
+    返回 / Returns:
+        str: 照片键 / the photo key.
+    """
+    return os.path.splitext(os.path.normcase(os.path.normpath(path)))[0]
 
 
 class ExifWriteGuard:
@@ -23,14 +44,16 @@ class ExifWriteGuard:
 
     两套口径（#150）：
     - total / done / failed 按「写入条目」计：连续超时判断与失败数用它；
-    - photos_total / photos_done 按「文件」去重计：给用户看的进度与汇总用它。
-      一张识别出鸟种的照片会排两条（星级一条、标题与鸟名一条），按条数显示时
-      86 张照片会显示成一百多，用户看不懂总数从哪来。
+    - photos_total / photos_done 按「照片主名」去重计：给用户看的进度与汇总用它。
+      一张识别出鸟种的照片会排两条（星级一条、标题与鸟名一条），RAW+JPEG 时配套
+      JPEG 还要再写一份；按条数或按文件显示时 86 张照片会显示成一百多，用户看不懂
+      总数从哪来。
 
     Tracks queued / done / failed counts and whether to stop writing. Thread-safe.
-    Item counts (total/done/failed) drive the timeout rule; per-file counts
-    (photos_total/photos_done) are what users see — one identified photo
-    queues two items, so item counts overstated the photo total (#150).
+    Item counts (total/done/failed) drive the timeout rule; per-photo counts
+    (photos_total/photos_done, keyed by folder + stem) are what users see — one
+    identified photo queues two items, and a RAW+JPEG pair writes both files,
+    so item or file counts overstated the photo total (#150).
     """
 
     #: 连续几批超时就停止写入 / stop after this many consecutive timed-out batches
@@ -43,27 +66,28 @@ class ExifWriteGuard:
         self.failed = 0
         self.consecutive_timeouts = 0
         self.aborted = False
-        # 每个文件还有几条没写完；值为 0 表示该文件已写完
-        # Outstanding items per file; 0 means that file is done.
+        # 每张照片（按主名）还有几条没写完；值为 0 表示该照片已写完
+        # Outstanding items per photo (keyed by stem); 0 means that photo is done.
         self._pending: Dict[str, int] = {}
 
     @property
     def photos_total(self) -> int:
-        """排过队的不同文件数 / distinct files queued so far."""
+        """排过队的不同照片数（按主名）/ distinct photos (by stem) queued so far."""
         with self._lock:
             return len(self._pending)
 
     @property
     def photos_done(self) -> int:
-        """所有条目都已写完（或跳过）的文件数 / files with no outstanding items."""
+        """所有条目都已写完（或跳过）的照片数 / photos with no outstanding items."""
         with self._lock:
             return sum(1 for n in self._pending.values() if n <= 0)
 
     def _settle_files(self, files: Optional[Iterable[str]]) -> None:
-        """一批里的文件各减一条待写（调用方已持锁）/ Decrement per-file pending (lock held)."""
+        """一批里的条目各给所属照片减一条待写（调用方已持锁）/ Decrement per-photo pending (lock held)."""
         for f in files or ():
-            if f in self._pending:
-                self._pending[f] -= 1
+            key = _photo_key(f)
+            if key in self._pending:
+                self._pending[key] -= 1
 
     def add_queued(self, count: int, files: Optional[Iterable[str]] = None) -> None:
         """
@@ -78,7 +102,8 @@ class ExifWriteGuard:
         with self._lock:
             self.total += count
             for f in files or ():
-                self._pending[f] = self._pending.get(f, 0) + 1
+                key = _photo_key(f)
+                self._pending[key] = self._pending.get(key, 0) + 1
 
     def record(self, count: int, result: Dict, files: Optional[Iterable[str]] = None) -> None:
         """
