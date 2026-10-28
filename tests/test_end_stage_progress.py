@@ -119,6 +119,29 @@ def test_guard_photo_reopens_when_more_items_arrive():
     assert (g.photos_done, g.photos_total) == (0, 1)
 
 
+def test_guard_counts_raw_jpeg_pair_as_one_photo():
+    """
+    #150：RAW+JPEG 时 CR3 与配套 JPEG 都要写，一组按主名只算一张；两个都写完才算完成。
+    不同文件夹里的同名照片仍是两张。
+
+    #150: a RAW+JPEG pair counts once (keyed by folder + stem) and is done only
+    when both files are written; same stems in different folders stay separate.
+    """
+    from core.exif_write_guard import ExifWriteGuard
+
+    a_raw = os.path.join("shoot", "IMG_1.CR3")
+    a_jpg = os.path.join("shoot", "IMG_1.JPG")
+    other = os.path.join("other", "IMG_1.CR3")
+    g = ExifWriteGuard()
+    g.add_queued(3, [a_raw, a_jpg, other])         # 星级 / ratings
+    g.add_queued(2, [a_raw, a_jpg])                # 标题 / titles
+    assert (g.total, g.photos_total, g.photos_done) == (5, 2, 0)
+    g.record(4, {"success": 4, "failed": 0}, [a_raw, a_jpg, other, a_raw])
+    assert g.photos_done == 1, "JPEG 的标题还没写 / the JPEG title is still pending"
+    g.record(1, {"success": 1, "failed": 0}, [a_jpg])
+    assert (g.photos_done, g.photos_total) == (2, 2)
+
+
 # ---------- 状态回调与文案 / status channel and strings ----------
 
 def test_processing_callbacks_have_status():
