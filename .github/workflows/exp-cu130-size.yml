@@ -41,48 +41,63 @@ jobs:
           $total = (Get-ChildItem output/installer_cuda -Recurse -File | Measure-Object Length -Sum).Sum
           'staged app total: {0:N0} MiB' -f ($total / 1MB)
 
-      - name: Create Full CUDA installer (A, as-is)
+      # 分卷：安装数据拆成 Setup-*.bin，每片不超过 Inno 默认的 2,100,000,000 字节
+      # （低于 GitHub 单文件上限 2,147,483,648）。不删任何额外 DLL。
+      # Disk spanning: data goes into Setup-*.bin slices of at most Inno's default
+      # 2,100,000,000 bytes (under GitHub's 2 GiB asset limit). No extra DLLs removed.
+      - name: Enable disk spanning in CUDA installer script
+        shell: pwsh
+        run: |
+          $iss = 'output/installer_cuda/SuperPicky-cuda.iss'
+          $text = Get-Content $iss -Raw -Encoding UTF8
+          if ($text -notmatch '(?m)^\[Setup\]\r?$') { throw '[Setup] section not found' }
+          $text = $text -replace '(?m)^\[Setup\]\r?$', "[Setup]`r`nDiskSpanning=yes`r`nDiskSliceSize=2100000000"
+          Set-Content $iss $text -Encoding UTF8 -NoNewline
+          Select-String -Path $iss -Pattern 'DiskSpanning|DiskSliceSize|^Compression|SolidCompression'
+
+      - name: Create spanned Full CUDA installer
         uses: Minionguyjpro/Inno-Setup-Action@v1.2.7
         with:
           path: ./output/installer_cuda/SuperPicky-cuda.iss
 
-      - name: Measure installer A
+      - name: Measure spanned installer
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force sizes | Out-Null
-          $exe = Get-ChildItem output/installer_cuda/Output/*.exe | Select-Object -First 1
-          Move-Item $exe.FullName sizes/A_as_is.exe
-          $len = (Get-Item sizes/A_as_is.exe).Length
-          'A as-is: {0} bytes ({1:N1} MiB), limit 2147483648, margin {2:N1} MiB' -f $len, ($len / 1MB), ((2147483648 - $len) / 1MB)
+          Move-Item output/installer_cuda/Output/* sizes/
+          $sum = 0
+          foreach ($f in Get-ChildItem sizes) {
+            $sum += $f.Length
+            $flag = if ($f.Length -lt 2147483648) { 'OK' } else { 'OVER' }
+            '{0}: {1} bytes ({2:N1} MiB) {3}' -f $f.Name, $f.Length, ($f.Length / 1MB), $flag
+            if ($f.Length -ge 2147483648) { throw "$($f.Name) exceeds 2 GiB" }
+          }
+          'total: {0} bytes ({1:N1} MiB)' -f $sum, ($sum / 1MB)
 
-      # B：再去掉三个没有任何 DLL 静态导入的库，量能省多少（是否可删要实机验证）
-      # B: also drop three DLLs no other DLL statically imports (runtime safety unverified)
-      - name: Drop unreferenced DLLs for variant B
+      # 在 runner 上静默安装一次，核对装出来的文件数和总字节数与打包前一致
+      # Silent install on the runner and compare file count / bytes with the staged app
+      - name: Silent install and verify
         shell: pwsh
         run: |
-          foreach ($n in 'cusolverMg64_12.dll', 'nvrtc64_130_0.alt.dll', 'nvperf_host.dll') {
-            $p = "output/installer_cuda/_internal/torch/lib/$n"
-            if (Test-Path $p) { Remove-Item $p; "removed $n" } else { "missing $n" }
-          }
-
-      - name: Create Full CUDA installer (B, trimmed)
-        uses: Minionguyjpro/Inno-Setup-Action@v1.2.7
-        with:
-          path: ./output/installer_cuda/SuperPicky-cuda.iss
-
-      - name: Measure installer B
-        shell: pwsh
-        run: |
-          $exe = Get-ChildItem output/installer_cuda/Output/*.exe | Select-Object -First 1
-          Move-Item $exe.FullName sizes/B_trimmed.exe
-          foreach ($f in Get-ChildItem sizes/*.exe) {
-            '{0}: {1} bytes ({2:N1} MiB), margin {3:N1} MiB' -f $f.Name, $f.Length, ($f.Length / 1MB), ((2147483648 - $f.Length) / 1MB)
-          }
+          $exe = Get-ChildItem sizes/*.exe | Select-Object -First 1
+          $dest = Join-Path $env:RUNNER_TEMP 'sp_install'
+          $p = Start-Process $exe.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=$dest", "/LOG=$env:RUNNER_TEMP\sp_install.log" -Wait -PassThru
+          "installer exit code: $($p.ExitCode)"
+          if ($p.ExitCode -ne 0) { Get-Content "$env:RUNNER_TEMP\sp_install.log" -Tail 40; throw 'install failed' }
+          $src = Get-ChildItem output/installer_cuda/_internal -Recurse -File
+          $dst = Get-ChildItem (Join-Path $dest '_internal') -Recurse -File
+          $srcBytes = ($src | Measure-Object Length -Sum).Sum
+          $dstBytes = ($dst | Measure-Object Length -Sum).Sum
+          'staged _internal: {0} files, {1} bytes' -f $src.Count, $srcBytes
+          'installed _internal: {0} files, {1} bytes' -f $dst.Count, $dstBytes
+          if (-not (Test-Path (Join-Path $dest 'SuperPicky.exe'))) { throw 'SuperPicky.exe missing' }
+          if ($src.Count -ne $dst.Count -or $srcBytes -ne $dstBytes) { throw 'installed files differ from staged files' }
+          'install verified'
 
       - name: Upload installers
         uses: actions/upload-artifact@v4
         with:
           name: exp-cu130-installers
-          path: sizes/*.exe
+          path: sizes/*
           retention-days: 3
           compression-level: 0
