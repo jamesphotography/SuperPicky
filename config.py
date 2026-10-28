@@ -811,9 +811,16 @@ def _cuda_usable(torch_module) -> bool:
             except Exception:
                 major, minor, name = "?", "?", "GPU"
             cuda_ver = getattr(getattr(torch_module, "version", None), "cuda", "?")
+            # 新卡（RTX 50 等，sm_100 起）要 CUDA 13 安装包；老卡（GTX 9/10 系列）要 CUDA 11.8 安装包
+            # Newer cards (sm_100+, e.g. RTX 50) need the CUDA 13 installer; older ones the CUDA 11.8 one
+            hint = (
+                "RTX 50 series and newer need the CUDA 13 installer (FullCUDA13)"
+                if isinstance(major, int) and major >= 10
+                else "this card needs the CUDA 11.8 installer (FullCUDA)"
+            )
             reason = (
                 f"{name} (sm_{major}{minor}) is not supported by this build "
-                f"(CUDA {cuda_ver}); using CPU — RTX 50 series needs the CUDA 12.8 build"
+                f"(CUDA {cuda_ver}); using CPU — {hint}"
             )
             _CUDA_SUPPORT_CACHE = (False, reason)
             logger.warning("[Device] %s", reason)

@@ -41,7 +41,11 @@ CUDA_INNO_TEMPLATE = INNO_DIR / "SuperPicky-cuda.iss"
 PATCH_INNO_TEMPLATE = INNO_DIR / "SuperPicky_CUDA_Patch.iss"
 INNO_LANGUAGE_FILE = INNO_DIR / "ChineseSimplified.isl"
 CPU_REQUIREMENTS_FILE = ROOT_DIR / "requirements.txt"
-CUDA_REQUIREMENTS_FILE = ROOT_DIR / "requirements_cuda.txt"
+# CUDA 依赖文件默认是 CUDA 11.8 版；CI 设 SUPERPICKY_CUDA_REQUIREMENTS=requirements_cuda13.txt
+# 用同一套流程构建 CUDA 13 版（RTX 50 系列），产物目录与安装脚本不变。
+# Defaults to the CUDA 11.8 set; CI sets SUPERPICKY_CUDA_REQUIREMENTS=requirements_cuda13.txt
+# to build the CUDA 13 (RTX 50) variant through the same pipeline and paths.
+CUDA_REQUIREMENTS_FILE = ROOT_DIR / (os.environ.get("SUPERPICKY_CUDA_REQUIREMENTS", "").strip() or "requirements_cuda.txt")
 PATCH_MANIFEST_RELATIVE_PATH = Path("_internal") / "cuda_patch_manifest.txt"
 CPU_INSTALLER_STAGING_DIRNAME = "installer_cpu"
 CUDA_INSTALLER_STAGING_DIRNAME = "installer_cuda"
