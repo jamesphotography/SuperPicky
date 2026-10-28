@@ -34,7 +34,6 @@ jobs:
 
       - name: Check assets
         run: |
-          cp .github/exp/README_cu130_test.txt assets/
           ls -l assets
           test "$(ls assets/*.exe | wc -l)" -eq 1
           test "$(ls assets/*.bin | wc -l)" -eq 2
@@ -43,15 +42,11 @@ jobs:
             if [ "$size" -ge 2147483648 ]; then echo "$f exceeds 2 GiB"; exit 1; fi
           done
 
-      - name: Create test pre-release
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: test-cu130-rc11
-          target_commitish: ea9341bd8e86a722d363faea727b65b5954b76ff
-          name: SuperPicky 4.6.4 RC11 — CUDA 13 test build (RTX 50)
-          body_path: .github/exp/release_body_cu130_test.md
-          prerelease: true
-          make_latest: false
-          fail_on_unmatched_files: true
-          files: |
-            assets/*
+      # Release 已由维护者本机建好（Actions 的 token 对这个 tag 建 Release 会 403），
+      # 这里只上传附件。
+      # The release was created locally (creating it with the Actions token
+      # returned 403); this step only uploads the assets.
+      - name: Upload assets to the test pre-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload test-cu130-rc11 assets/*.exe assets/*.bin --clobber --repo "$GITHUB_REPOSITORY"
