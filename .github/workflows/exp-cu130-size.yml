@@ -1,0 +1,88 @@
+# 实验：用 PyTorch cu130 打 Full CUDA 安装包，只量体积，不建 tag、不建 Release。
+# 仅在推送 exp/cu130-size 分支时运行；产物作为短期 artifact 上传。
+# Experiment: build the Full CUDA installer on PyTorch cu130 to measure its size.
+# Runs only on pushes to exp/cu130-size; never creates a tag or a Release.
+name: Experiment cu130 installer size
+
+on:
+  push:
+    branches:
+      - exp/cu130-size
+
+jobs:
+  build-cuda-size:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Build Full CUDA release
+        env:
+          RELEASE_TAG: v0.0.0-exp-cu130
+        run: python build_release_win.py --build-type cuda --copy-dir output --no-zip
+
+      # 打包后的 torch 版本、显卡架构列表、torch/lib 里最大的 DLL
+      # Bundled torch version, arch list and the largest DLLs in torch/lib
+      - name: Report bundled torch
+        shell: pwsh
+        run: |
+          .\.venv-cuda\Scripts\python.exe -c "import torch; print('torch', torch.__version__, 'cuda', torch.version.cuda); print('arch', torch.cuda.get_arch_list())"
+          Get-ChildItem output/installer_cuda/_internal/torch/lib -Filter *.dll |
+            Sort-Object Length -Descending | Select-Object -First 25 |
+            ForEach-Object { '{0,8:N0} MiB  {1}' -f ($_.Length / 1MB), $_.Name }
+          $total = (Get-ChildItem output/installer_cuda -Recurse -File | Measure-Object Length -Sum).Sum
+          'staged app total: {0:N0} MiB' -f ($total / 1MB)
+
+      - name: Create Full CUDA installer (A, as-is)
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.7
+        with:
+          path: ./output/installer_cuda/SuperPicky-cuda.iss
+
+      - name: Measure installer A
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force sizes | Out-Null
+          $exe = Get-ChildItem output/installer_cuda/Output/*.exe | Select-Object -First 1
+          Move-Item $exe.FullName sizes/A_as_is.exe
+          $len = (Get-Item sizes/A_as_is.exe).Length
+          'A as-is: {0} bytes ({1:N1} MiB), limit 2147483648, margin {2:N1} MiB' -f $len, ($len / 1MB), ((2147483648 - $len) / 1MB)
+
+      # B：再去掉三个没有任何 DLL 静态导入的库，量能省多少（是否可删要实机验证）
+      # B: also drop three DLLs no other DLL statically imports (runtime safety unverified)
+      - name: Drop unreferenced DLLs for variant B
+        shell: pwsh
+        run: |
+          foreach ($n in 'cusolverMg64_12.dll', 'nvrtc64_130_0.alt.dll', 'nvperf_host.dll') {
+            $p = "output/installer_cuda/_internal/torch/lib/$n"
+            if (Test-Path $p) { Remove-Item $p; "removed $n" } else { "missing $n" }
+          }
+
+      - name: Create Full CUDA installer (B, trimmed)
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.7
+        with:
+          path: ./output/installer_cuda/SuperPicky-cuda.iss
+
+      - name: Measure installer B
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem output/installer_cuda/Output/*.exe | Select-Object -First 1
+          Move-Item $exe.FullName sizes/B_trimmed.exe
+          foreach ($f in Get-ChildItem sizes/*.exe) {
+            '{0}: {1} bytes ({2:N1} MiB), margin {3:N1} MiB' -f $f.Name, $f.Length, ($f.Length / 1MB), ((2147483648 - $f.Length) / 1MB)
+          }
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: exp-cu130-installers
+          path: sizes/*.exe
+          retention-days: 3
+          compression-level: 0

@@ -3,11 +3,11 @@
 
 -r requirements_base.txt
 
-# PyTorch CUDA 11.8 wheels
---extra-index-url https://mirror.nju.edu.cn/pytorch/whl/cu118/
---extra-index-url https://download.pytorch.org/whl/cu118
-torch==2.7.1+cu118
-torchvision==0.22.1+cu118
+# 实验：PyTorch CUDA 13.0 wheels，只用于量安装包体积，不发布
+# Experiment: PyTorch CUDA 13.0 wheels, for installer size measurement only
+--extra-index-url https://download.pytorch.org/whl/cu130
+torch==2.14.1+cu130
+torchvision==0.29.1+cu130
 # torchaudio 已移除：全项目零 import，PyInstaller 不会打包它，只是白装。
 # torchaudio removed: never imported, never bundled by PyInstaller.
 pyinstaller
