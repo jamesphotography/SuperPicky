@@ -1,3 +1,71 @@
+# SuperPicky 4.6.4 RC12
+
+**What's new since RC11:**
+
+- **New: CUDA 13 installer for RTX 50 series graphics cards.** The regular CUDA build has no GPU code
+  for RTX 5050/5060/5070/5080/5090, so on those cards it falls back to the much slower CPU (since
+  RC10). The new `FullCUDA13` installer uses PyTorch 2.14.1 + CUDA 13.0 and runs on the GPU from
+  GTX 16 series up to RTX 50 series. It needs **NVIDIA driver 580 or newer**; with an older driver
+  it falls back to CPU. This is the first CUDA 13 build and has not been tested on real GPUs yet,
+  so reports are very welcome.
+- **The CUDA 13 installer comes in three files.** GitHub limits each file to 2 GB and this installer
+  is about 2.2 GB, so it is split into one `.exe` and two `.bin` files. Download all three into the
+  same folder, don't rename them, then run the `.exe`.
+- **New: copy photos to a folder from the results browser.** Right-click → **Copy to Folder…** copies
+  the checked photos (or just the one you right-clicked) to a folder you choose, together with each
+  photo's `.xmp` sidecar and paired camera JPEG, so ratings and species names come along. Existing
+  files are never overwritten: a name clash is saved as "name (1)". Shows progress, can be cancelled,
+  checks free space first, and offers to open the folder when done.
+- **Photo count while writing ratings, RAW+JPEG.** With RAW+JPEG shooting the count still showed
+  twice the number of photos, because the RAW and its JPEG were counted separately. A pair now
+  counts as one photo. (#150)
+- **Clearer GPU fallback note in the log.** When the graphics card isn't supported by the installed
+  build, the log now names the installer that works for it (CUDA 13 for RTX 50, CUDA 11.8 for
+  GTX 9/10 series).
+
+**Which installer?**
+
+| Your computer | Download |
+|---|---|
+| Mac (Apple silicon) | `SuperPicky_v4.6.4RC12_arm64_….dmg` |
+| Windows, no NVIDIA card (or any PC) | `SuperPicky_Setup_Full_Win64_….exe` (about 765 MB, CPU) |
+| Windows, NVIDIA GTX 9/10/16, RTX 20/30/40 | `SuperPicky_Setup_FullCUDA_Win64_….exe` (CUDA 11.8) |
+| Windows, NVIDIA RTX 50 (driver 580+) | `SuperPicky_Setup_FullCUDA13_Win64_….exe` **plus** both `….bin` files (CUDA 13) |
+
+The two CUDA installers replace each other; your settings are kept.
+
+---
+
+# SuperPicky 4.6.4 RC12（中文）
+
+**RC11 以来的变化：**
+
+- **新增：给 RTX 50 系列显卡的 CUDA 13 安装包。** 现有的 CUDA 版没有为 RTX 5050/5060/5070/5080/5090
+  编译 GPU 代码，这些显卡从 RC10 起只能改用 CPU，速度慢很多。新的 `FullCUDA13` 安装包用 PyTorch 2.14.1 + CUDA 13.0，
+  从 GTX 16 系列到 RTX 50 系列都能用 GPU。需要 **NVIDIA 驱动 580 或更新**，驱动太旧会改用 CPU。
+  这是第一个 CUDA 13 版本，还没在真实显卡上测过，欢迎反馈。
+- **CUDA 13 安装包分成三个文件。** GitHub 单个文件不能超过 2 GB，这个安装包约 2.2 GB，所以拆成一个 `.exe`
+  和两个 `.bin`。三个都要下载、放在同一个文件夹、不要改名，然后运行 `.exe`。
+- **新增：在结果浏览器里把照片复制到文件夹。** 右键 →「复制到文件夹…」，把勾选的照片（或右键点的那一张）复制到
+  你选的文件夹，同名的 `.xmp` 边车和配套相机 JPEG 一起复制，星级和鸟名不会丢。绝不覆盖已有文件，重名的存成
+  「文件名 (1)」。有进度、可取消、先检查剩余空间，完成后可直接打开文件夹。
+- **RAW+JPEG 时写入评分的张数正确了。** RAW 和配套 JPEG 原来各算一张，显示成照片数的两倍；现在一组只算一张。（#150）
+- **日志里的 GPU 回退说明更明确。** 显卡不被当前安装包支持时，日志会写明该换哪个安装包（RTX 50 用 CUDA 13 版，
+  GTX 9/10 系列用 CUDA 11.8 版）。
+
+**该下载哪个？**
+
+| 你的电脑 | 下载 |
+|---|---|
+| Mac（Apple 芯片） | `SuperPicky_v4.6.4RC12_arm64_….dmg` |
+| Windows，没有 N 卡（任何电脑都能用） | `SuperPicky_Setup_Full_Win64_….exe`（约 765 MB，CPU） |
+| Windows，NVIDIA GTX 9/10/16、RTX 20/30/40 | `SuperPicky_Setup_FullCUDA_Win64_….exe`（CUDA 11.8） |
+| Windows，NVIDIA RTX 50（驱动 580+） | `SuperPicky_Setup_FullCUDA13_Win64_….exe` **加上**两个 `….bin`（CUDA 13） |
+
+两个 CUDA 安装包会互相覆盖，设置会保留。国内下载慢可以在附件链接前加 `https://gh-proxy.com/`。
+
+---
+
 # SuperPicky 4.6.4 RC11
 
 **What's new since RC10:**

@@ -178,6 +178,127 @@ jobs:
       #     git commit -m "chore(web): 自动更新 downloads_github.json → $tag [skip ci]"
       #     git push origin HEAD:nightly
 
+  # 第四个安装包：CUDA 13（PyTorch 2.14.1+cu130），给 RTX 50 系列等新显卡。
+  # cu118 版没有 sm_120 的 GPU 代码，RTX 50 只能回退 CPU；cu130 覆盖 GTX 16 到 RTX 50，
+  # 但没有 GTX 9/10 系列，所以 CUDA 11.8 版继续保留。驱动须 580 或更新。
+  # 安装包约 2.22 GB，超过 GitHub 单文件上限 2 GiB（cu130 的 GPU 库已预压缩，LZMA 压不动；
+  # 删未引用 DLL 实测只省 29 MiB），所以用 Inno DiskSpanning 分卷：一个 .exe 加若干 .bin，
+  # 每片不超过 2,100,000,000 字节，必须放在同一文件夹且不能改名。
+  # 单独一个 job 并行构建：与 CPU/CUDA 11.8 不抢 runner 磁盘，失败也不影响其他三个包。
+  # Fourth installer: CUDA 13 (torch 2.14.1+cu130) for RTX 50 and newer. cu118
+  # has no sm_120 kernels; cu130 covers GTX 16..RTX 50 but not GTX 9/10, so the
+  # CUDA 11.8 build stays. ~2.22 GB exceeds the 2 GiB asset limit, so Inno disk
+  # spanning splits it into an .exe plus .bin slices (same folder, names unchanged).
+  # A separate parallel job: no disk contention, and a failure here never blocks
+  # the other three installers.
+  build-windows-cuda13:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'windows' }}
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: |
+            requirements_base.txt
+            requirements_cuda13.txt
+
+      - name: Resolve release metadata
+        id: release_meta
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: python scripts/ci_release.py resolve-metadata
+
+      - name: Build Full CUDA 13 release
+        env:
+          RELEASE_TAG: ${{ steps.release_meta.outputs.tag }}
+          SUPERPICKY_CUDA_REQUIREMENTS: requirements_cuda13.txt
+        run: python build_release_win.py --build-type cuda --copy-dir output --no-zip
+
+      # 打包进去的 torch 必须是 cu130，否则会发出一个名不副实的安装包
+      # The bundled torch must be cu130, or we'd ship a mislabeled installer
+      - name: Verify bundled torch is CUDA 13
+        shell: pwsh
+        run: |
+          $out = .\.venv-cuda\Scripts\python.exe -c "import torch; print(torch.__version__, torch.version.cuda); print(' '.join(torch.cuda.get_arch_list()))"
+          $out
+          if (-not ($out -match '\+cu130')) { throw 'bundled torch is not cu130' }
+          if (-not ($out -match 'sm_120')) { throw 'sm_120 missing from arch list' }
+
+      # 分卷 + 文件名改成 FullCUDA13，与 CUDA 11.8 版区分；仓库里的 inno 模板不动
+      # Disk spanning + FullCUDA13 file name, patched on the staged script only
+      - name: Enable disk spanning and CUDA 13 file name
+        shell: pwsh
+        run: |
+          $iss = 'output/installer_cuda/SuperPicky-cuda.iss'
+          $text = Get-Content $iss -Raw -Encoding UTF8
+          if ($text -notmatch '(?m)^\[Setup\]\r?$') { throw '[Setup] section not found' }
+          if ($text -notmatch 'SuperPicky_Setup_FullCUDA_Win64_') { throw 'OutputBaseFilename prefix not found' }
+          $text = $text -replace '(?m)^\[Setup\]\r?$', "[Setup]`r`nDiskSpanning=yes`r`nDiskSliceSize=2100000000"
+          $text = $text.Replace('SuperPicky_Setup_FullCUDA_Win64_', 'SuperPicky_Setup_FullCUDA13_Win64_')
+          Set-Content $iss $text -Encoding UTF8 -NoNewline
+          Select-String -Path $iss -Pattern 'DiskSpanning|DiskSliceSize|OutputBaseFilename'
+
+      - name: Create spanned Full CUDA 13 installer
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.7
+        with:
+          path: ./output/installer_cuda/SuperPicky-cuda.iss
+
+      # 每片都必须低于 2 GiB，且 .exe 与 .bin 都在
+      # Every slice must be under 2 GiB, and both .exe and .bin must exist
+      - name: Check slice sizes
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem output/installer_cuda/Output/SuperPicky_Setup_FullCUDA13_Win64_*
+          if (-not ($files | Where-Object Extension -eq '.exe')) { throw 'setup .exe missing' }
+          if (-not ($files | Where-Object Extension -eq '.bin')) { throw 'no .bin slices' }
+          foreach ($f in $files) {
+            '{0}: {1} bytes' -f $f.Name, $f.Length
+            if ($f.Length -ge 2147483648) { throw "$($f.Name) exceeds 2 GiB" }
+          }
+
+      # 在 runner 上静默安装一次，核对装出来的文件与打包前完全一致（分卷能正确合回）
+      # Silent install on the runner; installed files must match the staged app
+      - name: Silent install and verify
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem output/installer_cuda/Output/SuperPicky_Setup_FullCUDA13_Win64_*.exe | Select-Object -First 1
+          $dest = Join-Path $env:RUNNER_TEMP 'sp_install'
+          $p = Start-Process $exe.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=$dest", "/LOG=$env:RUNNER_TEMP\sp_install.log" -Wait -PassThru
+          "installer exit code: $($p.ExitCode)"
+          if ($p.ExitCode -ne 0) { Get-Content "$env:RUNNER_TEMP\sp_install.log" -Tail 40; throw 'install failed' }
+          $src = Get-ChildItem output/installer_cuda/_internal -Recurse -File
+          $dst = Get-ChildItem (Join-Path $dest '_internal') -Recurse -File
+          $srcBytes = ($src | Measure-Object Length -Sum).Sum
+          $dstBytes = ($dst | Measure-Object Length -Sum).Sum
+          'staged _internal: {0} files, {1} bytes' -f $src.Count, $srcBytes
+          'installed _internal: {0} files, {1} bytes' -f $dst.Count, $dstBytes
+          if (-not (Test-Path (Join-Path $dest 'SuperPicky.exe'))) { throw 'SuperPicky.exe missing' }
+          if ($src.Count -ne $dst.Count -or $srcBytes -ne $dstBytes) { throw 'installed files differ from staged files' }
+          'install verified'
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.release_meta.outputs.tag }}
+          name: ${{ steps.release_meta.outputs.name }}
+          body_path: ChangeLog.md
+          fail_on_unmatched_files: true
+          # RC / 预发布 tag 标记为 prerelease / Mark RC tags as prerelease.
+          prerelease: ${{ contains(steps.release_meta.outputs.tag, '-RC') || contains(steps.release_meta.outputs.tag, '-rc') }}
+          files: |
+            output/installer_cuda/Output/SuperPicky_Setup_FullCUDA13_Win64_*.exe
+            output/installer_cuda/Output/SuperPicky_Setup_FullCUDA13_Win64_*.bin
+
   build-mac:
     # Tag 推送始终构建全平台；手动触发时按 platform 选择。
     # Tag pushes always build all; manual runs honor the platform input.

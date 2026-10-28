@@ -1,0 +1,19 @@
+# SuperPicky NVIDIA CUDA 13 dependency set (RTX 50 series and newer GPUs).
+# Use this in a dedicated CUDA virtual environment.
+# 给 RTX 50 系列等新显卡用的 CUDA 13 依赖；GTX 16 系列到 RTX 50 系列都有 GPU 代码，
+# 不含 GTX 9/10 系列（这些显卡请用 requirements_cuda.txt 的 CUDA 11.8 版）。需要 NVIDIA 驱动 580 或更新。
+# Covers GTX 16 through RTX 50 (sm_75..sm_120), not GTX 9/10 series (use the
+# CUDA 11.8 set in requirements_cuda.txt). Needs NVIDIA driver 580 or newer.
+# 安装包超过 GitHub 单文件 2 GiB 上限，CI 用 Inno Setup 分卷打包（见 build-release.yml）。
+# The installer exceeds GitHub's 2 GiB asset limit, so CI builds it with Inno disk spanning.
+
+-r requirements_base.txt
+
+# PyTorch CUDA 13.0 wheels
+--extra-index-url https://download.pytorch.org/whl/cu130
+torch==2.14.1+cu130
+torchvision==0.29.1+cu130
+# torchaudio 已移除：全项目零 import，PyInstaller 不会打包它，只是白装。
+# torchaudio removed: never imported, never bundled by PyInstaller.
+pyinstaller
+lap

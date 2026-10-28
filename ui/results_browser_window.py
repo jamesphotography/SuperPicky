@@ -1596,6 +1596,26 @@ def _build_context_menu(parent_widget, photo: dict, directory: str):
         copy_action.triggered.connect(_copy_path)
     menu.addAction(copy_action)
 
+    # 复制到文件夹：范围规则与「修改鸟种」「删除」相同；连同 .xmp 边车与配套
+    # 相机 JPEG 一起复制，实现见 ResultsBrowserWindow._copy_photos_to_folder。
+    # Copy to Folder: same scope rule as Edit Species / Delete; sidecars and the
+    # paired camera JPEG travel along (see _copy_photos_to_folder).
+    copy_handler = getattr(parent_widget, "_copy_photos_to_folder", None)
+    if callable(copy_handler):
+        _copy_targets = _species_edit_targets(parent_widget, photo)
+        _copy_label = (
+            _i18n.t('browser.ctx_copy_to_folder_batch').format(count=len(_copy_targets))
+            if len(_copy_targets) > 1 else _i18n.t('browser.ctx_copy_to_folder')
+        )
+        copy_to_action = QAction(_copy_label, parent_widget)
+        copy_to_action.setEnabled(bool(filepath))
+
+        def _copy_to_folder(_checked=False, _targets=_copy_targets):
+            copy_handler(list(_targets))
+
+        copy_to_action.triggered.connect(_copy_to_folder)
+        menu.addAction(copy_to_action)
+
     # 删除（#130）：范围规则与「修改鸟种」相同——点中的照片在勾选集里就删整个
     # 勾选集，否则只删这一张；全屏只删当前这张。走浏览器唯一的删除实现，
     # 确认框（含「以后不再询问」）与附属文件清理都与 Delete 键一致。
@@ -1796,6 +1816,10 @@ class ResultsBrowserWindow(QMainWindow):
     # 后台写鸟名元数据的进度 (已写, 总数)，经信号回主线程更新状态栏（#147）
     # Background species-metadata progress (done, total), routed to the status bar (#147)
     species_metadata_progress = Signal(int, int)
+    # 「复制到文件夹」后台进度（千分比）与结果，经信号回主线程
+    # "Copy to Folder" progress (per mille) and result, routed back to the GUI thread
+    photo_copy_progress = Signal(int)
+    photo_copy_finished = Signal(object)
     closed = Signal()   # 窗口关闭时通知主窗口
 
     def __init__(self, parent=None):
@@ -1813,6 +1837,13 @@ class ResultsBrowserWindow(QMainWindow):
         self._fullscreen_nav_photos: list = []
         self._apple_photos_importer = None
         self._apple_photos_progress = None
+        # 正在进行的「复制到文件夹」：取消事件 / 线程 / 进度框 / 目标文件夹
+        # The running "Copy to Folder": cancel event / thread / progress dialog / folder
+        self._copy_cancel: Optional[threading.Event] = None
+        self._copy_thread: Optional[threading.Thread] = None
+        self._copy_progress_dialog: Optional[QProgressDialog] = None
+        self._copy_dest: str = ""
+        self._copy_plan = None
 
         self._setup_window()
         self._setup_menu()
@@ -1896,6 +1927,8 @@ class ResultsBrowserWindow(QMainWindow):
         self.bg_refresh_requested.connect(self._refresh_after_background_change)
         self.species_change_failed.connect(self._show_species_change_failures)
         self.species_metadata_progress.connect(self._on_species_metadata_progress)
+        self.photo_copy_progress.connect(self._on_photo_copy_progress)
+        self.photo_copy_finished.connect(self._on_photo_copy_finished)
 
         self._thumb_grid.photo_selected.connect(self._on_photo_selected)
         self._thumb_grid.photo_double_clicked.connect(self._enter_fullscreen)
@@ -3808,6 +3841,178 @@ class ResultsBrowserWindow(QMainWindow):
         else:
             self._update_status(len(self._all_photos), len(self._raw_filtered_photos))
 
+    def _copy_photos_to_folder(self, photos: list) -> None:
+        """
+        把一组照片复制到用户选的文件夹（右键「复制到文件夹」）。
+
+        流程：解析路径 → 选文件夹（记住上次的）→ 拒绝复制到照片所在文件夹 →
+        制定计划（带上 .xmp 边车与配套 JPEG，重名整组编号）→ 检查磁盘空间 →
+        后台线程复制，进度框可取消，完成后汇报结果。只复制，不改数据库。
+
+        Copy photos into a user-chosen folder. Resolves paths, asks for the
+        folder (remembering the last one), refuses the photos' own folder, plans
+        the copy with sidecars and paired JPEGs, checks free space, then copies
+        on a worker thread with a cancellable progress dialog. The DB is untouched.
+
+        参数 / Args:
+            photos (list): 要复制的照片记录 / photo records to copy.
+        """
+        import shutil
+        from PySide6.QtWidgets import QFileDialog
+        from advanced_config import get_advanced_config
+        from core.photo_copy import execute_copy_plan, plan_photo_copy, source_folder_conflict
+        from ui.detail_panel import _format_file_size
+
+        i18n = self.i18n
+        title = i18n.t("browser.copy_title")
+        if self._copy_cancel is not None:
+            StyledMessageBox.information(self, title, i18n.t("browser.copy_busy"))
+            return
+        main_paths = [p for p in _external_open_paths(self, photos, self._directory)
+                      if os.path.isfile(p)]
+        if not main_paths:
+            StyledMessageBox.warning(self, title, i18n.t("browser.copy_none"))
+            return
+
+        cfg = get_advanced_config()
+        start_dir = cfg.get_browser_copy_dir()
+        if not start_dir or not os.path.isdir(start_dir):
+            start_dir = os.path.expanduser("~")
+        dest = QFileDialog.getExistingDirectory(self, i18n.t("browser.copy_pick_title"), start_dir)
+        if not dest:
+            return
+        dest = os.path.normpath(dest)
+        cfg.set_browser_copy_dir(dest)
+        cfg.save()
+
+        if source_folder_conflict(main_paths, dest):
+            StyledMessageBox.warning(self, title, i18n.t("browser.copy_same_folder"))
+            return
+        plan = plan_photo_copy(main_paths, dest)
+        if not plan.jobs:
+            StyledMessageBox.warning(self, title, i18n.t("browser.copy_none"))
+            return
+        try:
+            free = shutil.disk_usage(dest).free
+        except OSError:
+            free = None
+        if free is not None and free < plan.total_bytes:
+            StyledMessageBox.warning(self, title, i18n.t("browser.copy_no_space").format(
+                need=_format_file_size(plan.total_bytes), free=_format_file_size(free)))
+            return
+
+        progress = QProgressDialog(
+            i18n.t("browser.copy_progress").format(
+                count=plan.photo_count, size=_format_file_size(plan.total_bytes)),
+            i18n.t("buttons.cancel"), 0, 1000, self,
+        )
+        progress.setWindowTitle(title)
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.setValue(0)
+
+        cancel = threading.Event()
+        progress.canceled.connect(cancel.set)
+        self._copy_cancel = cancel
+        self._copy_progress_dialog = progress
+        self._copy_dest = dest
+        self._copy_plan = plan
+        last = {"permille": -1}
+
+        def _emit_progress(done: int, total: int) -> None:
+            # 只在千分比变化时发信号，避免每 8 MB 一次地刷界面
+            # Emit only when the per-mille value changes
+            permille = 1000 if not total else min(1000, done * 1000 // total)
+            if permille == last["permille"]:
+                return
+            last["permille"] = permille
+            try:
+                self.photo_copy_progress.emit(permille)
+            except RuntimeError:
+                pass
+
+        def _run() -> None:
+            from tools.utils import log_message
+            try:
+                result = execute_copy_plan(plan, cancel, _emit_progress)
+            except Exception as e:  # noqa: BLE001 — 结果必须送回主线程 / the result must reach the GUI
+                log_message(f"[Copy] copy to folder crashed: {e}")
+                from core.photo_copy import CopyResult
+                result = CopyResult(failed=[("", str(e))])
+            for src, err in result.failed:
+                log_message(f"[Copy] failed: {src}: {err}")
+            try:
+                self.photo_copy_finished.emit(result)
+            except RuntimeError:
+                pass
+
+        self._copy_thread = threading.Thread(target=_run, daemon=True)
+        self._copy_thread.start()
+
+    @Slot(int)
+    def _on_photo_copy_progress(self, permille: int) -> None:
+        """
+        更新复制进度框（主线程槽）/ Update the copy progress dialog (GUI slot).
+
+        参数 / Args:
+            permille (int): 0~1000 的进度 / progress in per mille.
+        """
+        dialog = self._copy_progress_dialog
+        if dialog is not None and not dialog.wasCanceled():
+            dialog.setValue(permille)
+
+    @Slot(object)
+    def _on_photo_copy_finished(self, result) -> None:
+        """
+        复制结束：关进度框，汇报复制了几张、重名改名 / 跳过 / 失败各几张，
+        并提供「打开文件夹」（主线程槽）。
+
+        Copy finished: close the dialog and report copied / renamed / skipped /
+        failed counts, offering "Open Folder" (GUI slot).
+
+        参数 / Args:
+            result (core.photo_copy.CopyResult): 复制结果 / the outcome.
+        """
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+
+        dialog = self._copy_progress_dialog
+        plan = self._copy_plan
+        dest = self._copy_dest
+        self._copy_cancel = None
+        self._copy_thread = None
+        self._copy_progress_dialog = None
+        self._copy_plan = None
+        if dialog is not None:
+            dialog.close()
+            dialog.deleteLater()
+
+        i18n = self.i18n
+        key = "browser.copy_cancelled" if result.cancelled else "browser.copy_done"
+        lines = [i18n.t(key).format(count=result.copied_photos, folder=dest)]
+        if plan is not None and plan.renamed:
+            lines.append(i18n.t("browser.copy_renamed").format(count=plan.renamed))
+        if plan is not None and plan.missing:
+            lines.append(i18n.t("browser.copy_missing").format(count=plan.missing))
+        if result.failed:
+            lines.append(i18n.t("browser.copy_failed").format(count=len(result.failed)))
+
+        box = StyledMessageBox(
+            parent=self,
+            title=i18n.t("browser.copy_title"),
+            message="\n\n".join(lines),
+            dialog_type=(StyledMessageBox.Warning if result.failed
+                         else StyledMessageBox.Information),
+            buttons=[
+                (i18n.t("buttons.confirm"), StyledMessageBox.Cancel, "secondary"),
+                (i18n.t("browser.copy_open_folder"), StyledMessageBox.Ok, "primary"),
+            ],
+        )
+        if box.exec() == StyledMessageBox.Ok and dest and os.path.isdir(dest):
+            QDesktopServices.openUrl(QUrl.fromLocalFile(dest))
+
     def _record_correction(self, photo: dict, new_cn: str, new_en: str,
                             new_latin: str) -> None:
         """
@@ -4525,6 +4730,13 @@ class ResultsBrowserWindow(QMainWindow):
 
     def cleanup(self):
         """释放线程和 DB 连接。"""
+        # 关窗时取消正在进行的复制，并等当前块写完、临时文件清掉再继续
+        # Cancel a running copy and wait briefly so its temp file gets removed
+        if self._copy_cancel is not None:
+            self._copy_cancel.set()
+            thread = self._copy_thread
+            if thread is not None:
+                thread.join(timeout=5)
         importer = self._apple_photos_importer
         if importer is not None:
             try:
