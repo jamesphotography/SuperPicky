@@ -75,17 +75,50 @@ all_datas.extend(copy_metadata('ultralytics'))
 all_datas.extend(copy_metadata('pillow_heif'))
 all_datas.extend(copy_metadata('pi_heif'))
 
-# torchvision 的编译扩展（_C.pyd 及其依赖 dll）在某些 torch/torchvision 版本组合
-# 下不会被 PyInstaller 的自动 hook 发现（例如 CUDA 13 的 torchvision==0.29.1+cu130），
-# 导致 nms 等自定义算子静默注册失败，运行时报 "operator torchvision::nms does not
-# exist"。collect_dynamic_libs 直接扫包目录兜底收集，不依赖 hook 覆盖度。
-# torchvision's compiled extension (_C.pyd and its dependency DLLs) is not always
-# discovered by PyInstaller's automatic hook for every torch/torchvision pairing
-# (e.g. CUDA 13's torchvision==0.29.1+cu130), which silently breaks custom ops
-# like nms ("operator torchvision::nms does not exist" at runtime).
-# collect_dynamic_libs scans the package directory directly as a hook-independent
-# fallback.
-torchvision_binaries = collect_dynamic_libs('torchvision')
+# torchvision 的编译扩展（CUDA13 wheel 里叫 _C_stable.pyd / image_stable.pyd，
+# 老版本叫 _C.pyd / image.pyd）直接 import nvcuda.dll——这是显卡驱动自带的
+# API 库，任何安装包都不能、也不该带它，只存在于装了 NVIDIA 驱动的终端机器上。
+# GitHub Actions 的 Windows runner 没有 GPU/驱动，PyInstaller 对 binaries 列表
+# 里的文件做依赖分析时解析不到 nvcuda.dll，会把整个文件静默丢弃，导致 nms 等
+# 自定义算子运行时注册失败，报 "operator torchvision::nms does not exist"
+# （RTX 2080 + CUDA13 用户反馈）。
+# 解法：这两个扩展文件走 datas（纯拷贝，不触发依赖分析），其余 torchvision 周边
+# dll（libjpeg/libpng/libwebp 等，没有驱动依赖）仍交给 collect_dynamic_libs 走
+# binaries 正常收集。
+#
+# torchvision's compiled extension (_C_stable.pyd / image_stable.pyd on the CUDA13
+# wheel; _C.pyd / image.pyd on older ones) directly imports nvcuda.dll — the GPU
+# driver's own API library, which no installer bundles or should bundle; it only
+# exists on a machine with the NVIDIA driver installed. GitHub Actions' Windows
+# runners have no GPU/driver, so PyInstaller's dependency analysis of the
+# `binaries` list can't resolve nvcuda.dll and silently drops the whole file,
+# breaking custom ops like nms at runtime ("operator torchvision::nms does not
+# exist", reported on an RTX 2080 + CUDA13 install).
+# Fix: ship those two extension files as `datas` (plain copy, no dependency
+# analysis) while the harmless peripheral DLLs (libjpeg/libpng/libwebp, no driver
+# dependency) still go through collect_dynamic_libs into `binaries` as normal.
+import glob as _glob
+
+def _torchvision_driver_dependent_pyds():
+    try:
+        import torchvision
+        tv_dir = os.path.dirname(torchvision.__file__)
+    except ImportError:
+        return [], []
+    pyd_datas = []
+    for pattern in ('_C_stable*.pyd', 'image_stable*.pyd', '_C.pyd', 'image.pyd'):
+        for path in _glob.glob(os.path.join(tv_dir, pattern)):
+            pyd_datas.append((path, 'torchvision'))
+    pyd_basenames = {os.path.basename(p) for p, _ in pyd_datas}
+    return pyd_datas, pyd_basenames
+
+_torchvision_pyd_datas, _torchvision_pyd_basenames = _torchvision_driver_dependent_pyds()
+all_datas.extend(_torchvision_pyd_datas)
+
+torchvision_binaries = [
+    entry for entry in collect_dynamic_libs('torchvision')
+    if os.path.basename(entry[0]) not in _torchvision_pyd_basenames
+]
 
 a = Analysis(
     ['main.py'],
