@@ -1,6 +1,6 @@
 import os
 import site
-from PyInstaller.utils.hooks import collect_data_files, copy_metadata
+from PyInstaller.utils.hooks import collect_data_files, copy_metadata, collect_dynamic_libs
 import sys
 sys.path.append(os.path.abspath('.'))
 from constants import APP_VERSION
@@ -75,10 +75,22 @@ all_datas.extend(copy_metadata('ultralytics'))
 all_datas.extend(copy_metadata('pillow_heif'))
 all_datas.extend(copy_metadata('pi_heif'))
 
+# torchvision 的编译扩展（_C.pyd 及其依赖 dll）在某些 torch/torchvision 版本组合
+# 下不会被 PyInstaller 的自动 hook 发现（例如 CUDA 13 的 torchvision==0.29.1+cu130），
+# 导致 nms 等自定义算子静默注册失败，运行时报 "operator torchvision::nms does not
+# exist"。collect_dynamic_libs 直接扫包目录兜底收集，不依赖 hook 覆盖度。
+# torchvision's compiled extension (_C.pyd and its dependency DLLs) is not always
+# discovered by PyInstaller's automatic hook for every torch/torchvision pairing
+# (e.g. CUDA 13's torchvision==0.29.1+cu130), which silently breaks custom ops
+# like nms ("operator torchvision::nms does not exist" at runtime).
+# collect_dynamic_libs scans the package directory directly as a hook-independent
+# fallback.
+torchvision_binaries = collect_dynamic_libs('torchvision')
+
 a = Analysis(
     ['main.py'],
     pathex=[base_path],
-    binaries=[],
+    binaries=torchvision_binaries,
     datas=all_datas,
     hiddenimports=[
         'ultralytics',
