@@ -50,12 +50,21 @@ def test_lookup_prefers_fp16_then_falls_back(tmp_path, monkeypatch):
         get_topiq_weight_path()
 
 
-def test_download_and_build_lists_ship_fp16():
-    """下载清单与两个打包脚本的模型清单必须同步（否则 Full 构建会因缺文件失败）。"""
+def test_download_and_build_lists_ship_charm():
+    """
+    下载清单与两个打包脚本的模型清单必须同步到 Charm 权重（否则 Full 构建会因缺文件失败），
+    且不再列出已被替换的 TOPIQ 权重。
+    Download and build lists must ship the Charm weight (else Full builds fail on a missing
+    file) and must no longer list the replaced TOPIQ weights.
+    """
+    from charm_model import CHARM_WEIGHT_NAMES
+
+    charm = CHARM_WEIGHT_NAMES[0]
     for name in ("scripts/download_models.py", "build_release_win.py", "build_release_mac.py"):
         with open(os.path.join(REPO, name), encoding="utf-8") as f:
             src = f.read()
-        assert re.search(r'"filename":\s*"%s"' % re.escape(FP16), src), name
+        assert re.search(r'"filename":\s*"%s"' % re.escape(charm), src), name
+        assert not re.search(r'"filename":\s*"%s"' % re.escape(FP16), src), name
         assert not re.search(r'"filename":\s*"%s"' % re.escape(FP32), src), name
 
 

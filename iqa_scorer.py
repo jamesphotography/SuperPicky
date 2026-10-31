@@ -2,346 +2,484 @@
 # -*- coding: utf-8 -*-
 """
 IQA (Image Quality Assessment) 评分器
-使用 TOPIQ 美学评分模型
+使用 Charm-TAD66K (CVPR 2025) 美学评分模型
 
-V3.7: 切换到 TOPIQ 模型，更好的鸟类摄影美学评估
-- TOPIQ 使用 Top-down 语义理解，对主体识别更准确
-- 比 NIMA 快约 40%
-- 基于 ResNet50 + CFANet 架构
+V3.7: 切换到 TOPIQ 模型 (ResNet50 + CFANet, AVA 训练)
+V4.7 (exp/charm-aesthetic): 切换到 Charm-TAD66K 模型
+- 基于 DINOv2-small (ViT-S/14) + Charm 多尺度频率感知分词器
+- 保留原图长宽比与前 64 个高频 28x28 细节块，避免 384x384 方形拉伸与全图低分辨率模糊
+- 权重体积从 147 MB (TOPIQ FP16) 降至 44.2 MB (Charm FP16)，净省约 103 MB
+- 在 76 张实拍鸟图人眼盲测基准上 Spearman 秩相关从 0.7100 提升至 0.7905
 """
 
 import os
-import torch
-from typing import Tuple, Optional
-import numpy as np
-from PIL import Image
-import torchvision.transforms as T
-
-# 使用 TOPIQ 模型
-from topiq_model import CFANet, load_topiq_weights, get_topiq_weight_path
-from tools.i18n import t as _t
-
-from config import get_best_device, get_lazy_registry
+from typing import Optional, Tuple
 
 import cv2
+import numpy as np
+import torch
+import torchvision.transforms as T
+from PIL import Image
 
-# V4.5: TOPIQ 输入尺寸固定 384x384；源图明显更大时先用 cv2 INTER_AREA
-# 快速预降，再交给 PIL LANCZOS 做最终精修，避免直接对几千万像素的原图
-# 做 LANCZOS(耗时随源图像素数线性增长)。
-# V4.5: TOPIQ's input size is fixed at 384x384. When the source is much
-# larger, fast-shrink with cv2 INTER_AREA first, then hand off to PIL
-# LANCZOS for the final pass — avoids running LANCZOS directly on a
-# multi-megapixel source, whose cost scales with source pixel count.
-_TOPIQ_INPUT_SIZE = 384
-_TOPIQ_PRESHRINK_SIZE = _TOPIQ_INPUT_SIZE * 4  # 1536
+from charm_model import (
+    CHARM_MAX_EDGE,
+    CharmNet,
+    get_charm_weight_path,
+    load_charm_weights,
+    resize_for_charm,
+)
+from config import get_best_device, get_lazy_registry
+
+# Charm 目标长边上限为 672 (CHARM_MAX_EDGE)；源图明显更大时先用 cv2 INTER_AREA
+# 等比例快速预降到 1536 长边，再交给 PIL LANCZOS 做最终精修到 672，避免直接对
+# 几千万像素的原图做 LANCZOS (耗时随源图像素数线性增长)。
+# Charm caps the long edge at 672 (CHARM_MAX_EDGE). When the source is much
+# larger, fast-shrink proportionally with cv2 INTER_AREA to long-edge 1536
+# first, then hand off to PIL LANCZOS for the final 672 pass.
+_TOPIQ_INPUT_SIZE: int = CHARM_MAX_EDGE
+_TOPIQ_PRESHRINK_SIZE: int = 1536
 
 
 def _preshrink_if_large(img_array: np.ndarray) -> np.ndarray:
     """
-    源图明显大于 TOPIQ 输入尺寸时，用 cv2 INTER_AREA 快速降到中间尺寸。
+    源图长边明显大于预降阈值时，用 cv2 INTER_AREA 等比例快速降到中间尺寸。
 
-    INTER_AREA 是专为降采样设计的区域平均算法，比 PIL LANCZOS 快得多，
-    用它先降到约 4 倍最终目标尺寸，再由调用方做最后一步 PIL LANCZOS 精修，
-    实测（棋盘图案 + 真实 45MP 鸟类照片）显示最终评分误差 < 0.02
-    (1-10 分制)，可忽略。每个维度只降不升：小图整体原样返回；长宽比极端的
-    图（长边超阈值、短边低于阈值）只降长边——INTER_AREA 在放大时会退化为
-    近似最近邻引入块状伪影，且后续 LANCZOS 精修无法修复。
+    参数:
+    img_array (np.ndarray): HWC 格式的图像数组（BGR 或 RGB 均可）
 
-    If the source is much larger than the TOPIQ input size, fast-shrink it
-    with cv2 INTER_AREA first. INTER_AREA is an area-averaging algorithm
-    designed for downscaling and is much faster than PIL LANCZOS; shrinking
-    to ~4x the final target size here, then letting the caller do a final
-    PIL LANCZOS pass, keeps the measured score drift under 0.02 (on a 1-10
-    scale) on both a synthetic checkerboard pattern and a real 45MP bird
-    photo. Each dimension is only ever shrunk, never enlarged: small images
-    are returned unchanged, and for extreme aspect ratios (long side above
-    the threshold, short side below) only the long side is reduced —
-    INTER_AREA degrades to near-nearest-neighbor when upscaling and the
-    resulting block artifacts survive the final LANCZOS pass.
+    返回:
+    np.ndarray: 等比例预降后（或小图原样返回）的 HWC numpy 数组
 
-    Args:
-        img_array: HWC numpy array，通道顺序不限（BGR 或 RGB 均可，只做
-            空间 resize，不涉及颜色通道）。
+    When the source long edge exceeds the pre-shrink threshold, proportionally
+    downscale it using cv2 INTER_AREA to an intermediate resolution before the
+    final PIL LANCZOS pass.
 
-    Returns:
-        resize 后（或原样，小图时）的 HWC numpy array。
+    Parameters:
+    img_array (np.ndarray): HWC numpy image array (BGR or RGB)
+
+    Return:
+    np.ndarray: Proportionally pre-shrunk (or unchanged if small) HWC numpy array
     """
     height, width = img_array.shape[:2]
-    if max(height, width) > _TOPIQ_PRESHRINK_SIZE:
+    longest = max(height, width)
+    if longest > _TOPIQ_PRESHRINK_SIZE:
+        scale = _TOPIQ_PRESHRINK_SIZE / float(longest)
+        new_w = max(1, int(round(width * scale)))
+        new_h = max(1, int(round(height * scale)))
         img_array = cv2.resize(
             img_array,
-            # cv2.resize 的 dsize 是 (宽, 高) / dsize is (width, height)
-            (min(width, _TOPIQ_PRESHRINK_SIZE), min(height, _TOPIQ_PRESHRINK_SIZE)),
+            (new_w, new_h),
             interpolation=cv2.INTER_AREA,
         )
     return img_array
 
 
-
-
 def _t(key: str, **params) -> str:
-    """延迟导入 i18n，取当前界面语言的文案 / Lazily translate with the UI language."""
+    """
+    延迟导入 i18n，取当前界面语言的文案。
+
+    参数:
+    key (str): 国际化翻译键名
+    **params: 格式化参数
+
+    返回:
+    str: 翻译后的字符串
+
+    Lazily import i18n and translate the given key with the active UI language.
+
+    Parameters:
+    key (str): i18n translation key
+    **params: Formatting parameters
+
+    Return:
+    str: Translated text string
+    """
     from tools.i18n import t
+
     return t(key, **params)
 
+
 class IQAScorer:
-    """IQA 评分器 - 使用 TOPIQ 美学评分"""
+    """
+    IQA 美学评分器（底层使用 Charm-TAD66K 模型，对外保持原接口与 [1, 10] 分制完全兼容）。
 
-    def __init__(self, device='mps'):
+    IQA aesthetic scorer backed by Charm-TAD66K while preserving full backward
+    compatibility with existing public methods and the [1, 10] score range.
+    """
+
+    def __init__(self, device: str = "mps") -> None:
         """
-        初始化 IQA 评分器
+        初始化 IQA 评分器。
 
-        Args:
-            device: 计算设备 ('mps', 'cuda', 'cpu')
+        参数:
+        device (str): 期望计算设备 ('mps', 'cuda', 'cpu')
+
+        返回:
+        None
+
+        Initialize the IQA scorer.
+
+        Parameters:
+        device (str): Requested compute device ('mps', 'cuda', 'cpu')
+
+        Return:
+        None
         """
         self.device = get_best_device()
         print(_t("logs.iqa_init", device=self.device))
 
         # 延迟加载模型（第一次使用时才加载）
-        self._topiq_model = None
+        # Lazily load the model on first use
+        self._topiq_model: Optional[CharmNet] = None
+        self._use_fp16: bool = False
 
-        # V4.0.5: 复用 transform 实例，避免每次调用新建
+        # 复用 transform 实例，避免每次调用新建
+        # Reuse the ToTensor transform instance across calls
         self._transform = T.ToTensor()
 
         print(_t("logs.iqa_ready"))
 
-    def _load_topiq(self):
-        """延迟加载 TOPIQ 模型"""
+    def _load_topiq(self) -> CharmNet:
+        """
+        延迟加载 Charm-TAD66K 美学模型（保留 _load_topiq 方法名以兼容旧调用方与单测）。
+
+        参数:
+        无
+
+        返回:
+        CharmNet: 已加载并置于目标设备的 CharmNet 模型实例
+
+        Lazily load the Charm-TAD66K aesthetic model (keeps the `_load_topiq`
+        method name for backward compatibility with existing callers and tests).
+
+        Parameters:
+        None
+
+        Return:
+        CharmNet: Loaded CharmNet model instance on the target device
+        """
         if self._topiq_model is None:
-            print(_t("logs.topiq_loading"))
+            print(_t("logs.charm_loading"))
             try:
-                # 获取权重路径
-                weight_path = get_topiq_weight_path()
-                
-                # 初始化 TOPIQ 模型
-                self._topiq_model = CFANet()
-                load_topiq_weights(self._topiq_model, weight_path, self.device)
-                self._topiq_model.to(self.device)
-                
-                # V4.0.5: 启用 FP16 半精度推理，提速约 30-50%
-                if self.device.type in ('mps', 'cuda'):
-                    self._topiq_model = self._topiq_model.half()
-                    self._use_fp16 = True
-                else:
-                    self._use_fp16 = False
-                    
-                self._topiq_model.eval()
-                print(_t("logs.topiq_model_loaded"))
-            except Exception as e:
-                raise RuntimeError(f"TOPIQ 模型加载失败: {e}")
+                weight_path = get_charm_weight_path()
+
+                model = CharmNet()
+                # 权重先在 CPU 加载 / weights are loaded on CPU first
+                load_charm_weights(model, weight_path, "cpu")
+                try:
+                    model = self._move_to_device(model, self.device)
+                except Exception as exc:
+                    # GPU 初始化失败 → 回退 CPU，并输出可见日志
+                    # GPU init failed -> fall back to CPU with a visible log line
+                    print(_t("logs.charm_cpu_fallback", device=self.device, error=exc))
+                    self.device = torch.device("cpu")
+                    model = self._move_to_device(model.float().cpu(), self.device)
+
+                model.eval()
+                self._topiq_model = model
+                print(_t("logs.charm_model_loaded"))
+            except Exception as exc:
+                raise RuntimeError(f"Charm 美学模型加载失败: {exc}") from exc
         return self._topiq_model
+
+    def _move_to_device(self, model: CharmNet, device: torch.device) -> CharmNet:
+        """
+        将模型移动到目标设备；MPS/CUDA 上转 FP16，并更新 self._use_fp16。
+
+        参数:
+        model (CharmNet): 待移动的模型
+        device (torch.device): 目标设备
+
+        返回:
+        CharmNet: 已在目标设备上的模型
+
+        Move the model to the target device; use FP16 on MPS/CUDA and update
+        self._use_fp16.
+
+        Parameters:
+        model (CharmNet): Model to move
+        device (torch.device): Target device
+
+        Return:
+        CharmNet: Model on the target device
+        """
+        model = model.to(device)
+        if device.type in ("mps", "cuda"):
+            model = model.half()
+            self._use_fp16 = True
+        else:
+            self._use_fp16 = False
+        return model
 
     def preload(self) -> None:
         """
-        预热:立即加载 TOPIQ 权重(供启动预加载调用),避免首次评分时才现加载。
-        Warm up: load TOPIQ weights now (called by startup preload) so the first
-        scoring call (e.g. crop advisor / bird selection) doesn't trigger a load.
+        预热：立即加载美学模型权重（供启动预加载调用），避免首次评分时才现加载。
+
+        参数:
+        无
+
+        返回:
+        None
+
+        Warm up: load aesthetic model weights immediately (called by startup
+        preload) so the first scoring call does not pay model initialization cost.
+
+        Parameters:
+        None
+
+        Return:
+        None
         """
         self._load_topiq()
 
     def calculate_nima(self, image_path: str) -> Optional[float]:
         """
-        计算美学评分 (使用 TOPIQ，保持接口名称兼容)
+        计算美学评分（calculate_aesthetic 的兼容别名）。
 
-        Args:
-            image_path: 图片路径
+        参数:
+        image_path (str): 图像文件路径
 
-        Returns:
-            美学分数 (1-10, 越高越好) 或 None (失败时)
+        返回:
+        Optional[float]: 美学分数 (1-10，越高越好) 或 None（失败时）
+
+        Compute aesthetic score (backward-compatible alias of calculate_aesthetic).
+
+        Parameters:
+        image_path (str): Path to the image file
+
+        Return:
+        Optional[float]: Aesthetic score in [1, 10] (higher is better) or None on failure
         """
         return self.calculate_aesthetic(image_path)
 
     def _score_pil_image(self, img: Image.Image) -> float:
         """
-        共享推理路径：对 RGB PIL 图像计算 TOPIQ 美学评分。
+        共享推理路径：对 RGB PIL 图像计算 Charm-TAD66K 美学评分。
 
         calculate_aesthetic()（路径入口）与 calculate_from_array()（数组入口）
-        都委托到这里，推理细节（预降、LANCZOS 精修、transform、FP16、
-        inference_mode、clamp）只维护一处，避免两个入口静默分叉。
-
-        预降只在图像明显大于阈值时触发：先用零拷贝的 img.size 判断，小图
-        不再付出 np.array/Image.fromarray 两次整图拷贝的代价。
+        都委托到这里，推理细节（等比例预降、LANCZOS 精修、分词与前向推理、clamp）
+        只维护一处，避免两个入口静默分叉。
 
         参数:
-        img (Image.Image): RGB 模式的 PIL 图像。
+        img (Image.Image): RGB 模式的 PIL 图像
 
         返回:
-        float: 美学分数，已 clamp 到 [1, 10]。
+        float: 美学分数，已限制到 [1.0, 10.0]
 
-        Shared inference path: TOPIQ aesthetic score for an RGB PIL image.
-
-        Both calculate_aesthetic() (path entry) and calculate_from_array()
-        (array entry) delegate here so inference details (pre-shrink, LANCZOS
-        finishing, transform, FP16, inference_mode, clamp) live in exactly
-        one place. The pre-shrink only engages when the image is clearly
-        above the threshold — checked via the zero-copy img.size first, so
-        small images no longer pay two full-frame pixel copies.
+        Shared inference path: compute the Charm-TAD66K aesthetic score for an
+        RGB PIL image. Both calculate_aesthetic() and calculate_from_array()
+        delegate here so pre-shrink, LANCZOS resize, tokenization, and clamping
+        live in one place.
 
         Parameters:
-        img (Image.Image): PIL image in RGB mode.
+        img (Image.Image): PIL image in RGB mode
 
         Return:
-        float: Aesthetic score clamped to [1, 10].
+        float: Aesthetic score clamped to [1.0, 10.0]
         """
-        topiq_model = self._load_topiq()
+        charm_model = self._load_topiq()
 
-        # 零拷贝判断：只有大图才转 numpy 走 cv2 INTER_AREA 预降
+        # 零拷贝判断：只有大图才转 numpy 走 cv2 INTER_AREA 等比例预降
         # Zero-copy check: only large images take the numpy/cv2 pre-shrink
         if max(img.size) > _TOPIQ_PRESHRINK_SIZE:
             img = Image.fromarray(_preshrink_if_large(np.array(img)))
-        img = img.resize((_TOPIQ_INPUT_SIZE, _TOPIQ_INPUT_SIZE), Image.LANCZOS)
+        img = resize_for_charm(img, max_edge=CHARM_MAX_EDGE)
 
-        # 转为张量（复用实例变量）
-        img_tensor = self._transform(img).unsqueeze(0).to(self.device)
+        img_tensor = self._transform(img).unsqueeze(0)
 
-        # V4.0.5: 使用 FP16 和 inference_mode 优化推理
-        if hasattr(self, '_use_fp16') and self._use_fp16:
-            img_tensor = img_tensor.half()
-
-        with torch.inference_mode():
-            score = topiq_model(img_tensor, return_mos=True)
+        try:
+            with torch.inference_mode():
+                score = charm_model(img_tensor, return_mos=True)
+        except Exception as exc:
+            if self.device.type == "cpu":
+                raise
+            # GPU 推理失败 → 回退 CPU 重试一次 / GPU inference failed -> retry once on CPU
+            print(_t("logs.charm_cpu_fallback", device=self.device, error=exc))
+            self.device = torch.device("cpu")
+            self._topiq_model = self._move_to_device(charm_model.float().cpu(), self.device)
+            with torch.inference_mode():
+                score = self._topiq_model(img_tensor, return_mos=True)
 
         if isinstance(score, torch.Tensor):
             score = score.item()
 
-        # 分数范围 [1, 10]
         return max(1.0, min(10.0, float(score)))
 
     def calculate_aesthetic(self, image_path: str) -> Optional[float]:
         """
-        计算 TOPIQ 美学评分
+        从图片文件路径计算 Charm-TAD66K 美学评分。
 
-        Args:
-            image_path: 图片路径
+        参数:
+        image_path (str): 图片文件路径
 
-        Returns:
-            美学分数 (1-10, 越高越好) 或 None (失败时)
+        返回:
+        Optional[float]: 美学分数 (1-10，越高越好) 或 None（失败时）
+
+        Compute the Charm-TAD66K aesthetic score from an image file path.
+
+        Parameters:
+        image_path (str): Image file path
+
+        Return:
+        Optional[float]: Aesthetic score in [1, 10] or None on failure
         """
         if not os.path.exists(image_path):
             print(f"❌ 图片不存在: {image_path}")
             return None
 
         try:
-            img = Image.open(image_path).convert('RGB')
+            img = Image.open(image_path)
+            if max(img.size) > _TOPIQ_PRESHRINK_SIZE:
+                img.draft("RGB", (_TOPIQ_PRESHRINK_SIZE, _TOPIQ_PRESHRINK_SIZE))
+            img = img.convert("RGB")
             return self._score_pil_image(img)
-        except Exception as e:
-            print(f"❌ TOPIQ 计算失败: {e}")
+        except Exception as exc:
+            print(f"❌ Charm 美学计算失败: {exc}")
             return None
 
     def calculate_from_array(self, img_bgr: np.ndarray) -> Optional[float]:
         """
-        V4.0.5: 从已加载的 BGR numpy array 计算 TOPIQ 美学评分
-        
-        避免二次磁盘读取：主流程 cv2.imread 已读过图片，
-        直接传入 numpy array 复用，省去 Image.open 的 JPEG 解码。
-        
-        Args:
-            img_bgr: OpenCV BGR 格式的 numpy array
-            
-        Returns:
-            美学分数 (1-10, 越高越好) 或 None (失败时)
+        从已加载的 BGR numpy 数组计算 Charm-TAD66K 美学评分。
+        避免二次磁盘读取与 JPEG 解码；大图先在 numpy 侧完成 cv2 INTER_AREA 等比例预降。
+
+        参数:
+        img_bgr (np.ndarray): OpenCV BGR 格式的图像数组
+
+        返回:
+        Optional[float]: 美学分数 (1-10，越高越好) 或 None（失败时）
+
+        Compute the Charm-TAD66K aesthetic score from an in-memory BGR numpy array.
+        Avoids redundant disk reads and JPEG decoding; large images are pre-shrunk
+        on the numpy side via cv2 INTER_AREA before converting to PIL.
+
+        Parameters:
+        img_bgr (np.ndarray): OpenCV BGR image array
+
+        Return:
+        Optional[float]: Aesthetic score in [1, 10] or None on failure
         """
         if img_bgr is None or img_bgr.size == 0:
             return None
 
         try:
-            # V4.5: 输入已是 numpy，先在 numpy 侧完成 cv2 INTER_AREA 预降
-            # （大图才生效），再转 PIL 交给共享推理路径；预降后的图必然小于
-            # 阈值，_score_pil_image 内部的预降判断自动跳过，不会重复。
-            # V4.5: The input is already numpy, so pre-shrink on the numpy
-            # side (large sources only), then hand a PIL image to the shared
-            # inference path; the pre-shrunk image is below the threshold so
-            # _score_pil_image's own check is a no-op — no double work.
             img_bgr = _preshrink_if_large(img_bgr)
-            # del img_rgb 在评分前释放全分辨率副本，避免 50-70 MB 驻留到推理结束
             img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
             img = Image.fromarray(img_rgb)
             del img_rgb
             return self._score_pil_image(img)
-        except Exception as e:
-            print(f"❌ TOPIQ (from array) 计算失败: {e}")
+        except Exception as exc:
+            print(f"❌ Charm (from array) 计算失败: {exc}")
             return None
 
     def calculate_brisque(self, image_input) -> Optional[float]:
         """
-        计算 BRISQUE 技术质量评分 (已弃用，返回 None)
-        
-        保留此方法以保持接口兼容性
+        计算 BRISQUE 技术质量评分（已弃用，始终返回 None 以保持接口兼容）。
+
+        参数:
+        image_input: 任意图像输入（已忽略）
+
+        返回:
+        Optional[float]: 始终返回 None
+
+        Deprecated BRISQUE technical quality score (always returns None for
+        backward compatibility).
+
+        Parameters:
+        image_input: Ignored input
+
+        Return:
+        Optional[float]: Always None
         """
-        # BRISQUE 已弃用
         return None
 
-    def calculate_both(self,
-                       full_image_path: str,
-                       crop_image) -> Tuple[Optional[float], Optional[float]]:
+    def calculate_both(
+        self, full_image_path: str, crop_image
+    ) -> Tuple[Optional[float], Optional[float]]:
         """
-        计算美学评分 (BRISQUE 已弃用)
+        计算美学评分与已弃用的 BRISQUE 评分二元组。
 
-        Args:
-            full_image_path: 全图路径 (用于美学评分)
-            crop_image: 不再使用
+        参数:
+        full_image_path (str): 全图路径
+        crop_image: 已弃用参数
 
-        Returns:
-            (aesthetic_score, None) 元组
+        返回:
+        Tuple[Optional[float], Optional[float]]: (aesthetic_score, None)
+
+        Compute aesthetic score and deprecated BRISQUE tuple.
+
+        Parameters:
+        full_image_path (str): Full image path
+        crop_image: Deprecated parameter
+
+        Return:
+        Tuple[Optional[float], Optional[float]]: (aesthetic_score, None)
         """
         aesthetic_score = self.calculate_aesthetic(full_image_path)
         return aesthetic_score, None
 
 
-def get_iqa_scorer(device='mps') -> IQAScorer:
+def get_iqa_scorer(device: str = "mps") -> IQAScorer:
     """
-    获取 IQA 评分器单例
+    获取 IQA 评分器延迟单例。
 
-    Args:
-        device: 计算设备
+    参数:
+    device (str): 计算设备标识
 
-    Returns:
-        IQAScorer 实例
+    返回:
+    IQAScorer: 缓存的 IQAScorer 单例实例
+
+    Get the lazy singleton IQAScorer instance.
+
+    Parameters:
+    device (str): Compute device identifier
+
+    Return:
+    IQAScorer: Cached IQAScorer singleton instance
     """
     registry = get_lazy_registry()
-    return registry.get_or_create(f"iqa_scorer.instance::{device}", lambda: IQAScorer(device=device))
+    return registry.get_or_create(
+        f"iqa_scorer.instance::{device}", lambda: IQAScorer(device=device)
+    )
 
 
-# 便捷函数 (保持向后兼容)
 def calculate_nima(image_path: str) -> Optional[float]:
-    """计算美学评分的便捷函数 (使用 TOPIQ)"""
+    """
+    计算美学评分的模块级便捷函数。
+
+    参数:
+    image_path (str): 图片文件路径
+
+    返回:
+    Optional[float]: 美学分数 (1-10) 或 None
+
+    Module-level convenience function to compute the aesthetic score.
+
+    Parameters:
+    image_path (str): Path to the image file
+
+    Return:
+    Optional[float]: Aesthetic score in [1, 10] or None
+    """
     scorer = get_iqa_scorer()
     return scorer.calculate_aesthetic(image_path)
 
 
 def calculate_brisque(image_input) -> Optional[float]:
-    """计算 BRISQUE 评分 (已弃用)"""
+    """
+    已弃用的模块级 BRISQUE 评分函数（返回 None）。
+
+    参数:
+    image_input: 忽略的输入
+
+    返回:
+    Optional[float]: None
+
+    Deprecated module-level BRISQUE function (returns None).
+
+    Parameters:
+    image_input: Ignored input
+
+    Return:
+    Optional[float]: None
+    """
     return None
-
-
-if __name__ == "__main__":
-    # 测试代码
-    print("=" * 70)
-    print("IQA 评分器测试 (TOPIQ)")
-    print("=" * 70)
-
-    # 初始化评分器
-    scorer = IQAScorer(device='mps')
-
-    # 测试图片路径
-    test_image = "img/_Z9W0960.jpg"
-
-    if os.path.exists(test_image):
-        print(f"\n📷 测试图片: {test_image}")
-
-        import time
-        start = time.time()
-        score = scorer.calculate_aesthetic(test_image)
-        elapsed = time.time() - start
-
-        if score is not None:
-            print(f"   ✅ TOPIQ 分数: {score:.2f} / 10")
-            print(f"   ⏱️  耗时: {elapsed*1000:.0f}ms")
-        else:
-            print(f"   ❌ 评分计算失败")
-
-    else:
-        print(f"\n⚠️  测试图片不存在: {test_image}")
-        print("   请提供有效的测试图片路径")
-
-    print("\n" + "=" * 70)

@@ -4,7 +4,7 @@
 评星 V2 核心:批内相对排序 + 配额制(纯函数,无 Qt/IO 依赖)。
 
 设计(2026-07-09 审定,详见 docs/plans/2026-07-09-rating-v2-quota.md):
-- 硬门槛保留绝对值:无鸟→-1;置信度<50%→0;归一化锐度<100→0;TOPIQ<3.5→0;
+- 硬门槛保留绝对值:无鸟→-1;置信度<50%→0;归一化锐度<100→0;美学分<3.0→0;
   关键点全不可见→1(角度不佳)。
 - 综合分 Q = 0.65×锐度批内百分位 + 0.35×TOPIQ批内百分位,
   外加小幅加减分:飞鸟+0.06、精焦+0.04、脱焦−0.06、曝光问题−0.06。
@@ -25,11 +25,17 @@ from typing import Dict, List, Optional
 # ---- 常量(与审定方案一致)/ constants per approved design ----
 MIN_CONFIDENCE = 0.50     # 置信度硬门槛 / confidence hard gate
 MIN_SHARPNESS = 100.0     # 归一化锐度硬门槛 / normalized sharpness hard gate
-MIN_TOPIQ = 3.5           # TOPIQ 硬门槛 / TOPIQ hard gate
+# 美学分硬门槛。3.5→3.0:2026-10 美学模型由 TOPIQ 换成 Charm-TAD66K,Charm 分数整体偏低
+# (实拍 544 只鸟:均值 4.65、最低 3.21;TOPIQ 均值 5.14、最低 3.56),沿用 3.5 会让约 4%
+# 的鸟被直接判 0★;3.0 在同一批数据上与旧门槛一样几乎不触发,保持「只拦明显很差的片」。
+# Aesthetics hard gate, lowered 3.5→3.0 when the model moved from TOPIQ to Charm-TAD66K:
+# Charm scores run lower (544 real birds: mean 4.65, min 3.21 vs TOPIQ 5.14 / 3.56), so
+# 3.5 would zero-star ~4% of birds; 3.0 keeps the original "only block clearly bad" intent.
+MIN_AESTHETIC = 3.0
 KEYPOINT_VIS_MIN = 0.3    # 关键点可见判定阈值 / keypoint visibility threshold
 
 W_SHARP = 0.65            # Q 中锐度百分位权重 / sharpness percentile weight
-W_TOPIQ = 0.35            # Q 中美学百分位权重 / aesthetics percentile weight
+W_AESTHETIC = 0.35            # Q 中美学百分位权重 / aesthetics percentile weight
 BONUS_FLYING = 0.06       # 飞鸟加分 / flying bonus
 BONUS_FOCUS_BEST = 0.04   # 精焦加分 / head-focus bonus
 PENALTY_FOCUS_WORST = -0.06   # 脱焦减分 / focus-outside penalty
@@ -86,7 +92,7 @@ class PhotoMetricsV2:
     detected: bool = False
     confidence: float = 0.0
     norm_sharpness: float = 0.0       # ISO 归一化后的头部锐度 / ISO-normalized head sharpness
-    topiq: Optional[float] = None     # 鸟裁剪区 TOPIQ / bird-crop TOPIQ
+    aesthetic: Optional[float] = None     # 鸟裁剪区 TOPIQ / bird-crop TOPIQ
     best_eye: float = 0.0             # 双眼最高可见度 / best eye visibility
     beak_vis: float = 0.0             # 鸟喙可见度 / beak visibility
     is_flying: bool = False
@@ -116,19 +122,19 @@ def _percentile_fn(values: List[float]):
     return pct
 
 
-def compute_q(photo: PhotoMetricsV2, pct_sharp, pct_topiq) -> float:
+def compute_q(photo: PhotoMetricsV2, pct_sharp, pct_aesthetic) -> float:
     """
     计算单张照片的综合质量分 Q。
 
     参数:
         photo: 照片指标
-        pct_sharp / pct_topiq: 批内百分位查询函数
+        pct_sharp / pct_aesthetic: 批内百分位查询函数
 
     返回:
         float: Q 分(理论范围约 -0.12 ~ 1.10)
     """
     q = W_SHARP * pct_sharp(photo.norm_sharpness)
-    q += W_TOPIQ * pct_topiq(photo.topiq if photo.topiq is not None else 0.0)
+    q += W_AESTHETIC * pct_aesthetic(photo.aesthetic if photo.aesthetic is not None else 0.0)
     if photo.is_flying:
         q += BONUS_FLYING
     if photo.focus_status == "BEST":
@@ -167,10 +173,10 @@ def gate_photo(
         return RatingV2Result(
             0, reason_key="rating_engine.low_sharpness",
             reason_args={"val": photo.norm_sharpness, "threshold": MIN_SHARPNESS})
-    if photo.topiq is not None and photo.topiq < MIN_TOPIQ:
+    if photo.aesthetic is not None and photo.aesthetic < MIN_AESTHETIC:
         return RatingV2Result(
             0, reason_key="rating_engine.low_aesthetics",
-            reason_args={"val": photo.topiq, "threshold": MIN_TOPIQ})
+            reason_args={"val": photo.aesthetic, "threshold": MIN_AESTHETIC})
     return None
 
 
@@ -245,10 +251,10 @@ def assign_ratings(
         return results
 
     pct_sharp = _percentile_fn([p.norm_sharpness for p in pool])
-    pct_topiq = _percentile_fn([(p.topiq if p.topiq is not None else 0.0) for p in pool])
+    pct_aesthetic = _percentile_fn([(p.aesthetic if p.aesthetic is not None else 0.0) for p in pool])
 
     scored = sorted(
-        ((compute_q(p, pct_sharp, pct_topiq), p) for p in pool),
+        ((compute_q(p, pct_sharp, pct_aesthetic), p) for p in pool),
         key=lambda x: -x[0])
 
     # V4.6: 按鸟种分组执行配额——排序仍用全局 Q(小样本鸟种的种内百分位
@@ -300,7 +306,7 @@ def assign_ratings(
                     "rank": gidx + 1,
                     "group_size": gn,
                     "pct_sharp": pct_sharp(p.norm_sharpness),
-                    "pct_topiq": (pct_topiq(p.topiq) if p.topiq is not None else None),
+                    "pct_aesthetic": (pct_aesthetic(p.aesthetic) if p.aesthetic is not None else None),
                     "quota3": quota3,
                     "quota2": quota2,
                     "sharp_floor3": QUOTA3_SHARP_FLOOR,

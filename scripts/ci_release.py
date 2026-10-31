@@ -47,6 +47,7 @@ PATCH_ITEMS = (
     "iqa_scorer.py",
     "server_manager.py",
     "superpicky_cli.py",
+    "charm_model.py",
     "topiq_model.py",
     "tools",
     "core",

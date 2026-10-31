@@ -95,8 +95,8 @@ class CaptionFacts:
     head_sharp: Optional[float] = None           # 头部锐度原始值（ISO 折算前）
     norm_sharpness: Optional[float] = None       # ISO 折算后的头部锐度（评星实际使用）
     sharp_gate: Optional[float] = None           # 锐度硬门槛（0★ 下限）
-    topiq: Optional[float] = None                # 美感分（TOPIQ，约 1-10）
-    topiq_gate: Optional[float] = None           # 美感硬门槛
+    aesthetic: Optional[float] = None                # 美感分（TOPIQ，约 1-10）
+    aesthetic_gate: Optional[float] = None           # 美感硬门槛
     best_eye: Optional[float] = None             # 双眼最高可见度 0-1
     focus_status: Optional[str] = None           # BEST / GOOD / BAD / WORST
     focus_weight: Optional[float] = None         # 对焦锐度权重（区分合焦的几种来源）
@@ -110,14 +110,14 @@ class CaptionFacts:
     group_size: Optional[int] = None             # 组内张数
     species_known: bool = False                  # 组是否按鸟种划分
     pct_sharp: Optional[float] = None            # 锐度在本批排序池中的百分位 0-1
-    pct_topiq: Optional[float] = None            # 美感在本批排序池中的百分位 0-1
+    pct_aesthetic: Optional[float] = None            # 美感在本批排序池中的百分位 0-1
     pool_size: Optional[int] = None              # 本批排序池张数（太少时不写百分位）
     quota3: Optional[float] = None               # 3★ 配额 %
     quota2: Optional[float] = None               # 2★ 配额 %
     sharp_floor3: Optional[float] = None         # 3★ 锐度兜底
     burst_cap: Optional[int] = None              # 连拍组 3★ 上限
     weight_sharp: Optional[float] = None         # 综合分中锐度权重（0-1）
-    weight_topiq: Optional[float] = None         # 综合分中美感权重（0-1）
+    weight_aesthetic: Optional[float] = None         # 综合分中美感权重（0-1）
     picked: bool = False                         # 是否「精选」
     # —— 鸟种识别（仅排序池照片：识鸟结果在收尾定星时才齐）/ Bird ID (pool photos) ——
     birdid_enabled: bool = False                 # 是否开了自动识鸟
@@ -193,9 +193,9 @@ def _why(f: CaptionFacts, t: Translator) -> Optional[str]:
     if o == "low_sharpness" and f.norm_sharpness is not None and f.sharp_gate is not None:
         return t("caption.why_low_sharpness", stars=stars,
                  val=f"{f.norm_sharpness:.0f}", thr=f"{f.sharp_gate:.0f}")
-    if o == "low_aesthetics" and f.topiq is not None and f.topiq_gate is not None:
+    if o == "low_aesthetics" and f.aesthetic is not None and f.aesthetic_gate is not None:
         return t("caption.why_low_aesthetics", stars=stars,
-                 val=f"{f.topiq:.1f}", thr=f"{f.topiq_gate:.1f}")
+                 val=f"{f.aesthetic:.1f}", thr=f"{f.aesthetic_gate:.1f}")
     if (o in RANKED_OUTCOMES and f.rank is not None and f.group_size
             and f.quota3 is not None and f.quota2 is not None):
         n, rank = f.group_size, f.rank
@@ -250,14 +250,14 @@ def _sharp_line(f: CaptionFacts, t: Translator, ranked: bool) -> Optional[str]:
     return t("caption.sharp_plain", val=val, note=note)
 
 
-def _topiq_line(f: CaptionFacts, t: Translator, ranked: bool) -> Optional[str]:
+def _aesthetic_line(f: CaptionFacts, t: Translator, ranked: bool) -> Optional[str]:
     """美感行 / Aesthetics line."""
-    if f.topiq is None:
+    if f.aesthetic is None:
         return None
-    val = f"{f.topiq:.1f}"
-    if ranked and f.pct_topiq is not None:
-        key = "caption.topiq_good" if f.pct_topiq >= 0.5 else "caption.topiq_weak"
-        return t(key, val=val, pos=_position(f.pct_topiq, t))
+    val = f"{f.aesthetic:.1f}"
+    if ranked and f.pct_aesthetic is not None:
+        key = "caption.topiq_good" if f.pct_aesthetic >= 0.5 else "caption.topiq_weak"
+        return t(key, val=val, pos=_position(f.pct_aesthetic, t))
     return t("caption.topiq_plain", val=val)
 
 
@@ -302,14 +302,14 @@ def build_caption(f: CaptionFacts, t: Translator) -> str:
     ranked = o in RANKED_OUTCOMES
     # 排序池太小时，逐项依据不写本批百分位（仍写数值）/ no percentiles for tiny pools
     show_pct = ranked and (f.pool_size or 0) >= MIN_POOL_FOR_PERCENTILE
-    if ranked and f.weight_sharp is not None and f.weight_topiq is not None:
+    if ranked and f.weight_sharp is not None and f.weight_aesthetic is not None:
         lines.append(t("caption.rule_v2",
-                       ws=f"{f.weight_sharp * 100:.0f}", wt=f"{f.weight_topiq * 100:.0f}"))
+                       ws=f"{f.weight_sharp * 100:.0f}", wt=f"{f.weight_aesthetic * 100:.0f}"))
     if o != "low_confidence":
         for line in (
             _sharp_line(f, t, show_pct),
             _focus_line(f, t),
-            _topiq_line(f, t, show_pct),
+            _aesthetic_line(f, t, show_pct),
         ):
             if line:
                 lines.append(line)

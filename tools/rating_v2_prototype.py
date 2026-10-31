@@ -40,11 +40,11 @@ ISO_MIN_FACTOR = 0.5
 # 硬门槛 / absolute gates
 MIN_CONFIDENCE = 0.50
 MIN_SHARPNESS = 100.0
-MIN_TOPIQ = 3.5
+MIN_AESTHETIC = 3.5
 
 # Q 分构成 / Q composition
 W_SHARP = 0.65
-W_TOPIQ = 0.35
+W_AESTHETIC = 0.35
 BONUS_FLYING = 0.06
 BONUS_FOCUS_BEST = 0.04
 PENALTY_FOCUS_WORST = -0.06
@@ -109,7 +109,7 @@ def rate_v2(rows: List[sqlite3.Row], quota3: float, quota2: float) -> Dict[str, 
         if norm_sharp < MIN_SHARPNESS:
             info["new"] = 0
             continue
-        if r["nima_score"] is not None and r["nima_score"] < MIN_TOPIQ:
+        if r["nima_score"] is not None and r["nima_score"] < MIN_AESTHETIC:
             info["new"] = 0
             continue
 
@@ -123,10 +123,10 @@ def rate_v2(rows: List[sqlite3.Row], quota3: float, quota2: float) -> Dict[str, 
         return result
 
     pct_sharp = percentile_fn([s["sharp"] for s in scored])
-    pct_topiq = percentile_fn([s["topiq"] for s in scored])
+    pct_aesthetic = percentile_fn([s["topiq"] for s in scored])
 
     for s in scored:
-        q = W_SHARP * pct_sharp(s["sharp"]) + W_TOPIQ * pct_topiq(s["topiq"])
+        q = W_SHARP * pct_sharp(s["sharp"]) + W_AESTHETIC * pct_aesthetic(s["topiq"])
         if s["fly"]:
             q += BONUS_FLYING
         if s["focus"] == "BEST":

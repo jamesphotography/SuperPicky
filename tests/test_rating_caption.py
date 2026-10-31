@@ -24,9 +24,9 @@ def _ranked(**kw) -> CaptionFacts:
     """排序池里一张 3★ 照片的典型事实 / Typical facts of a ranked 3★ photo."""
     base = dict(
         rating=3, outcome="top", confidence=0.88, head_sharp=631.0, norm_sharpness=631.0,
-        topiq=5.93, best_eye=0.99, focus_status="BEST", focus_weight=1.1, iso=1000,
-        rank=1, group_size=18, species_known=True, pct_sharp=0.97, pct_topiq=0.91,
-        quota3=20, quota2=30, sharp_floor3=300, weight_sharp=0.65, weight_topiq=0.35,
+        aesthetic=5.93, best_eye=0.99, focus_status="BEST", focus_weight=1.1, iso=1000,
+        rank=1, group_size=18, species_known=True, pct_sharp=0.97, pct_aesthetic=0.91,
+        quota3=20, quota2=30, sharp_floor3=300, weight_sharp=0.65, weight_aesthetic=0.35,
         birdid_enabled=True, species_confidence=92.0, species_threshold=50.0, pool_size=60,
     )
     base.update(kw)
@@ -113,7 +113,7 @@ def test_gated_photos_state_the_rule_and_threshold():
     """被硬门槛挡下的照片：「为什么」写出具体数值与最低要求，不出现排名与排名依据。"""
     cap = build_caption(CaptionFacts(
         rating=0, outcome="low_sharpness", confidence=0.9, norm_sharpness=38,
-        head_sharp=38, sharp_gate=100, topiq=4.2, best_eye=0.8, iso=800), ZH)
+        head_sharp=38, sharp_gate=100, aesthetic=4.2, best_eye=0.8, iso=800), ZH)
     lines = cap.split("\n")
     assert lines[:2] == ["0★ 未通过", "为什么是 0★：头部太模糊——头部锐度 38，低于最低要求 100"]
     assert "· 头部锐度 38" in cap
@@ -143,7 +143,7 @@ def test_unknown_reason_falls_back_to_v1_text():
     """旧版 V1 评星：「为什么」行用引擎给出的原因文字。"""
     assert outcome_from_reason_key("whatever") == "v1"
     cap = build_caption(CaptionFacts(rating=2, outcome="v1", v1_reason="良好照片",
-                                     norm_sharpness=500, topiq=5.0), ZH)
+                                     norm_sharpness=500, aesthetic=5.0), ZH)
     assert cap.split("\n")[:2] == ["2★ 良好", "为什么是 2★：良好照片"]
 
 
@@ -162,7 +162,7 @@ def test_manual_change_replaces_only_the_marker_line():
 def test_assign_ratings_reports_rank_and_floor_cap():
     """定星结果带组内名次/张数/百分位；名次够 3★ 但锐度不足时给 floor_capped。"""
     photos = [PhotoMetricsV2(key=f"p{i}", detected=True, confidence=0.9,
-                             norm_sharpness=150 + i, topiq=5.0, best_eye=0.9, beak_vis=0.9)
+                             norm_sharpness=150 + i, aesthetic=5.0, best_eye=0.9, beak_vis=0.9)
               for i in range(3)]
     res = assign_ratings(photos, quota3=30, quota2=30)
     best = res["p2"]
@@ -316,7 +316,7 @@ def test_detail_panel_shows_caption_numbers():
 
 def test_tiny_pool_shows_values_without_percentiles():
     """排序池不足 10 张：写数值，不写「本批前/后」，也不据此打 ✓/✗。"""
-    cap = build_caption(_ranked(pool_size=1, group_size=1, pct_sharp=0.0, pct_topiq=0.0), ZH)
+    cap = build_caption(_ranked(pool_size=1, group_size=1, pct_sharp=0.0, pct_aesthetic=0.0), ZH)
     assert "本批" not in cap
     assert "· 头部锐度 631" in cap and "· 美学分 5.9 / 10" in cap
 

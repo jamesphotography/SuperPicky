@@ -1571,9 +1571,9 @@ class PhotoProcessor:
             get_quota3_for_skill,
             get_quota2_for_skill,
             MIN_SHARPNESS as V2_MIN_SHARPNESS,
-            MIN_TOPIQ as V2_MIN_TOPIQ,
+            MIN_AESTHETIC as V2_MIN_AESTHETIC,
             W_SHARP as V2_W_SHARP,
-            W_TOPIQ as V2_W_TOPIQ,
+            W_AESTHETIC as V2_W_AESTHETIC,
             FOCUS_ARBITRATION_SHARPNESS as V2_FOCUS_ARBITRATION_SHARPNESS,
             needs_focus_check as needs_focus_check_v2,
         )
@@ -2833,7 +2833,7 @@ class PhotoProcessor:
                         detected=bool(detected),
                         confidence=confidence,
                         norm_sharpness=normalized_sharpness,
-                        topiq=topiq,
+                        aesthetic=topiq,
                         best_eye=best_eye_visibility,
                         beak_vis=beak_vis,
                     ) if detected else None,
@@ -3005,7 +3005,7 @@ class PhotoProcessor:
                         detected=True,
                         confidence=confidence,
                         norm_sharpness=normalized_sharpness,
-                        topiq=topiq,
+                        aesthetic=topiq,
                         best_eye=best_eye_visibility,
                         beak_vis=beak_vis,
                         is_flying=is_flying,
@@ -3153,8 +3153,8 @@ class PhotoProcessor:
                     head_sharp=head_sharpness if detected else None,
                     norm_sharpness=normalized_sharpness if detected else None,
                     sharp_gate=V2_MIN_SHARPNESS,
-                    topiq=topiq,
-                    topiq_gate=V2_MIN_TOPIQ,
+                    aesthetic=topiq,
+                    aesthetic_gate=V2_MIN_AESTHETIC,
                     best_eye=best_eye_visibility if detected else None,
                     focus_status=focus_status,
                     focus_weight=focus_sharpness_weight,
@@ -3530,14 +3530,14 @@ class PhotoProcessor:
                     facts.group_size = ra.get('group_size')
                     facts.species_known = pend['metrics'].species is not None
                     facts.pct_sharp = ra.get('pct_sharp')
-                    facts.pct_topiq = ra.get('pct_topiq')
+                    facts.pct_aesthetic = ra.get('pct_aesthetic')
                     facts.pool_size = ra.get('pool_size')
                     facts.quota3 = ra.get('quota3')
                     facts.quota2 = ra.get('quota2')
                     facts.sharp_floor3 = ra.get('sharp_floor3')
                     facts.burst_cap = ra.get('burst_cap')
                     facts.weight_sharp = V2_W_SHARP
-                    facts.weight_topiq = V2_W_TOPIQ
+                    facts.weight_aesthetic = V2_W_AESTHETIC
                     # 鸟种识别信息：识鸟结果此刻已全部就绪。低置信度候选不写入鸟种、
                     # 不分目录，但上面分组时仍按候选鸟种排名——题注如实说明。
                     # Bird ID facts. A low-confidence candidate is not stored as the

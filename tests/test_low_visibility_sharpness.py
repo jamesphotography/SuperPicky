@@ -100,7 +100,7 @@ def test_beak_visible_no_longer_scores_below_beak_hidden():
     若锐度为 0 就掉进 low_sharpness 判 0★——看到的信息更多反而更低分。
     锐度不再恒为 0 之后，倒置必须消失。
     """
-    common = dict(key="k", detected=True, confidence=0.9, topiq=5.0, best_eye=0.1)
+    common = dict(key="k", detected=True, confidence=0.9, aesthetic=5.0, best_eye=0.1)
 
     beak_hidden = gate_photo(PhotoMetricsV2(
         norm_sharpness=0.0, beak_vis=0.1, **common))
@@ -118,7 +118,7 @@ def test_eye_cap_still_limits_to_two_stars():
 
     photos = [
         PhotoMetricsV2(key=f"p{i}", detected=True, confidence=0.9,
-                       norm_sharpness=900.0 - i, topiq=8.0, best_eye=0.1,
+                       norm_sharpness=900.0 - i, aesthetic=8.0, best_eye=0.1,
                        beak_vis=0.9)
         for i in range(10)
     ]

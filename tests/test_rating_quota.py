@@ -24,10 +24,10 @@ from core.rating_quota import (
 )
 
 
-def make_photo(key, sharp=500.0, topiq=5.0, **kw):
+def make_photo(key, sharp=500.0, aesthetic=5.0, **kw):
     """构造通过全部硬门槛的默认照片 / a photo passing every hard gate."""
     defaults = dict(detected=True, confidence=0.9, norm_sharpness=sharp,
-                    topiq=topiq, best_eye=0.9, beak_vis=0.9)
+                    aesthetic=aesthetic, best_eye=0.9, beak_vis=0.9)
     defaults.update(kw)
     return PhotoMetricsV2(key=key, **defaults)
 
@@ -40,12 +40,19 @@ class TestHardGates(unittest.TestCase):
             (make_photo("b", confidence=0.3), 0),
             (make_photo("c", best_eye=0.1, beak_vis=0.1), 1),   # 角度不佳
             (make_photo("d", sharp=50.0), 0),                    # 真糊
-            (make_photo("e", topiq=3.0), 0),                     # 美学兜底
+            (make_photo("e", aesthetic=2.9), 0),                     # 美学兜底(门槛 3.0,严格小于才拦)
         ]
         for photo, expect in cases:
             r = gate_photo(photo)
             self.assertIsNotNone(r, photo.key)
             self.assertEqual(r.rating, expect, photo.key)
+
+    def test_aesthetic_gate_boundary(self):
+        """门槛值本身放行、低于才拦 / the gate value itself passes, below it is blocked."""
+        from core.rating_quota import MIN_AESTHETIC
+        self.assertEqual(MIN_AESTHETIC, 3.0)
+        self.assertIsNone(gate_photo(make_photo("at", aesthetic=MIN_AESTHETIC)))
+        self.assertEqual(gate_photo(make_photo("below", aesthetic=MIN_AESTHETIC - 0.01)).rating, 0)
 
     def test_pass_returns_none(self):
         self.assertIsNone(gate_photo(make_photo("ok")))
@@ -54,7 +61,7 @@ class TestHardGates(unittest.TestCase):
 class TestQuotaAssignment(unittest.TestCase):
     def _batch(self, n=100):
         """锐度/美学线性递减的 n 张照片 / n photos with descending quality."""
-        return [make_photo(f"p{i:03d}", sharp=800 - i * 5, topiq=6.5 - i * 0.02)
+        return [make_photo(f"p{i:03d}", sharp=800 - i * 5, aesthetic=6.5 - i * 0.02)
                 for i in range(n)]
 
     def test_quota_split(self):
@@ -67,21 +74,21 @@ class TestQuotaAssignment(unittest.TestCase):
 
     def test_sharp_floor_blocks_3star(self):
         """整批全烂时,3★ 配额不凑数(锐度兜底) / floor prevents fake 3★."""
-        photos = [make_photo(f"p{i}", sharp=250 - i, topiq=5.0) for i in range(10)]
+        photos = [make_photo(f"p{i}", sharp=250 - i, aesthetic=5.0) for i in range(10)]
         res = assign_ratings(photos, quota3=20, quota2=25)
         self.assertTrue(all(r.rating < 3 for r in res.values()))
 
     def test_eye_visibility_caps_at_2(self):
         """眼睛可见度<0.5 → 封顶 2★ / low eye visibility caps stars at 2."""
         photos = self._batch(10)
-        photos[0] = make_photo("p000", sharp=800, topiq=6.5, best_eye=0.4)
+        photos[0] = make_photo("p000", sharp=800, aesthetic=6.5, best_eye=0.4)
         res = assign_ratings(photos, quota3=50, quota2=30)
         self.assertEqual(res["p000"].rating, 2)
         self.assertEqual(res["p000"].reason_key, "rating_v2.eye_capped")
 
     def test_burst_cap(self):
         """同连拍组 3★ 封顶 2 张,溢出者降 2★ / per-burst 3-star cap."""
-        photos = [make_photo(f"p{i}", sharp=800 - i, topiq=6.0, burst_id=7)
+        photos = [make_photo(f"p{i}", sharp=800 - i, aesthetic=6.0, burst_id=7)
                   for i in range(5)]
         res = assign_ratings(photos, quota3=100, quota2=0, burst_cap3=2)
         stars = sorted((r.rating for r in res.values()), reverse=True)
@@ -112,9 +119,9 @@ class TestSpeciesQuota(unittest.TestCase):
     def test_per_species_quota(self):
         """识鸟开启时配额按鸟种独立执行 / quotas apply per species."""
         # 80 张海鸥(高分) + 8 张塍鹬(低分):全局配额下塍鹬会全军覆没
-        gulls = [make_photo(f"g{i:02d}", sharp=800 - i, topiq=6.0, species="gull")
+        gulls = [make_photo(f"g{i:02d}", sharp=800 - i, aesthetic=6.0, species="gull")
                  for i in range(80)]
-        godwits = [make_photo(f"w{i}", sharp=400 - i, topiq=4.5, species="godwit")
+        godwits = [make_photo(f"w{i}", sharp=400 - i, aesthetic=4.5, species="godwit")
                    for i in range(8)]
         res = assign_ratings(gulls + godwits, quota3=25, quota2=25)
         gull3 = sum(1 for k, r in res.items() if k.startswith("g") and r.rating == 3)
@@ -127,17 +134,17 @@ class TestSpeciesQuota(unittest.TestCase):
 
     def test_rare_species_keeps_best_shot(self):
         """小样本鸟种保底最好的 1 张(锐度兜底仍生效)/ singleton keeps its best."""
-        photos = [make_photo(f"g{i:02d}", sharp=800 - i, topiq=6.0, species="gull")
+        photos = [make_photo(f"g{i:02d}", sharp=800 - i, aesthetic=6.0, species="gull")
                   for i in range(40)]
-        photos.append(make_photo("rare", sharp=350, topiq=4.2, species="rare_bird"))
-        photos.append(make_photo("rare_blurry", sharp=200, topiq=4.2, species="blurry_bird"))
+        photos.append(make_photo("rare", sharp=350, aesthetic=4.2, species="rare_bird"))
+        photos.append(make_photo("rare_blurry", sharp=200, aesthetic=4.2, species="blurry_bird"))
         res = assign_ratings(photos, quota3=20, quota2=25)
         self.assertEqual(res["rare"].rating, 3)          # ceil(1×20%)=1 且过锐度兜底
         self.assertLess(res["rare_blurry"].rating, 3)    # 锐度<300 兜底挡住
 
     def test_no_species_falls_back_to_global(self):
         """species 全为 None(未开识鸟)→ 单组,等价全局配额。"""
-        photos = [make_photo(f"p{i:03d}", sharp=800 - i * 5, topiq=6.5 - i * 0.02)
+        photos = [make_photo(f"p{i:03d}", sharp=800 - i * 5, aesthetic=6.5 - i * 0.02)
                   for i in range(100)]
         res = assign_ratings(photos, quota3=20, quota2=25)
         self.assertEqual(sum(1 for r in res.values() if r.rating == 3), 20)
@@ -271,7 +278,7 @@ if __name__ == "__main__":
 def _metrics(**kw):
     """能过 V2 全部硬门槛的典型指标 / Metrics passing every V2 gate."""
     from core.rating_quota import PhotoMetricsV2
-    base = dict(key="k", detected=True, confidence=0.9, norm_sharpness=580.0, topiq=5.9,
+    base = dict(key="k", detected=True, confidence=0.9, norm_sharpness=580.0, aesthetic=5.9,
                 best_eye=0.99, beak_vis=0.9)
     base.update(kw)
     return PhotoMetricsV2(**base)

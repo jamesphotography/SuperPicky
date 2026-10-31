@@ -199,21 +199,19 @@ MODELS_TO_DOWNLOAD = [
         "sha256": "25bee11a4846e9065185bf22512e0ce4f81a62da79aece8f1683209f375904a6",
     },
     {
-        # TOPIQ 美学权重的半精度存储版（体积减半，为 Windows CUDA 包腾出 2 GiB 上限内的空间）。
-        # 由 chaofengc/IQA-PyTorch-Weights 的 cfanet_iaa_ava_res50-3cd62bb3.pth 经
-        # scripts_dev/convert_weights_fp16.py 转换；GPU 上推理本来就是 .half()，分数逐位一致。
-        # fp16-stored TOPIQ aesthetic weights (half the size, keeps the Windows CUDA installer
-        # under GitHub's 2 GiB limit), converted from chaofengc/IQA-PyTorch-Weights'
-        # cfanet_iaa_ava_res50-3cd62bb3.pth via scripts_dev/convert_weights_fp16.py.
+        # Charm-TAD66K 美学权重（DINOv2-small + 回归头，FP16 纯张量字典，44.2 MB），
+        # 由 scripts_dev/convert_charm_weights_fp16.py 转换，替代原 TOPIQ(cfanet) 权重。
+        # Charm-TAD66K aesthetic weights (DINOv2-small + MLP head, FP16 tensor-only dict,
+        # 44.2 MB), converted by scripts_dev/convert_charm_weights_fp16.py; replaces TOPIQ.
         "resource_id": "quality_model",
         "category": "Quality Assessment",
         "repo_id": "jamesphotography/SuperPicky-models",
-        "filename": "cfanet_iaa_ava_res50_fp16.pth",
+        "filename": "charm_tad66k_fp16.pth",
         "dest_dir": "models",
         "packaged_dest_dir": "models",
         "feature_tags": ["quality"],
         "required": False,
-        "sha256": "db9a31eae686b3cd82200d5e2e2b040252c102c225bf18ff22c83f00cfe9b885",
+        "sha256": "96078fb42c51736b7507f983157dd0e35eee690c21ef42a5717d25b021ba1a09",
     },
     {
         # yolo11l-seg.pt 不在 jamesphotography/SuperPicky-models 中（该 repo 只放 .onnx 权重），
