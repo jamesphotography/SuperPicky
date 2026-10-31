@@ -183,7 +183,15 @@ jobs:
   # 但没有 GTX 9/10 系列，所以 CUDA 11.8 版继续保留。驱动须 580 或更新。
   # 安装包约 2.22 GB，超过 GitHub 单文件上限 2 GiB（cu130 的 GPU 库已预压缩，LZMA 压不动；
   # 删未引用 DLL 实测只省 29 MiB），所以用 Inno DiskSpanning 分卷：一个 .exe 加若干 .bin，
-  # 每片不超过 2,100,000,000 字节，必须放在同一文件夹且不能改名。
+  # 每片不超过 1,400,000,000 字节，必须放在同一文件夹且不能改名。Inno 分卷是顺序灌满、
+  # 不是均分——卷越大单次发布越容易只出 2 个文件，但当前体积下两片会很不均匀（约
+  # 2.1GB + 130MB）；1.4e9 在"两片基本够用"（约 1.4GB + 0.83GB）和"体积再涨仍有余量"
+  # （到约 2.8 GB 总体积前都只出 2 个文件）之间取了个折中，不是算错。
+  # Disk spanning fills sequentially, not evenly — a larger slice tolerates more
+  # size growth before a 3rd file appears, but at today's ~2.22 GB total that
+  # yields a lopsided ~2.1 GB + 130 MB split. 1.4e9 trades some of that growth
+  # headroom for a more even two-way split (~1.4 GB + 0.83 GB) while still
+  # covering up to ~2.8 GB total before a 3rd file appears.
   # 单独一个 job 并行构建：与 CPU/CUDA 11.8 不抢 runner 磁盘，失败也不影响其他三个包。
   # Fourth installer: CUDA 13 (torch 2.14.1+cu130) for RTX 50 and newer. cu118
   # has no sm_120 kernels; cu130 covers GTX 16..RTX 50 but not GTX 9/10, so the
@@ -243,7 +251,7 @@ jobs:
           $text = Get-Content $iss -Raw -Encoding UTF8
           if ($text -notmatch '(?m)^\[Setup\]\r?$') { throw '[Setup] section not found' }
           if ($text -notmatch 'SuperPicky_Setup_FullCUDA_Win64_') { throw 'OutputBaseFilename prefix not found' }
-          $text = $text -replace '(?m)^\[Setup\]\r?$', "[Setup]`r`nDiskSpanning=yes`r`nDiskSliceSize=2100000000"
+          $text = $text -replace '(?m)^\[Setup\]\r?$', "[Setup]`r`nDiskSpanning=yes`r`nDiskSliceSize=1400000000"
           $text = $text.Replace('SuperPicky_Setup_FullCUDA_Win64_', 'SuperPicky_Setup_FullCUDA13_Win64_')
           Set-Content $iss $text -Encoding UTF8 -NoNewline
           Select-String -Path $iss -Pattern 'DiskSpanning|DiskSliceSize|OutputBaseFilename'
