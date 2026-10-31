@@ -10,6 +10,8 @@ eBird 插件共用的唯一鸟名来源。改一只鸟的名字只改主库，�
 写三处，各自只动名字相关的数据：
 1. birdid/data/bird_reference.sqlite：BirdCountInfo 的简繁中文名与 eBird 代码
    （按 id 对齐，先核对学名逐条一致）。识鸟结果、详情、卡片、LR 插件、CLI 都读它。
+   同库的 china_protection 表：中国国家重点保护等级（主库 species_conservation，
+   按学名 / 英文名 / 简繁中文名各一行），只供中文界面显示（core/china_protection.py）。
 2. ioc/pinyin_toned.json：补齐 / 更新主库现用名的带声调读音（其余条目不动）。
 3. ioc/birdname.db：写入一个名为「SuperPicky 名录」的版本，供改鸟种弹窗与鸟名查询使用：
    - 主库全部鸟种，名字与识鸟结果一致。识鸟参考库（BirdCountInfo）里有的记 in_model=1；
@@ -50,6 +52,14 @@ BACKUP_DIR = os.path.expanduser("~/Library/Caches/SuperPicky-db-backups")
 #: 写进 birdname.db 的主库版本名；tools.birdname_versions 据此把它排在最前
 #: Version name of the master catalog in birdname.db (preferred by birdname_versions).
 MASTER_VERSION_NAME = "SuperPicky 名录"
+
+#: 主库保护等级文字 → 写进参考库的整数等级（1=国家一级，2=国家二级）
+#: Master protection labels → integer class stored in the reference DB.
+CHINA_LEVELS = {"国家一级": 1, "国家二级": 2}
+
+#: 参考库里存中国保护等级的表名；core/china_protection.py 按同一名字读
+#: Reference-DB table holding the China protection class (read by core/china_protection.py).
+CHINA_TABLE = "china_protection"
 IOC_VERSION_ID = 8
 
 
@@ -145,10 +155,23 @@ def load_master(master_db: str) -> dict:
             pinyin[name] = toned
             initials[name] = ini
         version = con.execute("SELECT value FROM meta WHERE key = 'names_version'").fetchone()[0]
+        # 中国国家重点保护等级（主库 species_conservation 表；出处为国家林业和草原局、
+        # 农业农村部 2021 年第 3 号公告《国家重点保护野生动物名录》）。
+        # 旧主库没有这张表时视为空，不影响名字同步。
+        # China's national key protection class (2021 list) from species_conservation;
+        # an older master without the table just yields nothing.
+        china: Dict[int, int] = {}
+        try:
+            for sid, category in con.execute(
+                    "SELECT species_id, china_category FROM species_conservation "
+                    "WHERE china_category IN ('国家一级', '国家二级')"):
+                china[sid] = CHINA_LEVELS[category]
+        except sqlite3.OperationalError:
+            china = {}
     finally:
         con.close()
     return {"species": species, "aliases": aliases, "pinyin": pinyin, "initials": initials,
-            "version": version}
+            "version": version, "china": china}
 
 
 def plan_reference(ref_db: str, species: dict) -> Tuple[List[tuple], List[str], Set[int]]:
@@ -353,6 +376,79 @@ def merge_pinyin(json_path: str, master: dict) -> Tuple[dict, int]:
     return table, changed
 
 
+def plan_china_protection(ref_db: str, master: dict) -> Tuple[List[tuple], List[str], bool]:
+    """
+    组装参考库 china_protection 表的全部行，并判断与现有内容是否一致。
+
+    照片库（report.db）只存中英文鸟名、不存学名，所以每个受保护鸟种按学名、英文名、
+    简体名、繁体名各写一行，界面拿哪个名字都能查到。同一个名字若对应两个保护等级
+    不同的鸟种（理论上不该出现），这个名字整个不写，宁可不显示也不显示错。
+
+    参数:
+    ref_db (str): bird_reference.sqlite 路径
+    master (dict): load_master() 的结果，需含 species 与 china
+
+    返回:
+    Tuple: (行 [(名字, 学名, 等级)]，按名字排序；被丢弃的歧义名字；是否与现有表一致)
+
+    Build every row of the reference DB's china_protection table (one row per
+    scientific / English / Simplified / Traditional name, since report.db stores
+    names only) and tell whether it matches the current table. A name mapped to
+    two different classes is dropped rather than risk showing the wrong one.
+    """
+    by_name: Dict[str, Tuple[str, int]] = {}
+    ambiguous: Set[str] = set()
+    for sid, level in master["china"].items():
+        sp = master["species"].get(sid)
+        if sp is None:
+            continue
+        for name in {sp["sci"], sp["en"], sp["zh"], sp["tc"]}:
+            name = (name or "").strip()
+            if not name:
+                continue
+            prev = by_name.get(name)
+            if prev is not None and prev[1] != level:
+                ambiguous.add(name)
+            else:
+                by_name[name] = (sp["sci"], level)
+    rows = sorted((name, sci, level) for name, (sci, level) in by_name.items()
+                  if name not in ambiguous)
+
+    con = sqlite3.connect(f"file:{ref_db}?mode=ro", uri=True)
+    try:
+        current = con.execute(
+            f"SELECT name, scientific_name, level FROM {CHINA_TABLE} ORDER BY name").fetchall()
+    except sqlite3.OperationalError:
+        # 表还不存在：主库也没有保护数据时视为一致，不为一张空表去改参考库
+        # Table absent: with no master data either, treat as unchanged (no empty table)
+        current = []
+    finally:
+        con.close()
+    return rows, sorted(ambiguous), current == rows
+
+
+def write_china_protection(ref_db: str, rows: List[tuple]) -> None:
+    """
+    整表重写参考库的 china_protection 表（单个事务，失败则原表不变）。
+
+    参数:
+    ref_db (str): bird_reference.sqlite 路径
+    rows (List[tuple]): plan_china_protection() 给出的 (名字, 学名, 等级) 行
+
+    Rewrite the china_protection table in one transaction.
+    """
+    con = sqlite3.connect(ref_db)
+    try:
+        with con:
+            con.execute(f"DROP TABLE IF EXISTS {CHINA_TABLE}")
+            con.execute(f"CREATE TABLE {CHINA_TABLE} (name TEXT PRIMARY KEY, "
+                        "scientific_name TEXT NOT NULL, level INTEGER NOT NULL)")
+            con.executemany(f"INSERT INTO {CHINA_TABLE} (name, scientific_name, level) "
+                            "VALUES (?, ?, ?)", rows)
+    finally:
+        con.close()
+
+
 def main(argv: List[str]) -> int:
     """命令行入口；校验失败或数据对不齐时返回 1 / CLI entry point."""
     parser = argparse.ArgumentParser(description="从鸟名主库同步名字到 SuperPicky")
@@ -381,9 +477,14 @@ def main(argv: List[str]) -> int:
     catalog, stats = build_catalog(args.name_db, master, ref_ids)
     catalog_same = catalog_unchanged(args.name_db, catalog)
     table, py_changed = merge_pinyin(args.pinyin_json, master)
+    china_rows, china_ambiguous, china_same = plan_china_protection(args.ref_db, master)
 
     print(f"主库 names_version={master['version']}")
     print(f"  bird_reference：BirdCountInfo 更新 {len(updates)} 行")
+    print(f"  bird_reference：中国保护等级 {len(master['china'])} 种 → {len(china_rows)} 个名字"
+          f"{'（与现有内容一致）' if china_same else '（有变化）'}")
+    if china_ambiguous:
+        print(f"    同名不同等级、已跳过：{'、'.join(china_ambiguous[:10])}")
     print(f"  birdname.db「{MASTER_VERSION_NAME}」：模型种 {stats['master']}，模型未收录 {stats['ioc_gap']}"
           f"{'（与现有内容一致）' if catalog_same else '（有变化）'}")
     print(f"  pinyin_toned.json：增改 {py_changed} 条")
@@ -392,7 +493,7 @@ def main(argv: List[str]) -> int:
         return 0
     # 只写有变化的文件：内容没变还重写，git 里会出现「看着改了其实没改」的二进制差异
     # Only rewrite files whose content changes, so git shows no phantom diffs.
-    targets = [path for path, changed in ((args.ref_db, bool(updates)),
+    targets = [path for path, changed in ((args.ref_db, bool(updates) or not china_same),
                                           (args.name_db, not catalog_same),
                                           (args.pinyin_json, py_changed > 0)) if changed]
     if not targets:
@@ -412,6 +513,8 @@ def main(argv: List[str]) -> int:
                                 "ebird_code = ? WHERE id = ?", updates)
         finally:
             con.close()
+    if not china_same:
+        write_china_protection(args.ref_db, china_rows)
     if not catalog_same:
         write_catalog(args.name_db, catalog)
     if py_changed:

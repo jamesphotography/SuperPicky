@@ -1041,7 +1041,7 @@ class CropStudio(QWidget):
         return not str(getattr(self._i18n, "current_lang", "")).startswith("en")
 
     def _build_top_bar(self) -> QWidget:
-        """顶栏:鸟种名 + 文件名(灰) + 星级 + 罕见度 pill + IUCN pill + 返回 + 导出。"""
+        """顶栏:鸟种名 + 文件名(灰) + 星级 + 罕见度 pill + IUCN pill + 国家保护 pill(仅中文) + 返回 + 导出。"""
         p = self._photo
         is_zh = self._is_zh()
         bar = QFrame()
@@ -1100,6 +1100,18 @@ class CropStudio(QWidget):
             iucn_pill = QLabel(text)
             iucn_pill.setStyleSheet(self._pill_qss(color, boxed=False))
             h.addWidget(iucn_pill)
+
+        # 国家保护 pill：只在中文界面、且鸟种在名录里时显示，样式同 IUCN pill
+        # China protection pill: Chinese UIs only, listed species only; styled like IUCN
+        from core import china_protection as _china
+        lang = str(getattr(self._i18n, "current_lang", ""))
+        china_level = _china.get_level(p.get("bird_species_cn"), p.get("bird_species_en"))
+        china_text = _china.label(china_level, lang)
+        if china_text:
+            china_pill = QLabel(china_text)
+            china_pill.setObjectName("cropStudioChinaProtection")
+            china_pill.setStyleSheet(self._pill_qss(_china.color(china_level), boxed=False))
+            h.addWidget(china_pill)
 
         h.addStretch(1)
 

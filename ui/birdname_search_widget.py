@@ -44,6 +44,7 @@ from ui.detail_panel import _format_iucn
 # Optional user-supplied 0-10 rarity index; absent for most users, in which
 # case lookup_index returns None and the panel renders exactly as before.
 from core.custom_rarity import lookup_index as lookup_custom_rarity
+from core import china_protection as _china
 
 
 def get_birdname_db_path() -> str:
@@ -565,6 +566,13 @@ class BirdNameSearchWidget(QWidget):
         self.detail_rarity_label = self._make_detail_row(v, self.i18n.t("birdname_search.rarity"))
         # IUCN 行
         self.detail_iucn_label = self._make_detail_row(v, "IUCN")
+        # 国家保护行：只在中文界面创建（切换语言需重启，构建时决定即可）；英文界面为 None
+        # China-protection row, built in Chinese UIs only (a language switch needs a
+        # restart, so deciding at build time is enough); None on an English UI.
+        self.detail_china_label = (
+            self._make_detail_row(v, self.i18n.t("birdname_search.china_protection"))
+            if _china.is_shown_for(get_i18n().current_lang) else None
+        )
 
         # 简介标题
         intro_caption = QLabel(self.i18n.t("birdname_search.intro"))
@@ -907,6 +915,21 @@ class BirdNameSearchWidget(QWidget):
             )
         else:
             self._reset_detail_value(self.detail_iucn_label)
+
+        # 国家保护等级：学名最准，再退到中英文名；不在名录里显示「—」
+        # China protection: try the Latin name first, then the Chinese / English names
+        if self.detail_china_label is not None:
+            lang = get_i18n().current_lang
+            level = _china.get_level(latin, cn, en)
+            text = _china.label(level, lang)
+            if text:
+                self.detail_china_label.setText(text)
+                self.detail_china_label.setStyleSheet(
+                    f"color: {_china.color(level)}; font-size: 12px; font-weight: 600; "
+                    f"background: transparent; border: none;"
+                )
+            else:
+                self._reset_detail_value(self.detail_china_label)
 
         # 简介
         desc = (info.get("short_description_zh") if info else None) or ""

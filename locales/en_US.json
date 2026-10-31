@@ -1575,6 +1575,7 @@
     "meta_flying": "Flying",
     "meta_species": "Species",
     "meta_iucn": "IUCN",
+    "meta_china_protection": "China protection",
     "meta_caption": "Caption",
     "meta_camera": "Camera",
     "meta_lens": "Lens",
@@ -1847,6 +1848,7 @@
     "select_version": "Select version:",
     "intro": "Overview",
     "rarity": "Rarity",
+    "china_protection": "China",
     "found_n": "Found {count} result(s)"
   },
   "fullscreen": {

@@ -27,6 +27,7 @@ from PIL import Image, ImageOps
 
 from core.iso_sharpness import display_aesthetic, display_head_sharpness
 from core.rarity_tier import gbif_score_to_tier
+from core import china_protection
 from tools.file_utils import sibling_jpeg
 
 # 「磁盘上有自己目录」的星级门槛：低于它的照片一律归「其他鸟类」，该鸟种
@@ -96,6 +97,10 @@ class SpeciesBlock:
     # 故挂在这里而不是 PhotoRef 上。无数据为 None。
     # Species-level beauty index (0-100); not a per-photo property.
     beauty: Optional[float] = None
+    # 中国国家保护等级（1=国家一级，2=国家二级，None=不在名录），同样是鸟种级属性；
+    # 只在中文报告里画徽标（core/china_protection.py）。
+    # China protection class (1/2/None), species-level; badge in Chinese reports only.
+    china_level: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -408,6 +413,8 @@ def aggregate(photos: List[dict], *, include_gps: bool = False,
             iucn=head.get("iucn_category"),
             photos=[_to_ref(r) for r in _dedupe_bursts(ordered)[:per_species]],
             beauty=head.get("aesthetic_index"),
+            china_level=china_protection.get_level(
+                head.get("bird_species_cn"), head.get("bird_species_en")),
         ))
     # 罕见度降序；tier 为 None 视为最低，同 tier 时张数多者在前。
     blocks.sort(key=lambda b: (b.tier if b.tier is not None else -1, b.count),
@@ -626,8 +633,8 @@ def collect_image_jobs(data: ReportData) -> List[ImageJob]:
 # 深色底让鸟类羽色与背景虚化显色更好。
 #
 # 「美术馆」配色原则：这是一份照片作品集，界面必须让位给照片——中性灰阶
-# 全部无彩色，**颜色只允许出现在有信息含义的两处**（罕见度徽章、IUCN
-# 徽章）。原先的 --accent(#00d4aa 亮青绿) 与 --gold(#ffcc00 纯黄) 是两个
+# 全部无彩色，**颜色只允许出现在有信息含义的徽章上**（罕见度、IUCN，
+# 以及中文报告的国家保护等级——后者沿用 IUCN 徽章配色）。原先的 --accent(#00d4aa 亮青绿) 与 --gold(#ffcc00 纯黄) 是两个
 # 高饱和色同屏打架，且会跟画面里的鸟争夺视线，已删除。
 # 底色也从偏蓝紫的 #0d0d0f 校正为中性微暖，免得把暖调晨昏光的片子衬发青。
 #
@@ -640,7 +647,8 @@ def collect_image_jobs(data: ReportData) -> List[ImageJob]:
 # Single dark theme: a standalone file has no host theme to follow, and a
 # dark ground renders plumage and bokeh better. Gallery principle: the UI is
 # achromatic so the photos are the only source of color on the page; hue is
-# reserved for the two badges that actually carry information. Latin font
+# reserved for the badges that carry information (rarity, IUCN, and the China
+# protection class in Chinese reports, which reuses the IUCN badge colors). Latin font
 # families MUST precede the CJK ones or Latin text and digits get rendered by
 # the CJK face. System fonts only — the file must work offline.
 _CSS_BASE = """
@@ -714,7 +722,7 @@ font-style:italic}
 .splist .n{font-variant-numeric:tabular-nums;opacity:.75;margin-left:4px}
 .splist .sep{opacity:.35;margin:0 5px}
 .tier{font-size:12px;padding:1px 8px;border-radius:10px;border:1px solid currentColor}
-.iucn{font-size:11px;padding:1px 7px;border-radius:10px;
+.iucn,.cnprot{font-size:11px;padding:1px 7px;border-radius:10px;
 background:var(--iucn-bg);color:var(--iucn-fg);font-weight:600}
 .hero{margin:0 auto}
 .row{display:flex;gap:8px;margin-top:8px}
@@ -1294,6 +1302,11 @@ def _species_html(data: ReportData, reg: "_ImageRegistry", is_zh: bool) -> str:
                        f'{_esc(tier_name(block.tier, is_zh))}</span>')
         if block.iucn in IUCN_BADGE_SHOWN:
             badges += f'<span class="iucn">{_esc(block.iucn)}</span>'
+        # 国家保护徽标：只在中文报告里画；繁体 TW 经 _z 转成台湾用字
+        # China protection badge, Chinese reports only (_z localizes for zh_TW)
+        china_text = china_protection.label(block.china_level, "zh_CN") if is_zh else None
+        if china_text:
+            badges += f'<span class="cnprot">{_esc(_z(china_text))}</span>'
         # 选鸟参数只算一次，且只喂给代表作（_gallery_html 内部决定挂哪一张）
         pick_bits = (_pick_bits(block.photos[0], block.beauty, is_zh)
                      if block.photos else None)
