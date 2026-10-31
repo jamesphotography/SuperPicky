@@ -246,3 +246,94 @@ def test_catalog_aliases_include_ebird_english_names(tmp_path):
         "斑胸草雀": "巽他斑胸草雀|Sunda Zebra Finch",
         "田鹨": "理氏鹨|Richard's Pipit (Gray)",
     }
+
+
+def _add_conservation(master, rows):
+    """
+    给最小主库补上 species_conservation 表（国家重点保护等级等）。
+    Add the master's species_conservation table with the given rows.
+    """
+    con = sqlite3.connect(master)
+    con.executescript(
+        "CREATE TABLE species_conservation (species_id INTEGER PRIMARY KEY, iucn_category TEXT,"
+        " china_category TEXT, cites_appendix TEXT);")
+    con.executemany("INSERT INTO species_conservation VALUES (?, ?, ?, ?)", rows)
+    con.commit()
+    con.close()
+
+
+def _china_rows(ref):
+    con = sqlite3.connect(ref)
+    try:
+        return con.execute(
+            f"SELECT name, scientific_name, level FROM {sync.CHINA_TABLE} ORDER BY name").fetchall()
+    finally:
+        con.close()
+
+
+def test_china_protection_written_under_every_name(tmp_path):
+    """
+    国家保护等级写进参考库：每个受保护种按学名、英文名、简繁中文名各一行；
+    非保护种（含只有 IUCN 的）不写。重跑不再改动参考库。
+    Each protected species gets one row per name; unlisted ones get none;
+    a rerun leaves the reference DB alone.
+    """
+    root, master = _master(tmp_path)
+    ref, names, py = _targets(tmp_path)
+    _add_conservation(master, [(2, "LC", "国家二级", None),     # 田鹨（测试用）
+                               (3, "VU", None, "附录II")])      # 只有 IUCN / CITES
+    assert _run(tmp_path, root, master, ref, names, py) == 0
+    assert _china_rows(ref) == [
+        ("Anthus richardi", "Anthus richardi", 2),
+        ("Richard's Pipit", "Anthus richardi", 2),
+        ("大花鷚", "Anthus richardi", 2),
+        ("田鹨", "Anthus richardi", 2),
+    ]
+
+    before = os.path.getmtime(ref)
+    backups = len(os.listdir(tmp_path / "bak"))
+    assert _run(tmp_path, root, master, ref, names, py) == 0
+    assert os.path.getmtime(ref) == before
+    assert len(os.listdir(tmp_path / "bak")) == backups
+
+
+def test_china_protection_level_change_rewrites_table(tmp_path):
+    """主库等级变了（二级→一级）就整表重写 / A changed class rewrites the table."""
+    root, master = _master(tmp_path)
+    ref, names, py = _targets(tmp_path)
+    _add_conservation(master, [(2, "LC", "国家二级", None)])
+    assert _run(tmp_path, root, master, ref, names, py) == 0
+
+    con = sqlite3.connect(master)
+    con.execute("UPDATE species_conservation SET china_category = '国家一级' WHERE species_id = 2")
+    con.commit()
+    con.close()
+    assert _run(tmp_path, root, master, ref, names, py) == 0
+    assert {level for _, _, level in _china_rows(ref)} == {1}
+
+
+def test_master_without_conservation_creates_no_table(tmp_path):
+    """
+    旧主库没有 species_conservation：不报错，也不为一张空表去改参考库。
+    An older master without the table neither fails nor adds an empty table.
+    """
+    root, master = _master(tmp_path)
+    ref, names, py = _targets(tmp_path)
+    assert sync.load_master(str(master))["china"] == {}
+    rows, ambiguous, same = sync.plan_china_protection(str(ref), sync.load_master(str(master)))
+    assert (rows, ambiguous, same) == ([], [], True)
+
+
+def test_ambiguous_name_is_dropped(tmp_path):
+    """
+    同一个名字对应两个等级不同的鸟种时，这个名字不写（宁可不显示也不显示错）。
+    A name shared by species of different classes is dropped.
+    """
+    root, master = _master(tmp_path)
+    ref, _, _ = _targets(tmp_path)
+    data = sync.load_master(str(master))
+    data["species"][1]["zh"] = "田鹨"          # 人为制造同名 / force a shared name
+    data["china"] = {1: 1, 2: 2}
+    rows, ambiguous, _ = sync.plan_china_protection(str(ref), data)
+    assert ambiguous == ["田鹨"]
+    assert all(name != "田鹨" for name, _, _ in rows)

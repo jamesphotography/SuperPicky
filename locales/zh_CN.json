@@ -1575,6 +1575,7 @@
     "meta_flying": "飞行",
     "meta_species": "鸟种",
     "meta_iucn": "IUCN",
+    "meta_china_protection": "国家保护",
     "meta_caption": "选片备注",
     "meta_camera": "相机",
     "meta_lens": "镜头",
@@ -1847,6 +1848,7 @@
     "select_version": "请选择版本:",
     "intro": "简介",
     "rarity": "罕见度",
+    "china_protection": "国家保护",
     "found_n": "找到 {count} 个结果"
   },
   "fullscreen": {

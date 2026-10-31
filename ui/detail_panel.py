@@ -25,6 +25,7 @@ from ui.icon_utils import load_tinted_icon, stars_pixmap, tinted_png_path, glyph
 from core.rarity_tier import (gbif_score_to_tier, tier_name, tier_icon,
                               tier_color, format_rarity_values)
 from core.custom_rarity import lookup_index as lookup_custom_rarity
+from core import china_protection as _china
 
 
 # ============================================================
@@ -519,6 +520,9 @@ class DetailPanel(QWidget):
         # V4.2.7: IUCN 红色名录等级，紧贴鸟种之下显示
         # V4.2.7: IUCN Red List category, pinned directly under Species
         self._val_iucn = _make_value_label()
+        # 中国国家保护等级（国家一级 / 二级），紧跟 IUCN；只在中文界面显示整行
+        # China's national protection class, right after IUCN; Chinese UIs only
+        self._val_china = _make_value_label()
         self._val_camera = _make_value_label()
         self._val_lens = _NoWrapLabel()
         self._val_lens.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 12px; font-family: {FONTS['mono']}; background: transparent;")
@@ -589,13 +593,14 @@ class DetailPanel(QWidget):
         species_col.addWidget(self._val_species_en)
 
         rows = [
-            # 鸟类信息 4 行连续（鸟种 → 全球罕见度 → 鸟种颜值 → IUCN）
-            # Four bird-related rows kept adjacent for natural reading
-            # (species -> global rarity -> species beauty -> IUCN).
+            # 鸟类信息 5 行连续（鸟种 → 全球罕见度 → 鸟种颜值 → IUCN → 国家保护）
+            # Five bird-related rows kept adjacent for natural reading
+            # (species -> global rarity -> species beauty -> IUCN -> China protection).
             ("browser.meta_species",    species_row),
             ("browser.meta_gbif_rarity", self._val_gbif_rarity),
             ("browser.meta_species_beauty", self._val_species_beauty),
             ("browser.meta_iucn",       self._val_iucn),
+            ("browser.meta_china_protection", self._val_china),
             ("browser.meta_focus",      self._val_focus),
             ("browser.meta_sharpness",  self._val_sharpness),
             ("browser.meta_aesthetic",  self._val_aesthetic),
@@ -613,6 +618,10 @@ class DetailPanel(QWidget):
         self._meta_rows = rows
         for key, val_widget in rows:
             form.addRow(_lbl(key), val_widget)
+        # 国家保护行只在中文界面显示；_refresh_metadata 每次按当前语言再设一遍
+        # The China-protection row shows in Chinese UIs only; re-applied on refresh
+        self._meta_form = form
+        form.setRowVisible(self._val_china, _china.is_shown_for(self.i18n.current_lang))
 
         meta_layout.addLayout(form)
         meta_layout.addStretch()
@@ -715,7 +724,7 @@ class DetailPanel(QWidget):
             self._val_species_beauty,
             self._val_focus, self._val_sharpness,
             self._val_aesthetic, self._val_flying, self._val_species,
-            self._val_iucn,
+            self._val_iucn, self._val_china,
             self._val_caption,
             self._val_camera, self._val_lens, self._val_shutter,
             self._val_iso, self._val_focal, self._val_confidence,
@@ -823,6 +832,14 @@ class DetailPanel(QWidget):
             f"{t('browser.meta_species')}: {species}",
             f"{t('browser.meta_gbif_rarity')}: {f'{tier_icon(gbif_score_to_tier(gbif_r))} {tier_name(gbif_score_to_tier(gbif_r), is_zh=is_zh)} ({gbif_r:.1f})' if gbif_r is not None else '—'}",
             f"{t('browser.meta_iucn')}: {iucn_text}",
+        ]
+        # 国家保护等级只在中文界面、且鸟种在名录里时才复制
+        # China protection: Chinese UIs only, and only when the species is listed
+        china_text = _china.label(
+            _china.get_level(p.get("bird_species_cn"), p.get("bird_species_en")), lang)
+        if china_text:
+            lines.append(f"{t('browser.meta_china_protection')}: {china_text}")
+        lines += [
             f"{t('browser.meta_focus')}: {focus}",
             f"{t('browser.meta_sharpness')}: {f'{sharp:.0f}' if sharp is not None else '—'}",
             f"{t('browser.meta_aesthetic')}: {f'{topiq:.1f}' if topiq is not None else '—'}",
@@ -1211,6 +1228,26 @@ class DetailPanel(QWidget):
         else:
             self._val_iucn.setText(_unknown)
             self._val_iucn.setStyleSheet(
+                f"color: {COLORS['text_primary']}; font-size: 12px; background: transparent;"
+            )
+
+        # 中国国家保护等级：按当前鸟名现查（鸟种级属性，不存库），只在中文界面显示整行。
+        # 不在名录里显示「—」；必须无条件 setText，避免残留上一张照片的等级。
+        # China protection class, looked up by the current species name (not stored),
+        # row shown in Chinese UIs only; always setText so no stale class lingers.
+        lang = self.i18n.current_lang
+        self._meta_form.setRowVisible(self._val_china, _china.is_shown_for(lang))
+        china_level = _china.get_level(p.get("bird_species_cn"), p.get("bird_species_en"))
+        china_text = _china.label(china_level, lang)
+        if china_text:
+            self._val_china.setText(china_text)
+            self._val_china.setStyleSheet(
+                f"color: {_china.color(china_level)}; font-size: 12px; font-weight: 600; "
+                f"background: transparent;"
+            )
+        else:
+            self._val_china.setText(_unknown)
+            self._val_china.setStyleSheet(
                 f"color: {COLORS['text_primary']}; font-size: 12px; background: transparent;"
             )
 
