@@ -127,3 +127,45 @@ def test_four_letter_codes_of_aos_lumps_point_at_the_american_taxon(search, quer
     """
     results = search(query)
     assert results and results[0] == expected, results[:5]
+
+
+# ── #155：4 位代码前缀 + 拼音只在简体中文界面 ────────────────────────────────
+# #155: four-letter code prefixes + pinyin only in the Simplified Chinese UI
+
+_SUNBIRD = "阿拉伯橙簇花蜜鸟"      # Palestine Sunbird，拼音首字母 ALBCCHMN
+_CHICKADEE = "黑顶山雀"            # Black-capped Chickadee，BCCH / bkcchi
+
+
+def _use_language(lang: str) -> None:
+    """切换界面语言；autouse fixture 结束时会恢复 / Switch UI language (restored)."""
+    from tools.i18n import get_i18n
+    get_i18n().switch_language(lang)
+
+
+@pytest.mark.parametrize("search", SEARCHES)
+@pytest.mark.parametrize("lang", ["en_US", "zh_TW"])
+def test_pinyin_initials_do_not_match_outside_simplified_chinese(search, lang):
+    """
+    英文、繁体界面输入 bcc / bcch 不再搜出拼音首字母里恰好含这几个字母的鸟（#155）。
+
+    Outside zh_CN, "bcc" no longer surfaces the sunbird whose pinyin initials
+    happen to contain it (#155).
+    """
+    _use_language(lang)
+    assert _SUNBIRD not in search("bcc")
+    assert _SUNBIRD not in search("bcch")
+
+
+@pytest.mark.parametrize("search", SEARCHES)
+def test_four_letter_code_prefix_finds_the_bird(search):
+    """bcc 是 BCCH 的前缀，能找到黑顶山雀；输全 bcch 时排第一（#155）。"""
+    _use_language("en_US")
+    assert _CHICKADEE in search("bcc")
+    assert search("bcch")[0] == _CHICKADEE
+
+
+@pytest.mark.parametrize("search", SEARCHES)
+def test_simplified_chinese_keeps_pinyin_initials(search):
+    """简体中文界面照旧认拼音首字母：btb 仍是白头鹎排第一，bcc 仍能搜到含 bcc 的鸟。"""
+    assert search("btb")[0] == "白头鹎"
+    assert _SUNBIRD in search("bcc")

@@ -311,7 +311,7 @@ jobs:
     # Tag 推送始终构建全平台；手动触发时按 platform 选择。
     # Tag pushes always build all; manual runs honor the platform input.
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'mac' }}
-    runs-on: macos-14
+    runs-on: macos-15
     permissions:
       contents: write
 

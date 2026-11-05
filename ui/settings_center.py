@@ -695,12 +695,9 @@ class SettingsCenter(QDialog):
         self._bid_auto.stateChanged.connect(self._on_birdid_field_changed)
         lay.addWidget(self._bid_auto)
 
-        # 写入关键字开关(Paul P1-1) / write-keywords toggle
-        self._bid_keywords = QCheckBox(self.i18n.t("settings.birdid_keywords_label"))
-        self._bid_keywords.setChecked(cfg.birdid_write_keywords)
-        self._bid_keywords.setStyleSheet(self._checkbox_qss())
-        self._bid_keywords.stateChanged.connect(self._on_birdid_field_changed)
-        lay.addWidget(self._bid_keywords)
+        # 「写入照片关键字」开关已并入输出页「写入哪些字段」（#153），同一个配置项
+        # 只留一个入口。/ The write-keywords toggle moved to the Output page's
+        # field list (#153): one setting, one place.
 
         # ── 置信度滑块 / Confidence slider (range 30-95, mirrors set_birdid_confidence clamp) ──
         conf_title = QLabel(self.i18n.t("settings.birdid_section_conf"))
@@ -1204,9 +1201,6 @@ class SettingsCenter(QDialog):
 
         # 自动识鸟开关 / Auto-identify toggle
         cfg.set_birdid_auto_identify(self._bid_auto.isChecked())
-
-        # 写入关键字开关 / write-keywords toggle
-        cfg.set_birdid_write_keywords(self._bid_keywords.isChecked())
 
         # 置信度(set_birdid_confidence 不内部 save，此处显式补调，确保值持久化)
         # Confidence (set_birdid_confidence doesn't call save internally; call it explicitly here)
@@ -1964,6 +1958,10 @@ class SettingsCenter(QDialog):
         self._xmp_embedded.toggled.connect(self._raw_embed.setEnabled)
         self._raw_embed.setEnabled(self._xmp_embedded.isChecked())
 
+        # ── 写入哪些字段（#153）/ Which fields to write (#153) ────────────────
+        lay.addWidget(self._divider())
+        self._build_metadata_fields_section(lay, cfg)
+
         # ── 分隔线 / Divider ──────────────────────────────────────────────────
         lay.addWidget(self._divider())
 
@@ -2131,6 +2129,138 @@ class SettingsCenter(QDialog):
         cfg = get_advanced_config()
         cfg.set_burst_group_folders(self._cull_burst_folders.isChecked())
         cfg.save()
+
+    def _build_metadata_fields_section(self, lay: QVBoxLayout, cfg: Any) -> None:
+        """
+        构建「写入哪些字段」区（#153）：说明、「一键精简」「全部勾选」两个按钮、
+        「核心内容」「鸟种识别内容」两组共 12 个勾选框。
+
+        字段清单与顺序来自 core.metadata_fields；每次勾选即时保存。写入方式选
+        「不写入」时整区置灰——那时什么都不写，勾选没有意义。
+
+        参数:
+        lay (QVBoxLayout): 输出页主布局
+        cfg (AdvancedConfig): 配置实例
+
+        Build the "Which fields to write" section (#153): a hint, "Lean" and
+        "Select all" buttons, and 12 checkboxes in two groups. The list comes
+        from core.metadata_fields; every toggle saves immediately. The whole
+        section is disabled while the write mode is "Don't write".
+
+        Parameters:
+        lay (QVBoxLayout): the Output page layout
+        cfg (AdvancedConfig): config instance
+        """
+        from core.metadata_fields import METADATA_FIELDS
+
+        self._meta_fields_box = QWidget()
+        box_lay = QVBoxLayout(self._meta_fields_box)
+        box_lay.setContentsMargins(0, 0, 0, 0)
+        box_lay.setSpacing(8)
+
+        title = QLabel(self.i18n.t("advanced_settings.metadata_fields_title"))
+        title.setStyleSheet(f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;")
+        box_lay.addWidget(title)
+
+        hint = QLabel(self.i18n.t("advanced_settings.metadata_fields_hint"))
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"color:{COLORS['text_muted']};font-size:11px;")
+        box_lay.addWidget(hint)
+
+        btn_row = QHBoxLayout()
+        lean_btn = QPushButton(self.i18n.t("advanced_settings.metadata_fields_lean"))
+        lean_btn.setObjectName("secondary")
+        lean_btn.setFixedHeight(28)
+        lean_btn.clicked.connect(self._on_metadata_fields_lean)
+        all_btn = QPushButton(self.i18n.t("advanced_settings.metadata_fields_all"))
+        all_btn.setObjectName("secondary")
+        all_btn.setFixedHeight(28)
+        all_btn.clicked.connect(self._on_metadata_fields_all)
+        btn_row.addWidget(lean_btn)
+        btn_row.addWidget(all_btn)
+        btn_row.addStretch(1)
+        box_lay.addLayout(btn_row)
+
+        lean_hint = QLabel(self.i18n.t("advanced_settings.metadata_fields_lean_hint"))
+        lean_hint.setWordWrap(True)
+        lean_hint.setStyleSheet(f"color:{COLORS['text_muted']};font-size:11px;")
+        box_lay.addWidget(lean_hint)
+
+        muted_check = tinted_png_path("circle-check.svg", COLORS['text_muted'], 15)
+        check_qss = (
+            self._checkbox_qss()
+            + f"QCheckBox:disabled {{ color: {COLORS['text_muted']}; }}"
+            + f"QCheckBox::indicator:checked:disabled {{ image: url({muted_check}); }}"
+        )
+        self._meta_field_checks: dict[str, QCheckBox] = {}
+        for group in ("core", "species"):
+            group_label = QLabel(self.i18n.t(f"advanced_settings.metadata_fields_group_{group}"))
+            group_label.setStyleSheet(
+                f"color:{COLORS['text_secondary']};font-size:12px;font-weight:600;margin-top:4px;"
+            )
+            box_lay.addWidget(group_label)
+            for field in METADATA_FIELDS:
+                if field.group != group:
+                    continue
+                check = QCheckBox(self.i18n.t(f"advanced_settings.metadata_field_{field.field_id}"))
+                check.setStyleSheet(check_qss)
+                check.setChecked(cfg.metadata_field_enabled(field.field_id))
+                # 默认参数绑定当前 field_id，避免闭包晚绑定全指向最后一项
+                # Bind field_id as a default arg to avoid late-binding closures
+                check.toggled.connect(
+                    lambda on, fid=field.field_id: self._on_metadata_field_toggled(fid, on))
+                box_lay.addWidget(check)
+                self._meta_field_checks[field.field_id] = check
+
+        lay.addWidget(self._meta_fields_box)
+        self._xmp_none.toggled.connect(lambda on: self._meta_fields_box.setEnabled(not on))
+        self._meta_fields_box.setEnabled(not self._xmp_none.isChecked())
+
+    def _on_metadata_field_toggled(self, field_id: str, checked: bool) -> None:
+        """
+        单个字段勾选变化 → 立即持久化。/ Persist a single field toggle immediately.
+
+        参数 / Parameters:
+            field_id (str): 字段 id / field id
+            checked (bool): 是否写入 / whether to write it
+        """
+        from advanced_config import get_advanced_config
+        get_advanced_config().set_metadata_fields({field_id: checked})
+
+    def _apply_metadata_field_selection(self, selected: frozenset) -> None:
+        """
+        把 12 个勾选框设成「selected 里的勾上、其余取消」，并一次性保存。
+
+        设置勾选时屏蔽信号，避免每个勾选框各存一次配置。
+
+        参数:
+        selected (frozenset): 要勾选的字段 id
+
+        Set the 12 checkboxes to exactly `selected` and save once (signals are
+        blocked while setting, so each checkbox doesn't save on its own).
+
+        Parameters:
+        selected (frozenset): field ids to check
+        """
+        from advanced_config import get_advanced_config
+        values = {}
+        for field_id, check in self._meta_field_checks.items():
+            on = field_id in selected
+            check.blockSignals(True)
+            check.setChecked(on)
+            check.blockSignals(False)
+            values[field_id] = on
+        get_advanced_config().set_metadata_fields(values)
+
+    def _on_metadata_fields_lean(self) -> None:
+        """「一键精简」：只留星级、旗标、题注、锐度、美学分。/ Lean preset."""
+        from core.metadata_fields import LEAN_PRESET
+        self._apply_metadata_field_selection(LEAN_PRESET)
+
+    def _on_metadata_fields_all(self) -> None:
+        """「全部勾选」：回到默认全写。/ Select all (the default)."""
+        from core.metadata_fields import ALL_FIELDS
+        self._apply_metadata_field_selection(ALL_FIELDS)
 
     def _on_xmp_mode_changed(self, _button, checked: bool) -> None:
         """

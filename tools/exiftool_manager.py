@@ -14,6 +14,7 @@ from typing import Any, Callable, Optional, List, Dict, Tuple
 from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from constants import ALL_RATING_FOLDER_NAMES, SIDECAR_RAW_EXTENSIONS
+from core.metadata_fields import ALL_FIELDS, filter_item, has_payload
 import time
 import threading
 import queue
@@ -323,6 +324,29 @@ def pick_flag_args(pick) -> List[str]:
 # 清除旗标时一并清掉的字段 / Flag fields cleared together on reset
 PICK_FLAG_CLEAR_ARGS = ['-XMP:Pick=', '-XMP-xmpDM:Good=']
 
+# 重置时每个清除参数属于哪个输出字段（#153：重置只清开着的字段——关掉的字段里
+# 可能是用户自己的真实数据，比如真实的城市名）。不在表里的参数一律照清。
+# Which output field each reset argument belongs to (#153: reset clears only
+# enabled fields, since a switched-off field may hold the user's own data such
+# as a real city name). Arguments not listed here are always kept.
+RESET_ARG_FIELDS = {
+    '-Rating=': 'rating',
+    '-XMP:Rating=': 'rating',
+    '-XMP:Pick=': 'pick',
+    '-XMP-xmpDM:Good=': 'pick',
+    '-XMP:Label=': 'label',
+    '-XMP:Title=': 'title',
+    '-XMP:Description=': 'caption',
+    '-XMP:City=': 'sharpness',
+    '-IPTC:City=': 'sharpness',
+    '-XMP:State=': 'aesthetic',
+    '-IPTC:Province-State=': 'aesthetic',
+    '-XMP:Country=': 'focus',
+    '-IPTC:Country-PrimaryLocationName=': 'focus',
+    '-XMP-iptcCore:IntellectualGenre=': 'iucn',
+    '-XMP-iptcExt:Event=': 'rarity',
+}
+
 # 批量写入的空闲超时：两个文件结果之间最多等多少秒（慢不算卡，真卡才放弃）
 # Batch-write idle timeout: max seconds between two file results
 BATCH_IDLE_TIMEOUT = 60.0
@@ -613,6 +637,69 @@ class ExifToolManager:
             mode = "auto"
         return mode
 
+    def _enabled_fields(self) -> frozenset:
+        """
+        读取开着的元数据输出字段（#153）。读配置失败时按全开处理并打日志——
+        宁可多写，也不能因为读配置出错而静默丢掉用户要的字段。
+
+        返回:
+        frozenset: 开着的字段 id
+
+        Read the enabled metadata output fields (#153). On a config error, fall
+        back to all fields with a log line rather than silently dropping fields.
+
+        Return:
+        frozenset: enabled field ids
+        """
+        try:
+            from advanced_config import get_advanced_config
+            return get_advanced_config().enabled_metadata_fields()
+        except Exception as e:
+            print(f"[ExifTool] metadata field switches unreadable, writing all fields: {e}")
+            return ALL_FIELDS
+
+    def _apply_field_switches(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        去掉 item 里被用户关掉的字段（#153），返回新字典。
+
+        参数:
+        item (Dict[str, Any]): 写入器 item
+
+        返回:
+        Dict[str, Any]: 过滤后的副本
+
+        Drop the switched-off fields from a writer item (#153).
+
+        Parameters:
+        item (Dict[str, Any]): writer item
+
+        Return:
+        Dict[str, Any]: filtered copy
+        """
+        return filter_item(item, self._enabled_fields())
+
+    def _filter_reset_args(self, args: List[str]) -> List[str]:
+        """
+        按开关过滤重置用的清除参数：只清开着的字段（#153，维护者 2026-11-04 拍板）。
+
+        参数:
+        args (List[str]): 清除参数，如 ['-Rating=', '-XMP:City=']
+
+        返回:
+        List[str]: 只保留开着字段（以及不属于任何字段）的参数
+
+        Filter reset arguments so only enabled fields are cleared (#153).
+
+        Parameters:
+        args (List[str]): clearing arguments
+
+        Return:
+        List[str]: arguments of enabled fields, plus any not tied to a field
+        """
+        enabled = self._enabled_fields()
+        return [a for a in args
+                if RESET_ARG_FIELDS.get(a) is None or RESET_ARG_FIELDS[a] in enabled]
+
     def _get_metadata_write_mode(self) -> str:
         """获取全局元数据写入模式: embedded | sidecar | none"""
         try:
@@ -737,6 +824,11 @@ class ExifToolManager:
         file_path = item.get('file')
         if not file_path or not os.path.exists(file_path):
             return False
+        # #153 关掉的字段不写；什么都不剩就是「按配置跳过」，算成功
+        # #153 skip switched-off fields; nothing left counts as a configured skip
+        item = self._apply_field_switches(item)
+        if not has_payload(item):
+            return True
 
         args = []
         if item.get('rating') is not None:
@@ -879,6 +971,11 @@ class ExifToolManager:
         file_path = item.get('file')
         if not file_path:
             return False
+        # #153 关掉的字段不写；什么都不剩就不碰（也不新建）侧车
+        # #153 skip switched-off fields; with nothing left, don't touch or create the sidecar
+        item = self._apply_field_switches(item)
+        if not has_payload(item):
+            return True
         xmp_path = os.path.splitext(file_path)[0] + '.xmp'
         self._cleanup_sidecar_tmp(xmp_path)
 
@@ -990,7 +1087,8 @@ class ExifToolManager:
         if not os.path.exists(xmp_path):
             return True
 
-        args = [
+        # #153 只清开着的字段 / clear enabled fields only
+        clear_args = self._filter_reset_args([
             '-XMP:Rating=',
             *PICK_FLAG_CLEAR_ARGS,
             '-XMP:Label=',
@@ -1001,6 +1099,11 @@ class ExifToolManager:
             '-XMP:Title=',
             '-XMP-iptcCore:IntellectualGenre=',
             '-XMP-iptcExt:Event=',
+        ])
+        if not clear_args:
+            return True
+        args = [
+            *clear_args,
             '-overwrite_original_in_place',  # V4.3.0: ExFAT 安全，避免 rename 删文件
             xmp_path
         ]
@@ -1016,6 +1119,11 @@ class ExifToolManager:
         mode = self._get_arw_write_mode(file_path)
         if not file_path or not os.path.exists(file_path):
             return False
+        # #153 先过滤：什么都不剩时，auto 模式也不必复制整张 RAW 去试写
+        # #153 filter first, so auto mode doesn't copy a whole RAW for nothing
+        item = self._apply_field_switches(item)
+        if not has_payload(item):
+            return True
 
         if mode == 'sidecar':
             return self._write_metadata_xmp_sidecar(item)
@@ -1097,71 +1205,27 @@ class ExifToolManager:
         if self._get_metadata_write_mode() == "none":
             return True
 
-        # 专有 RAW 强制走 XMP 侧车路由 / proprietary RAW routes to XMP sidecar
-        if self._is_sidecar_raw(file_path):
-            item = {
-                'file': file_path,
-                'rating': rating,
-                'pick': pick,
-                'sharpness': sharpness,
-                'nima_score': nima_score
-            }
-            if caption is not None:
-                item['caption'] = caption
-            return self._write_metadata_arw(item)
-
-        # V4.0.5: 使用常驻进程处理单文件更新
-        args = []
-        
-        # Rating
-        args.append(f'-Rating={rating}')
-        
-        # Pick（xmpDM:pick + xmpDM:good，后者才是 Lightroom Classic 读取的字段）
-        args.extend(pick_flag_args(pick))
-        
-        # Sharpness -> XMP:City
-        if sharpness is not None:
-            args.append(f'-XMP:City={sharpness:06.2f}')
-            
-        # NIMA -> XMP:State
-        if nima_score is not None:
-            args.append(f'-XMP:State={nima_score:05.2f}')
-
-        # 题注 -> XMP:Description，中文必须经 UTF-8 临时文件传入
-        # Caption via a UTF-8 temp file (never inline, to keep Chinese intact)
-        caption_tmp_path = None
+        # 统一组装成 item，交给与批量写入相同的写入函数：字段开关（#153）、题注的
+        # UTF-8 临时文件、ExFAT 安全的原地写都在那里一处处理。此前这里另拼了一套
+        # 参数，开关和格式都得在两处同步。
+        # Build one item and hand it to the same writers the batch path uses, so
+        # field switches (#153), the UTF-8 caption temp file and in-place writes
+        # live in one place instead of a second hand-built argument list.
+        item = {
+            'file': file_path,
+            'rating': rating,
+            'pick': pick,
+            'sharpness': sharpness,
+            'nima_score': nima_score,
+        }
         if caption is not None:
-            fd, caption_tmp_path = tempfile.mkstemp(suffix='.txt', prefix='sp_caption_')
-            with os.fdopen(fd, 'w', encoding='utf-8') as f:
-                f.write(caption)
-            args.append(f'-XMP:Description<={caption_tmp_path}')
-
-        # 文件路径
-        args.append(file_path)
-        
-        # 选项（in_place 保留文件 Birth Time，不创建新 inode）
-        args.append('-overwrite_original_in_place')
+            item['caption'] = caption
 
         try:
-            # 发送命令
-            try:
-                success = self._send_to_process(args)
-            finally:
-                if caption_tmp_path:
-                    try:
-                        os.remove(caption_tmp_path)
-                    except OSError:
-                        pass
-            
-            if success:
-                filename = os.path.basename(file_path)
-                pick_desc = {-1: "rejected", 0: "none", 1: "picked"}.get(pick, str(pick))
-                sharpness_info = f", Sharp={sharpness:06.2f}" if sharpness is not None else ""
-                nima_info = f", NIMA={nima_score:05.2f}" if nima_score is not None else ""
-                # print(f"✅ EXIF updated: {filename} (Rating={rating}, Pick={pick_desc}{sharpness_info}{nima_info})")
-            
-            return success
-
+            # 专有 RAW 强制走 XMP 侧车路由 / proprietary RAW routes to XMP sidecar
+            if self._is_sidecar_raw(file_path):
+                return self._write_metadata_arw(item)
+            return self._write_metadata_subprocess(item, in_place=True)
         except Exception as e:
             print(f"❌ Error setting rating/pick: {e}")
             return False
@@ -1246,7 +1310,11 @@ class ExifToolManager:
         if write_keywords and not (old_title or "").strip():
             old_title = self._read_title(read_target)
 
-        ok = self.set_metadata(file_path, {'Title': new_title})
+        # #153 用户关掉「鸟种名（标题）」时不碰 Title；关键字仍按 write_keywords 处理
+        # #153 leave Title alone when the title field is off; keywords still follow write_keywords
+        ok = True
+        if 'title' in self._enabled_fields():
+            ok = self.set_metadata(file_path, {'Title': new_title})
 
         if write_keywords:
             existing = self._read_subject_list(read_target)
@@ -1306,7 +1374,11 @@ class ExifToolManager:
         if write_keywords and not (old_title or "").strip():
             old_title = self._read_title(read_target)
 
-        ok = self.set_metadata(file_path, {'Title': ''})
+        # #153 关掉「鸟种名（标题）」时 Title 可能是用户自己写的，不清
+        # #153 with the title field off, Title may be the user's own text: keep it
+        ok = True
+        if 'title' in self._enabled_fields():
+            ok = self.set_metadata(file_path, {'Title': ''})
 
         old = (old_title or "").strip()
         if write_keywords and old:
@@ -1510,6 +1582,19 @@ class ExifToolManager:
         if global_mode == "none":
             print("[ExifTool] metadata_write_mode=none, 跳过所有元数据写入")
             return stats
+
+        # #153 先按字段开关过滤；过滤后没有可写内容的条目是「按配置跳过」，计为成功、
+        # 不交给 exiftool（空命令会报 nothing to do，被误计为失败）。
+        # #153 apply the field switches first; items left with nothing to write
+        # are configured skips, counted as success and never sent to exiftool
+        # (an empty command fails with "nothing to do").
+        enabled = self._enabled_fields()
+        filtered = [filter_item(it, enabled) for it in files_metadata]
+        files_metadata = [it for it in filtered if has_payload(it)]
+        stats['success'] += len(filtered) - len(files_metadata)
+        if not files_metadata:
+            return stats
+
         if global_mode == "sidecar":
             from tools.i18n import t as _t
             print(_t("logs.exif_sidecar_mode", count=len(files_metadata)))
@@ -1913,8 +1998,9 @@ class ExifToolManager:
         if self._is_sidecar_raw(file_path):
             return self._reset_xmp_sidecar(file_path)
 
-        # 删除Rating、Pick、City、Country和Province-State字段
-        args = [
+        # 删除Rating、Pick、City、Country和Province-State字段；#153 只清开着的字段
+        # Clear rating/flag/location-borrowed fields; #153 enabled fields only
+        clear_args = self._filter_reset_args([
             '-Rating=',
             *PICK_FLAG_CLEAR_ARGS,
             '-XMP:Label=',
@@ -1925,6 +2011,11 @@ class ExifToolManager:
             '-IPTC:City=',
             '-IPTC:Country-PrimaryLocationName=',
             '-IPTC:Province-State=',
+        ])
+        if not clear_args:
+            return True
+        args = [
+            *clear_args,
             '-overwrite_original_in_place',
             file_path
         ]
@@ -2002,7 +2093,9 @@ class ExifToolManager:
             # 此处不重复，减少参数量。
             # Build a single -execute for all files to avoid N round-trips.
             # Flags are listed once; all file paths follow; one -execute at the end.
-            batch_args = [
+            # #153 只清开着的字段；全部关掉时这批不用动，直接算成功
+            # #153 clear enabled fields only; with all off, the batch is a no-op
+            batch_args = self._filter_reset_args([
                 '-Rating=',
                 *PICK_FLAG_CLEAR_ARGS,
                 '-XMP:Label=',
@@ -2014,7 +2107,10 @@ class ExifToolManager:
                 '-IPTC:City=',
                 '-IPTC:Country-PrimaryLocationName=',
                 '-IPTC:Province-State=',
-            ]
+            ])
+            if not batch_args:
+                stats['success'] += len(valid_files)
+                continue
             batch_args.extend(valid_files)
             batch_args.append('-execute')
 
