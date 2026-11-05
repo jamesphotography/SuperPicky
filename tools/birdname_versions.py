@@ -199,6 +199,8 @@ class CodeSearch(NamedTuple):
     where_params (tuple): where 的参数
     rank (str): 插进排序 CASE 的 WHEN 子句（放在「精确名字」之后、「部分名字」之前）
     rank_params (tuple): rank 的参数
+    prefix_rank (str): 代码前缀命中的 WHEN 子句（放在「部分名字」之后、ELSE 之前）
+    prefix_rank_params (tuple): prefix_rank 的参数
 
     SQL fragments and parameters for species-code search.
     """
@@ -207,9 +209,70 @@ class CodeSearch(NamedTuple):
     where_params: tuple
     rank: str
     rank_params: tuple
+    prefix_rank: str = ""
+    prefix_rank_params: tuple = ()
 
 
 _NO_CODE_SEARCH = CodeSearch("", (), "", ())
+
+
+class PinyinSearch(NamedTuple):
+    """
+    拼音全拼 / 拼音首字母搜索的 SQL 片段与参数（见 catalog_pinyin_search）。
+
+    属性 / Attributes:
+    where (str): 追加在 WHERE 括号内的 OR 条件（以 " OR " 开头；非简体界面为空串）
+    where_params (tuple): where 的参数
+    rank (str): 插进排序 CASE 的 WHEN 子句（「拼音首字母精确命中」3～4 分）
+    rank_params (tuple): rank 的参数
+
+    SQL fragments for pinyin / pinyin-initial search.
+    """
+
+    where: str
+    where_params: tuple
+    rank: str
+    rank_params: tuple
+
+
+def catalog_pinyin_search(query: str, lang: Optional[str] = None) -> PinyinSearch:
+    """
+    拼音全拼与拼音首字母搜索——只在简体中文界面生效（#155）。
+
+    名录的 pinyin_name / abbreviation 两列是按**简体大陆鸟名**算出来的拼音。英文界面
+    用户看不懂它们：输入 bcc 时，「阿拉伯橙簇花蜜鸟」（拼音首字母 ALBCCHMN）因为
+    中间含 bcc 被搜出来，看起来毫无道理（#155）。繁体 TW 界面也不需要：台湾不用
+    汉语拼音找鸟名，且显示的台湾鸟名常与简体名不同（白頭翁 ≠ 白头鹎），拼音对不上。
+    这与「拼音只在简体中文界面显示」（tools.pinyin_names.pinyin_for_ui）是同一条规则。
+
+    参数:
+    query (str): 用户输入
+    lang (str | None): 语言代码；None 表示取当前界面语言
+
+    返回:
+    PinyinSearch: 简体中文界面下为拼音条件；其他界面四个字段全空
+
+    Pinyin and pinyin-initial search, active only in the Simplified Chinese UI
+    (#155). The columns are derived from mainland Simplified names, which mean
+    nothing to English users and don't line up with zh_TW display names.
+
+    Parameters:
+    query (str): user input
+    lang (str | None): language code; None means the current UI language
+
+    Return:
+    PinyinSearch: pinyin terms for zh_CN, otherwise all-empty
+    """
+    from tools.zh_convert import current_language
+    if (lang if lang is not None else current_language()) != "zh_CN":
+        return PinyinSearch("", (), "", ())
+    q = query or ""
+    q_lower = q.lower()
+    where = (" OR pinyin_name LIKE ? OR abbreviation LIKE ?"
+             " OR LOWER(pinyin_name) LIKE ? OR LOWER(abbreviation) LIKE ?")
+    where_params = (f"%{q}%", f"%{q}%", f"%{q_lower}%", f"%{q_lower}%")
+    rank = " WHEN abbreviation = ? THEN 3 WHEN LOWER(abbreviation) = ? THEN 4"
+    return PinyinSearch(where, where_params, rank, (q, q_lower))
 
 
 def catalog_code_search(conn: sqlite3.Connection, query: str) -> CodeSearch:
@@ -219,10 +282,13 @@ def catalog_code_search(conn: sqlite3.Connection, query: str) -> CodeSearch:
     「SuperPicky 名录」由 sync_from_master 写入 `alpha4` 与 `ebird_code` 两列；老库没有
     这两列，或输入不像代码（中文、含空格、长度不在 3～7）时返回空片段，查询照旧。
 
-    匹配：4 位代码精确（不分大小写）；eBird 代码精确或前缀。
+    匹配：4 位代码与 eBird 代码都认精确或前缀（不分大小写）。4 位代码原先只认完整
+    4 位，北美用户输入 bcc 找不到 BCCH（黑顶山雀），而 eBird 代码却能前缀匹配，
+    两种代码表现不一致（#155）。
     排序：rank 子句给「代码精确命中」4.5 分——排在中文名 / 英文名 / 拼音首字母精确命中
-    （1～4）之后、部分名字匹配（5～6）之前；只靠 eBird 前缀命中的落到 ELSE（最后）。
-    这样中文用户输入拼音首字母 btb 时，白头鹎仍排在 eBird 代码以 btb 开头的鸟之前。
+    （1～4）之后、部分名字匹配（5～6）之前；只靠代码前缀命中的给 6.5 分，排在部分
+    名字匹配之后、其余模糊命中（ELSE）之前。中文用户输入拼音首字母 btb 时，白头鹎
+    （拼音首字母精确命中，4 分）仍排在代码以 btb 开头的鸟之前。
 
     参数 / Parameters:
     conn (sqlite3.Connection): 已打开的 birdname.db 连接
@@ -230,10 +296,12 @@ def catalog_code_search(conn: sqlite3.Connection, query: str) -> CodeSearch:
 
     返回 / Returns:
     CodeSearch: SQL 片段与参数；调用方把 where 拼进 WHERE 的 OR 列表，把 rank 插进
-        排序 CASE 中「LOWER(abbreviation) = ? THEN 4」之后。
+        排序 CASE 中拼音首字母精确命中（3～4，见 catalog_pinyin_search）之后，把
+        prefix_rank 插在「english_name LIKE … THEN 6」之后、ELSE 之前。
 
-    Species-code search for IBP four-letter and eBird codes. Exact code hits rank
-    right after exact name/pinyin-initial hits; prefix-only eBird hits rank last,
+    Species-code search for IBP four-letter and eBird codes, exact or prefix
+    (#155: "bcc" now finds BCCH). Exact code hits rank right after exact
+    name/pinyin-initial hits; prefix-only hits rank after partial name matches,
     so pinyin initials such as "btb" keep their bird on top.
     """
     q = (query or "").strip()
@@ -249,16 +317,26 @@ def catalog_code_search(conn: sqlite3.Connection, query: str) -> CodeSearch:
 
     upper, lower = q.upper(), q.lower()
     where, where_params, rank, rank_params = "", [], "", []
+    # 代码只含字母数字（已由 _CODE_LIKE_RE 保证），LIKE 无需转义。
+    # 4 位代码存的是大写；SQLite 的 LIKE 对 ASCII 本就不分大小写，这里仍统一用大写。
+    # Codes are alphanumeric, so LIKE needs no escaping; alpha4 is stored upper-case.
+    prefix_rank = []
     if has_alpha:
-        where += " OR alpha4 = ?"
-        where_params.append(upper)
+        where += " OR alpha4 LIKE ?"
+        where_params.append(upper + "%")
         rank += " WHEN alpha4 = ? THEN 4.5"
         rank_params.append(upper)
+        prefix_rank.append(("alpha4 LIKE ?", upper + "%"))
     if has_ebird:
-        # 代码只含字母数字（已由 _CODE_LIKE_RE 保证），LIKE 无需转义
-        # Codes are alphanumeric, so the LIKE pattern needs no escaping.
         where += " OR ebird_code LIKE ?"
         where_params.append(lower + "%")
         rank += " WHEN ebird_code = ? THEN 4.5"
         rank_params.append(lower)
-    return CodeSearch(where, tuple(where_params), rank, tuple(rank_params))
+        prefix_rank.append(("ebird_code LIKE ?", lower + "%"))
+    # 只靠前缀命中的排在部分名字匹配（5～6）之后。CASE 按顺序取第一个命中的 WHEN，
+    # 所以这一句由调用方放在「english_name LIKE … THEN 6」之后（见 prefix_rank 字段）。
+    # Prefix-only hits rank after partial name matches (see prefix_rank).
+    prefix_sql = "".join(f" WHEN {cond} THEN 6.5" for cond, _ in prefix_rank)
+    prefix_params = tuple(p for _, p in prefix_rank)
+    return CodeSearch(where, tuple(where_params), rank, tuple(rank_params),
+                      prefix_sql, prefix_params)

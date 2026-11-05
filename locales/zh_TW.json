@@ -1856,7 +1856,7 @@
     "yolo_conf_tooltip": "鳥類偵測置信度閾值（越高漏檢越多）"
   },
   "birdname_search": {
-    "placeholder": "輸入中文/英文/拼音/縮寫/鳥種代碼",
+    "placeholder": "輸入中文/英文/學名/鳥種代碼",
     "clear_tooltip": "清空搜尋",
     "no_data": "暫無資料",
     "load_failed": "載入失敗",
@@ -1887,7 +1887,7 @@
     "title": "修改鳥種",
     "hint": "搜尋並選擇正確的鳥種，確認後將自動更新資料夾和資料庫。",
     "hint_flat": "搜尋並選擇正確的鳥種，確認後將更新資料庫和照片中繼資料，不移動檔案。",
-    "search_placeholder": "輸入中文名、英文名、拼音或鳥種代碼…",
+    "search_placeholder": "輸入中文名、英文名或鳥種代碼…",
     "prompt": "請輸入關鍵詞搜尋鳥種",
     "no_match": "未找到匹配的鳥種",
     "confirm": "確認修改",

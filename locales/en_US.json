@@ -1856,7 +1856,7 @@
     "yolo_conf_tooltip": "Bird detection confidence threshold (higher = more misses)"
   },
   "birdname_search": {
-    "placeholder": "Enter Chinese / English / Pinyin / abbreviation / species code",
+    "placeholder": "Enter Chinese / English / scientific name / species code",
     "clear_tooltip": "Clear search",
     "no_data": "No data",
     "load_failed": "Load failed",
@@ -1887,7 +1887,7 @@
     "title": "Change Bird Species",
     "hint": "Search and select the correct species. Files will be moved automatically after confirmation.",
     "hint_flat": "Search and select the correct species. The database and the photo's metadata will be updated after confirmation; files are not moved.",
-    "search_placeholder": "Type Chinese name, English name, pinyin or species code…",
+    "search_placeholder": "Type Chinese name, English name or species code…",
     "prompt": "Enter a keyword to search for bird species",
     "no_match": "No matching species found",
     "confirm": "Confirm",
