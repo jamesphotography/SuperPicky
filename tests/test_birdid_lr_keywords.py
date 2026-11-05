@@ -105,8 +105,10 @@ def test_birdid_write_keywords_config_roundtrip():
 
 def test_settings_center_keywords_checkbox_saves():
     """
-    识鸟页「写入关键字」复选框存在,取消勾选并保存后配置为 False。
-    The Bird ID page checkbox exists and unchecking + save persists False.
+    「鸟种关键字」勾选框在输出页「写入哪些字段」里（#153 从识鸟页挪过去），
+    取消勾选即保存为 False。
+    The keywords checkbox lives on the Output page field list (moved from the
+    Bird ID page in #153); unchecking it persists False.
     """
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
@@ -124,11 +126,12 @@ def test_settings_center_keywords_checkbox_saves():
         cfg = AdvancedConfig(config_file=tmp)
         _ac_mod.get_advanced_config = lambda: cfg   # settings_center 均为方法内局部 import
         w = SettingsCenter(get_i18n())
-        w.show_page("birdid")
-        assert w._bid_keywords.isChecked() is True   # 默认开 / default on
-        w._bid_keywords.setChecked(False)
-        w._save_birdid()
+        w.show_page("output")
+        check = w._meta_field_checks["keywords"]
+        assert check.isChecked() is True   # 默认开 / default on
+        check.setChecked(False)
         assert cfg.birdid_write_keywords is False
+        assert AdvancedConfig(config_file=tmp).birdid_write_keywords is False
         w.close()
     finally:
         _ac_mod.get_advanced_config = _orig

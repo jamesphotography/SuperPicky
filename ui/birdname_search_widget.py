@@ -714,7 +714,6 @@ class BirdNameSearchWidget(QWidget):
             conn = sqlite3.connect(self.db_path)
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            query_lower = query.lower()
             # 与改鸟种弹窗同一套附加条件：别名搜索 + 模型种优先（老库为空串）
             # Same extras as the edit dialog: alias search + model-first order.
             from tools.birdname_versions import catalog_search_extras
@@ -727,25 +726,23 @@ class BirdNameSearchWidget(QWidget):
             # Species codes: IBP four-letter (CANG) and eBird (cangoo); see #119.
             from tools.birdname_versions import catalog_code_search
             code = catalog_code_search(conn, query)
+            # 拼音全拼 / 首字母只在简体中文界面参与搜索（#155）
+            # Pinyin terms only in the Simplified Chinese UI (#155)
+            from tools.birdname_versions import catalog_pinyin_search
+            py = catalog_pinyin_search(query)
             sql = f"""
                 SELECT * FROM birds
                 WHERE version_id = ? AND (
                     chinese_name LIKE ? OR
                     english_name LIKE ? OR
-                    latin_name LIKE ? OR
-                    pinyin_name LIKE ? OR
-                    abbreviation LIKE ? OR
-                    LOWER(pinyin_name) LIKE ? OR
-                    LOWER(abbreviation) LIKE ?{alias_where}{tw_where}{code.where}
+                    latin_name LIKE ?{py.where}{alias_where}{tw_where}{code.where}
                 )
                 ORDER BY
                     CASE
                         WHEN chinese_name = ? THEN 1
-                        WHEN english_name = ? THEN 2
-                        WHEN abbreviation = ? THEN 3
-                        WHEN LOWER(abbreviation) = ? THEN 4{code.rank}
+                        WHEN english_name = ? THEN 2{py.rank}{code.rank}
                         WHEN chinese_name LIKE ? THEN 5
-                        WHEN english_name LIKE ? THEN 6
+                        WHEN english_name LIKE ? THEN 6{code.prefix_rank}
                         ELSE 7
                     END,
                     {model_order}chinese_name
@@ -756,20 +753,17 @@ class BirdNameSearchWidget(QWidget):
                 f"%{query}%",
                 f"%{query}%",
                 f"%{query}%",
-                f"%{query}%",
-                f"%{query}%",
-                f"%{query_lower}%",
-                f"%{query_lower}%",
+                *py.where_params,
                 *((f"%{query}%",) if alias_where else ()),
                 *tw_params,
                 *code.where_params,
                 exact_cn,
                 query,
-                query,
-                query_lower,
+                *py.rank_params,
                 *code.rank_params,
                 f"{query}%",
                 f"{query}%",
+                *code.prefix_rank_params,
             )
             cursor.execute(sql, params)
             results = cursor.fetchall()
