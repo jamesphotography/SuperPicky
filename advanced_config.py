@@ -76,6 +76,21 @@ class AdvancedConfig:
         #   sidecar:  所有文件统一写 .xmp 侧车，不修改原文件
         #   none:     跳过所有元数据写入，仅按评分整理目录
         "metadata_write_mode": "embedded",
+        # #153 每个元数据字段单独开关，默认全开（升级后行为不变）。字段清单与界面
+        # 顺序见 core/metadata_fields.py；关键字沿用下方的 birdid_write_keywords。
+        # #153 per-field metadata output switches, all on by default. See
+        # core/metadata_fields.py; keywords keep using birdid_write_keywords below.
+        "metadata_write_rating": True,
+        "metadata_write_pick": True,
+        "metadata_write_label": True,
+        "metadata_write_title": True,
+        "metadata_write_caption": True,
+        "metadata_write_sharpness": True,
+        "metadata_write_aesthetic": True,
+        "metadata_write_focus": True,
+        "metadata_write_iucn": True,
+        "metadata_write_rarity": True,
+        "metadata_write_beauty": True,
 
         # 专有 RAW（NEF/CR2/CR3/ARW/RAF/ORF/RW2/PEF/3FR/IIQ，DNG 除外）是否也把
         # 元数据写进文件本体。**默认关闭**：这些格式默认只写 XMP 边车，不重写本体，
@@ -624,6 +639,73 @@ class AdvancedConfig:
         Set the proprietary-RAW body-write opt-in.
         """
         self.config["raw_embed_metadata"] = bool(value)
+
+    def metadata_field_enabled(self, field_id: str) -> bool:
+        """
+        某个元数据输出字段是否要写入照片（#153）。
+
+        参数:
+        field_id (str): core.metadata_fields 里的字段 id，如 "sharpness"
+
+        返回:
+        bool: 开着为 True；配置里缺这个键时按默认开处理
+
+        异常:
+        KeyError: field_id 不是已知字段
+
+        Whether a metadata output field is written to photos (#153).
+
+        Parameters:
+        field_id (str): field id from core.metadata_fields, e.g. "sharpness"
+
+        Return:
+        bool: True when on; a missing config key counts as on (the default)
+
+        Raises:
+        KeyError: unknown field_id
+        """
+        from core.metadata_fields import FIELDS_BY_ID
+        key = FIELDS_BY_ID[field_id].config_key
+        return bool(self.config.get(key, True))
+
+    def enabled_metadata_fields(self) -> frozenset:
+        """
+        返回所有开着的元数据输出字段 id。
+
+        返回:
+        frozenset: 开着的字段 id 集合
+
+        Return the ids of all enabled metadata output fields.
+
+        Return:
+        frozenset: ids of the enabled fields
+        """
+        from core.metadata_fields import FIELD_IDS
+        return frozenset(f for f in FIELD_IDS if self.metadata_field_enabled(f))
+
+    def set_metadata_fields(self, values: Dict[str, bool]) -> None:
+        """
+        批量设置元数据输出字段开关，并保存一次。
+
+        参数:
+        values (Dict[str, bool]): 字段 id → 是否写入；未列出的字段保持原值
+
+        异常:
+        KeyError: 含未知字段 id
+
+        Set several metadata output switches and save once.
+
+        Parameters:
+        values (Dict[str, bool]): field id -> write or not; unlisted fields keep
+            their current value
+
+        Raises:
+        KeyError: an unknown field id
+        """
+        from core.metadata_fields import FIELDS_BY_ID
+        for field_id, value in values.items():
+            self.config[FIELDS_BY_ID[field_id].config_key] = bool(value)
+        self.save()
 
     def get_metadata_write_mode(self) -> str:
         """获取全局元数据写入模式: embedded | sidecar | none"""
