@@ -1,3 +1,42 @@
+# SuperPicky 4.6.5 RC1
+
+**What's new since 4.6.4:**
+
+- **Choose which metadata fields SuperPicky writes.** **Settings → Output → Fields to Write**
+  lists the 12 fields SuperPicky writes into photos (rating, flag, color label, species name,
+  rating explanation, sharpness in City, aesthetics in State / Province, focus status in
+  Country, species keyword, IUCN category, global rarity, species beauty). Only checked fields
+  are written. **Lean** keeps just rating, flag, caption, sharpness and aesthetics; **Select
+  All** turns everything back on. Unchecked fields are also left alone when you reset, so your
+  own City or Country stays. Everything is on by default, so nothing changes until you untick
+  something. The species-keyword switch has moved here from the Bird ID page; if you had
+  turned it off, it stays off. (#153)
+- **4-letter bird codes match as you type.** In **Change Species** and the bird-name lookup,
+  typing the first letters of a 4-letter code now finds it: `bcc` already lists Black-capped
+  Chickadee (BCCH), and the full `bcch` puts it first. (#155)
+- **Pinyin search only in the Simplified Chinese interface.** In English and Traditional
+  Chinese, short inputs such as `bcc` no longer match Chinese pinyin abbreviations and pull
+  in unrelated birds. Simplified Chinese works as before. (#155)
+
+---
+
+# SuperPicky 4.6.5 RC1（中文）
+
+**相比 4.6.4 的变化：**
+
+- **可以选择写入照片的元数据字段。** 「设置 → 输出 → 写入哪些字段」列出 SuperPicky 写进照片的
+  12 个字段（星级、旗标、色标、鸟种名、评分说明、锐度〔城市〕、美学分〔省/自治区〕、对焦状态
+  〔国家/地区〕、鸟种关键字、IUCN 保护等级、全球罕见度、鸟种颜值），只写勾选的字段。「一键精简」
+  只保留星级、旗标、题注、锐度和美学分，「全部勾选」恢复全部。取消勾选的字段在重置时也不会被
+  清除，你自己填的城市、国家会保留。默认全部勾选，不改设置就和以前一样。「写入鸟种关键字」开关
+  从识鸟页移到了这里，以前关掉的仍保持关闭。（#153）
+- **4 位鸟种代码输前几位就能找到。** 「修改鸟种」和鸟名查询里，输入代码的前几位即可命中：输入
+  `bcc` 就能看到黑顶山雀（BCCH），输全 `bcch` 时它排第一。（#155）
+- **拼音搜索只在简体中文界面生效。** 英文和繁体中文界面下，像 `bcc` 这样的短输入不再匹配中文
+  拼音缩写、搜出不相干的鸟。简体中文界面不变。（#155）
+
+---
+
 # SuperPicky 4.6.4
 
 This release brings a more accurate bird-ID model, a GPU build for RTX 50 series
