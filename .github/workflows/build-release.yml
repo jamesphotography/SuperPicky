@@ -413,3 +413,42 @@ jobs:
             output/mac/code_patch_*.zip
             output/mac/patch_meta.json
 
+
+  # 三个构建都结束后，按 Release 上实际的安装包给正文末尾加「Download / 下载」清单。
+  # 用实际资产生成，所以某个可选的 CUDA 包没传上去也不会出现死链。
+  # 只要有一个构建成功就跑；全部失败时 Release 不存在，没必要跑。
+  # After all builds finish, append a download list built from the assets that
+  # are actually on the release. Runs if at least one build succeeded.
+  release-notes:
+    needs: [build-windows, build-windows-cuda13, build-mac]
+    if: ${{ !cancelled() && (needs.build-windows.result == 'success' || needs.build-windows-cuda13.result == 'success' || needs.build-mac.result == 'success') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Resolve release metadata
+        id: release_meta
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: python scripts/ci_release.py resolve-metadata
+
+      - name: Write release notes with download list
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release_meta.outputs.tag }}
+        run: |
+          python scripts/ci_release.py extract-notes --output release_notes.md
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets > release_assets.json
+          python scripts/ci_release.py add-downloads --notes release_notes.md --assets-json release_assets.json --tag "$TAG" --repo "$GITHUB_REPOSITORY" --output release_notes.md
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file release_notes.md

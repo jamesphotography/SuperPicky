@@ -33,6 +33,16 @@ user-visible defect.
 会原样显示上一版的说明，对下载者是误导。中文段标题必须写成「上一段标题 + （中文）」，
 否则会被当成另一个版本而截掉。
 
+三个构建都结束后，`build-release.yml` 的 `release-notes` 任务再按 Release 上**实际存在
+的安装包**在正文末尾追加「Download / 下载」清单（`ci_release.py add-downloads`）：
+Mac M 系列 → Intel → Windows CPU → CUDA 11.8 → CUDA 13（.exe + 两个 .bin），带直链与
+大小。没上传的包不出现（不会有死链）；Intel 没有时测试版写「本测试版不提供」、正式版
+写「稍后提供」。因为正文就是这一段加下载清单，**这一段要写短**：一条改动一两行，
+详细说明放在 ChangeLog 里，Release 页会链接过去。
+
+After all builds, the `release-notes` job appends a download list built from the
+assets actually on the release. Keep this section short.
+
 格式沿用既有惯例：
 
 ```markdown
@@ -115,7 +125,19 @@ git push origin v4.6.0-rc1
    `cublasLt` / `cudnn_engines_precompiled`：PyTorch v2.7.1 只对 `nvcuda.dll`
    做了 DELAYLOAD（`caffe2/CMakeLists.txt:553-559`），其余 CUDA 库都是 PE 静态
    导入，删任何一个 `import torch` 直接失败。
-- **Intel Mac 版需要手工构建上传**，CI 不产出。
+- **Intel Mac 版需要手工构建上传**，CI 不产出。上传后在仓库根目录重跑下面几行，
+  把 Release 正文里 Intel 那一行换成直链（`TAG` 换成本次 tag）：
+
+  ```bash
+  TAG=v4.6.5 R=jamesphotography/SuperPicky
+  git show $TAG:ChangeLog.md > /tmp/changelog.md
+  python3 scripts/ci_release.py extract-notes --source /tmp/changelog.md --output /tmp/notes.md
+  gh release view $TAG --repo $R --json assets > /tmp/assets.json
+  python3 scripts/ci_release.py add-downloads --notes /tmp/notes.md --assets-json /tmp/assets.json --tag $TAG --repo $R --output /tmp/notes.md
+  gh release edit $TAG --repo $R --notes-file /tmp/notes.md
+  ```
+
+  说明取自该 tag 当时的 ChangeLog（`git show`），所以 dev 上已经写了下一版也不影响。
 
 ---
 
