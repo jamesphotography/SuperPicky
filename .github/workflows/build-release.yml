@@ -113,12 +113,17 @@ jobs:
       - name: Build code patch zip
         run: python scripts/ci_release.py build-patch --output-dir release_assets --patch-version ${{ steps.release_meta.outputs.tag }}
 
+      # 只取 ChangeLog 最新版本那一段（中英），不再把历史版本全塞进 Release 页。
+      # Only the newest version's section (EN + ZH) goes into the Release body.
+      - name: Extract release notes
+        run: python scripts/ci_release.py extract-notes --output release_notes.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.release_meta.outputs.tag }}
           name: ${{ steps.release_meta.outputs.name }}
-          body_path: ChangeLog.md
+          body_path: release_notes.md
           fail_on_unmatched_files: true
           # RC / 预发布 tag 标记为 prerelease，避免被当成正式版 / latest 推给用户。
           # Mark RC / pre-release tags as prerelease so they are not treated as
@@ -294,12 +299,17 @@ jobs:
           if ($src.Count -ne $dst.Count -or $srcBytes -ne $dstBytes) { throw 'installed files differ from staged files' }
           'install verified'
 
+      # 只取 ChangeLog 最新版本那一段（中英），不再把历史版本全塞进 Release 页。
+      # Only the newest version's section (EN + ZH) goes into the Release body.
+      - name: Extract release notes
+        run: python scripts/ci_release.py extract-notes --output release_notes.md
+
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.release_meta.outputs.tag }}
           name: ${{ steps.release_meta.outputs.name }}
-          body_path: ChangeLog.md
+          body_path: release_notes.md
           fail_on_unmatched_files: true
           # RC / 预发布 tag 标记为 prerelease / Mark RC tags as prerelease.
           prerelease: ${{ contains(steps.release_meta.outputs.tag, '-RC') || contains(steps.release_meta.outputs.tag, '-rc') }}
@@ -382,12 +392,17 @@ jobs:
         if: always()
         run: python scripts/ci_release.py cleanup-paths --path $RUNNER_TEMP/certificate.p12 --path $RUNNER_TEMP/installer_certificate.p12
 
+      # 只取 ChangeLog 最新版本那一段（中英），不再把历史版本全塞进 Release 页。
+      # Only the newest version's section (EN + ZH) goes into the Release body.
+      - name: Extract release notes
+        run: python scripts/ci_release.py extract-notes --output release_notes.md
+
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.release_meta.outputs.tag }}
           name: ${{ steps.release_meta.outputs.name }}
-          body_path: ChangeLog.md
+          body_path: release_notes.md
           fail_on_unmatched_files: true
           # RC / 预发布 tag 标记为 prerelease，避免被当成正式版 / latest 推给用户。
           # Mark RC / pre-release tags as prerelease so they are not treated as

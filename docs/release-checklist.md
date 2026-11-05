@@ -26,9 +26,12 @@ user-visible defect.
 
 ### 1.2 ChangeLog.md —— 必改
 
-**CI 直接把 `ChangeLog.md` 全文当作 GitHub Release 的正文**
-（`build-release.yml` 的 `body_path: ChangeLog.md`）。不更新它，新版本的发布页
-会原样显示上一版的说明，对下载者是误导。
+**CI 从 `ChangeLog.md` 截取最新版本那一段当作 GitHub Release 的正文**
+（`scripts/ci_release.py extract-notes` → `release_notes.md` → `body_path`）：
+从文件顶部取到第一个版本不同的一级标题为止，`# SuperPicky X` 与
+`# SuperPicky X（中文）` 算同一版本，一起保留。不更新 ChangeLog，新版本的发布页
+会原样显示上一版的说明，对下载者是误导。中文段标题必须写成「上一段标题 + （中文）」，
+否则会被当成另一个版本而截掉。
 
 格式沿用既有惯例：
 

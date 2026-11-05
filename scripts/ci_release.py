@@ -450,6 +450,91 @@ def cmd_cleanup_paths(args: argparse.Namespace) -> int:
     return 0
 
 
+def changelog_heading_key(line: str) -> str | None:
+    """
+    取一级标题的版本键 / Return the version key of a top-level heading.
+
+    「# SuperPicky 4.6.4」与「# SuperPicky 4.6.4（中文）」视为同一版本，
+    以便中英两段一起保留；非一级标题（含「## 」）返回 None。
+
+    "# SuperPicky 4.6.4" and "# SuperPicky 4.6.4（中文）" share one key so the
+    English and Chinese sections stay together. Returns None for any line that
+    is not a top-level heading (including "## ").
+
+    参数 / Parameters:
+    line (str): ChangeLog 中的一行 / One line of the changelog
+
+    返回 / Return:
+    str | None: 去掉「（中文）」后缀的标题文字，或 None
+                Heading text without the "（中文）" suffix, or None
+    """
+
+    if not line.startswith("# "):
+        return None
+    title = line[2:].strip()
+    for suffix in ("（中文）", "(中文)"):
+        if title.endswith(suffix):
+            title = title[: -len(suffix)].rstrip()
+    return title
+
+
+def extract_latest_notes(text: str) -> str:
+    """
+    从 ChangeLog 中截取最新版本那一段 / Extract the newest version's notes.
+
+    从文件开头一直取到第一个版本键不同的一级标题为止（即只保留最新版本的
+    英文 + 中文两段），并去掉末尾的「---」分隔线。找不到一级标题时原样返回。
+
+    Takes everything from the top of the file up to the first top-level heading
+    whose version key differs from the first one (so only the newest version's
+    English + Chinese sections remain), and drops the trailing "---" rule.
+    Returns the text unchanged if there is no top-level heading.
+
+    参数 / Parameters:
+    text (str): ChangeLog.md 全文 / Full ChangeLog.md text
+
+    返回 / Return:
+    str: 最新版本的发布说明（以换行结尾）/ Newest release notes, newline-terminated
+    """
+
+    lines = text.splitlines()
+    first_key: str | None = None
+    end = len(lines)
+    for index, line in enumerate(lines):
+        key = changelog_heading_key(line)
+        if key is None:
+            continue
+        if first_key is None:
+            first_key = key
+        elif key != first_key:
+            end = index
+            break
+    if first_key is None:
+        return text
+
+    kept = lines[:end]
+    while kept and kept[-1].strip() in ("", "---"):
+        kept.pop()
+    return "\n".join(kept) + "\n"
+
+
+def cmd_extract_notes(args: argparse.Namespace) -> int:
+    """
+    生成只含最新版本的 Release 说明文件 / Write release notes for the newest version only.
+    """
+
+    source = repo_path(args.source)
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    notes = extract_latest_notes(source.read_text(encoding="utf-8"))
+    output_path.write_text(notes, encoding="utf-8")
+
+    values = {"notes_path": str(output_path)}
+    write_github_outputs(values, args.github_output)
+    print(json.dumps({**values, "lines": notes.count("\n")}, ensure_ascii=False))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """
     创建命令行解析器 / Build the command-line parser.
@@ -504,6 +589,12 @@ def build_parser() -> argparse.ArgumentParser:
     secret_parser.add_argument("--decode-base64", action="store_true", help="按 Base64 解码后写入")
     secret_parser.add_argument("--github-output", help="可选，显式指定 GITHUB_OUTPUT 文件路径")
     secret_parser.set_defaults(func=cmd_materialize_secret_file)
+
+    notes_parser = subparsers.add_parser("extract-notes", help="从 ChangeLog 截取最新版本的发布说明")
+    notes_parser.add_argument("--source", default="ChangeLog.md", help="ChangeLog 路径，默认 ChangeLog.md")
+    notes_parser.add_argument("--output", required=True, help="输出的发布说明文件路径")
+    notes_parser.add_argument("--github-output", help="可选，显式指定 GITHUB_OUTPUT 文件路径")
+    notes_parser.set_defaults(func=cmd_extract_notes)
 
     cleanup_parser = subparsers.add_parser("cleanup-paths", help="删除文件或目录")
     cleanup_parser.add_argument("--path", action="append", required=True, help="待删除的路径，可重复指定")
