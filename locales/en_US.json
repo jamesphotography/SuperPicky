@@ -399,6 +399,7 @@
     "readonly_clear_failed": "  ⚠️ Could not clear the read-only flag [{file}]: {error}",
     "gc_collected": "  🧹 [Photo {index}] Memory freed",
     "photo_failed_skipped": "  ⚠️ Photo {index} hit an error and was skipped [{name}]: {error}",
+    "resume_state_write_failed": "  ⚠️ Resume: could not update the progress file .superpicky/resume_state.json ({error}). Usually antivirus or a sync app (such as OneDrive) has it open. Culling continues normally; only if you stop now may a few finished photos be processed again when you continue.",
     "exiftool_close_failed": "⚠️ ExifTool session close failed: {error}",
     "db_path_update_failed": "    ⚠️ DB path update failed: {error}",
     "move_failed_simple": "    ⚠️ Move failed: {error}",

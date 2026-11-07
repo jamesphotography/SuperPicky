@@ -613,7 +613,7 @@ class FilterPanel(QWidget):
             )
             self._count_label.setText(self.i18n.t("browser.matched_count", count=count))
 
-    def update_species_list(self, species: list, has_other: bool = False):
+    def update_species_list(self, species: list, has_other: bool = False) -> bool:
         """
         更新鸟种下拉列表。
 
@@ -633,6 +633,19 @@ class FilterPanel(QWidget):
 
         List only foldered species, appending an "other birds" catch-all when
         the current filter still leaves unfoldered photos to reach.
+
+        返回 / Returns:
+            bool: 原先选中的某个鸟种已不在新列表里、下拉因此退回「全部鸟种」时为 True。
+                  重建期间信号是屏蔽的，这次退回不会发出 filters_changed，调用方
+                  必须据此按新的筛选条件重新加载网格——否则下拉显示「全部」，
+                  网格却还按旧鸟种过滤，一张都不显示（#157：把唯一一张「苍鹭」
+                  改成「大蓝鹭」后网格变空）。
+                  True when the previously selected species is no longer listed
+                  and the combo fell back to "All". Signals are blocked while
+                  rebuilding, so no filters_changed fires; the caller must reload
+                  the grid with fresh filters, or the combo says "All" while the
+                  grid still filters by the vanished species and shows nothing
+                  (#157).
         """
         self._species_list = species
         self.species_combo.blockSignals(True)
@@ -662,6 +675,9 @@ class FilterPanel(QWidget):
             self.species_combo.setCurrentIndex(idx)
         self.species_combo.blockSignals(False)
         self._refresh_species_icon()
+        # 选中项为空串 = 本来就是「全部鸟种」，不算退回
+        # An empty current value means "All" was already selected: not a fallback.
+        return bool(current) and idx < 0
 
     # ------------------------------------------------------------------
     #  筛选状态读取

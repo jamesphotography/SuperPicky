@@ -26,9 +26,22 @@ user-visible defect.
 
 ### 1.2 ChangeLog.md —— 必改
 
-**CI 直接把 `ChangeLog.md` 全文当作 GitHub Release 的正文**
-（`build-release.yml` 的 `body_path: ChangeLog.md`）。不更新它，新版本的发布页
-会原样显示上一版的说明，对下载者是误导。
+**CI 从 `ChangeLog.md` 截取最新版本那一段当作 GitHub Release 的正文**
+（`scripts/ci_release.py extract-notes` → `release_notes.md` → `body_path`）：
+从文件顶部取到第一个版本不同的一级标题为止，`# SuperPicky X` 与
+`# SuperPicky X（中文）` 算同一版本，一起保留。不更新 ChangeLog，新版本的发布页
+会原样显示上一版的说明，对下载者是误导。中文段标题必须写成「上一段标题 + （中文）」，
+否则会被当成另一个版本而截掉。
+
+三个构建都结束后，`build-release.yml` 的 `release-notes` 任务再按 Release 上**实际存在
+的安装包**在正文末尾追加「Download / 下载」清单（`ci_release.py add-downloads`）：
+Mac M 系列 → Intel → Windows CPU → CUDA 11.8 → CUDA 13（.exe + 两个 .bin），带直链与
+大小。没上传的包不出现（不会有死链）；Intel 没有时测试版写「本测试版不提供」、正式版
+写「稍后提供」。因为正文就是这一段加下载清单，**这一段要写短**：一条改动一两行，
+详细说明放在 ChangeLog 里，Release 页会链接过去。
+
+After all builds, the `release-notes` job appends a download list built from the
+assets actually on the release. Keep this section short.
 
 格式沿用既有惯例：
 
@@ -67,6 +80,9 @@ git push origin v4.6.0-rc1
   **push 分支不会触发构建**。
 - tag 含 `-rc` 或 `-RC` 时，CI 自动标记为 prerelease，不会被当成 latest 推给
   用户（`build-release.yml` 的 `prerelease:` 表达式，大小写都认）。
+- **测试版（tag 含 `-rc` / `-RC`）不构建 CUDA 13 包**，只出 Mac ARM、Windows CPU、
+  CUDA 11.8 三个；Release 页下载清单会写明「本测试版不提供」。正式版照常构建四个包。
+  Test builds skip the CUDA 13 installer; stable releases build all four.
 - 正式版 tag **不要**加 `-final` 之类后缀 —— prerelease 判断只看 `-rc`，多余的
   后缀会让它被当成正式版处理，但版本名会变得难看。
 
@@ -112,7 +128,19 @@ git push origin v4.6.0-rc1
    `cublasLt` / `cudnn_engines_precompiled`：PyTorch v2.7.1 只对 `nvcuda.dll`
    做了 DELAYLOAD（`caffe2/CMakeLists.txt:553-559`），其余 CUDA 库都是 PE 静态
    导入，删任何一个 `import torch` 直接失败。
-- **Intel Mac 版需要手工构建上传**，CI 不产出。
+- **Intel Mac 版需要手工构建上传**，CI 不产出。上传后在仓库根目录重跑下面几行，
+  把 Release 正文里 Intel 那一行换成直链（`TAG` 换成本次 tag）：
+
+  ```bash
+  TAG=v4.6.5 R=jamesphotography/SuperPicky
+  git show $TAG:ChangeLog.md > /tmp/changelog.md
+  python3 scripts/ci_release.py extract-notes --source /tmp/changelog.md --output /tmp/notes.md
+  gh release view $TAG --repo $R --json assets > /tmp/assets.json
+  python3 scripts/ci_release.py add-downloads --notes /tmp/notes.md --assets-json /tmp/assets.json --tag $TAG --repo $R --output /tmp/notes.md
+  gh release edit $TAG --repo $R --notes-file /tmp/notes.md
+  ```
+
+  说明取自该 tag 当时的 ChangeLog（`git show`），所以 dev 上已经写了下一版也不影响。
 
 ---
 
