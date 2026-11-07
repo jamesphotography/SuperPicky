@@ -1,3 +1,33 @@
+# SuperPicky 4.6.5 RC2
+
+**What's new since RC1:**
+
+- **A locked progress file no longer fails a photo (Windows).** If antivirus or a sync app
+  (such as OneDrive) briefly had `.superpicky/resume_state.json` open, a photo that was already
+  rated and identified was reported as "hit an error and was skipped". SuperPicky now retries,
+  and if the file stays locked it logs one warning and carries on. Error messages now name the
+  original photo (e.g. `_T3A2095.CR3`) instead of its cached preview. (#156)
+- **The grid no longer goes empty after re-identifying the last photo of a species.** When the
+  species you were viewing disappears, the dropdown falls back to **All** and the grid now shows
+  all photos to match. (#157)
+- This test build has no CUDA 13 installer; RTX 50 users can use the CPU or CUDA 11.8 build.
+
+---
+
+# SuperPicky 4.6.5 RC2（中文）
+
+**相比 RC1 的变化：**
+
+- **进度文件被占用不再让照片判为失败（Windows）。** 杀毒软件或同步程序（如 OneDrive）短暂打开
+  `.superpicky/resume_state.json` 时，已经评星、识鸟完成的照片会被报成「处理异常，已跳过」。现在会
+  重试，仍被占用就只记一条警告、继续选片。出错提示改为显示原片名（如 `_T3A2095.CR3`），不再显示
+  缓存预览图路径。（#156）
+- **把某鸟种的最后一张改成别的鸟种后，网格不再变空。** 正在看的鸟种消失时，下拉退回「全部鸟种」，
+  网格也跟着显示全部照片。（#157）
+- 本测试版不提供 CUDA 13 安装包，RTX 50 显卡请用 CPU 版或 CUDA 11.8 版。
+
+---
+
 # SuperPicky 4.6.5 RC1
 
 **What's new since 4.6.4:**
