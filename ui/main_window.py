@@ -10,7 +10,7 @@ import threading
 import subprocess
 from types import SimpleNamespace
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 
 def get_resource_path(relative_path):
@@ -832,6 +832,13 @@ class SuperPickyMainWindow(QMainWindow):
         self.directory_path = ""
         self.worker = None
         self.worker_signals = None
+        # 多目录队列（实验室功能）：处理多个目录时持有 FolderQueue，空闲时为 None
+        # Multi-folder queue (Labs): holds a FolderQueue while processing several folders, else None
+        self._queue = None
+        # 主界面当前是否显示多目录列表；关开关遇到处理中时记下挂起，处理结束后再收起
+        # Whether the folder list is currently shown; a switch-off during processing is deferred
+        self._lab_multi_active = False
+        self._lab_multi_pending_off = False
         self.current_progress = 0
         self.total_files = 0
         self._main_window_placement_saved = False
@@ -890,6 +897,10 @@ class SuperPickyMainWindow(QMainWindow):
         if not self.config.is_first_run:
             # 非首次运行：根据保存的水平设置滑块
             self._apply_skill_level_thresholds(self.config.skill_level)
+
+        # 实验室「多目录」开关：决定目录栏显示单目录输入框还是目录列表
+        # Labs multi-folder switch: show the single-folder input or the folder list
+        self._apply_lab_multi_folder()
 
 
 
@@ -1222,6 +1233,23 @@ class SuperPickyMainWindow(QMainWindow):
         if not hasattr(self, '_recent_menu'):
             return
         self._recent_menu.clear()
+        multi_on = bool(self.config.lab_multi_folder)
+        # 多目录开启时，目录组列在单目录条目之前；关闭时不显示目录组
+        # With multi-folder on, directory groups come before single entries; hidden when off
+        if multi_on:
+            groups = self.config.get_recent_directory_groups()
+            sep = "、" if str(getattr(self.i18n, "current_lang", "")).startswith("zh") else ", "
+            for group in groups:
+                label = self.i18n.t(
+                    "menu.recent_group", count=len(group),
+                    names=self._group_names_text(group, sep))
+                action = QAction(label, self)
+                action.setToolTip("\n".join(group))
+                action.triggered.connect(
+                    lambda checked=False, g=list(group): self._restore_recent_group(g))
+                self._recent_menu.addAction(action)
+            if groups:
+                self._recent_menu.addSeparator()
         dirs = self.config.get_recent_directories()
         offline_prefix = self.i18n.t("menu.recent_dirs_offline")  # "(脱机)" or "(Offline)"
         if dirs:
@@ -1229,7 +1257,10 @@ class SuperPickyMainWindow(QMainWindow):
                 available = os.path.isdir(d)
                 label = d if available else f"{offline_prefix} {d}"
                 action = QAction(label, self)
-                if available:
+                if available and multi_on:
+                    # 多目录开启时点单个目录：替换整个列表 / replaces the whole list
+                    action.triggered.connect(lambda checked=False, path=d: self._folder_list.set_folders([path]))
+                elif available:
                     action.triggered.connect(lambda checked=False, path=d: self._handle_directory_selection(path))
                 else:
                     action.triggered.connect(
@@ -1243,9 +1274,57 @@ class SuperPickyMainWindow(QMainWindow):
         clear_action.triggered.connect(self._clear_recent_directories)
         self._recent_menu.addAction(clear_action)
 
+    @staticmethod
+    def _group_names_text(dirs: List[str], sep: str, limit: int = 60) -> str:
+        """
+        把目录组的各目录名（basename）连成一行，超过 limit 个字符时截断并加「…」。
+
+        参数:
+        dirs (List[str]): 目录路径列表
+        sep (str): 连接符（中文界面「、」，英文 ", "）
+        limit (int): 最大字符数（不含省略号）
+
+        返回:
+        str: 例如 "A、B、C" 或截断后的 "A、B、C…"
+
+        Join the folders' basenames; truncate to `limit` characters plus "…".
+
+        Parameters:
+        dirs (List[str]): folder paths
+        sep (str): separator ("、" for Chinese UIs, ", " otherwise)
+        limit (int): maximum characters before the ellipsis
+
+        Return:
+        str: e.g. "A, B, C" or a truncated "A, B, C…"
+        """
+        names = sep.join(os.path.basename(os.path.normpath(d)) or d for d in dirs)
+        if len(names) > limit:
+            names = names[:limit] + "…"
+        return names
+
+    def _restore_recent_group(self, group: List[str]) -> None:
+        """
+        把「最近目录」里的一个目录组放回多目录列表；不存在的目录（如外接盘未连接）
+        跳过，各写一条 warning 日志，不弹窗不中断。
+
+        参数:
+        group (List[str]): 目录组
+
+        Put a recent directory group back into the folder list; missing folders
+        (e.g. an unplugged drive) are skipped with one warning log line each.
+
+        Parameters:
+        group (List[str]): the directory group
+        """
+        missing = self._folder_list.set_folders(group)
+        for d in missing:
+            self._log(self.i18n.t("logs.recent_group_missing", directory=d), "warning")
+
     def _clear_recent_directories(self):
         """清空最近目录历史。"""
         self.config.config["recent_directories"] = []
+        # 目录组同属「最近目录」历史，一并清除 / groups are part of the same history
+        self.config.config["recent_directory_groups"] = []
         self.config.save()
         self._refresh_recent_menu()
 
@@ -1732,6 +1811,17 @@ class SuperPickyMainWindow(QMainWindow):
         self.dir_input.pathDropped.connect(self._on_path_dropped)     # V3.9: 拖放目录
         dir_layout.addWidget(self.dir_input, 1)
 
+        # 实验室多目录列表：与 dir_input 同处一行，二者只显示一个（由 _apply_lab_multi_folder 切换）。
+        # 默认隐藏，隐藏的控件不占布局空间，开关关闭时目录栏与原来完全一致。
+        # Labs folder list: shares the row with dir_input; only one is shown
+        # (toggled by _apply_lab_multi_folder). Hidden by default, so the
+        # single-folder bar is unchanged while the switch is off.
+        from ui.folder_list_widget import FolderListWidget
+        self._folder_list = FolderListWidget()
+        self._folder_list.setVisible(False)
+        self._folder_list.foldersChanged.connect(self._on_folders_changed)
+        dir_layout.addWidget(self._folder_list, 1)
+
         browse_btn = QPushButton("  " + self.i18n.t("labels.browse"))
         browse_btn.setIcon(load_tinted_icon("folder.svg", ICON_IDLE, 16))
         browse_btn.setIconSize(QSize(16, 16))
@@ -1739,6 +1829,9 @@ class SuperPickyMainWindow(QMainWindow):
         browse_btn.setMinimumWidth(100)
         browse_btn.clicked.connect(self._browse_directory)
         dir_layout.addWidget(browse_btn)
+        # 多目录模式下列表自带「添加目录」，浏览按钮随输入框一起隐藏
+        # In multi-folder mode the list has its own add button; browse hides with the input
+        self._browse_btn = browse_btn
 
         parent_layout.addLayout(dir_layout)
 
@@ -1945,6 +2038,171 @@ class SuperPickyMainWindow(QMainWindow):
         self._check_report_csv()
         self._maybe_prompt_resume_after_selection()
 
+    # ========== 实验室：多目录 / Labs: multi-folder ==========
+
+    def _is_lab_processing(self) -> bool:
+        """
+        是否正在处理（工作线程存活，或多目录队列在跑）。
+
+        返回:
+        bool: 处理中为 True
+
+        Whether processing is under way (worker alive or the folder queue running).
+
+        Return:
+        bool: True while processing
+        """
+        return (self.worker is not None and self.worker.is_alive()) or self._queue is not None
+
+    def _is_multi_mode(self) -> bool:
+        """
+        多目录模式：实验室开关打开，且列表里至少有 2 个目录。
+
+        返回:
+        bool: 是否多目录模式
+
+        Multi-folder mode: the Labs switch is on and the list holds at least 2 folders.
+
+        Return:
+        bool: whether multi-folder mode is active
+        """
+        return bool(self.config.lab_multi_folder) and len(self._folder_list.folders()) >= 2
+
+    def _multi_folders(self) -> List[str]:
+        """
+        待处理目录：开关打开时为列表内容，否则为 [directory_path]（未选目录时为 []）。
+
+        返回:
+        List[str]: 目录列表
+
+        Folders to process: the list contents when the switch is on, otherwise
+        [directory_path] (or [] when nothing is selected).
+
+        Return:
+        List[str]: folder paths
+        """
+        if self.config.lab_multi_folder:
+            return self._folder_list.folders()
+        return [self.directory_path] if self.directory_path else []
+
+    def _apply_lab_multi_folder(self) -> None:
+        """
+        按 lab_multi_folder 切换目录栏：开启显示目录列表，关闭显示单目录输入框。
+
+        - 开启：显示列表；若已选目录且列表为空，把它放进列表作为第一项。
+        - 关闭：显示输入框；列表有多个目录时只保留第一个，并对它走一遍
+          _handle_directory_selection（界面回到单目录）。处理中（工作线程存活或
+          队列在跑）不切换，只记下挂起，由 _apply_pending_lab_switch 在处理结束后应用。
+
+        Toggle the directory bar per lab_multi_folder: list when on, single input
+        when off. Switching on seeds the list with the selected folder; switching
+        off keeps only the first folder and re-selects it. While processing, the
+        switch-off is deferred until _apply_pending_lab_switch runs.
+        """
+        if self.config.lab_multi_folder:
+            self._lab_multi_pending_off = False
+            self._lab_multi_active = True
+            self.dir_input.setVisible(False)
+            self._browse_btn.setVisible(False)
+            self._folder_list.setVisible(True)
+            if self.directory_path and not self._folder_list.folders():
+                self._folder_list.set_folders([self.directory_path])
+            self._refresh_recent_menu()
+            return
+
+        if not self._lab_multi_active:
+            # 本来就是单目录界面，无需切换 / already single-folder
+            self._lab_multi_pending_off = False
+            return
+        if self._is_lab_processing():
+            self._lab_multi_pending_off = True
+            return
+        self._switch_to_single_folder()
+
+    def _switch_to_single_folder(self) -> None:
+        """
+        收起目录列表、回到单目录界面；列表有多个目录时只保留第一个并重新选中它。
+
+        Collapse the folder list back to the single-folder bar; with several
+        folders, keep only the first and re-select it.
+        """
+        folders = self._folder_list.folders()
+        self._lab_multi_pending_off = False
+        # 先标记非激活，清空列表发出的 foldersChanged 不会再被当作选择处理
+        # Mark inactive first so the foldersChanged from clearing is ignored
+        self._lab_multi_active = False
+        self._folder_list.set_folders([])
+        self._folder_list.setVisible(False)
+        self.dir_input.setVisible(True)
+        self._browse_btn.setVisible(True)
+        if len(folders) >= 2:
+            # directory_path 已是第一个目录；清空后才能完整走一遍单目录选择
+            # directory_path already equals the first folder; clear it to re-run selection
+            self.directory_path = ""
+            self._handle_directory_selection(folders[0])
+        self._refresh_recent_menu()
+
+    def _apply_pending_lab_switch(self) -> None:
+        """
+        处理结束后应用挂起的「关闭多目录」。由 _on_finished / _on_cancelled /
+        _on_error（以及多目录队列结束时）调用。
+
+        注意：这些槽经排队连接执行时工作线程可能还没真正退出（is_alive 仍为 True），
+        所以这里不再检查工作线程，只要求队列已结束（_queue 为 None）。
+
+        Apply a deferred multi-folder switch-off once processing ends. Called from
+        _on_finished / _on_cancelled / _on_error (and when the folder queue ends).
+        The worker thread may still be alive while these queued slots run, so only
+        the queue (_queue is None) is checked here.
+        """
+        if not self._lab_multi_pending_off or self._queue is not None:
+            return
+        if self.config.lab_multi_folder:
+            # 处理期间又把开关打开了：放弃挂起 / switched back on meanwhile
+            self._lab_multi_pending_off = False
+            return
+        self._switch_to_single_folder()
+
+    def _on_folders_changed(self, folders: List[str]) -> None:
+        """
+        目录列表变化：1 个目录时完全等同单目录选择；≥2 个时 directory_path 取第一个，
+        状态条显示「已选 N 个目录」，任一目录有 report.db 时按钮为 has_results，否则 ready。
+
+        参数:
+        folders (List[str]): 列表当前的目录
+
+        Folder list changed: one folder behaves exactly like a single selection;
+        two or more set directory_path to the first, show "N folders selected" and
+        set the buttons to has_results if any folder has a report.db, else ready.
+
+        Parameters:
+        folders (List[str]): current folders in the list
+        """
+        if not self._lab_multi_active:
+            return
+        if not folders:
+            self.directory_path = ""
+            self.dir_input.clear()
+            self._update_status_banner("idle")
+            self._update_action_buttons("idle")
+            return
+        if len(folders) == 1:
+            first = os.path.normpath(folders[0])
+            if first == os.path.normpath(self.directory_path or ""):
+                # 从多个减到 1 个且剩下的就是当前目录：只把状态条/按钮恢复为单目录，
+                # 不重放日志、不自动弹浏览器（用户只是移除了别的目录）
+                # Shrunk to the current folder: restore single-folder banner/buttons only
+                self._check_report_csv(auto_open=False)
+            else:
+                self._handle_directory_selection(first)
+            return
+        self.directory_path = os.path.normpath(folders[0])
+        self.dir_input.setText(self.directory_path)
+        has_results = any(
+            os.path.exists(os.path.join(d, ".superpicky", "report.db")) for d in folders)
+        self._update_status_banner("multi_selected", len(folders))
+        self._update_action_buttons("has_results" if has_results else "ready")
+
     def _check_directory_health(self, directory: str):
         """检查目标目录的磁盘空间和写权限，结果输出到 UI 日志。"""
         import shutil
@@ -2108,8 +2366,9 @@ class SuperPickyMainWindow(QMainWindow):
     def _update_status_banner(self, state: str, data=None):
         """更新状态条显示。
 
-        state: "idle" | "ready" | "has_results" | "processing" | "done"
-        data: 对 has_results/done 传入 stats dict；对 processing 传入 filename str
+        state: "idle" | "ready" | "has_results" | "processing" | "done" | "multi_selected"
+        data: 对 has_results/done 传入 stats dict；对 processing 传入 filename str；
+              对 multi_selected 传入目录数 int
         """
         if not hasattr(self, '_status_banner'):
             return
@@ -2132,6 +2391,22 @@ class SuperPickyMainWindow(QMainWindow):
             import html as _html
             text = self.i18n.t("labels.dir_ready").format(
                 dirname=_html.escape(dirname)).replace(" ", "&nbsp;")
+            self._status_banner.setText(self._status_folder_icon_html() + "&nbsp;&nbsp;" + text)
+            self._status_banner.setStyleSheet(f"""
+                QLabel {{
+                    background-color: {COLORS['bg_card']};
+                    color: {COLORS['text_secondary']};
+                    border: 1px solid {COLORS['accent']};
+                    border-radius: 6px;
+                    font-size: 12px;
+                    padding: 0 12px;
+                }}
+            """)
+        elif state == "multi_selected":
+            # 实验室多目录：已选 N 个目录，样式同 ready / Labs: N folders selected, styled as ready
+            import html as _html
+            text = _html.escape(self.i18n.t("labels.multi_selected", count=int(data or 0))
+                                ).replace(" ", "&nbsp;")
             self._status_banner.setText(self._status_folder_icon_html() + "&nbsp;&nbsp;" + text)
             self._status_banner.setStyleSheet(f"""
                 QLabel {{
@@ -2254,8 +2529,12 @@ class SuperPickyMainWindow(QMainWindow):
             self.view_results_btn.style().unpolish(self.view_results_btn)
             self.view_results_btn.style().polish(self.view_results_btn)
 
-    def _check_report_csv(self):
-        """检查是否有 report.db，更新状态条，有结果时自动弹出浏览器。"""
+    def _check_report_csv(self, auto_open: bool = True):
+        """检查是否有 report.db，更新状态条，有结果时自动弹出浏览器。
+
+        auto_open: 为 False 时只刷新状态条/按钮，不自动弹出浏览器（多目录列表缩回 1 个时用）。
+        auto_open: when False, only refresh banner/buttons without opening the browser.
+        """
         if not self.directory_path:
             return
 
@@ -2275,7 +2554,7 @@ class SuperPickyMainWindow(QMainWindow):
             self._update_action_buttons("has_results")
             # 只有保留预览图时才自动弹出浏览器（无预览图时浏览器无内容）
             from advanced_config import get_advanced_config as _get_adv
-            if _get_adv().keep_temp_files:
+            if auto_open and _get_adv().keep_temp_files:
                 QTimer.singleShot(300, self._auto_open_results)
         else:
             self._update_status_banner("ready")
@@ -2447,6 +2726,7 @@ class SuperPickyMainWindow(QMainWindow):
         """
         self._update_status(self.i18n.t("labels.stopped"), COLORS['warning'])
         self._check_report_csv()
+        self._apply_pending_lab_switch()
 
     def _burst_note(self, cfg) -> str:
         """
@@ -2813,12 +3093,16 @@ class SuperPickyMainWindow(QMainWindow):
         else:
             QTimer.singleShot(800, self._open_finder_results)
 
+        # 处理中关掉的多目录开关，在此应用 / apply a switch-off deferred during processing
+        self._apply_pending_lab_switch()
+
     @Slot(str)
     def _on_error(self, error_msg):
         """处理错误"""
         self._log(f"Error: {error_msg}", "error")
         self._update_status(self.i18n.t("errors.error_title"), COLORS['error'])
         self._check_report_csv()  # 恢复按钮状态 + 状态条
+        self._apply_pending_lab_switch()
 
     @Slot()
     def _quick_restore_directory(self):
@@ -3299,6 +3583,8 @@ class SuperPickyMainWindow(QMainWindow):
         self._refresh_skill_chip()
         # 刷新首页快速参数面板,与设置中心改动保持一致(SSOT 双向同步)
         self._refresh_param_panel()
+        # 实验室页可能改了多目录开关：切换目录栏 / the Labs page may have flipped multi-folder
+        self._apply_lab_multi_folder()
 
         # Task 8 guard: birdid_dock.reload_from_config 由 Task 8 提供
         # Task 8 guard: reload_from_config is provided by Task 8

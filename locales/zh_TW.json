@@ -37,6 +37,7 @@
     "recent_dirs": "最近資料夾",
     "recent_dirs_clear": "清除歷史記錄",
     "recent_dirs_offline": "(離線)",
+    "recent_group": "{count} 個資料夾：{names}",
     "video_analysis": "影片分析…",
     "video_menu": "影片",
     "lang_tw": "繁體中文 TW"
@@ -112,6 +113,7 @@
     "status_done": "完成！{total} 張    ★★★ {n3}    ★★ {n2}    ★ {n1}",
     "add_folder": "＋ 新增資料夾…",
     "folder_total": "共 {count} 個資料夾 · {photos} 張",
+    "multi_selected": "已選 {count} 個資料夾",
     "folder_photos": "{n} 張",
     "folder_reject_overlap": "此資料夾與清單中的資料夾存在包含關係（父子資料夾），不能同時加入：\n{directory}",
     "folder_reject_dangerous": "此資料夾是系統或根目錄等危險位置，不能加入：\n{directory}",
@@ -397,6 +399,7 @@
     "processing_cancelled": "⏹ 處理已取消",
     "video_skipped_disabled": "⏭ 偵測到 {count} 個影片，但影片處理未開啟（可在「設定 → 影片」中開啟）",
     "resume_check_failed": "⚠️ 恢復狀態檢查失敗: {error}",
+    "recent_group_missing": "⚠️ 資料夾不存在，已略過：{directory}",
     "open_folder_failed": "  ⚠️ 開啟資料夾失敗: {error}",
     "server_stop_failed": "⚠️ 識鳥 API 服務停止失敗: {error}",
     "server_stop_error": "❌ 停止識鳥 API 服務時出錯: {error}",

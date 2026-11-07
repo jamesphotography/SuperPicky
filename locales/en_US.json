@@ -37,6 +37,7 @@
     "recent_dirs": "Recent Folders",
     "recent_dirs_clear": "Clear History",
     "recent_dirs_offline": "(Offline)",
+    "recent_group": "{count} folders: {names}",
     "video_analysis": "Video Analysis…",
     "video_menu": "Video",
     "lang_tw": "繁體中文 TW"
@@ -112,6 +113,7 @@
     "status_done": "Done! {total}    ★★★ {n3}    ★★ {n2}    ★ {n1}",
     "add_folder": "+ Add folder…",
     "folder_total": "{count} folders · {photos} photos",
+    "multi_selected": "{count} folders selected",
     "folder_photos": "{n} photos",
     "folder_reject_overlap": "This folder overlaps (parent/child) with one already in the list:\n{directory}",
     "folder_reject_dangerous": "This is a system or root location and cannot be added:\n{directory}",
@@ -397,6 +399,7 @@
     "processing_cancelled": "⏹ Processing cancelled.",
     "video_skipped_disabled": "⏭ Found {count} videos, but video processing is off (turn it on in Settings → Video)",
     "resume_check_failed": "⚠️ Resume check failed: {error}",
+    "recent_group_missing": "⚠️ Folder not found, skipped: {directory}",
     "open_folder_failed": "  ⚠️ Could not open the folder: {error}",
     "server_stop_failed": "⚠️ Failed to stop the Bird ID API server: {error}",
     "server_stop_error": "❌ Error while stopping the Bird ID API server: {error}",

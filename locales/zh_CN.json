@@ -37,6 +37,7 @@
     "recent_dirs": "最近目录",
     "recent_dirs_clear": "清除历史记录",
     "recent_dirs_offline": "(脱机)",
+    "recent_group": "{count} 个目录：{names}",
     "video_analysis": "视频分析…",
     "video_menu": "视频",
     "lang_tw": "繁體中文 TW"
@@ -112,6 +113,7 @@
     "status_done": "完成！{total} 张    ★★★ {n3}    ★★ {n2}    ★ {n1}",
     "add_folder": "＋ 添加目录…",
     "folder_total": "共 {count} 个目录 · {photos} 张",
+    "multi_selected": "已选 {count} 个目录",
     "folder_photos": "{n} 张",
     "folder_reject_overlap": "该目录与列表中的目录存在包含关系（父子目录），不能同时加入：\n{directory}",
     "folder_reject_dangerous": "该目录是系统或根目录等危险位置，不能加入：\n{directory}",
@@ -397,6 +399,7 @@
     "processing_cancelled": "⏹ 处理已取消",
     "video_skipped_disabled": "⏭ 检测到 {count} 个视频，但视频处理未开启（可在「设置 → 视频」中开启）",
     "resume_check_failed": "⚠️ 恢复状态检查失败: {error}",
+    "recent_group_missing": "⚠️ 目录不存在，已跳过：{directory}",
     "open_folder_failed": "  ⚠️ 打开目录失败: {error}",
     "server_stop_failed": "⚠️ 识鸟 API 服务停止失败: {error}",
     "server_stop_error": "❌ 停止识鸟 API 服务时出错: {error}",
