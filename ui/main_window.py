@@ -148,6 +148,16 @@ def _format_wall_clock(ts: float) -> str:
     return _dt2.fromtimestamp(ts).strftime("%H:%M:%S")
 
 
+# 预扫描失败的哨兵：_prescan 扫描本身抛异常时返回它（区别于 None=已阻断、
+# list=扫描结果），调用方据此给 worker 传 scan_results=None，保持「扫描失败
+# 不阻断、交给 worker 自己扫描」的原语义。不用 [] 是因为空列表表示「没有照片」。
+# Sentinel returned by _prescan when the scan itself raises (distinct from
+# None = blocked and a list = results). The caller then passes
+# scan_results=None to the worker, keeping "scan failure doesn't block".
+# Not [] because an empty list means "no photos".
+_SCAN_FAILED = object()
+
+
 #: #145 开始确认框里「更换国家…」按钮的返回值（Yes=1 / No=0 之外）
 #: #145 return value of the "Change country…" button in the start confirmation
 START_CONFIRM_CHANGE_COUNTRY = 2
@@ -2961,35 +2971,121 @@ class SuperPickyMainWindow(QMainWindow):
             )
             return
 
-        # 2. 照片数量预扫描（阻断型）
-        scan_results = None
+        # 2. 照片数量预扫描（阻断型）/ Photo pre-scan (blocking)
+        scan = self._prescan(self.directory_path)
+        if scan is None:
+            return
+        scan_results = None if scan is _SCAN_FAILED else scan
+
+        self._launch_worker(self.directory_path, resume_processing, scan_results)
+
+    def _prescan(self, directory: str) -> Optional[object]:
+        """
+        开始前的危险目录检查与照片数量预扫描（阻断型）。
+
+        危险目录或没有照片时弹警告并返回 None（调用方应直接中止）；
+        扫描本身抛异常时不阻断，返回哨兵 _SCAN_FAILED，调用方据此给 worker
+        传 scan_results=None，交由 worker 自己扫描。
+
+        参数:
+        directory (str): 要处理的源目录
+
+        返回:
+        None | object | list: None=已阻断（已弹窗）；_SCAN_FAILED=扫描异常；
+        否则为 scan_directories 的结果列表（非空）
+
+        Dangerous-root check and photo pre-scan before processing (blocking).
+        Shows a warning and returns None when the folder is dangerous or has no
+        photos (the caller should stop). If the scan itself raises, it does not
+        block: returns the _SCAN_FAILED sentinel so the caller passes
+        scan_results=None to the worker, which then scans on its own.
+
+        Parameters:
+        directory (str): Source folder to process
+
+        Return:
+        None | object | list: None = blocked (dialog shown); _SCAN_FAILED = scan
+        raised; otherwise the non-empty list from scan_directories
+        """
         try:
             from core.recursive_scanner import DEFAULT_SCAN_MAX_DEPTH, is_dangerous_root, scan_directories
 
-            is_dangerous, reason = is_dangerous_root(self.directory_path)
+            is_dangerous, reason = is_dangerous_root(directory)
             if is_dangerous:
                 StyledMessageBox.warning(
                     self,
                     self.i18n.t("health.dangerous_dir_title"),
                     self.i18n.t(
                         "health.dangerous_dir_msg",
-                        directory=self.directory_path,
+                        directory=directory,
                         reason=reason,
                     ),
                 )
-                return
+                return None
 
-            scan_results = scan_directories(self.directory_path, max_depth=DEFAULT_SCAN_MAX_DEPTH)
+            scan_results = scan_directories(directory, max_depth=DEFAULT_SCAN_MAX_DEPTH)
             if not scan_results:
                 StyledMessageBox.warning(
                     self,
                     self.i18n.t("health.no_photos_title"),
-                    self.i18n.t("health.no_photos_msg", directory=self.directory_path),
+                    self.i18n.t("health.no_photos_msg", directory=directory),
                 )
-                return
+                return None
+            return scan_results
         except Exception:
-            pass  # 扫描失败不阻断，交给 worker 处理
+            return _SCAN_FAILED  # 扫描失败不阻断，交给 worker 处理 / scan failure doesn't block
 
+    def _build_ui_settings(self) -> list:
+        """
+        从 advanced_config 组装传给 WorkerThread 的 9 项 ui_settings 列表。
+
+        返回:
+        list: [置信度%, 锐度阈值, 美学阈值, 保存裁切, 归一化模式, 飞鸟检测,
+        曝光检测(固定 False), 连拍检测, 识鸟开关]
+
+        Build the 9-item ui_settings list for WorkerThread from advanced_config.
+
+        Return:
+        list: [confidence %, sharpness, aesthetics, save crop, normalization,
+        flight, exposure (always False), burst, bird ID auto-identify]
+        """
+        # Task 7: 准备 UI 设置 — 改从 advanced_config 读取，不再依赖已删除的参数面板控件
+        # Task 7: Prepare UI settings — read from advanced_config; old panel widgets removed
+        _adv = get_advanced_config()
+        return [
+            int(_adv.min_confidence * 100),   # [0] AI 置信度 / AI confidence
+            int(_adv.min_sharpness),           # [1] 锐度阈值 / sharpness threshold
+            _adv.min_nima,                     # [2] NIMA 美学阈值 / NIMA aesthetics threshold
+            True,                              # [3] 始终保存裁切 / always save crop
+            "log_compression",                 # [4] 归一化模式 / normalization mode
+            bool(_adv.flight_check),           # [5] 飞鸟检测 / flight detection
+            False,                             # [6] 曝光检测已移除，固定 False / exposure removed
+            bool(_adv.burst_check),            # [7] 连拍检测 / burst detection
+            bool(_adv.birdid_auto_identify),   # [8] 识鸟开关 / bird ID auto-identify
+        ]
+
+    def _launch_worker(self, directory: str, resume: bool, scan_results: Optional[list]) -> None:
+        """
+        清空日志/进度、连接信号并启动一个目录的 WorkerThread（不弹任何确认框）。
+
+        所有开始前的提示与自检由调用方负责（单目录为 _start_processing；
+        多目录队列只问一次，再对每个目录调用本方法）。
+
+        参数:
+        directory (str): 要处理的源目录
+        resume (bool): 是否从断点续处理
+        scan_results (Optional[list]): 预扫描结果；None 表示由 worker 自己扫描
+
+        Clear log/progress, wire signals and start the WorkerThread for one
+        folder, without any confirmation dialogs. All start-up prompts and
+        health checks are the caller's job (_start_processing for one folder;
+        the multi-folder queue asks once, then calls this per folder).
+
+        Parameters:
+        directory (str): Source folder to process
+        resume (bool): Whether to resume from saved state
+        scan_results (Optional[list]): Pre-scan results; None lets the worker scan
+        """
         # 3. 模型预加载状态提示（非阻断）
         if not self._preload_done:
             self._log(self.i18n.t("health.models_still_loading"), "warning")
@@ -3004,20 +3100,7 @@ class SuperPickyMainWindow(QMainWindow):
         self._update_status(self.i18n.t("labels.processing"), COLORS['warning'])
         self._log(self.i18n.t("logs.processing_start"))
 
-        # Task 7: 准备 UI 设置 — 改从 advanced_config 读取，不再依赖已删除的参数面板控件
-        # Task 7: Prepare UI settings — read from advanced_config; old panel widgets removed
-        _adv = get_advanced_config()
-        ui_settings = [
-            int(_adv.min_confidence * 100),   # [0] AI 置信度 / AI confidence
-            int(_adv.min_sharpness),           # [1] 锐度阈值 / sharpness threshold
-            _adv.min_nima,                     # [2] NIMA 美学阈值 / NIMA aesthetics threshold
-            True,                              # [3] 始终保存裁切 / always save crop
-            "log_compression",                 # [4] 归一化模式 / normalization mode
-            bool(_adv.flight_check),           # [5] 飞鸟检测 / flight detection
-            False,                             # [6] 曝光检测已移除，固定 False / exposure removed
-            bool(_adv.burst_check),            # [7] 连拍检测 / burst detection
-            bool(_adv.birdid_auto_identify),   # [8] 识鸟开关 / bird ID auto-identify
-        ]
+        ui_settings = self._build_ui_settings()
 
         # 创建信号
         self.worker_signals = WorkerSignals()
@@ -3037,11 +3120,11 @@ class SuperPickyMainWindow(QMainWindow):
 
         # 启动工作线程
         self.worker = WorkerThread(
-            self.directory_path,
+            directory,
             ui_settings,
             self.worker_signals,
             self.i18n,
-            resume=resume_processing,
+            resume=resume,
             scan_results=scan_results,
         )
         self.worker.start()
