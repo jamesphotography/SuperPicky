@@ -29,8 +29,8 @@ def test_nav_has_six_pages_and_switch():
     # 且「参数设置可开启」的日志指向一个不存在的入口。首页开关维持剥离状态。
     # 4.6: the "video" page is back — stripping every entry point left the
     # main-flow video processing reachable only by a pre-existing config value.
-    assert PAGE_ORDER == ["culling", "birdid", "output", "video", "apps", "about"]
-    assert w._nav.count() == 6
+    assert PAGE_ORDER == ["culling", "birdid", "output", "video", "apps", "labs", "about"]
+    assert w._nav.count() == 7
     w.show_page("about")
     assert w._stack.currentIndex() == PAGE_ORDER.index("about")
     w.close()
