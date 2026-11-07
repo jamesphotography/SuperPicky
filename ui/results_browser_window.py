@@ -2736,7 +2736,12 @@ class ResultsBrowserWindow(QMainWindow):
         species, has_other = compute_dropdown_species(
             self._db, use_en=use_en, ratings=filters.get('ratings')
         )
-        self._filter_panel.update_species_list(species, has_other)
+        if self._filter_panel.update_species_list(species, has_other):
+            # 选中的鸟种在当前星级下已没有照片，下拉退回了「全部鸟种」：传进来的
+            # filters 还带着旧鸟种，照它查会得到空网格，改用下拉现在的条件（#157）。
+            # The selected species vanished and the combo fell back to "All"; the
+            # incoming filters still name it, so re-read them (#157).
+            filters = self._filter_panel.get_filters()
 
         raw_photos = self._db.get_photos_by_filters(filters)
         resolved_photos = [self._resolve_photo_paths(p) for p in raw_photos]
@@ -3311,7 +3316,15 @@ class ResultsBrowserWindow(QMainWindow):
         new_species, new_has_other = compute_dropdown_species(
             self._db, use_en=use_en, ratings=current_filters.get("ratings")
         )
-        self._filter_panel.update_species_list(new_species, new_has_other)
+        if self._filter_panel.update_species_list(new_species, new_has_other):
+            # 改掉的是该鸟种的最后一张：下拉退回「全部鸟种」，网格必须跟着按新条件
+            # 重载，否则还按已消失的旧鸟种过滤，一张都不显示（#157）。这里本来
+            # 只就地打补丁以保住滚动位置，但筛选条件已经变了，只能整页重载。
+            # That was the species' last photo: the combo fell back to "All", so
+            # the grid must reload with the new filters or it stays empty (#157).
+            # The in-place patch normally keeps the scroll position, but the
+            # filter itself changed, so a full reload is required.
+            self._apply_filters(self._filter_panel.get_filters())
 
         # 5. 后台执行文件移动（同时更新连拍组其他成员的 DB 鸟种字段及 current_path）
         #    失败必须让用户看见——回调在工作线程里触发，用 QTimer 转回主线程弹窗。
