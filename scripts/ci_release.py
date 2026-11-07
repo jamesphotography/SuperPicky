@@ -615,11 +615,21 @@ def render_download_section(assets: list[dict], tag: str, repo: str) -> str:
         group = [a for a in installers if marker in a["name"] and a["name"] not in used]
         used.update(a["name"] for a in group)
         if not group:
+            is_test = infer_release_channel(tag) == "nightly"
             if marker == "_x86_64_":
                 missing = ("not provided for this test build / 本测试版不提供"
-                           if infer_release_channel(tag) == "nightly"
-                           else "coming soon / 稍后提供")
+                           if is_test else "coming soon / 稍后提供")
                 lines.append(f"- {label} — {missing}")
+            elif marker == "_Setup_FullCUDA13_Win64_" and is_test:
+                # 测试版不构建 CUDA 13（build-release.yml），写明原因与替代，
+                # 免得 RTX 50 用户以为漏传了。正式版缺它 = 构建失败，不列。
+                # Test builds skip CUDA 13 by design; say so and point RTX 50
+                # users at the alternatives. On a stable release it is omitted.
+                lines.append(
+                    "- **Windows, NVIDIA RTX 50 (CUDA 13)** — not provided for this test build; "
+                    "use the CPU or CUDA 11.8 installer (on RTX 50 it runs on the CPU) / "
+                    "本测试版不提供，请用 CPU 版或 CUDA 11.8 版（在 RTX 50 上会用 CPU 运行）"
+                )
             continue
         if len(group) == 1:
             lines.append(f"- {label} — {link(group[0])}")

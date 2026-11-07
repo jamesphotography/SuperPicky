@@ -205,7 +205,12 @@ jobs:
   # A separate parallel job: no disk contention, and a failure here never blocks
   # the other three installers.
   build-windows-cuda13:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'windows' }}
+    # 测试版（tag 或手动填的版本号含 -rc / -RC）不打 CUDA 13 包：它构建最慢、体积最大，
+    # 临时测试只需 Mac ARM、Windows CPU、CUDA 11.8 三个包；正式版照常构建（维护者 2026-11-07 拍板）。
+    # Test builds (tag or manual version containing -rc / -RC) skip CUDA 13: it is
+    # the slowest and largest build, and a test round only needs Mac ARM, Windows
+    # CPU and CUDA 11.8. Stable releases still build it.
+    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'windows') && !contains(github.ref_name, '-rc') && !contains(github.ref_name, '-RC') && !contains(github.event.inputs.version, '-rc') && !contains(github.event.inputs.version, '-RC') }}
     runs-on: windows-latest
     permissions:
       contents: write

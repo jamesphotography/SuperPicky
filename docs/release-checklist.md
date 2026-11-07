@@ -80,6 +80,9 @@ git push origin v4.6.0-rc1
   **push 分支不会触发构建**。
 - tag 含 `-rc` 或 `-RC` 时，CI 自动标记为 prerelease，不会被当成 latest 推给
   用户（`build-release.yml` 的 `prerelease:` 表达式，大小写都认）。
+- **测试版（tag 含 `-rc` / `-RC`）不构建 CUDA 13 包**，只出 Mac ARM、Windows CPU、
+  CUDA 11.8 三个；Release 页下载清单会写明「本测试版不提供」。正式版照常构建四个包。
+  Test builds skip the CUDA 13 installer; stable releases build all four.
 - 正式版 tag **不要**加 `-final` 之类后缀 —— prerelease 判断只看 `-rc`，多余的
   后缀会让它被当成正式版处理，但版本名会变得难看。
 

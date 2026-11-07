@@ -214,3 +214,26 @@ def test_add_downloads_cli_appends_after_notes(tmp_path) -> None:
     body = notes.read_text(encoding="utf-8")
     assert body.startswith("# SuperPicky 4.6.4\n\n中文说明。\n\n## Download / 下载\n")
     assert "任何电脑（CPU 版）" in body
+
+
+def test_rc_without_cuda13_says_it_is_not_built() -> None:
+    """测试版不构建 CUDA 13：清单写明「本测试版不提供」及替代，而不是静默缺一行。"""
+
+    assets = [a for a in ASSETS_464 if "FullCUDA13" not in a["name"]]
+    rc = ci_release.render_download_section(assets, "v4.6.5-rc2", REPO)
+    line = _line_with(rc, "RTX 50 (CUDA 13)")
+    assert "本测试版不提供" in line and "CUDA 11.8" in line
+    assert "FullCUDA13" not in rc
+
+
+def test_workflow_skips_cuda13_only_for_test_builds() -> None:
+    """CUDA 13 任务的 if 条件排除 -rc / -RC（tag 与手动版本号都看）。"""
+
+    import yaml
+
+    data = yaml.safe_load((ROOT / ".github" / "workflows" / "build-release.yml").read_text(encoding="utf-8"))
+    cond = data["jobs"]["build-windows-cuda13"]["if"]
+    for needle in ("!contains(github.ref_name, '-rc')", "!contains(github.ref_name, '-RC')",
+                   "!contains(github.event.inputs.version, '-rc')"):
+        assert needle in cond
+    assert "-rc" not in data["jobs"]["build-windows"]["if"]
