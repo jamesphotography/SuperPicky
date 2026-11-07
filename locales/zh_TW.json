@@ -399,6 +399,7 @@
     "readonly_clear_failed": "  ⚠️ 移除只讀屬性失敗 [{file}]: {error}",
     "gc_collected": "  🧹 [第{index}張] 已回收記憶體",
     "photo_failed_skipped": "  ⚠️ 第{index}張處理異常，已跳過 [{name}]: {error}",
+    "resume_state_write_failed": "  ⚠️ 續跑紀錄：無法更新進度檔 .superpicky/resume_state.json（{error}），通常是防毒軟體或同步程式（如 OneDrive）正開著它。選片照常進行；只有現在中途停止，下次接著處理時才可能重做幾張已完成的照片。",
     "exiftool_close_failed": "⚠️ ExifTool 會話關閉失敗: {error}",
     "db_path_update_failed": "    ⚠️ 資料庫路徑更新失敗: {error}",
     "move_failed_simple": "    ⚠️ 移動失敗: {error}",

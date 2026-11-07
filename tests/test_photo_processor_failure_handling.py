@@ -84,3 +84,22 @@ def test_failure_without_prefix_still_counted(tmp_path):
     processor._handle_photo_failure(1, "IMG_0001.NEF", None, ValueError("early"))
 
     assert processor.stats["failed"] == 1
+
+
+def test_failure_shows_original_raw_name_not_cached_preview(tmp_path):
+    """RAW 照片失败时显示原片名，而不是内部缓存预览图路径（#156）。
+
+    RAW photos are processed from a cached preview; the failure log and the
+    end-of-run list must name the original RAW, not that internal path (#156).
+    """
+    import os
+
+    processor, logs = _make_processor(tmp_path)
+    preview = os.path.join(".superpicky", "cache", "temp_preview", "_T3A2095.jpg")
+
+    processor._handle_photo_failure(141, preview, "_T3A2095", OSError("denied"),
+                                    {"_T3A2095": ".CR3"})
+
+    assert processor.failed_photos == ["_T3A2095.CR3"]
+    error_logs = [msg for level, msg in logs if level == "error"]
+    assert any("_T3A2095.CR3" in msg and "temp_preview" not in msg for msg in error_logs)
