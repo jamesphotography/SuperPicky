@@ -209,6 +209,16 @@ class AdvancedConfig:
         # 最近选鸟目录历史（最多保留 10 个，按最近使用时间倒序）
         "recent_directories": [],
 
+        # 最近多目录选鸟组（每组 >=2 个目录，最多 10 组，最新在前）
+        # Recent multi-folder groups (each >=2 dirs, max 10, newest first)
+        "recent_directory_groups": [],
+
+        # 实验室开关（默认关闭，恢复默认时同样关闭）
+        # Labs switches (off by default; also turned off by restore-defaults)
+        "lab_report_export": False,
+        "lab_ebird_export": False,
+        "lab_multi_folder": False,
+
         # 主窗口位置和最大化状态。普通几何与最大化状态分开存储，便于跨屏幕校验。
         # Main-window placement and maximized state. Normal geometry is stored
         # separately from maximized state so it can be validated across monitors.
@@ -373,7 +383,7 @@ class AdvancedConfig:
         # 更新检查状态 / update-check state
         "ignored_update_version", "include_prerelease", "auto_check_updates",
         # 使用记录与窗口状态 / history and window state
-        "recent_directories", "main_window_geometry", "main_window_maximized",
+        "recent_directories", "recent_directory_groups", "main_window_geometry", "main_window_maximized",
         "browser_copy_dir",
     })
 
@@ -1034,6 +1044,30 @@ class AdvancedConfig:
         self.config["delete_confirm"] = bool(value)
 
     @property
+    def lab_report_export(self) -> bool:
+        """实验室：报告导出开关 / Labs: report export switch."""
+        return bool(self.config.get("lab_report_export", False))
+
+    @property
+    def lab_ebird_export(self) -> bool:
+        """实验室：eBird 导出开关 / Labs: eBird export switch."""
+        return bool(self.config.get("lab_ebird_export", False))
+
+    @property
+    def lab_multi_folder(self) -> bool:
+        """实验室：多目录选鸟开关 / Labs: multi-folder culling switch."""
+        return bool(self.config.get("lab_multi_folder", False))
+
+    def set_lab_report_export(self, value: bool) -> None:
+        self.config["lab_report_export"] = bool(value)
+
+    def set_lab_ebird_export(self, value: bool) -> None:
+        self.config["lab_ebird_export"] = bool(value)
+
+    def set_lab_multi_folder(self, value: bool) -> None:
+        self.config["lab_multi_folder"] = bool(value)
+
+    @property
     def close_action(self) -> str:
         """
         主窗口关闭按钮的行为（#123）："ask" / "tray" / "quit"；非法值按 "ask" 处理。
@@ -1347,6 +1381,39 @@ class AdvancedConfig:
         dirs = [d for d in self.config.get("recent_directories", []) if d != directory]
         dirs.insert(0, directory)
         self.config["recent_directories"] = dirs[:10]
+        self.save()
+
+    def get_recent_directory_groups(self) -> list:
+        """
+        返回最近多目录组列表（最新在前）。只保留「list[str] 且长度>=2」的条目，
+        防御手改坏的配置。
+
+        Return recent multi-folder groups (newest first), keeping only entries
+        that are list[str] with >= 2 items, to guard against hand-edited configs.
+        """
+        raw = self.config.get("recent_directory_groups", [])
+        if not isinstance(raw, list):
+            return []
+        return [
+            list(g) for g in raw
+            if isinstance(g, list) and len(g) >= 2 and all(isinstance(x, str) for x in g)
+        ]
+
+    def add_recent_directory_group(self, dirs: list) -> None:
+        """
+        记录一组目录：按集合判重（不论顺序），保留本次顺序并插到最前，
+        最多 10 组；少于 2 个目录时忽略；写完保存。
+
+        Record a directory group: dedup by set (order-insensitive), keep this
+        call's order at the front, cap at 10; ignore groups of < 2; then save().
+        """
+        group = [d for d in dirs if isinstance(d, str)]
+        if len(group) < 2:
+            return
+        key = set(group)
+        groups = [g for g in self.get_recent_directory_groups() if set(g) != key]
+        groups.insert(0, group)
+        self.config["recent_directory_groups"] = groups[:10]
         self.save()
 
     def get_dict(self) -> Dict[str, object]:
