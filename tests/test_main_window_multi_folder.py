@@ -185,6 +185,52 @@ def test_switch_off_deferred_while_worker_alive(tmp_path):
         w.close()
 
 
+def test_deferred_switch_from_finished_does_not_reselect(tmp_path, monkeypatch):
+    """
+    从 _on_finished 应用挂起的关闭：不重放日志、不额外排自动打开浏览器，
+    directory_path 仍是第一个目录，输入框可见。
+    A deferred switch-off applied from _on_finished must not replay the console
+    log or schedule another browser open.
+    """
+    import ui.main_window as mw
+    a = _photo_dir(tmp_path, "a")
+    b = _photo_dir(tmp_path, "b")
+    w = _window()
+    try:
+        w.config.set_keep_temp_files(True)
+        _set_lab(w, True)
+        w._folder_list.set_folders([a, b])
+        w._queue = object()
+        _set_lab(w, False)
+        assert w._lab_multi_pending_off is True
+        w._queue = None
+
+        scheduled = []
+        monkeypatch.setattr(mw.QTimer, "singleShot",
+                            staticmethod(lambda ms, cb: scheduled.append((ms, cb))))
+        replays = []
+        monkeypatch.setattr(w, "_restore_console_from_log", lambda d: replays.append(d) or False)
+        selections = []
+        monkeypatch.setattr(w, "_handle_directory_selection", lambda d: selections.append(d))
+        monkeypatch.setattr(w, "_show_statistics_report", lambda stats: None)
+        monkeypatch.setattr(w, "_play_completion_sound", lambda: None)
+        monkeypatch.setattr(w, "_apply_current_results", lambda d, st: None)
+
+        w._on_finished({})
+        # 只有 _on_finished 自己排的那一次打开 / only _on_finished's own scheduled open
+        opens = [cb for _ms, cb in scheduled
+                 if getattr(cb, "__name__", "") in ("_auto_open_results", "_open_finder_results")]
+        assert len(opens) == 1
+        assert replays == []
+        assert selections == []
+        assert w._folder_list.isHidden()
+        assert not w.dir_input.isHidden()
+        assert w.directory_path == a
+        assert w.dir_input.text() == a
+    finally:
+        w.close()
+
+
 def test_recent_groups_hidden_when_switch_off(tmp_path):
     """开关关闭时最近目录菜单里没有目录组；开启后出现在单目录之前。"""
     a = _photo_dir(tmp_path, "a")

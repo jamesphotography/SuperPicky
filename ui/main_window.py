@@ -2119,12 +2119,28 @@ class SuperPickyMainWindow(QMainWindow):
             return
         self._switch_to_single_folder()
 
-    def _switch_to_single_folder(self) -> None:
+    def _switch_to_single_folder(self, refresh_state: bool = True) -> None:
         """
-        收起目录列表、回到单目录界面；列表有多个目录时只保留第一个并重新选中它。
+        收起目录列表、回到单目录界面；列表有多个目录时只保留第一个。
 
-        Collapse the folder list back to the single-folder bar; with several
-        folders, keep only the first and re-select it.
+        第一个目录通常就是当前 directory_path（≥2 个时它总被设为第一个），此时不重新走
+        _handle_directory_selection——否则会重复记「已选目录」、重放上次日志到控制台、
+        并再排一次自动打开浏览器（处理结束的槽里已经排过一次）。只有第一个目录与
+        directory_path 不同时才完整选中它。
+
+        参数:
+        refresh_state (bool): 第一个目录即当前目录时，是否用 _check_report_csv(auto_open=False)
+            把状态条/按钮恢复为单目录。由处理结束的槽调用时传 False（槽已刷新过状态）。
+
+        Collapse the folder list back to the single-folder bar, keeping only the
+        first folder. That folder normally already is directory_path; it is then
+        not re-selected (no duplicate log, console replay or second browser open).
+        It is fully selected only when it differs from directory_path.
+
+        Parameters:
+        refresh_state (bool): when the first folder is already current, whether to
+            restore the single-folder banner/buttons via _check_report_csv(auto_open=False).
+            Terminal slots pass False since they have already refreshed state.
         """
         folders = self._folder_list.folders()
         self._lab_multi_pending_off = False
@@ -2136,10 +2152,13 @@ class SuperPickyMainWindow(QMainWindow):
         self.dir_input.setVisible(True)
         self._browse_btn.setVisible(True)
         if len(folders) >= 2:
-            # directory_path 已是第一个目录；清空后才能完整走一遍单目录选择
-            # directory_path already equals the first folder; clear it to re-run selection
-            self.directory_path = ""
-            self._handle_directory_selection(folders[0])
+            first = os.path.normpath(folders[0])
+            if first == os.path.normpath(self.directory_path or ""):
+                self.dir_input.setText(first)
+                if refresh_state:
+                    self._check_report_csv(auto_open=False)
+            else:
+                self._handle_directory_selection(first)
         self._refresh_recent_menu()
 
     def _apply_pending_lab_switch(self) -> None:
@@ -2161,7 +2180,9 @@ class SuperPickyMainWindow(QMainWindow):
             # 处理期间又把开关打开了：放弃挂起 / switched back on meanwhile
             self._lab_multi_pending_off = False
             return
-        self._switch_to_single_folder()
+        # 处理结束的槽已刷新过状态条/按钮，这里不再刷新
+        # The terminal slot has already refreshed banner/buttons
+        self._switch_to_single_folder(refresh_state=False)
 
     def _on_folders_changed(self, folders: List[str]) -> None:
         """
