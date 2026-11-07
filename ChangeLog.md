@@ -1,3 +1,56 @@
+# SuperPicky 4.6.5 RC3
+
+**What's new since RC2:**
+
+- **100% zoom is sharp for RAW + small JPEG shooting.** When your camera saves a small JPEG
+  next to each RAW, full-screen 100% zoom now uses the large preview inside the RAW instead of
+  enlarging the small JPEG.
+- **Deleting many photos is much faster, with a progress bar.** Deletion runs in the background
+  and can be cancelled; moving 150 files to the Trash on an external drive went from about 29 to
+  3 seconds. Finder's own "Moving to Trash" window no longer pops up, and Put Back still works.
+- **Choose Move to Trash or Delete Permanently.** The delete prompt now offers both (Move to
+  Trash is the default). Permanent deletion is much faster but cannot be undone, so it always
+  asks first, even if you turned off delete confirmation. Shortcut: Cmd+Option+Delete on Mac,
+  Shift+Delete on Windows, or right-click > Delete Permanently.
+- **Deleting a collapsed burst deletes the whole burst.** Previously only its cover photo was
+  deleted, so "select all, delete" kept leaving photos behind. The prompt now lists the stars in
+  those bursts (for example "3★ ×2, 2★ ×3, 1 with 👑 Pick") and offers Expand Bursts to Choose.
+  Full-screen deletion still removes only the photo on screen.
+- **Every identified species keeps at least one 2★ photo (Rating V2).** If all photos of a
+  species would end at 0★ or 1★, the best one is raised to 2★, so deleting 0★/1★ never removes a
+  species entirely. 3★ rules are unchanged, and the caption explains the raise.
+- **Settings > About > Restore Defaults.** Resets every setting to its first-install value;
+  your language, anonymous-stats choice, recent folders and window position are kept, and the
+  old settings are backed up first.
+- Progress dialogs (delete, copy, species change, report, Apple Photos import) are no longer
+  squashed into a thin line with the percentage hidden.
+- This test build has no CUDA 13 installer; RTX 50 users can use the CPU or CUDA 11.8 build.
+
+---
+
+# SuperPicky 4.6.5 RC3（中文）
+
+**相比 RC2 的变化：**
+
+- **RAW + 小尺寸 JPEG 拍摄时，100% 放大不再模糊。** 相机同时存了小 JPEG 时，全屏放大到 100% 改用
+  RAW 里内嵌的大图，不再把小 JPEG 拉大。
+- **多张删除快得多，并有进度条。** 删除在后台进行、可以取消；外接盘上 150 个文件移到废纸篓从约
+  29 秒缩短到 3 秒。不再弹出访达自己的「移到废纸篓」窗口，「放回原处」照常可用。
+- **可以选「移到废纸篓」或「永久删除」。** 删除确认框两种都有，默认是移到废纸篓。永久删除快得多但
+  无法恢复，所以即使关掉了删除确认也一定会先问一次。快捷键：Mac 上 ⌘⌥⌫，Windows 上 Shift+Delete，
+  也可以右键「永久删除…」。
+- **删除折叠的连拍会删整组。** 以前只删了封面那一张，「全选删除」后总会剩下几张。确认框会列出这些
+  连拍里各星级的张数（如「3★ 2 张、2★ 3 张，含 👑 精选 1 张」），也可以选「展开连拍，逐张挑选」。
+  全屏里删除仍然只删当前这张。
+- **每个识别出的鸟种至少留一张 2★（V2 评星）。** 某个鸟种的照片如果全都只有 0★/1★，会把其中最好的
+  一张提到 2★，删 0★/1★ 时不会把这种鸟整个删掉。3★ 的规则不变，题注里写明提级原因。
+- **设置 → 关于 → 恢复默认设置。** 把所有设置恢复为初次安装时的值；界面语言、匿名统计开关、最近打开
+  的文件夹和窗口位置会保留，恢复前自动备份原来的设置。
+- 删除、复制、改鸟种、导出报告、导入 Apple 照片等进度框不再被压成一条细线、看不到百分比。
+- 本测试版不提供 CUDA 13 安装包，RTX 50 显卡请用 CPU 版或 CUDA 11.8 版。
+
+---
+
 # SuperPicky 4.6.5 RC2
 
 **What's new since RC1:**
