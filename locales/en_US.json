@@ -145,7 +145,12 @@
     "restart_btn": "Restart",
     "enable_btn": "Enable",
     "skip_btn": "Not Now",
-    "video_first_tip_body": "📹 Detected {count} video file(s) in this folder.\n\nSuperPicky now supports video bird analysis + auto-organize.\nAnalyzed videos are sorted into per-species folders (shared with photos).\n\nEnable video processing?\n(You can change this later in Settings.)"
+    "video_first_tip_body": "📹 Detected {count} video file(s) in this folder.\n\nSuperPicky now supports video bird analysis + auto-organize.\nAnalyzed videos are sorted into per-species folders (shared with photos).\n\nEnable video processing?\n(You can change this later in Settings.)",
+    "queue_precheck_title": "Some folders were processed before",
+    "queue_precheck_resume": "Unfinished last time (will continue):\n{folders}",
+    "queue_precheck_processed": "Already processed (will be skipped):\n{folders}",
+    "queue_reprocess_all": "Reprocess all (undo the previous file moves, then run again)",
+    "queue_start": "Start"
   },
   "messages": {
     "initialization_required": "Initialization is not finished yet. Complete first-run resource setup before processing.",
@@ -189,7 +194,17 @@
     "exif_reset_count": "EXIF reset: {count}",
     "ready_for_analysis": "Ready for new analysis",
     "reset_failed_log": "Reset failed",
-    "dir_unavailable": "Folder unavailable. Please make sure the external drive is connected."
+    "dir_unavailable": "Folder unavailable. Please make sure the external drive is connected.",
+    "queue_removable_message": "These folders are on a memory card or removable drive:\n{folders}\n\nProcessing directly on a card is risky: it moves thousands of files, and cards are slow with fragile file systems — an interruption or removing the card mid-way can lose photos.\n\nStrongly recommended: copy the photos to your computer's hard drive first, then process from the hard drive.\n\nContinue on the card anyway?",
+    "queue_summary_title": "📋 Multi-folder summary",
+    "queue_summary_line": "  {path}: {status}, {total} photos · 3★ {n3} · 2★ {n2} · 1★ {n1} · 0★ {n0} · no bird {nb}",
+    "queue_summary_line_short": "  {path}: {status}",
+    "queue_summary_errors": "❌ Folders with errors:",
+    "queue_status_done": "done",
+    "queue_status_skipped": "skipped (processed before)",
+    "queue_status_error": "error",
+    "queue_status_stopped": "stopped",
+    "queue_status_not_started": "not started"
   },
   "logs": {
     "reset_start": "🔄 Starting directory reset",
@@ -441,7 +456,10 @@
     "batch_reset_sub_failed": "  ❌ {rel}/ reset failed: {error}",
     "reset_dir_has_leftovers": "leftover files remain, kept: {sample}",
     "reset_cache_delete_failed": "  ⚠️ Failed to delete .superpicky: {error}",
-    "reset_cache_kept": "  ✅ .superpicky/ cache kept (quick restore: previews reused)"
+    "reset_cache_kept": "  ✅ .superpicky/ cache kept (quick restore: previews reused)",
+    "queue_folder_start": "[{i}/{n}] {path}",
+    "queue_folder_error": "❌ Folder failed, moving on to the next one: {path}\n   {error}",
+    "queue_folder_missing": "Folder not found (external drive not connected?)"
   },
   "server": {
     "server_already_running": "✅ Server already running on port {port}",

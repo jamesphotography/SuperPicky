@@ -145,7 +145,12 @@
     "restart_btn": "重新开始",
     "enable_btn": "启用",
     "skip_btn": "暂不启用",
-    "video_first_tip_body": "📹 检测到目录中有 {count} 个视频文件。\n\nSuperPicky 现已支持视频鸟类分析 + 自动归类。\n分析完成后会按鸟种分目录（与照片共享同一鸟种目录）。\n\n是否启用视频处理？\n（之后可在「参数设置」中切换）"
+    "video_first_tip_body": "📹 检测到目录中有 {count} 个视频文件。\n\nSuperPicky 现已支持视频鸟类分析 + 自动归类。\n分析完成后会按鸟种分目录（与照片共享同一鸟种目录）。\n\n是否启用视频处理？\n（之后可在「参数设置」中切换）",
+    "queue_precheck_title": "部分目录以前处理过",
+    "queue_precheck_resume": "上次没处理完（将接着处理）：\n{folders}",
+    "queue_precheck_processed": "已处理过（将跳过）：\n{folders}",
+    "queue_reprocess_all": "全部重新处理（先撤销上次的文件移动再重跑）",
+    "queue_start": "开始"
   },
   "messages": {
     "initialization_required": "初始化尚未完成。请先完成首次资源准备后再开始处理。",
@@ -189,7 +194,17 @@
     "exif_reset_count": "EXIF已重置: {count}",
     "ready_for_analysis": "可以开始新的分析了",
     "reset_failed_log": "重置失败",
-    "dir_unavailable": "目录不可用，请确认移动硬盘已连接。"
+    "dir_unavailable": "目录不可用，请确认移动硬盘已连接。",
+    "queue_removable_message": "以下目录位于存储卡或可移动磁盘上：\n{folders}\n\n直接在卡上处理有风险：处理会移动上千个文件，存储卡读写较慢、文件系统脆弱，一旦中途中断或拔卡，可能导致照片丢失。\n\n强烈建议先把照片复制到电脑硬盘，再选择硬盘上的文件夹进行处理。\n\n仍要直接在卡上继续吗？",
+    "queue_summary_title": "📋 多目录处理汇总",
+    "queue_summary_line": "  {path}：{status}，共 {total} 张 · 3★ {n3} · 2★ {n2} · 1★ {n1} · 0★ {n0} · 无鸟 {nb}",
+    "queue_summary_line_short": "  {path}：{status}",
+    "queue_summary_errors": "❌ 出错的目录：",
+    "queue_status_done": "完成",
+    "queue_status_skipped": "已跳过（以前处理过）",
+    "queue_status_error": "出错",
+    "queue_status_stopped": "已停止",
+    "queue_status_not_started": "未开始"
   },
   "logs": {
     "reset_start": "🔄 开始重置目录",
@@ -441,7 +456,10 @@
     "batch_reset_sub_failed": "  ❌ {rel}/ 复原失败：{error}",
     "reset_dir_has_leftovers": "仍有残留文件，保留: {sample}",
     "reset_cache_delete_failed": "  ⚠️ .superpicky 删除失败: {error}",
-    "reset_cache_kept": "  ✅ .superpicky/ 缓存已保留（快速复原：预览图复用）"
+    "reset_cache_kept": "  ✅ .superpicky/ 缓存已保留（快速复原：预览图复用）",
+    "queue_folder_start": "[{i}/{n}] {path}",
+    "queue_folder_error": "❌ 目录处理出错，跳到下一个目录：{path}\n   {error}",
+    "queue_folder_missing": "目录不存在（外接盘没有连接？）"
   },
   "server": {
     "server_already_running": "✅ 服务器已在端口 {port} 运行",
