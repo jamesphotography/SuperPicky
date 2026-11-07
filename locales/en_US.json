@@ -109,7 +109,15 @@
     "status_processing": "Processing... {filename}",
     "status_processing_idle": "Processing...",
     "status_processed": "Processed {total}    ★★★ {n3}    ★★ {n2}    ★ {n1}",
-    "status_done": "Done! {total}    ★★★ {n3}    ★★ {n2}    ★ {n1}"
+    "status_done": "Done! {total}    ★★★ {n3}    ★★ {n2}    ★ {n1}",
+    "add_folder": "+ Add folder…",
+    "folder_total": "{count} folders · {photos} photos",
+    "folder_photos": "{n} photos",
+    "folder_reject_duplicate": "This folder is already in the list:\n{directory}",
+    "folder_reject_overlap": "This folder overlaps (parent/child) with one already in the list:\n{directory}",
+    "folder_reject_dangerous": "This is a system or root location and cannot be added:\n{directory}",
+    "folder_reject_no_photos": "No photos found in this folder:\n{directory}",
+    "folder_reject_missing": "Folder does not exist:\n{directory}"
   },
   "dialogs": {
     "file_organization_title": "File Organization",

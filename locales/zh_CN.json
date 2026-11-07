@@ -109,7 +109,15 @@
     "status_processing": "正在处理... {filename}",
     "status_processing_idle": "正在处理...",
     "status_processed": "已处理 {total} 张    ★★★ {n3}    ★★ {n2}    ★ {n1}",
-    "status_done": "完成！{total} 张    ★★★ {n3}    ★★ {n2}    ★ {n1}"
+    "status_done": "完成！{total} 张    ★★★ {n3}    ★★ {n2}    ★ {n1}",
+    "add_folder": "＋ 添加目录…",
+    "folder_total": "共 {count} 个目录 · {photos} 张",
+    "folder_photos": "{n} 张",
+    "folder_reject_duplicate": "该目录已在列表中：\n{directory}",
+    "folder_reject_overlap": "该目录与列表中的目录存在包含关系（父子目录），不能同时加入：\n{directory}",
+    "folder_reject_dangerous": "该目录是系统或根目录等危险位置，不能加入：\n{directory}",
+    "folder_reject_no_photos": "该目录下没有找到照片：\n{directory}",
+    "folder_reject_missing": "目录不存在：\n{directory}"
   },
   "dialogs": {
     "file_organization_title": "文件整理",

@@ -109,7 +109,15 @@
     "status_processing": "正在處理... {filename}",
     "status_processing_idle": "正在處理...",
     "status_processed": "已處理 {total} 張    ★★★ {n3}    ★★ {n2}    ★ {n1}",
-    "status_done": "完成！{total} 張    ★★★ {n3}    ★★ {n2}    ★ {n1}"
+    "status_done": "完成！{total} 張    ★★★ {n3}    ★★ {n2}    ★ {n1}",
+    "add_folder": "＋ 新增資料夾…",
+    "folder_total": "共 {count} 個資料夾 · {photos} 張",
+    "folder_photos": "{n} 張",
+    "folder_reject_duplicate": "此資料夾已在清單中：\n{directory}",
+    "folder_reject_overlap": "此資料夾與清單中的資料夾存在包含關係（父子資料夾），不能同時加入：\n{directory}",
+    "folder_reject_dangerous": "此資料夾是系統或根目錄等危險位置，不能加入：\n{directory}",
+    "folder_reject_no_photos": "此資料夾下找不到照片：\n{directory}",
+    "folder_reject_missing": "資料夾不存在：\n{directory}"
   },
   "dialogs": {
     "file_organization_title": "檔案整理",
