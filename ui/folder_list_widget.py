@@ -9,9 +9,9 @@ import os
 from typing import Dict, List, Optional
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QDragEnterEvent, QDropEvent
+from PySide6.QtGui import QDragEnterEvent, QDropEvent, QFontMetrics
 from PySide6.QtWidgets import (
-    QFileDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
+    QFileDialog, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from core import folder_queue
@@ -34,6 +34,44 @@ def count_photos(path: str) -> int:
         return sum(d.photo_count for d in scan_directories(path, max_depth=DEFAULT_SCAN_MAX_DEPTH))
     except Exception:
         return 0
+
+
+class ElidedLabel(QLabel):
+    """
+    单行标签：文字过长时中间省略，最小宽度不随文字增长（避免撑宽窗口）。
+
+    Single-line label that middle-elides long text and whose minimum width does
+    not grow with the text (so long paths never widen the window).
+    """
+
+    def __init__(self, text: str, parent: Optional[QWidget] = None) -> None:
+        """参数: text 完整文字 / Parameters: text full text."""
+        super().__init__(parent)
+        self._full = text
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self._apply()
+
+    def full_text(self) -> str:
+        """返回未省略的完整文字 / The full, un-elided text."""
+        return self._full
+
+    def _apply(self) -> None:
+        """按当前宽度重算省略文字 / Recompute the elided text for the width."""
+        width = max(self.width(), 0)
+        shown = QFontMetrics(self.font()).elidedText(self._full, Qt.ElideMiddle, width) if width else self._full
+        super().setText(shown)
+
+    def resizeEvent(self, event) -> None:
+        """宽度变化时重算 / Recompute on resize."""
+        super().resizeEvent(event)
+        self._apply()
+
+    def minimumSizeHint(self):
+        """最小宽度恒为 0 / Minimum width is always 0."""
+        h = super().minimumSizeHint()
+        h.setWidth(0)
+        return h
 
 
 class FolderListWidget(QWidget):
@@ -96,7 +134,7 @@ class FolderListWidget(QWidget):
 
     def try_add(self, path: str) -> Optional[str]:
         """
-        校验并追加目录；被拒时弹窗提示。
+        校验并追加目录；被拒时弹窗提示（重复添加例外：静默忽略）。
 
         参数: path (str) 目录。
         返回: None 表示已加入（并发出 foldersChanged）；否则 REJECT_* 代码。
@@ -105,6 +143,10 @@ class FolderListWidget(QWidget):
         Returns None on success (emits foldersChanged) or a REJECT_* code.
         """
         code = folder_queue.validate_new_folder(self._folders, path)
+        if code == folder_queue.REJECT_DUPLICATE:
+            # 设计约定：重复添加静默忽略（不弹窗/不追加/不发信号）
+            # Spec: duplicate adds are silently ignored (no dialog/append/signal)
+            return code
         if code:
             StyledMessageBox.warning(
                 self, self.i18n.t("messages.hint"),
@@ -173,7 +215,7 @@ class FolderListWidget(QWidget):
             h.setContentsMargins(8, 2, 4, 2)
             h.setSpacing(6)
             text = f"📁 {path} · {self.i18n.t('labels.folder_photos', n=self._counts.get(path, 0))}"
-            lbl = QLabel(text)
+            lbl = ElidedLabel(text)
             lbl.setToolTip(path)
             lbl.setTextInteractionFlags(Qt.NoTextInteraction)
             lbl.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")

@@ -52,12 +52,11 @@ def test_try_add_rejects_with_dialog(widget, tmp_path):
     widget.try_add(a)
     seen = []
     widget.foldersChanged.connect(seen.append)
-    assert widget.try_add(a) == folder_queue.REJECT_DUPLICATE
     empty = tmp_path / "empty"
     empty.mkdir()
     assert widget.try_add(str(empty)) == folder_queue.REJECT_NO_PHOTOS
     assert len(widget.folders()) == 1
-    assert len(widget.dialog_calls) == 2
+    assert len(widget.dialog_calls) == 1
     assert seen == []
 
 
@@ -89,3 +88,29 @@ def test_disable_editing(widget, tmp_path):
     assert not widget.remove_buttons()[0].isEnabled()
     widget.set_enabled_editing(True)
     assert widget.add_button().isEnabled()
+
+
+def test_duplicate_add_silently_ignored(widget, tmp_path):
+    a = _photo_dir(tmp_path, "a")
+    widget.try_add(a)
+    seen = []
+    widget.foldersChanged.connect(seen.append)
+    before = widget.folders()
+    assert widget.try_add(a) == folder_queue.REJECT_DUPLICATE
+    assert widget.dialog_calls == []
+    assert seen == []
+    assert widget.folders() == before
+
+
+def test_long_path_row_does_not_widen(widget, tmp_path):
+    d = tmp_path
+    for i in range(12):
+        d = d / ("very_long_directory_name_%02d" % i)
+    d.mkdir(parents=True)
+    (d / "a.jpg").write_bytes(b"x")
+    assert widget.try_add(str(d)) is None
+    from ui.folder_list_widget import ElidedLabel
+    lbl = widget.findChildren(ElidedLabel)[0]
+    assert lbl.minimumSizeHint().width() < 300
+    assert widget.minimumSizeHint().width() < 400
+    assert str(d) in lbl.toolTip()
