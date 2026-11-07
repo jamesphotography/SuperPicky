@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QSlider, QComboBox, QMessageBox, QSizePolicy, QApplication,
     QStackedWidget, QMenu, QInputDialog, QLineEdit, QProgressDialog
 )
-from PySide6.QtCore import Qt, Signal, Slot, QProcess, QSize, QTimer
+from PySide6.QtCore import Qt, Signal, Slot, QProcess, QSize, QTimer, QEvent
 from PySide6.QtGui import QAction, QKeyEvent, QIcon
 from ui.custom_dialogs import StyledMessageBox, StyledProgressDialog
 from PySide6.QtWidgets import QDialog
@@ -2476,6 +2476,8 @@ class ResultsBrowserWindow(QMainWindow):
 
         self._export_menu_btn.setMenu(export_menu)
         layout.addWidget(self._export_menu_btn)
+        # 报告 / eBird 入口由实验室开关决定可见性 / visibility follows the Labs switches
+        self._refresh_lab_entries()
 
         layout.addSpacing(8)
 
@@ -5191,6 +5193,38 @@ class ResultsBrowserWindow(QMainWindow):
     # ------------------------------------------------------------------
     #  键盘快捷键
     # ------------------------------------------------------------------
+
+
+    def _refresh_lab_entries(self) -> None:
+        """
+        按实验室开关显示/隐藏导出菜单里的「报告」「eBird」两项；菜单里没有任何
+        可见项时（如 Windows 且两开关都关）隐藏整个导出按钮。
+
+        Show/hide the report and eBird menu items per the Labs switches; hide
+        the whole export button when no menu item is visible.
+        """
+        from advanced_config import get_advanced_config
+        cfg = get_advanced_config()
+        self._report_action.setVisible(bool(cfg.lab_report_export))
+        self._ebird_action.setVisible(bool(cfg.lab_ebird_export))
+        menu = self._export_menu_btn.menu()
+        any_visible = any(a.isVisible() for a in menu.actions())
+        self._export_menu_btn.setVisible(any_visible)
+
+    def showEvent(self, event) -> None:
+        """显示时刷新实验室入口 / refresh Labs entries when shown."""
+        super().showEvent(event)
+        self._refresh_lab_entries()
+
+    def changeEvent(self, event) -> None:
+        """
+        窗口重新激活（如设置中心关闭后）时刷新实验室入口。
+        Refresh Labs entries when the window is re-activated (e.g. after the
+        Settings Center closes).
+        """
+        super().changeEvent(event)
+        if event.type() == QEvent.ActivationChange and self.isActiveWindow():
+            self._refresh_lab_entries()
 
     def keyPressEvent(self, event: QKeyEvent):
         key = event.key()
