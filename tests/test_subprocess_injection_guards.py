@@ -56,16 +56,17 @@ def _function_source(module_path: Path, func_name: str) -> str:
 # ── AppleScript：路径必须走 argv，不得插值进脚本源 ─────────────────────────
 
 
-def test_move_to_trash_never_interpolates_path_into_applescript() -> None:
+@pytest.mark.parametrize("func_name", ["_move_to_trash", "_move_many_to_trash"])
+def test_move_to_trash_never_interpolates_path_into_applescript(func_name: str) -> None:
     """
-    _move_to_trash 不得用 f-string/format/% 拼接 AppleScript 源。
+    _move_to_trash / _move_many_to_trash 不得用 f-string/format/% 拼接 AppleScript 源。
 
     只要脚本源是静态常量、路径经 argv 传入，文件名里的任何字符都无法改变
     脚本结构，注入即不可能发生。
     """
 
     src = _function_source(
-        REPO_ROOT / "ui" / "results_browser_window.py", "_move_to_trash"
+        REPO_ROOT / "ui" / "results_browser_window.py", func_name
     )
     tree = ast.parse(src)
 
@@ -95,22 +96,27 @@ def test_move_to_trash_never_interpolates_path_into_applescript() -> None:
             ), "AppleScript 源不得使用 .format() / no .format() in script"
 
 
-def test_move_to_trash_passes_path_through_argv() -> None:
+@pytest.mark.parametrize("func_name,argv_item", [
+    ("_move_to_trash", "item 1 of argv"),
+    ("_move_many_to_trash", "item i of argv"),
+])
+def test_move_to_trash_passes_path_through_argv(func_name: str, argv_item: str) -> None:
     """脚本必须从 argv 取路径，且 osascript 调用带 -- 分隔符。"""
 
     src = _function_source(
-        REPO_ROOT / "ui" / "results_browser_window.py", "_move_to_trash"
+        REPO_ROOT / "ui" / "results_browser_window.py", func_name
     )
     assert "on run argv" in src, "AppleScript 应定义 run argv 处理器"
-    assert "item 1 of argv" in src, "路径应取自 argv"
+    assert argv_item in src, "路径应取自 argv"
     assert '"--"' in src, "osascript 调用应带 -- 分隔符，避免路径被当作选项"
 
 
-def test_move_to_trash_still_rejects_directories() -> None:
+@pytest.mark.parametrize("func_name", ["_move_to_trash", "_move_many_to_trash"])
+def test_move_to_trash_still_rejects_directories(func_name: str) -> None:
     """保留只删文件的守卫，防止误删目录。/ Keep the file-only guard."""
 
     src = _function_source(
-        REPO_ROOT / "ui" / "results_browser_window.py", "_move_to_trash"
+        REPO_ROOT / "ui" / "results_browser_window.py", func_name
     )
     assert "os.path.isfile" in src, "必须保留 isfile 守卫"
     assert "normpath" in src, "必须保留 normpath 规范化"

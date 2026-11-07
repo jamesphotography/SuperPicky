@@ -3127,6 +3127,22 @@ class SettingsCenter(QDialog):
         telemetry_hint.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 12px;")
         lay.addWidget(telemetry_hint)
 
+        # ── 恢复默认设置 / Restore defaults ─────────────────────────────────
+        # 全局且不常用,放在关于页最底部,不和日常设置挤在一起。
+        # Global and rarely used: at the bottom of About, away from daily settings.
+        lay.addSpacing(20)
+        lay.addWidget(self._divider())
+        lay.addSpacing(16)
+        reset_row = QHBoxLayout()
+        reset_hint = QLabel(self.i18n.t("settings.reset_defaults_hint"))
+        reset_hint.setWordWrap(True)
+        reset_hint.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 12px;")
+        reset_row.addWidget(reset_hint, 1)
+        self._reset_defaults_btn = QPushButton(self.i18n.t("settings.reset_defaults_btn"))
+        self._reset_defaults_btn.clicked.connect(self._on_reset_defaults)
+        reset_row.addWidget(self._reset_defaults_btn)
+        lay.addLayout(reset_row)
+
         lay.addStretch(1)
 
         scroll.setWidget(inner)
@@ -3134,6 +3150,62 @@ class SettingsCenter(QDialog):
         page_lay.setContentsMargins(0, 0, 0, 0)
         page_lay.addWidget(scroll)
         return page
+
+    def _on_reset_defaults(self) -> None:
+        """
+        「恢复默认设置…」:确认 → 备份配置文件 → 恢复默认并保存 → 原地重建各设置页。
+
+        必须重建设置页:关闭设置中心时 done() 会把各页控件上的值兜底写回配置,
+        不重建的话旧值会被原样写回去,等于没恢复。
+
+        "Restore defaults…": confirm → back up → reset and save → rebuild every
+        page in place. The rebuild is required: done() flushes widget values
+        back into the config on close, which would write the old values back.
+        """
+        from advanced_config import get_advanced_config
+        from ui.custom_dialogs import DeleteConfirmDialog, StyledMessageBox
+
+        t = self.i18n.t
+        dlg = DeleteConfirmDialog(
+            self, t("settings.reset_defaults_title"), t("settings.reset_defaults_msg"),
+            buttons=[("reset", t("settings.reset_defaults_confirm"), "danger"),
+                     ("cancel", t("buttons.cancel"), "primary")],
+            default_key="cancel")
+        dlg.exec()
+        if dlg.choice != "reset":
+            return
+        try:
+            backup = get_advanced_config().restore_defaults()
+        except OSError as e:
+            print(f"[Settings] restore defaults failed: {e}")
+            StyledMessageBox.warning(self, t("settings.reset_defaults_title"),
+                                     t("settings.reset_defaults_failed").format(error=e))
+            return
+        self._rebuild_pages("about")
+        done_msg = t("settings.reset_defaults_done")
+        if backup:
+            done_msg += "\n\n" + t("settings.reset_defaults_backup").format(path=backup)
+        StyledMessageBox.information(self, t("settings.reset_defaults_title"), done_msg)
+
+    def _rebuild_pages(self, show_key: str) -> None:
+        """
+        丢弃并按 PAGE_ORDER 重新构建全部设置页,使控件重新读取 advanced_config。
+
+        Discard and rebuild every page from PAGE_ORDER so the widgets re-read
+        advanced_config.
+
+        参数 / Parameters:
+            show_key (str): 重建后显示的页 / page to show afterwards.
+        """
+        # 与 __init__ 的构建路径一致 / same construction path as __init__
+        while self._stack.count():
+            old = self._stack.widget(0)
+            self._stack.removeWidget(old)
+            old.deleteLater()
+        for key in PAGE_ORDER:
+            self._stack.addWidget(self._build_page(key))
+        self.show_page(show_key)
+        self._stack.setCurrentIndex(PAGE_ORDER.index(show_key))
 
     def _on_telemetry_changed(self, _state: int) -> None:
         """

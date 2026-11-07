@@ -1126,7 +1126,9 @@ class BirdIDDockWidget(QDockWidget):
         self.progress.setStyleSheet(f"""
             QProgressBar {{
                 background-color: {COLORS['bg_input']};
+                border: none;
                 border-radius: 2px;
+                min-height: 3px;
                 max-height: 3px;
             }}
             QProgressBar::chunk {{

@@ -51,6 +51,7 @@ _OUTCOME_BY_REASON = {
     "rating_v2.rest_quota": "rest",
     "rating_v2.eye_capped": "eye_capped",
     "rating_v2.burst_capped": "burst_capped",
+    "rating_v2.species_floor": "species_floor",
 }
 
 # 进入 V2 排序池的结果类型（有组内名次与本批百分位）/ outcomes ranked in the V2 pool
@@ -126,6 +127,9 @@ class CaptionFacts:
     species_candidate: Optional[str] = None      # 未确定时最可能的鸟种名（按界面语言）
     species_threshold: Optional[float] = None    # 用户设置的识鸟置信度门槛 %
     species_model: str = "BirdTrace"             # 给出鸟种的识鸟模型名 / Bird-ID model name
+    # —— 鸟种保底(rating_v2.species_floor)/ species floor ——
+    species_name: Optional[str] = None           # 已确认的鸟种名(按界面语言)/ confirmed species name
+    floor_prev_rating: Optional[int] = None      # 保底提级前的星级 / rating before the floor raise
 
 
 Translator = Callable[..., str]
@@ -185,6 +189,12 @@ def _why(f: CaptionFacts, t: Translator) -> Optional[str]:
     stars = _stars(f.rating)
     if o == "no_bird":
         return t("caption.why_no_bird")
+    if o == "species_floor":
+        # 鸟种保底:本批这个鸟种在 2★ 及以上一张都没有,把最好的一张提上来
+        # Species floor: no photo of this species reached 2★, so the best was raised
+        return t("caption.why_species_floor", stars=stars,
+                 species=f.species_name or t("caption.group_species"),
+                 prev=_stars(f.floor_prev_rating if f.floor_prev_rating is not None else 0))
     if o == "low_confidence" and f.confidence is not None and f.confidence_threshold is not None:
         return t("caption.why_low_confidence", stars=stars,
                  conf=f"{f.confidence:.0%}", thr=f"{f.confidence_threshold:.0%}")

@@ -1500,6 +1500,9 @@ class PhotoProcessor:
             if in_pool and original_prefix in v2_pending:
                 v2_pending[original_prefix]['items'].append(item)
             else:
+                if original_prefix in v2_gated and item:
+                    # 留副本:写入队列可能改动条目 / keep a copy; the writer may mutate it
+                    v2_gated[original_prefix]['items'].append(dict(item))
                 queue_metadata(item)
         
         # UI设置转为列表格式
@@ -1603,6 +1606,12 @@ class PhotoProcessor:
         )
         v2_enabled = self.config.rating_algorithm == "v2"
         v2_pending: Dict[str, Dict] = {}
+        # 被 V2 硬门槛淘汰、但检测到鸟的照片:星级与 EXIF 当场定稿,这里留一份
+        # 指标与已写出的星级条目,收尾「鸟种保底」若把它提到 2★,据此重写。
+        # Detected photos stopped by a V2 hard gate: finalized on the spot, but
+        # their metrics and written star items are kept so the species floor in
+        # the post-pass can raise and rewrite them.
+        v2_gated: Dict[str, Dict] = {}
 
         if self.settings.auto_identify:
             try:
@@ -3058,6 +3067,15 @@ class PhotoProcessor:
                         # reason quoted V1 thresholds that V2 does not use.
                         rating_value = _v2_gate.rating
                         reason = self.i18n.t(_v2_gate.reason_key, **_v2_gate.reason_args)
+                        v2_gated[original_prefix] = {
+                            'metrics': _v2_metrics,
+                            'items': [],
+                            'rating': rating_value,
+                            'is_flying': is_flying,
+                            'has_exposure_issue': _v2_exposure,
+                            'is_focus_precise': False,
+                            'caption_facts': None,
+                        }
 
                 should_build_debug = bool(self.callbacks.crop_preview or self.settings.save_crop)
                 if detected and should_build_debug and bird_crop_bgr is not None:
@@ -3192,6 +3210,9 @@ class PhotoProcessor:
                 self._caption_facts[original_prefix] = caption_facts
                 if v2_in_pool:
                     v2_pending[original_prefix]['caption_facts'] = caption_facts
+                elif original_prefix in v2_gated:
+                    v2_gated[original_prefix]['caption_facts'] = caption_facts
+                    v2_gated[original_prefix]['is_focus_precise'] = is_focus_precise
             
                 if original_prefix in raw_dict:
                     # 有对应的 RAW 文件
@@ -3514,20 +3535,26 @@ class PhotoProcessor:
         # V4.6 (rating-v2/T3b): post-pass star assignment — quota-rank the pool,
         # then back-fill parked EXIF items (rating + caption head line), rating
         # records, stats, and the report DB.
-        if v2_enabled and v2_pending:
+        if v2_enabled and (v2_pending or v2_gated):
             self._status("labels.stage_rating", count=len(v2_pending))
             # V4.6(rating-v2): 识鸟结果此刻已全部就绪(collect wait=True 在前),
             # 填入 species 后配额将按鸟种分组执行;未识别/未开识鸟为 None(单组)。
             # V4.6 (rating-v2): Bird ID results are all in by now; with species
             # filled the quota runs per species (None = unknown / Bird ID off).
-            for prefix, pend in v2_pending.items():
+            # 硬门槛淘汰的照片也填鸟种并一起交给定星:它们不参加排名,只供
+            # 「鸟种保底」判断某个确认的鸟种是否在 2★ 及以上一张都没有。
+            # Gated photos get species too; they are not ranked, only used by
+            # the species floor to see whether a confirmed species has no 2★+.
+            for prefix, pend in list(v2_pending.items()) + list(v2_gated.items()):
                 info = self.file_bird_species.get(prefix)
                 if info:
                     pend['metrics'].species = info.get('en_name') or info.get('cn_name')
+                    pend['metrics'].species_confirmed = not info.get('low_confidence')
             quota3 = get_quota3_for_skill(self.config.skill_level, self.config)
             quota2 = get_quota2_for_skill(self.config.skill_level, self.config)
             v2_results = assign_ratings_v2(
-                [p['metrics'] for p in v2_pending.values()],
+                [p['metrics'] for p in v2_pending.values()]
+                + [g['metrics'] for g in v2_gated.values()],
                 quota3=quota3,
                 quota2=quota2,
                 min_confidence=self.settings.ai_confidence / 100.0,
@@ -3562,6 +3589,7 @@ class PhotoProcessor:
                     facts.burst_cap = ra.get('burst_cap')
                     facts.weight_sharp = V2_W_SHARP
                     facts.weight_topiq = V2_W_TOPIQ
+                    self._fill_species_floor_facts(facts, prefix, ra)
                     # 鸟种识别信息：识鸟结果此刻已全部就绪。低置信度候选不写入鸟种、
                     # 不分目录，但上面分组时仍按候选鸟种排名——题注如实说明。
                     # Bird ID facts. A low-confidence candidate is not stored as the
@@ -3604,6 +3632,53 @@ class PhotoProcessor:
                         self.report_db.update_photo(prefix, db_update)
                     except Exception:
                         pass
+            # 鸟种保底提级的硬门槛照片:星级与 EXIF 当场已写,这里重写星级 / 题注、
+            # 数据库、统计与分目录用的星级(提级的排序池照片已在上面的循环处理)。
+            # Gated photos raised by the species floor were written on the spot;
+            # rewrite stars / caption, DB, stats and the organizing rating here.
+            for prefix, gated in v2_gated.items():
+                res = v2_results.get(prefix)
+                if res is None or res.rating == gated['rating']:
+                    continue
+                old_rating, new_rating = gated['rating'], res.rating
+                ra = res.reason_args or {}
+                final_caption = None
+                facts = gated.get('caption_facts')
+                if facts is not None:
+                    facts.rating = new_rating
+                    facts.outcome = outcome_from_reason_key(res.reason_key)
+                    facts.v1_reason = self.i18n.t(res.reason_key, **ra)
+                    self._fill_species_floor_facts(facts, prefix, ra)
+                    final_caption = build_caption(facts, self.i18n.t)
+                    self._caption_facts[prefix] = facts
+                for item in gated['items']:
+                    updated = dict(item)
+                    updated['rating'] = new_rating
+                    if final_caption is not None and updated.get('caption'):
+                        updated['caption'] = final_caption
+                    queue_metadata(updated)
+                self.file_ratings[prefix] = new_rating
+                self._move_stats_rating(old_rating, new_rating)
+                if self.report_db:
+                    try:
+                        db_update = {'rating': new_rating}
+                        if final_caption is not None:
+                            db_update['caption'] = final_caption
+                        self.report_db.update_photo(prefix, db_update)
+                    except Exception as e:
+                        self._log(f"[Rating] species floor DB update failed: {prefix}: {e}", "warning")
+            # 每个保底提级记一行日志 / one log line per species-floor raise
+            for prefix, res in v2_results.items():
+                if res.reason_key == "rating_v2.species_floor":
+                    info = self.file_bird_species.get(prefix) or {}
+                    self._log(self.i18n.t(
+                        "logs.species_floor_raised",
+                        name=species_display(info.get('cn_name'), info.get('en_name'),
+                                             self.i18n.current_lang),
+                        file=prefix,
+                        old=max(0, int((res.reason_args or {}).get('prev_rating', 0))),
+                        new=res.rating,
+                    ))
             self._log(self.i18n.t(
                 "logs.rating_v2_summary",
                 total=len(v2_pending),
@@ -4032,6 +4107,43 @@ class PhotoProcessor:
         )
         self.stats['failed'] += 1
         self.failed_photos.append(display_name)
+
+    def _fill_species_floor_facts(self, facts, prefix: str, reason_args: dict) -> None:
+        """
+        给题注事实补上「鸟种保底」所需的鸟种名与原星级(非保底照片无副作用)。
+
+        Fill the species name and previous rating the species-floor caption
+        needs (harmless for other photos).
+
+        参数 / Parameters:
+            facts (CaptionFacts): 题注事实 / caption facts.
+            prefix (str): 照片主名 / photo prefix.
+            reason_args (dict): 定星原因参数 / rating reason args.
+        """
+        info = self.file_bird_species.get(prefix) or {}
+        if info and not info.get('low_confidence'):
+            facts.species_name = species_display(
+                info.get('cn_name'), info.get('en_name'), self.i18n.current_lang)
+        prev = (reason_args or {}).get('prev_rating')
+        facts.floor_prev_rating = int(prev) if prev is not None else None
+
+    _STAT_KEY_BY_RATING = {3: 'star_3', 2: 'star_2', 1: 'star_1', 0: 'star_0'}
+
+    def _move_stats_rating(self, old: int, new: int) -> None:
+        """
+        把一张照片在星级统计里从 old 挪到 new(鸟种保底提级用;总数与飞鸟等不变)。
+
+        Move one photo between star buckets (species floor); totals unchanged.
+
+        参数 / Parameters:
+            old (int): 原星级 / previous rating.
+            new (int): 新星级 / new rating.
+        """
+        old_key = self._STAT_KEY_BY_RATING.get(old, 'no_bird')
+        new_key = self._STAT_KEY_BY_RATING.get(new, 'no_bird')
+        if self.stats.get(old_key, 0) > 0:
+            self.stats[old_key] -= 1
+        self.stats[new_key] = self.stats.get(new_key, 0) + 1
 
     def _update_stats(self, rating: int, is_flying: bool = False, has_exposure_issue: bool = False, is_focus_precise: bool = False):
         """更新统计数据"""

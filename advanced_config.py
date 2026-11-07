@@ -5,8 +5,11 @@ SuperPicky V3.2 - 高级配置管理
 用于管理所有可配置的硬编码参数
 """
 
+import copy
 import json
 import os
+import shutil
+import time
 from pathlib import Path
 import sys
 from typing import Dict, List, Optional
@@ -345,13 +348,108 @@ class AdvancedConfig:
             print(_t("logs.config_save_failed", e=e))
             return False
 
-    def reset_to_default(self) -> None:
+    # 「恢复默认设置」时保留的字段：它们不是用户偏好，而是运行状态、一次性标记或
+    # 个人选择（用户 2026-11-07 拍板）。新增此类字段时**必须**加进来，否则恢复默认会：
+    #   - 清掉初始化 / 运行库状态 → 程序以为没初始化，Windows 上可能重新下载 CUDA 运行库；
+    #   - 把 birdid_dock_settings_migrated 置回 False → 下次启动从旧 json 把旧识鸟设置导回来；
+    #   - 把一次性提示标记置回 → 欢迎引导、各种首次提示重新弹出。
+    # Fields kept by "Restore defaults": runtime state, one-time flags and personal
+    # choices rather than preferences. New fields of that kind MUST be added here,
+    # or a restore would re-run initialization (possibly re-downloading the CUDA
+    # runtime on Windows), re-import legacy Bird ID settings, or re-show one-time prompts.
+    PRESERVE_ON_RESET = frozenset({
+        # 个人选择 / personal choices
+        "language", "telemetry_enabled",
+        # 一次性标记与迁移标记 / one-time and migration flags
+        "is_first_run", "correction_consent_shown", "video_first_run_prompted",
+        "birdid_dock_settings_migrated",
+        # 安装初始化与运行库状态 / installation and runtime state
+        "initialization_completed", "initialization_manifest_version",
+        "initialization_in_progress", "last_init_exit_reason", "last_init_mode",
+        "selected_runtime_variant", "detected_cuda_capable",
+        "runtime_install_location_preference", "resolved_runtime_dir",
+        "enabled_feature_set", "downloaded_resources", "resolved_source_map",
+        "last_init_error",
+        # 更新检查状态 / update-check state
+        "ignored_update_version", "include_prerelease", "auto_check_updates",
+        # 使用记录与窗口状态 / history and window state
+        "recent_directories", "main_window_geometry", "main_window_maximized",
+        "browser_copy_dir",
+    })
+
+    def reset_to_default(self, keep_preserved: bool = True) -> None:
         """
         重置为默认配置（仅改内存，需调用 save() 才落盘）。
 
-        Reset to defaults in memory only; call save() to persist.
+        用深拷贝：浅拷贝会让列表 / 字典类默认值与当前配置共用同一对象，之后改设置
+        会把 DEFAULT_CONFIG 本身改掉。
+
+        Reset to defaults in memory only; call save() to persist. Deep-copies
+        so list/dict defaults are never shared with (and mutated through) the
+        live config.
+
+        参数 / Parameters:
+            keep_preserved (bool): 是否保留 PRESERVE_ON_RESET 中的字段
+                / keep the PRESERVE_ON_RESET fields.
         """
-        self.config = self.DEFAULT_CONFIG.copy()
+        fresh = copy.deepcopy(self.DEFAULT_CONFIG)
+        if keep_preserved:
+            for key in self.PRESERVE_ON_RESET:
+                if key in self.config:
+                    fresh[key] = copy.deepcopy(self.config[key])
+        self.config = fresh
+
+    def backup_config_file(self) -> Optional[str]:
+        """
+        把当前配置文件另存为同目录下的 advanced_config.json.bak-<时间>。
+
+        Copy the config file to advanced_config.json.bak-<timestamp> beside it.
+
+        返回 / Returns:
+            Optional[str]: 备份路径；配置文件不存在时为 None
+            / backup path, or None when there is no config file yet.
+
+        异常 / Raises:
+            OSError: 复制失败 / when the copy fails.
+        """
+        if not os.path.isfile(self.config_file):
+            return None
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        backup = f"{self.config_file}.bak-{stamp}"
+        n = 1
+        while os.path.exists(backup):           # 同一秒内多次恢复 / several in one second
+            backup = f"{self.config_file}.bak-{stamp}-{n}"
+            n += 1
+        shutil.copy2(self.config_file, backup)
+        return backup
+
+    def restore_defaults(self) -> Optional[str]:
+        """
+        「恢复默认设置」：先备份当前配置文件，再恢复默认（保留 PRESERVE_ON_RESET）并保存。
+
+        备份失败就不恢复；写盘失败则内存也还原——失败时什么都不改，用户的设置
+        不会在没有备份、或只恢复了一半的情况下丢失。
+
+        "Restore defaults": back up the config file, reset (keeping
+        PRESERVE_ON_RESET) and save. A failed backup changes nothing; a failed
+        save restores the in-memory config as well.
+
+        返回 / Returns:
+            Optional[str]: 备份文件路径（之前没有配置文件时为 None）
+            / the backup path (None when there was no file yet).
+
+        异常 / Raises:
+            OSError: 备份或保存失败 / backup or save failed.
+        """
+        backup = self.backup_config_file()
+        previous = copy.deepcopy(self.config)
+        self.reset_to_default(keep_preserved=True)
+        if not self.save():
+            # 写盘失败:内存也还原,免得之后别处一次 save() 把半截恢复写进文件
+            # Save failed: restore memory too, so a later save() cannot persist it
+            self.config = previous
+            raise OSError(f"failed to save {self.config_file}")
+        return backup
 
     # Getter方法
     @property
