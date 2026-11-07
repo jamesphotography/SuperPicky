@@ -44,6 +44,28 @@ def test_validate_ok(tmp_path, monkeypatch):
     assert fq.validate_new_folder([], str(tmp_path)) is None
 
 
+def test_validate_accepts_processed_folder_without_scannable_photos(tmp_path, monkeypatch):
+    """只有 .superpicky/report.db、扫不到照片的已处理目录可加入；真空目录仍是 no_photos。
+    A processed folder (report.db only) is accepted; an empty folder is still no_photos."""
+    monkeypatch.setattr(fq, "is_dangerous_root", lambda p: (False, ""))
+    done = tmp_path / "done"
+    (done / ".superpicky").mkdir(parents=True)
+    (done / ".superpicky" / "report.db").write_bytes(b"")
+    # 照片在被扫描排除的星级目录里 / photos sit in an excluded rating folder
+    (done / "3星_优选").mkdir()
+    (done / "3星_优选" / "a.jpg").write_bytes(b"x")
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    resume = tmp_path / "resume"
+    (resume / ".superpicky").mkdir(parents=True)
+    (resume / ".superpicky" / "resume_state.json").write_text("{}", encoding="utf-8")
+    assert fq.validate_new_folder([], str(done)) is None
+    assert fq.validate_new_folder([], str(resume)) is None
+    assert fq.validate_new_folder([], str(empty)) == fq.REJECT_NO_PHOTOS
+    # 前面的检查顺序不变：重复仍先于「无照片」/ earlier checks still come first
+    assert fq.validate_new_folder([str(done)], str(done)) == fq.REJECT_DUPLICATE
+
+
 def test_classify_folder(tmp_path):
     d = tmp_path / "d"
     d.mkdir()

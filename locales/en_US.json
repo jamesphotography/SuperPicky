@@ -118,7 +118,8 @@
     "folder_reject_overlap": "This folder overlaps (parent/child) with one already in the list:\n{directory}",
     "folder_reject_dangerous": "This is a system or root location and cannot be added:\n{directory}",
     "folder_reject_no_photos": "No photos found in this folder:\n{directory}",
-    "folder_reject_missing": "Folder does not exist:\n{directory}"
+    "folder_reject_missing": "Folder does not exist:\n{directory}",
+    "folder_processed": "processed"
   },
   "dialogs": {
     "file_organization_title": "File Organization",
@@ -459,7 +460,8 @@
     "reset_cache_kept": "  ✅ .superpicky/ cache kept (quick restore: previews reused)",
     "queue_folder_start": "[{i}/{n}] {path}",
     "queue_folder_error": "❌ Folder failed, moving on to the next one: {path}\n   {error}",
-    "queue_folder_missing": "Folder not found (external drive not connected?)"
+    "queue_folder_missing": "Folder not found (external drive not connected?)",
+    "queue_reset_partial": "⚠️ {path}: {failed} file(s) could not be moved back; processing continues — please check this folder afterwards"
   },
   "server": {
     "server_already_running": "✅ Server already running on port {port}",

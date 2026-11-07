@@ -651,3 +651,95 @@ def test_single_start_button_still_single(tmp_path, env, monkeypatch):
         assert w._queue is None
     finally:
         w.close()
+
+
+def test_processed_folder_restored_via_list_reaches_precheck(tmp_path, env, monkeypatch):
+    """已整理的目录经「最近目录组」放回列表后仍在列表中，开始时预检框列出它。"""
+    a = _photo_dir(tmp_path, "a")
+    done = tmp_path / "done"
+    (done / "3星_优选").mkdir(parents=True)
+    (done / "3星_优选" / "x.jpg").write_bytes(b"\xff\xd8\xff\xd9")
+    done = os.path.normpath(str(done))
+    _mark_processed(done)
+    w = _window()
+    try:
+        r = _Recorder()
+        r.install(w, monkeypatch)
+        w.config.set_lab_multi_folder(True)
+        w._apply_lab_multi_folder()
+        w._restore_recent_group([a, done])
+        assert w._folder_list.folders() == [a, done]
+        w._start_queue()
+        dlg = _FakePrecheckDialog.instances[-1]
+        assert done in dlg.message
+        assert dlg.checkbox_text == w.i18n.t("dialogs.queue_reprocess_all")
+    finally:
+        w.close()
+
+
+def test_quit_during_queue_without_worker_asks(tmp_path, env, monkeypatch):
+    """队列在跑但没有存活工作线程（目录之间/重置中）：退出要确认，答「取消」不退出。"""
+    from ui.custom_dialogs import StyledMessageBox
+    dirs = [_photo_dir(tmp_path, n) for n in ("a", "b")]
+    w = _window()
+    try:
+        r = _Recorder()
+        r.install(w, monkeypatch)
+        _multi(w, dirs)
+        w._start_queue()
+        assert w._queue is not None and w.worker is None
+        asked, quits = [], []
+        monkeypatch.setattr(StyledMessageBox, "question",
+                            staticmethod(lambda *a_, **k: asked.append(a_[1]) or StyledMessageBox.Yes))
+        monkeypatch.setattr(w, "_force_quit", lambda: quits.append(1))
+        w._quit_app()
+        assert asked == [w.i18n.t("messages.exit_title")]
+        assert quits == []
+        assert w._queue is not None and not w._queue_stop_requested
+
+        # 确认退出：先停队列再退出 / confirmed: stop the queue, then quit
+        queue = w._queue
+        monkeypatch.setattr(StyledMessageBox, "question",
+                            staticmethod(lambda *a_, **k: StyledMessageBox.No))
+        w._quit_app()
+        assert quits == [1]
+        assert queue.next_item() is None
+    finally:
+        w._queue = None
+        w.close()
+
+
+def test_quit_idle_does_not_ask(tmp_path, env, monkeypatch):
+    """没有处理任务时退出不确认（单目录行为不变）。"""
+    from ui.custom_dialogs import StyledMessageBox
+    w = _window()
+    try:
+        asked, quits = [], []
+        monkeypatch.setattr(StyledMessageBox, "question",
+                            staticmethod(lambda *a_, **k: asked.append(1)))
+        monkeypatch.setattr(w, "_force_quit", lambda: quits.append(1))
+        w._quit_app()
+        assert asked == [] and quits == [1]
+    finally:
+        w.close()
+
+
+def test_reset_partial_failure_logs_warning(tmp_path, env, monkeypatch):
+    """重新处理时有文件没能移回：写一行警告，照常启动。"""
+    dirs = [_photo_dir(tmp_path, n) for n in ("a", "b")]
+    _mark_processed(dirs[0])
+    w = _window()
+    try:
+        r = _Recorder()
+        r.install(w, monkeypatch)
+        _multi(w, dirs)
+        _FakePrecheckDialog.next_checked = True
+        w._start_queue()
+        w._on_reset_complete(True, {"restored": 3, "failed": 2}, {})
+        _flush()
+        assert len(r.launches) == 1
+        expected = _core(w.i18n.t("logs.queue_reset_partial", path=dirs[0], failed=2))
+        assert expected in _console(w)
+    finally:
+        w._queue = None
+        w.close()

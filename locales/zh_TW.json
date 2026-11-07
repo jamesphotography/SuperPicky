@@ -118,7 +118,8 @@
     "folder_reject_overlap": "此資料夾與清單中的資料夾存在包含關係（父子資料夾），不能同時加入：\n{directory}",
     "folder_reject_dangerous": "此資料夾是系統或根目錄等危險位置，不能加入：\n{directory}",
     "folder_reject_no_photos": "此資料夾下找不到照片：\n{directory}",
-    "folder_reject_missing": "資料夾不存在：\n{directory}"
+    "folder_reject_missing": "資料夾不存在：\n{directory}",
+    "folder_processed": "已處理"
   },
   "dialogs": {
     "file_organization_title": "檔案整理",
@@ -195,7 +196,7 @@
     "ready_for_analysis": "可以開始新的分析了",
     "reset_failed_log": "重置失敗",
     "dir_unavailable": "資料夾不可用，請確認行動硬碟已連線。",
-    "queue_removable_message": "以下資料夾位於記憶卡或外接式磁碟上：\n{folders}\n\n直接在卡上處理有風險：處理會搬移上千個檔案，記憶卡讀寫較慢、檔案系統脆弱，一旦中途中斷或拔卡，可能導致照片遺失。\n\n強烈建議先把照片複製到電腦硬碟，再選擇硬碟上的資料夾進行處理。\n\n仍要直接在卡上繼續嗎？",
+    "queue_removable_message": "以下資料夾位於儲存卡或可移動磁碟上：\n{folders}\n\n直接在卡上處理有風險：處理會移動上千個檔案，儲存卡讀寫較慢、檔案系統脆弱，一旦中途中斷或拔卡，可能導致照片丟失。\n\n強烈建議先把照片複製到電腦硬碟，再選擇硬碟上的資料夾進行處理。\n\n仍要直接在卡上繼續嗎？",
     "queue_summary_title": "📋 多資料夾處理摘要",
     "queue_summary_line": "  {path}：{status}，共 {total} 張 · 3★ {n3} · 2★ {n2} · 1★ {n1} · 0★ {n0} · 無鳥 {nb}",
     "queue_summary_line_short": "  {path}：{status}",
@@ -459,7 +460,8 @@
     "reset_cache_kept": "  ✅ .superpicky/ 快取已保留（快速復原：預覽圖複用）",
     "queue_folder_start": "[{i}/{n}] {path}",
     "queue_folder_error": "❌ 資料夾處理發生錯誤，跳到下一個資料夾：{path}\n   {error}",
-    "queue_folder_missing": "資料夾不存在（外接磁碟沒有連接？）"
+    "queue_folder_missing": "資料夾不存在（外接磁碟沒有連接？）",
+    "queue_reset_partial": "⚠️ {path}：有 {failed} 個檔案沒能移回原位，處理仍會繼續，請事後檢查該資料夾"
   },
   "server": {
     "server_already_running": "✅ 伺服器已在埠 {port} 執行",

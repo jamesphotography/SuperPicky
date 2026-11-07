@@ -118,7 +118,8 @@
     "folder_reject_overlap": "该目录与列表中的目录存在包含关系（父子目录），不能同时加入：\n{directory}",
     "folder_reject_dangerous": "该目录是系统或根目录等危险位置，不能加入：\n{directory}",
     "folder_reject_no_photos": "该目录下没有找到照片：\n{directory}",
-    "folder_reject_missing": "目录不存在：\n{directory}"
+    "folder_reject_missing": "目录不存在：\n{directory}",
+    "folder_processed": "已处理"
   },
   "dialogs": {
     "file_organization_title": "文件整理",
@@ -459,7 +460,8 @@
     "reset_cache_kept": "  ✅ .superpicky/ 缓存已保留（快速复原：预览图复用）",
     "queue_folder_start": "[{i}/{n}] {path}",
     "queue_folder_error": "❌ 目录处理出错，跳到下一个目录：{path}\n   {error}",
-    "queue_folder_missing": "目录不存在（外接盘没有连接？）"
+    "queue_folder_missing": "目录不存在（外接盘没有连接？）",
+    "queue_reset_partial": "⚠️ {path}：有 {failed} 个文件没能移回原位，处理仍会继续，请事后检查该目录"
   },
   "server": {
     "server_already_running": "✅ 服务器已在端口 {port} 运行",

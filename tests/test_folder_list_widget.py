@@ -114,3 +114,49 @@ def test_long_path_row_does_not_widen(widget, tmp_path):
     assert lbl.minimumSizeHint().width() < 300
     assert widget.minimumSizeHint().width() < 400
     assert str(d) in lbl.toolTip()
+
+
+def _processed_dir(root, name, rows=0):
+    """
+    已处理且已整理的目录：照片在被扫描排除的星级目录里，.superpicky/report.db
+    含 rows 行（rows=0 时放一个空文件，读不出张数）。
+    A processed, organized folder; report.db has `rows` rows (empty file if 0).
+    """
+    import sqlite3
+    d = root / name
+    (d / "3星_优选").mkdir(parents=True)
+    (d / "3星_优选" / "a.jpg").write_bytes(b"x")
+    (d / ".superpicky").mkdir()
+    db = d / ".superpicky" / "report.db"
+    if rows:
+        con = sqlite3.connect(str(db))
+        con.execute("CREATE TABLE photos (filename TEXT, bird_species_cn TEXT)")
+        con.executemany("INSERT INTO photos VALUES (?, NULL)", [(f"p{i}",) for i in range(rows)])
+        con.commit()
+        con.close()
+    else:
+        db.write_bytes(b"")
+    return str(d)
+
+
+def test_processed_folder_can_be_added_with_db_count(widget, tmp_path):
+    """已处理目录可加入，行内张数取自 report.db；set_folders 也保留它。"""
+    from ui.folder_list_widget import ElidedLabel
+    p = _processed_dir(tmp_path, "done", rows=4)
+    assert widget.try_add(p) is None
+    assert widget.folders() == [os.path.normpath(p)]
+    assert widget.dialog_calls == []
+    lbl = widget.findChildren(ElidedLabel)[0]
+    assert widget.i18n.t("labels.folder_photos", n=4) in lbl.full_text()
+    widget.set_folders([])
+    assert widget.set_folders([p]) == []
+    assert widget.folders() == [os.path.normpath(p)]
+
+
+def test_processed_folder_unreadable_db_shows_label(widget, tmp_path):
+    """report.db 读不出张数时行内显示「已处理」，合计按 0 计。"""
+    from ui.folder_list_widget import ElidedLabel
+    p = _processed_dir(tmp_path, "done", rows=0)
+    assert widget.try_add(p) is None
+    lbl = widget.findChildren(ElidedLabel)[0]
+    assert widget.i18n.t("labels.folder_processed") in lbl.full_text()

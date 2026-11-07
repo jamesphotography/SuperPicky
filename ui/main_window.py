@@ -1625,9 +1625,12 @@ class SuperPickyMainWindow(QMainWindow):
 
     def _quit_app(self):
         """完全退出应用（清理由 aboutToQuit 信号统一处理）"""
-        # 任务进行中时先确认，避免托盘"完全退出"误杀处理任务
-        # Confirm first if a task is running, so tray "Quit" cannot kill it by accident
-        if self.worker and self.worker.is_alive():
+        # 任务进行中时先确认，避免托盘"完全退出"误杀处理任务。多目录队列在跑时
+        # （含目录之间、「重新处理」的重置阶段，此时没有存活的工作线程）同样要确认
+        # Confirm first if a task is running, so tray "Quit" cannot kill it by
+        # accident — including a running folder queue with no live worker
+        # (between folders or during a reprocess reset)
+        if self._is_lab_processing():
             reply = StyledMessageBox.question(
                 self,
                 self.i18n.t("messages.exit_title"),
@@ -1637,9 +1640,22 @@ class SuperPickyMainWindow(QMainWindow):
             )
             if reply != StyledMessageBox.No:  # 未确认退出 / quit not confirmed
                 return
+            self._stop_processing_for_quit()
+        self._force_quit()
+
+    def _stop_processing_for_quit(self) -> None:
+        """
+        退出前停掉处理：先停队列（后面的目录不再开始），再停工作线程与防休眠。
+
+        Stop processing before quitting: stop the queue first (no further
+        folders start), then the worker and caffeinate.
+        """
+        if self._queue is not None:
+            self._queue_stop_requested = True
+            self._queue.stop()
+        if self.worker and self.worker.is_alive():
             self.worker.request_stop()
             self.worker._stop_caffeinate()  # V3.8.1: 确保终止 caffeinate 进程
-        self._force_quit()
 
     def _force_quit(self):
         """不再确认，直接退出（清理由 aboutToQuit 信号统一处理）"""
@@ -4102,6 +4118,12 @@ class SuperPickyMainWindow(QMainWindow):
         skip the message box and _check_report_csv and launch it directly.
         """
         if self._queue is not None and self._queue_pending_launch:
+            # 部分文件没能移回原位：记一行警告，处理照常继续（与单目录一样不中止）
+            # Some files could not be moved back: warn once, processing continues
+            failed = (restore_stats or {}).get('failed', 0)
+            if failed:
+                self._log(self.i18n.t("logs.queue_reset_partial",
+                                      path=self._queue_pending_launch, failed=failed), "warning")
             self._queue_reset_done(bool(success), "" if success else
                                    self.i18n.t("messages.reset_failed_log"))
             return
@@ -5239,7 +5261,7 @@ class SuperPickyMainWindow(QMainWindow):
 
         # 兜底退出路径（托盘不可用 / 系统注销）：维持原有确认与清理逻辑
         # Fallback quit path (no tray / session shutdown): keep old confirm + cleanup
-        if self.worker and self.worker.is_alive() and not saving_session:
+        if self._is_lab_processing() and not saving_session:
             reply = StyledMessageBox.question(
                 self,
                 self.i18n.t("messages.exit_title"),
@@ -5249,8 +5271,8 @@ class SuperPickyMainWindow(QMainWindow):
             )
 
             if reply == StyledMessageBox.No:  # 用户点击"是"退出
-                self.worker.request_stop()
-                self.worker._stop_caffeinate()  # V3.8.1: 确保终止 caffeinate 进程
+                # 队列在跑时一并停队列 / also stops a running folder queue
+                self._stop_processing_for_quit()
                 self._stop_birdid_server()  # V4.0: 停止识鸟 API 服务
                 self._force_quit()          # 已确认过，不再二次弹窗 / already confirmed
                 event.accept()

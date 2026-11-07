@@ -36,6 +36,30 @@ def count_photos(path: str) -> int:
         return 0
 
 
+def folder_row_count(path: str) -> Optional[int]:
+    """
+    列表行显示的照片数：先按扫描计数；扫描为 0 但目录已处理过（或有续跑进度）时，
+    照片都在被扫描排除的星级/鸟种目录里，改用 report.db 的只读计数
+    （summarize_directories，不经 ReportDB、不触发 schema 升级）。
+
+    参数: path (str) 目录。
+    返回: Optional[int] 照片数；已处理但 report.db 读不出时为 None（行内显示「已处理」）。
+
+    Photo count shown in a row: the scan count; when that is 0 but the folder
+    is processed/resumable, a read-only report.db count (no schema
+    migration). Returns None when processed but unreadable (row shows
+    "processed").
+    """
+    n = count_photos(path)
+    if n or folder_queue.classify_folder(path) == folder_queue.STATE_FRESH:
+        return n
+    try:
+        from tools.merged_report_db import summarize_directories
+        return summarize_directories([path])[0]["photos"]
+    except Exception:
+        return None
+
+
 class ElidedLabel(QLabel):
     """
     单行标签：文字过长时中间省略，最小宽度不随文字增长（避免撑宽窗口）。
@@ -88,7 +112,7 @@ class FolderListWidget(QWidget):
         super().__init__(parent)
         self.i18n = get_i18n()
         self._folders: List[str] = []
-        self._counts: Dict[str, int] = {}
+        self._counts: Dict[str, Optional[int]] = {}
         self._editable = True
         self._remove_btns: List[QPushButton] = []
         self.setAcceptDrops(True)
@@ -154,7 +178,7 @@ class FolderListWidget(QWidget):
             return code
         norm = normalize_folder(path)
         self._folders.append(norm)
-        self._counts[norm] = count_photos(norm)
+        self._counts[norm] = folder_row_count(norm)
         self._rebuild()
         self.foldersChanged.emit(self.folders())
         return None
@@ -179,7 +203,7 @@ class FolderListWidget(QWidget):
             elif code is None:
                 norm = normalize_folder(p)
                 self._folders.append(norm)
-                self._counts[norm] = count_photos(norm)
+                self._counts[norm] = folder_row_count(norm)
         self._rebuild()
         self.foldersChanged.emit(self.folders())
         return missing
@@ -214,7 +238,11 @@ class FolderListWidget(QWidget):
             h = QHBoxLayout(row)
             h.setContentsMargins(8, 2, 4, 2)
             h.setSpacing(6)
-            text = f"📁 {path} · {self.i18n.t('labels.folder_photos', n=self._counts.get(path, 0))}"
+            n = self._counts.get(path, 0)
+            # None：已处理但读不出张数，显示「已处理」/ processed, count unreadable
+            count_text = (self.i18n.t("labels.folder_processed") if n is None
+                          else self.i18n.t("labels.folder_photos", n=n))
+            text = f"📁 {path} · {count_text}"
             lbl = ElidedLabel(text)
             lbl.setToolTip(path)
             lbl.setTextInteractionFlags(Qt.NoTextInteraction)
@@ -236,7 +264,7 @@ class FolderListWidget(QWidget):
             row.setStyleSheet(f"background-color: {COLORS['bg_card']}; border-radius: 6px;")
             self._rows_box.addWidget(row)
             self._remove_btns.append(btn)
-        total = sum(self._counts.get(p, 0) for p in self._folders)
+        total = sum(self._counts.get(p) or 0 for p in self._folders)
         self._total_label.setText(
             self.i18n.t("labels.folder_total", count=len(self._folders), photos=total))
 
