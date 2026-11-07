@@ -49,7 +49,10 @@ def browser(tmp_path, monkeypatch):
         return True
 
     monkeypatch.setattr(rbw, "_move_to_trash", fake_trash)
-    monkeypatch.setattr(rbw.ResultsBrowserWindow, "_confirm_delete", lambda self, photos: True)
+    # 删除走批量接口;不打桩的话 macOS 上会真的让 Finder 删 / the batch API is what runs
+    monkeypatch.setattr(rbw, "_move_many_to_trash", lambda paths: [fake_trash(p) for p in paths])
+    monkeypatch.setattr(rbw.ResultsBrowserWindow, "_confirm_delete",
+                        lambda self, photos, jobs, permanent=False, **_kw: "permanent" if permanent else "trash")
 
     win = rbw.ResultsBrowserWindow()
     win.open_directory(root)
@@ -69,6 +72,20 @@ def _wait_grid_built(win, timeout: float = 5.0) -> None:
             return
         time.sleep(0.01)
     raise AssertionError("grid not built")
+
+
+def _wait_delete_done(win, timeout: float = 5.0) -> None:
+    """
+    多张删除在后台线程按批进行,等它把结果送回主线程收尾。
+    Multi-photo deletes run on a worker thread; pump events until finished.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        _app.processEvents()
+        if win._delete_cancel is None:
+            return
+        time.sleep(0.01)
+    raise AssertionError("delete not finished")
 
 
 def _detail_state(win) -> tuple:
@@ -133,5 +150,6 @@ def test_buttons_disabled_when_everything_deleted(browser):
     """全部删光后，没有上一张也没有下一张。"""
     win = browser
     win._delete_photos(list(win._filtered_photos), in_fullscreen=False)
+    _wait_delete_done(win)
     assert win._filtered_photos == []
     assert _detail_state(win) == (False, False)

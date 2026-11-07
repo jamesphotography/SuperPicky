@@ -62,7 +62,10 @@ def browser(tmp_path, monkeypatch):
         return True
 
     monkeypatch.setattr(rbw, "_move_to_trash", fake_trash)
-    monkeypatch.setattr(rbw.ResultsBrowserWindow, "_confirm_delete", lambda self, photos: True)
+    # 删除走批量接口;不打桩的话 macOS 上会真的让 Finder 删 / the batch API is what runs
+    monkeypatch.setattr(rbw, "_move_many_to_trash", lambda paths: [fake_trash(p) for p in paths])
+    monkeypatch.setattr(rbw.ResultsBrowserWindow, "_confirm_delete",
+                        lambda self, photos, jobs, permanent=False, **_kw: "permanent" if permanent else "trash")
 
     win = rbw.ResultsBrowserWindow()
     win.open_directory(root)
@@ -82,6 +85,20 @@ def _wait_grid_built(win, timeout: float = 5.0) -> None:
             return
         time.sleep(0.01)
     raise AssertionError("grid not built")
+
+
+def _wait_delete_done(win, timeout: float = 5.0) -> None:
+    """
+    多张删除在后台线程按批进行,等它把结果送回主线程收尾。
+    Multi-photo deletes run on a worker thread; pump events until finished.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        _app.processEvents()
+        if win._delete_cancel is None:
+            return
+        time.sleep(0.01)
+    raise AssertionError("delete not finished")
 
 
 def _names(photos) -> list:
@@ -213,6 +230,7 @@ def test_delete_key_in_grid_deletes_checked_photos(browser):
     win, _, trashed = browser
     _check(win, win._filtered_photos[1:3])
     win.keyPressEvent(QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key_Delete, Qt.NoModifier))
+    _wait_delete_done(win)
 
     assert sorted(n for n in trashed if n.endswith(".CR3")) == ["IMG_1.CR3", "IMG_2.CR3"]
     assert _names(win._filtered_photos) == ["IMG_0", "IMG_3", "IMG_4"]
@@ -258,5 +276,6 @@ def test_context_menu_delete_follows_selection_scope(browser):
     action = _delete_action(photos[0])
     assert action.text() == i18n.t("browser.ctx_delete_batch").format(count=2)
     action.trigger()
+    _wait_delete_done(win)
     assert sorted(n for n in trashed if n.endswith(".CR3")) == ["IMG_0.CR3", "IMG_1.CR3", "IMG_4.CR3"]
     assert _names(win._filtered_photos) == ["IMG_2", "IMG_3"]

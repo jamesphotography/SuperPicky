@@ -301,20 +301,38 @@ QSlider::handle:horizontal:hover {{
 }}
 
 /* ==================== 进度条 ==================== */
+/* 通用进度条(进度对话框、视频窗口等):要容得下居中的百分比文字。
+   此前这里对所有 QProgressBar 锁死 3px,结果浏览器 / 视频窗口的进度条
+   全被压成一条线、百分比看不到。
+   Generic bars (progress dialogs, video window) must fit the centred
+   percentage; a former blanket 3px cap squashed them all into a line. */
 QProgressBar {{
     background-color: {COLORS['bg_input']};
-    border-radius: 2px;
+    border: 1px solid {COLORS['border']};
+    border-radius: 4px;
     text-align: center;
-    color: {COLORS['text_secondary']};
+    color: {COLORS['text_primary']};
     font-size: 11px;
     font-weight: 500;
-    min-height: 3px;
-    max-height: 3px;
+    min-height: 16px;
 }}
 
 QProgressBar::chunk {{
     background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
         stop:0 {COLORS['accent']}, stop:1 {COLORS['accent_light']});
+    border-radius: 3px;
+}}
+
+/* 主窗口处理进度是一条细线(百分比在旁边的标签里),只对它限高
+   Only the main window's processing bar is a thin line (its % is a label) */
+QProgressBar#mainProgressBar {{
+    border: none;
+    border-radius: 2px;
+    min-height: 3px;
+    max-height: 3px;
+}}
+
+QProgressBar#mainProgressBar::chunk {{
     border-radius: 2px;
 }}
 

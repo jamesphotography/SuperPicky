@@ -52,6 +52,12 @@ DEFAULT_QUOTA3 = 30.0     # 3★ 默认配额 %(= 推荐档 intermediate)/ defau
 DEFAULT_QUOTA2 = 30.0     # 2★ 默认配额 %(接在 3★ 之后)/ 2-star quota after 3★
 DEFAULT_BURST_CAP3 = 2    # 连拍组内 3★ 上限 / per-burst 3-star cap
 
+# 鸟种保底星级(用户 2026-11-07 拍板):多数人删 0★/1★、留 2★/3★,所以每个已确认
+# 的鸟种在 2★ 及以上至少要有一张,否则删片时整个鸟种就丢了。
+# Species floor (decided 2026-11-07): most users delete 0-1★ and keep 2-3★, so
+# every confirmed species must keep at least one photo at 2★ or above.
+SPECIES_FLOOR_RATING = 2
+
 # 技能等级 → 3★ 配额映射 / skill level → 3-star quota
 # 2026-07-24 重定手感:档位越低给分越宽松(新手 40 / 初级 30 / 大师 20)。
 # 注意这是配额上限而非实得比例——3★ 仍受 QUOTA3_SHARP_FLOOR 绝对兜底、
@@ -94,6 +100,12 @@ class PhotoMetricsV2:
     has_exposure_issue: bool = False
     burst_id: Optional[int] = None    # 连拍组 / burst group
     species: Optional[str] = None     # 鸟种(识鸟结果;None=未识别/未开识鸟)/ species key
+    # 鸟种是否已确认(识鸟置信度达到用户门槛、会写入鸟种);低置信度候选为 False。
+    # 只有确认的鸟种参与「鸟种保底」——浏览器里看得到的鸟种才需要保底。
+    # Whether the species is confirmed (Bird ID at/above the user's threshold, so
+    # it is stored); low-confidence candidates are False. Only confirmed species
+    # get the species floor — those are the species the browser shows.
+    species_confirmed: bool = False
 
 
 @dataclass
@@ -214,6 +226,7 @@ def assign_ratings(
     quota2: float = DEFAULT_QUOTA2,
     burst_cap3: int = DEFAULT_BURST_CAP3,
     min_confidence: float = MIN_CONFIDENCE,
+    species_floor: bool = True,
 ) -> Dict[str, RatingV2Result]:
     """
     对一批照片统一定星(V2 主入口)。
@@ -223,6 +236,7 @@ def assign_ratings(
         quota3: 3★ 配额百分比(如 20 → Q 前 20%)
         quota2: 2★ 配额百分比(接在 3★ 之后)
         burst_cap3: 同一连拍组内 3★ 上限,0 表示不限制
+        species_floor: 是否执行鸟种保底(见 apply_species_floor)
 
     返回:
         Dict[key, RatingV2Result]:每张照片的星级与原因
@@ -242,6 +256,9 @@ def assign_ratings(
             pool.append(p)
 
     if not pool:
+        # 全部被硬门槛淘汰时也要做鸟种保底 / the species floor still applies
+        if species_floor:
+            apply_species_floor(photos, results)
         return results
 
     pct_sharp = _percentile_fn([p.norm_sharpness for p in pool])
@@ -320,7 +337,73 @@ def assign_ratings(
                 results[key].reason_key = "rating_v2.burst_capped"
                 results[key].reason_args["burst_cap"] = burst_cap3
 
+    if species_floor:
+        apply_species_floor(photos, results)
+
     return results
+
+
+def apply_species_floor(
+    photos: List[PhotoMetricsV2],
+    results: Dict[str, RatingV2Result],
+    floor: int = SPECIES_FLOOR_RATING,
+) -> List[str]:
+    """
+    鸟种保底:每个已确认的鸟种在 floor 星及以上至少留一张,不够就把该种最好的
+    一张提到 floor 星(只升不降,3★ 规则不受影响)。
+
+    为什么需要:按鸟种配额本已给每种留了名额,但以下情况仍会让某个鸟种只剩
+    0★/1★,用户删 0★/1★ 时整个鸟种就丢了(2026-10 实拍 119 个文件夹×鸟种中有 5 个):
+      - 该种所有照片都没过硬门槛(有鸟置信度低于用户设置、美学 < 3.5 等);
+      - 低置信度的同种候选与确认照片一起排名,把确认的那张挤到 1★,而候选不写
+        鸟种,浏览器里这个鸟种就只剩 1★。
+
+    「最好的一张」:先比当前星级,再比综合分 Q(过门槛者才有),再比锐度、美学、
+    有鸟置信度。
+
+    Species floor: every confirmed species keeps at least one photo at
+    `floor` stars or above; otherwise its best photo is raised to `floor`
+    (raise only; 3★ rules untouched). Needed because a species can still end
+    at 0-1★ when all its photos fail hard gates, or when low-confidence
+    candidates ranked with it push the confirmed photo down — and users who
+    delete 0-1★ would lose the species. Best = current stars, then Q, then
+    sharpness, aesthetics and detection confidence.
+
+    参数 / Parameters:
+        photos (List[PhotoMetricsV2]): 全批照片(含被硬门槛淘汰的)/ all photos, gated included.
+        results (Dict[str, RatingV2Result]): 定星结果,原地修改 / ratings, modified in place.
+        floor (int): 保底星级 / floor rating.
+
+    返回 / Returns:
+        List[str]: 被提级的照片键 / keys of raised photos.
+    """
+    groups: Dict[str, List[PhotoMetricsV2]] = {}
+    for p in photos:
+        if p.detected and p.species and p.species_confirmed and p.key in results:
+            groups.setdefault(p.species, []).append(p)
+
+    def _best_key(p: PhotoMetricsV2) -> tuple:
+        r = results[p.key]
+        return (r.rating,
+                r.q_score if r.q_score is not None else float("-inf"),
+                p.norm_sharpness,
+                p.topiq if p.topiq is not None else 0.0,
+                p.confidence)
+
+    raised: List[str] = []
+    for members in groups.values():
+        if max(results[m.key].rating for m in members) >= floor:
+            continue
+        best = max(members, key=_best_key)
+        r = results[best.key]
+        r.reason_args = dict(r.reason_args or {},
+                             prev_rating=r.rating,
+                             prev_reason_key=r.reason_key,
+                             species_size=len(members))
+        r.rating = floor
+        r.reason_key = "rating_v2.species_floor"
+        raised.append(best.key)
+    return raised
 
 
 def get_quota3_for_skill(level_key: str, config=None) -> float:
