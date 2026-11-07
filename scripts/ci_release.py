@@ -450,6 +450,225 @@ def cmd_cleanup_paths(args: argparse.Namespace) -> int:
     return 0
 
 
+def changelog_heading_key(line: str) -> str | None:
+    """
+    取一级标题的版本键 / Return the version key of a top-level heading.
+
+    「# SuperPicky 4.6.4」与「# SuperPicky 4.6.4（中文）」视为同一版本，
+    以便中英两段一起保留；非一级标题（含「## 」）返回 None。
+
+    "# SuperPicky 4.6.4" and "# SuperPicky 4.6.4（中文）" share one key so the
+    English and Chinese sections stay together. Returns None for any line that
+    is not a top-level heading (including "## ").
+
+    参数 / Parameters:
+    line (str): ChangeLog 中的一行 / One line of the changelog
+
+    返回 / Return:
+    str | None: 去掉「（中文）」后缀的标题文字，或 None
+                Heading text without the "（中文）" suffix, or None
+    """
+
+    if not line.startswith("# "):
+        return None
+    title = line[2:].strip()
+    for suffix in ("（中文）", "(中文)"):
+        if title.endswith(suffix):
+            title = title[: -len(suffix)].rstrip()
+    return title
+
+
+def extract_latest_notes(text: str) -> str:
+    """
+    从 ChangeLog 中截取最新版本那一段 / Extract the newest version's notes.
+
+    从文件开头一直取到第一个版本键不同的一级标题为止（即只保留最新版本的
+    英文 + 中文两段），并去掉末尾的「---」分隔线。找不到一级标题时原样返回。
+
+    Takes everything from the top of the file up to the first top-level heading
+    whose version key differs from the first one (so only the newest version's
+    English + Chinese sections remain), and drops the trailing "---" rule.
+    Returns the text unchanged if there is no top-level heading.
+
+    参数 / Parameters:
+    text (str): ChangeLog.md 全文 / Full ChangeLog.md text
+
+    返回 / Return:
+    str: 最新版本的发布说明（以换行结尾）/ Newest release notes, newline-terminated
+    """
+
+    lines = text.splitlines()
+    first_key: str | None = None
+    end = len(lines)
+    for index, line in enumerate(lines):
+        key = changelog_heading_key(line)
+        if key is None:
+            continue
+        if first_key is None:
+            first_key = key
+        elif key != first_key:
+            end = index
+            break
+    if first_key is None:
+        return text
+
+    kept = lines[:end]
+    while kept and kept[-1].strip() in ("", "---"):
+        kept.pop()
+    return "\n".join(kept) + "\n"
+
+
+def cmd_extract_notes(args: argparse.Namespace) -> int:
+    """
+    生成只含最新版本的 Release 说明文件 / Write release notes for the newest version only.
+    """
+
+    source = repo_path(args.source)
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    notes = extract_latest_notes(source.read_text(encoding="utf-8"))
+    output_path.write_text(notes, encoding="utf-8")
+
+    values = {"notes_path": str(output_path)}
+    write_github_outputs(values, args.github_output)
+    print(json.dumps({**values, "lines": notes.count("\n")}, ensure_ascii=False))
+    return 0
+
+
+# 下载清单的分组：(资产文件名里的识别片段, 标题)。顺序即清单顺序。
+# 片段之间互不包含（"FullCUDA13_" 不会被 "FullCUDA_" 误匹配，因为下划线位置不同）。
+# Download list groups: (marker in the asset file name, label). Order is the
+# list order. Markers never overlap ("FullCUDA_" does not match "FullCUDA13_").
+DOWNLOAD_GROUPS: tuple[tuple[str, str], ...] = (
+    ("_arm64_", "**Mac (Apple silicon) / Mac（M 系列芯片）**"),
+    ("_x86_64_", "**Mac (Intel)**"),
+    ("_Setup_Full_Win64_", "**Windows, any PC / 任何电脑（CPU 版）**"),
+    ("_Setup_FullCUDA_Win64_", "**Windows, NVIDIA GTX 9/10/16 · RTX 20/30/40 (CUDA 11.8)**"),
+    ("_Setup_FullCUDA13_Win64_",
+     "**Windows, NVIDIA RTX 50 (CUDA 13, driver 580+)** — download all 3 into one folder, "
+     "run the .exe / 3 个文件下载到同一文件夹，运行 .exe："),
+)
+
+# 只有这些扩展名算安装包；code_patch zip、patch_meta.json 等内部文件不进清单。
+# Only these extensions are installers; internal files are left out.
+INSTALLER_SUFFIXES = (".dmg", ".exe", ".bin")
+
+
+def display_size(size_bytes: int) -> str:
+    """
+    下载清单里给人看的大小（十进制，与 GitHub 页面一致）/ Human size for the list.
+
+    参数 / Parameters:
+    size_bytes (int): 字节数 / Size in bytes
+
+    返回 / Return:
+    str: 如 "2.03 GB"、"795 MB"、"3.5 MB" / e.g. "2.03 GB", "795 MB", "3.5 MB"
+    """
+
+    if size_bytes >= 10 ** 9:
+        return f"{size_bytes / 10 ** 9:.2f} GB"
+    if size_bytes >= 10 ** 8:
+        return f"{size_bytes / 10 ** 6:.0f} MB"
+    return f"{size_bytes / 10 ** 6:.1f} MB"
+
+
+def render_download_section(assets: list[dict], tag: str, repo: str) -> str:
+    """
+    按 Release 上实际存在的资产生成「Download / 下载」清单 / Build the download list.
+
+    用实际资产（文件名 + 大小）而不是按命名规则拼链接，所以文件名里的 commit
+    hash、某个 CUDA 包构建失败没上传等情况都不会产生死链。CUDA 13 分卷按
+    .exe、-1.bin、-2.bin 的顺序列出。Intel Mac 包是发版后手工上传的：没有时，
+    测试版写「本测试版不提供」，正式版写「稍后提供」，上传后重跑本命令即可换成直链。
+    认不出分组的安装包放到最后「Other files / 其他文件」，不会被静默丢掉。
+
+    Built from the assets actually on the release (name + size), not from a
+    naming rule, so a commit hash in the name or a failed optional CUDA build can
+    never produce a dead link. CUDA 13 parts are listed .exe, -1.bin, -2.bin.
+    The Intel Mac build is uploaded by hand later: until then a test build says
+    "not provided" and a stable release says "coming soon"; rerun this command
+    after uploading to turn it into a link. Unrecognized installers are listed
+    last under "Other files" rather than silently dropped.
+
+    参数 / Parameters:
+    assets (list[dict]): `gh release view --json assets` 里的 assets，每项至少有
+                         name 与 size / Assets with at least name and size
+    tag (str): Release tag，如 v4.6.5-rc1 / Release tag
+    repo (str): owner/name，如 jamesphotography/SuperPicky / Repository
+
+    返回 / Return:
+    str: Markdown 清单（以换行结尾）/ Markdown list, newline-terminated
+    """
+
+    base = f"https://github.com/{repo}/releases/download/{tag}"
+    installers = sorted(
+        (a for a in assets if str(a.get("name", "")).endswith(INSTALLER_SUFFIXES)),
+        key=lambda a: a["name"],
+    )
+
+    def link(asset: dict) -> str:
+        return f"[{asset['name']}]({base}/{asset['name']}) · {display_size(int(asset['size']))}"
+
+    lines = ["## Download / 下载", ""]
+    used: set[str] = set()
+    for marker, label in DOWNLOAD_GROUPS:
+        group = [a for a in installers if marker in a["name"] and a["name"] not in used]
+        used.update(a["name"] for a in group)
+        if not group:
+            is_test = infer_release_channel(tag) == "nightly"
+            if marker == "_x86_64_":
+                missing = ("not provided for this test build / 本测试版不提供"
+                           if is_test else "coming soon / 稍后提供")
+                lines.append(f"- {label} — {missing}")
+            elif marker == "_Setup_FullCUDA13_Win64_" and is_test:
+                # 测试版不构建 CUDA 13（build-release.yml），写明原因与替代，
+                # 免得 RTX 50 用户以为漏传了。正式版缺它 = 构建失败，不列。
+                # Test builds skip CUDA 13 by design; say so and point RTX 50
+                # users at the alternatives. On a stable release it is omitted.
+                lines.append(
+                    "- **Windows, NVIDIA RTX 50 (CUDA 13)** — not provided for this test build; "
+                    "use the CPU or CUDA 11.8 installer (on RTX 50 it runs on the CPU) / "
+                    "本测试版不提供，请用 CPU 版或 CUDA 11.8 版（在 RTX 50 上会用 CPU 运行）"
+                )
+            continue
+        if len(group) == 1:
+            lines.append(f"- {label} — {link(group[0])}")
+            continue
+        # 分卷：.exe 排最前，其余按文件名（-1.bin、-2.bin）/ Split set: .exe first.
+        group.sort(key=lambda a: (not a["name"].endswith(".exe"), a["name"]))
+        lines.append(f"- {label}")
+        lines.extend(f"  - {link(a)}" for a in group)
+
+    others = [a for a in installers if a["name"] not in used]
+    if others:
+        lines.append("- **Other files / 其他文件**")
+        lines.extend(f"  - {link(a)}" for a in others)
+    return "\n".join(lines) + "\n"
+
+
+def cmd_add_downloads(args: argparse.Namespace) -> int:
+    """
+    给发布说明末尾追加下载清单 / Append the download list to the release notes.
+
+    读 `gh release view <tag> --json assets` 的输出，把清单接在 --notes 文件后面，
+    写到 --output（可与 --notes 相同）。
+
+    Reads the output of `gh release view <tag> --json assets`, appends the list
+    to the --notes file and writes --output (may equal --notes).
+    """
+
+    data = json.loads(Path(args.assets_json).read_text(encoding="utf-8"))
+    assets = data["assets"] if isinstance(data, dict) else data
+    notes = Path(args.notes).read_text(encoding="utf-8").rstrip("\n")
+    section = render_download_section(assets, args.tag, args.repo)
+    body = f"{notes}\n\n{section}" if notes else section
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(body, encoding="utf-8")
+    print(json.dumps({"output": str(output_path), "assets": len(assets)}, ensure_ascii=False))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """
     创建命令行解析器 / Build the command-line parser.
@@ -504,6 +723,20 @@ def build_parser() -> argparse.ArgumentParser:
     secret_parser.add_argument("--decode-base64", action="store_true", help="按 Base64 解码后写入")
     secret_parser.add_argument("--github-output", help="可选，显式指定 GITHUB_OUTPUT 文件路径")
     secret_parser.set_defaults(func=cmd_materialize_secret_file)
+
+    notes_parser = subparsers.add_parser("extract-notes", help="从 ChangeLog 截取最新版本的发布说明")
+    notes_parser.add_argument("--source", default="ChangeLog.md", help="ChangeLog 路径，默认 ChangeLog.md")
+    notes_parser.add_argument("--output", required=True, help="输出的发布说明文件路径")
+    notes_parser.add_argument("--github-output", help="可选，显式指定 GITHUB_OUTPUT 文件路径")
+    notes_parser.set_defaults(func=cmd_extract_notes)
+
+    downloads_parser = subparsers.add_parser("add-downloads", help="按 Release 实际资产给发布说明追加下载清单")
+    downloads_parser.add_argument("--notes", required=True, help="已有的发布说明文件")
+    downloads_parser.add_argument("--assets-json", required=True, help="gh release view <tag> --json assets 的输出文件")
+    downloads_parser.add_argument("--tag", required=True, help="Release tag，如 v4.6.5-rc1")
+    downloads_parser.add_argument("--repo", required=True, help="owner/name，如 jamesphotography/SuperPicky")
+    downloads_parser.add_argument("--output", required=True, help="输出文件，可与 --notes 相同")
+    downloads_parser.set_defaults(func=cmd_add_downloads)
 
     cleanup_parser = subparsers.add_parser("cleanup-paths", help="删除文件或目录")
     cleanup_parser.add_argument("--path", action="append", required=True, help="待删除的路径，可重复指定")

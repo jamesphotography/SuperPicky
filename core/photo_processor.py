@@ -702,10 +702,16 @@ class PhotoProcessor:
                     files_tbr = [prefix_to_file[prefix] for prefix in plan["pending_prefixes"] if prefix in prefix_to_file]
                     display_start = int(plan["next_index"])
                     display_total = int(plan["total_files"])
+                    resume_started = True
                 else:
-                    self.resume_state.start(ordered_prefixes)
+                    resume_started = self.resume_state.start(ordered_prefixes)
             else:
-                self.resume_state.start(ordered_prefixes)
+                resume_started = self.resume_state.start(ordered_prefixes)
+            if not resume_started:
+                # 进度文件被占用（#156）：只影响中断后能否接着处理，选片照常进行
+                # Progress file locked (#156): only affects resuming; carry on.
+                self._log(self.i18n.t("logs.resume_state_write_failed",
+                                      error=self.resume_state.last_error), "warning")
 
             self._check_cancelled()
             
@@ -1344,9 +1350,27 @@ class PhotoProcessor:
         total_files = display_total if display_total is not None else len(files_tbr)
         self._log(self.i18n.t("logs.files_to_process", total=total_files))
 
+        resume_warned = [False]
+
         def mark_resume_completed(prefix: str):
-            if prefix:
-                self.resume_state.mark_completed(prefix)
+            """
+            记一张照片已处理完。进度文件写不进去（#156：Windows 上被杀毒软件或
+            同步程序短暂占用）只记一条警告、整轮只记一次，绝不让这张已经处理完的
+            照片被判为失败。
+
+            Mark a photo done. If the progress file cannot be written (#156: held
+            by antivirus or a sync client on Windows) log one warning per run and
+            never turn the finished photo into a failure.
+            """
+            if not prefix or self.resume_state.mark_completed(prefix):
+                return
+            if not resume_warned[0]:
+                resume_warned[0] = True
+                self._log(
+                    self.i18n.t("logs.resume_state_write_failed",
+                                error=self.resume_state.last_error),
+                    "warning",
+                )
         
         exiftool_mgr = get_exiftool_manager()
         metadata_batch: List[Dict] = []
@@ -3389,7 +3413,7 @@ class PhotoProcessor:
                 # Log, count the failure, and move on to the next photo instead of
                 # aborting the whole remaining batch. Deliberately NOT marked
                 # resume-completed — see _handle_photo_failure for the semantics.
-                self._handle_photo_failure(i, filename, original_prefix, e)
+                self._handle_photo_failure(i, filename, original_prefix, e, raw_dict)
                 continue
         
         if self._should_stop():
@@ -3908,12 +3932,58 @@ class PhotoProcessor:
         # V4.2: 返回标注后的图像，用于 UI 实时预览
         return debug_img
     
+    @staticmethod
+    def _failure_display_name(
+        filename: Optional[str],
+        original_prefix: Optional[str],
+        raw_dict: Optional[Dict[str, str]],
+    ) -> str:
+        """
+        失败日志与汇总里给用户看的文件名：RAW 照片显示原片名（如 _T3A2095.CR3）。
+
+        RAW 照片在循环里处理的是缓存预览图，filename 是
+        「.superpicky/cache/temp_preview/_T3A2095.jpg」这样的内部路径，直接显示会让
+        用户以为是那张预览图出了问题（#156）。能对上 raw_dict 就显示原片名，
+        否则退回文件名本身（只取文件名部分）。
+
+        参数:
+        filename (Optional[str]): 循环里的文件路径，可能是预览图
+        original_prefix (Optional[str]): 照片前缀；异常早于赋值时为 None
+        raw_dict (Optional[Dict[str, str]]): 前缀 → RAW 扩展名
+
+        返回:
+        str: 显示用文件名；都没有时为空串
+
+        The file name shown in failure logs: the original RAW (e.g. _T3A2095.CR3)
+        rather than the internal cached-preview path, which made users think the
+        preview image itself was at fault (#156). Falls back to the base name.
+
+        Parameters:
+        filename (Optional[str]): path from the loop, possibly a preview image
+        original_prefix (Optional[str]): photo prefix; None if not yet assigned
+        raw_dict (Optional[Dict[str, str]]): prefix -> RAW extension
+
+        Return:
+        str: display name, or "" when nothing is known
+        """
+        prefix = original_prefix
+        if not prefix and filename:
+            prefix = os.path.splitext(os.path.basename(filename))[0]
+            if prefix.startswith("tmp_"):
+                prefix = prefix[4:]
+        if prefix and raw_dict and prefix in raw_dict:
+            return prefix + raw_dict[prefix]
+        if filename:
+            return os.path.basename(filename)
+        return original_prefix or ""
+
     def _handle_photo_failure(
         self,
         index: int,
         filename: str,
         original_prefix: Optional[str],
         error: Exception,
+        raw_dict: Optional[Dict[str, str]] = None,
     ) -> None:
         """
         单张照片处理异常的统一兜底：记录日志并计入失败统计。
@@ -3955,7 +4025,7 @@ class PhotoProcessor:
         Return:
         None
         """
-        display_name = filename or original_prefix or f"#{index}"
+        display_name = self._failure_display_name(filename, original_prefix, raw_dict) or f"#{index}"
         self._log(
             self.i18n.t("logs.photo_failed_skipped", index=index, name=display_name, error=error),
             "error"
