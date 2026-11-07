@@ -15,6 +15,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from collections import Counter
 from dataclasses import replace
 from datetime import datetime
@@ -27,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal, Slot, QProcess, QSize, QTimer
 from PySide6.QtGui import QAction, QKeyEvent, QIcon
-from ui.custom_dialogs import StyledMessageBox
+from ui.custom_dialogs import StyledMessageBox, StyledProgressDialog
 from PySide6.QtWidgets import QDialog
 from ui.directory_select_dialog import DirectorySelectDialog
 
@@ -38,7 +39,7 @@ from ui.combo_popup import style_combo_popup
 from ui.filter_panel import FilterPanel
 from ui.thumbnail_grid import ThumbnailGrid
 from ui.detail_panel import DetailPanel
-from ui.fullscreen_viewer import FullscreenViewer
+from ui.fullscreen_viewer import FullscreenViewer, is_permanent_delete_shortcut
 from ui.comparison_viewer import ComparisonViewer
 from typing import Callable, Optional
 
@@ -1639,6 +1640,21 @@ def _build_context_menu(parent_widget, photo: dict, directory: str):
         delete_action.triggered.connect(_delete)
         menu.addAction(delete_action)
 
+        # 永久删除:范围同上,总会先弹永久删除确认 / same scope, always confirmed
+        _perm_label = (
+            _i18n.t('browser.ctx_delete_permanent_batch').format(count=len(_del_targets))
+            if len(_del_targets) > 1 else _i18n.t('browser.ctx_delete_permanent')
+        )
+        permanent_action = QAction(_perm_label, parent_widget)
+
+        def _delete_permanently(_checked=False, _targets=_del_targets):
+            stack = getattr(parent_widget, "_stack", None)
+            in_fullscreen = bool(stack is not None and stack.currentIndex() == _PAGE_FULLSCREEN)
+            delete_handler(list(_targets), in_fullscreen=in_fullscreen, permanent=True)
+
+        permanent_action.triggered.connect(_delete_permanently)
+        menu.addAction(permanent_action)
+
     return menu
 
 
@@ -1717,6 +1733,262 @@ def _move_to_trash(filepath: str) -> bool:
     except Exception as e:
         print(f"⚠️ 移入回收站失败: {e}")
         return False
+
+
+# 每批处理的照片张数(决定进度条刷新与取消的粒度,每批之间可取消)
+# Photos per batch: sets progress / cancel granularity (cancel between batches).
+_TRASH_BATCH_PHOTOS = 10
+
+# 单次交给 Finder 的目标耗时。Finder 一次删除操作超过约 2 秒就会弹出它自己的
+# 「废纸篓」进度窗,与我们的进度框重复(实测外接盘 60 个文件 3.09 秒必弹,15 个
+# 0.85 秒不弹)。按实测每文件耗时动态决定每次交几个文件,控制在 0.8 秒内。
+# Target duration of one Finder call. Finder shows its own Trash progress
+# window once an operation exceeds ~2s (measured on an external disk: 60
+# files / 3.09s showed it, 15 files / 0.85s did not), duplicating ours.
+_FINDER_CALL_TARGET_SEC = 0.8
+_FINDER_CHUNK_MAX = 40          # 单次文件数上限 / max files per call
+# 每文件耗时估计(秒),首次保守取 0.1 → 首批 8 个;随实测更新,跨次删除沿用
+# Seconds-per-file estimate; conservative start (8 files), refined per call.
+_finder_secs_per_file = 0.1
+
+
+def _move_many_to_trash(paths: list) -> list:
+    """
+    把一批文件移入系统回收站,逐个返回是否成功。
+
+    macOS 上旧做法每个文件起一次 osascript 让 Finder 删,实测 195ms/文件;
+    这里一次 osascript 交给 Finder 一块文件(实测 62 个文件 0.86 秒),仍走 Finder
+    所以保留「放回原处」;块大小按实测速度控制在 0.8 秒内,避免 Finder 自己再
+    弹「废纸篓」进度窗。脚本先逐个把路径转成 alias(不存在的记失败),再
+    整批 delete;整批出错(如某文件被锁)时退回逐个 delete,保证每个文件的
+    结果都准确。脚本出错或超时时以磁盘为准:文件已不在即算成功。
+    Windows/其他平台逐个调用 _move_to_trash(SHFileOperationW 本身很快)。
+
+    Move a batch of files to the system trash and report each outcome.
+    On macOS one osascript hands the whole batch to Finder (62 files in
+    0.86s vs 195ms per file before), keeping Finder's "Put Back". Paths
+    are coerced to aliases one by one (missing ones fail), then deleted in
+    one call; if that call errors (e.g. a locked file) it retries one by
+    one so every result is exact. On script error/timeout the disk is the
+    source of truth. Other platforms fall back to _move_to_trash per file.
+
+    参数 / Parameters:
+        paths (list): 文件路径列表(只接受普通文件,目录一律拒绝)
+            / file paths (regular files only; directories are refused).
+
+    返回 / Returns:
+        list: 与 paths 一一对应的 bool / one bool per path.
+    """
+    results = [False] * len(paths)
+    valid = []   # (下标, 规范化路径) / (index, normalized path)
+    for i, p in enumerate(paths):
+        if not p:
+            continue
+        p = os.path.normpath(p)   # 消除 ./ 等冗余路径符,防止 Finder 误删父目录
+        if os.path.isfile(p):     # 只允许删除文件,禁止误删目录
+            valid.append((i, p))
+    if not valid:
+        return results
+
+    if sys.platform != "darwin":
+        for i, p in valid:
+            results[i] = _move_to_trash(p)
+        return results
+
+    # 脚本源是静态常量,路径全部经 argv 传入——绝不可把路径插值进脚本源
+    # (理由见 _move_to_trash)。返回与 argv 等长的 "1"/"0" 串。
+    # Static script; paths only via argv (see _move_to_trash). Returns a
+    # "1"/"0" string as long as argv.
+    script = (
+        "on run argv\n"
+        "    set n to count of argv\n"
+        "    set flags to {}\n"
+        "    set als to {}\n"
+        "    set idx to {}\n"
+        "    repeat with i from 1 to n\n"
+        '        set end of flags to "0"\n'
+        "        try\n"
+        "            set end of als to ((POSIX file (item i of argv)) as alias)\n"
+        "            set end of idx to i\n"
+        "        end try\n"
+        "    end repeat\n"
+        "    if (count of als) > 0 then\n"
+        "        try\n"
+        '            tell application "Finder" to delete als\n'
+        "            repeat with i in idx\n"
+        '                set item i of flags to "1"\n'
+        "            end repeat\n"
+        "        on error\n"
+        "            repeat with k from 1 to count of als\n"
+        "                try\n"
+        '                    tell application "Finder" to delete (item k of als)\n'
+        '                    set item (item k of idx) of flags to "1"\n'
+        "                end try\n"
+        "            end repeat\n"
+        "        end try\n"
+        "    end if\n"
+        '    set AppleScript\'s text item delimiters to ""\n'
+        "    return flags as text\n"
+        "end run"
+    )
+    # 分块交给 Finder:每块大小按实测速度定,让单次操作远低于 Finder 弹窗阈值
+    # Chunk by measured speed so no single Finder call nears its ~2s window
+    global _finder_secs_per_file
+    pos = 0
+    while pos < len(valid):
+        # +1e-9 防浮点误差(0.8/0.2 得 3.999…)/ guard float error
+        size = int(_FINDER_CALL_TARGET_SEC / max(_finder_secs_per_file, 0.005) + 1e-9)
+        chunk = valid[pos:pos + max(1, min(_FINDER_CHUNK_MAX, size))]
+        pos += len(chunk)
+        flags = ""
+        started = time.monotonic()
+        try:
+            result = subprocess.run(
+                ["osascript", "-e", script, "--", *[p for _, p in chunk]],
+                capture_output=True, text=True, timeout=30 + 2 * len(chunk),
+            )
+            if result.returncode == 0:
+                flags = result.stdout.strip()
+            else:
+                print(f"[Delete] Finder batch trash failed: {result.stderr.strip()}")
+        except Exception as e:
+            print(f"[Delete] Finder batch trash failed: {e}")
+        _finder_secs_per_file = (time.monotonic() - started) / len(chunk)
+        for k, (i, p) in enumerate(chunk):
+            reported = k < len(flags) and flags[k] == "1"
+            # 以磁盘为准:脚本中途出错/超时时已移走的文件也如实算成功
+            # Disk is the truth: files moved before an error/timeout count as done
+            results[i] = reported or not os.path.lexists(p)
+    return results
+
+
+def _expand_burst_groups(photos: list) -> list:
+    """
+    把折叠的连拍卡片展开成整组成员(去重、保持顺序),普通照片原样保留。
+
+    网格里一组连拍折叠成一张卡片(带张数角标),卡片的记录只是组里代表那一张
+    加上 burst_photos 成员列表。删除若只拿代表那张去删,剩下的成员会重新折叠
+    成新卡片——表现为「全选删除后总剩几张,一组 N 张要删 N 轮」。展开后与
+    「修改鸟种」作用于整组(core/rating_mover)的语义一致。
+
+    Expand collapsed burst cards into all their members (deduplicated, order
+    kept). A collapsed card's record is just the representative plus
+    burst_photos; deleting only it left the rest to re-collapse, so a burst of
+    N needed N rounds. Matches species edits, which act on the whole burst.
+
+    参数 / Parameters:
+        photos (list): 网格上选中的卡片记录 / selected card records.
+
+    返回 / Returns:
+        list: 展开后的照片记录 / expanded photo records.
+    """
+    out = []
+    seen = set()
+    for photo in photos:
+        members = photo.get("burst_photos") if photo.get("is_burst_group") else None
+        for member in (members or [photo]):
+            ident = _photo_identity(member)
+            if ident in seen:
+                continue
+            seen.add(ident)
+            out.append(member)
+    return out
+
+
+def _remove_many(paths: list) -> list:
+    """
+    永久删除一批文件(不进回收站),逐个返回是否成功。
+
+    实测外接盘 90 个文件 0.05 秒,而经 Finder 进废纸篓约 4.5 秒。只删普通文件,
+    目录与不存在的路径一律失败;只读等原因删不掉的照实报失败。
+
+    Permanently delete files (no trash), reporting each outcome. 90 files on
+    an external disk took 0.05s versus ~4.5s through Finder. Regular files
+    only; directories and missing paths fail, as do undeletable files.
+
+    参数 / Parameters:
+        paths (list): 文件路径列表 / file paths.
+
+    返回 / Returns:
+        list: 与 paths 一一对应的 bool / one bool per path.
+    """
+    results = [False] * len(paths)
+    for i, p in enumerate(paths):
+        if not p:
+            continue
+        p = os.path.normpath(p)
+        if not os.path.isfile(p):         # 只允许删除文件,禁止误删目录
+            continue
+        try:
+            os.remove(p)
+            results[i] = True
+        except OSError as e:
+            print(f"[Delete] permanent delete failed: {p}: {e}")
+    return results
+
+
+def _trash_photo_jobs(jobs: list, progress=None, cancelled=None,
+                      permanent: bool = False) -> list:
+    """
+    按批删除照片(默认移入回收站,permanent=True 时永久删除):先删一批照片本体,
+    本体成功的才删它们的 XMP 边车 / 配套 JPEG,再清内部缓存(#131 的顺序与语义
+    不变)。不碰 Qt,可在后台线程跑。
+
+    附属文件清理失败只记日志、不算删除失败——本体已经进了回收站。
+
+    Trash photos in batches: the main files first, then the sidecars /
+    paired JPEGs of the ones that succeeded, then cache files (#131 order
+    and semantics kept). Qt-free, so it runs on a worker thread. A failed
+    companion is logged but does not fail the photo.
+
+    参数 / Parameters:
+        jobs (list): 每张照片一个 (本体路径, 附属文件列表, 缓存文件列表);
+            本体路径为空(无路径的残留记录)视为已删除
+            / one (main path, companions, caches) per photo; an empty main
+            path (path-less DB row) counts as deleted.
+        progress (callable, optional): 每批完成后调用 progress(已处理, 总数)
+            / called as progress(done, total) after each batch.
+        cancelled (callable, optional): 返回 True 时不再开始下一批
+            / when it returns True no further batch is started.
+        permanent (bool): True 为永久删除(不进回收站)/ delete permanently.
+
+    返回 / Returns:
+        list: 每张照片 True=已删 / False=失败 / None=取消未处理
+            / per photo True=deleted, False=failed, None=not attempted.
+    """
+    from tools.utils import log_message
+    # 调用时再取函数,便于测试替换 / resolved at call time so tests can stub
+    remover = _remove_many if permanent else _move_many_to_trash
+    total = len(jobs)
+    outcome: list = [None] * total
+    for start in range(0, total, _TRASH_BATCH_PHOTOS):
+        if cancelled is not None and cancelled():
+            break
+        batch = list(range(start, min(start + _TRASH_BATCH_PHOTOS, total)))
+        with_path = [i for i in batch if jobs[i][0]]
+        for i in batch:
+            if not jobs[i][0]:
+                outcome[i] = True
+        main_ok = remover([jobs[i][0] for i in with_path])
+        companion_paths = []
+        for i, ok in zip(with_path, main_ok):
+            outcome[i] = ok
+            if ok:
+                companion_paths.extend(jobs[i][1])
+        for path, ok in zip(companion_paths, remover(companion_paths)):
+            if not ok:
+                log_message(f"[Delete] companion not deleted: {path}")
+        for i, ok in zip(with_path, main_ok):
+            if not ok:
+                continue
+            for path in jobs[i][2]:
+                try:
+                    os.remove(path)
+                except OSError as e:
+                    log_message(f"[Delete] cache not removed: {path}: {e}")
+        if progress is not None:
+            progress(batch[-1] + 1, total)
+    return outcome
 
 
 def _photo_companion_files(photo: dict) -> tuple:
@@ -1820,6 +2092,10 @@ class ResultsBrowserWindow(QMainWindow):
     # "Copy to Folder" progress (per mille) and result, routed back to the GUI thread
     photo_copy_progress = Signal(int)
     photo_copy_finished = Signal(object)
+    # 多张删除的后台进度 (已处理, 总数) 与逐张结果,经信号回主线程
+    # Multi-photo delete progress (done, total) and per-photo outcome, to the GUI thread
+    photo_delete_progress = Signal(int, int)
+    photo_delete_finished = Signal(object)
     closed = Signal()   # 窗口关闭时通知主窗口
 
     def __init__(self, parent=None):
@@ -1842,6 +2118,13 @@ class ResultsBrowserWindow(QMainWindow):
         self._copy_cancel: Optional[threading.Event] = None
         self._copy_thread: Optional[threading.Thread] = None
         self._copy_progress_dialog: Optional[QProgressDialog] = None
+        # 多张删除的后台状态:进行中时拒绝再次删除 / multi-delete state; blocks re-entry
+        self._delete_cancel: Optional[threading.Event] = None
+        self._delete_thread: Optional[threading.Thread] = None
+        self._delete_progress_dialog: Optional[QProgressDialog] = None
+        self._delete_pending: Optional[tuple] = None   # (照片列表, 是否全屏) / (photos, in_fullscreen)
+        # 后台线程写入的逐张结果,关窗时据此同步删数据库记录 / outcome box read on close
+        self._delete_result_box: dict = {}
         self._copy_dest: str = ""
         self._copy_plan = None
 
@@ -1929,6 +2212,8 @@ class ResultsBrowserWindow(QMainWindow):
         self.species_metadata_progress.connect(self._on_species_metadata_progress)
         self.photo_copy_progress.connect(self._on_photo_copy_progress)
         self.photo_copy_finished.connect(self._on_photo_copy_finished)
+        self.photo_delete_progress.connect(self._on_photo_delete_progress)
+        self.photo_delete_finished.connect(self._on_photo_delete_finished)
 
         self._thumb_grid.photo_selected.connect(self._on_photo_selected)
         self._thumb_grid.photo_double_clicked.connect(self._enter_fullscreen)
@@ -1947,6 +2232,7 @@ class ResultsBrowserWindow(QMainWindow):
         self._fullscreen.prev_requested.connect(self._fullscreen_prev)
         self._fullscreen.next_requested.connect(self._fullscreen_next)
         self._fullscreen.delete_requested.connect(self._on_delete_photo)
+        self._fullscreen.permanent_delete_requested.connect(self._on_permanent_delete_photo)
         self._fullscreen.context_menu_requested.connect(self._on_fullscreen_context_menu)
         self._fullscreen.species_edit_requested.connect(self._on_species_edit_requested)
         self._fullscreen.crop_advice_requested.connect(self._on_crop_advice_requested)
@@ -2676,7 +2962,7 @@ class ResultsBrowserWindow(QMainWindow):
         data = replace(data, dir_name=os.path.basename(self._directory) or self._directory)
         jobs = collect_image_jobs(data)
 
-        progress = QProgressDialog(self.i18n.t("report_export.working"),
+        progress = StyledProgressDialog(self.i18n.t("report_export.working"),
                                    self.i18n.t("report_export.cancel"),
                                    0, len(jobs), self)
         progress.setWindowModality(Qt.WindowModal)
@@ -3702,7 +3988,7 @@ class ResultsBrowserWindow(QMainWindow):
         for p in targets:
             by_base.setdefault(p.get("_base_dir") or self._directory, []).append(p)
 
-        progress = QProgressDialog(
+        progress = StyledProgressDialog(
             i18n.t('browser.merge_progress_title'), i18n.t('buttons.cancel'),
             0, len(targets), self,
         )
@@ -3914,7 +4200,7 @@ class ResultsBrowserWindow(QMainWindow):
                 need=_format_file_size(plan.total_bytes), free=_format_file_size(free)))
             return
 
-        progress = QProgressDialog(
+        progress = StyledProgressDialog(
             i18n.t("browser.copy_progress").format(
                 count=plan.photo_count, size=_format_file_size(plan.total_bytes)),
             i18n.t("buttons.cancel"), 0, 1000, self,
@@ -4220,7 +4506,7 @@ class ResultsBrowserWindow(QMainWindow):
             requested=preflight.requested,
             preflight_skipped=preflight.skipped,
         )
-        progress = QProgressDialog(
+        progress = StyledProgressDialog(
             self.i18n.t("browser.photos_import_progress").format(
                 completed=0,
                 total=len(preflight.candidates),
@@ -4349,7 +4635,7 @@ class ResultsBrowserWindow(QMainWindow):
         importer = self._apple_photos_importer
         if importer is None:
             return
-        progress = QProgressDialog(
+        progress = StyledProgressDialog(
             self.i18n.t("browser.photos_import_progress").format(
                 completed=0,
                 total=count,
@@ -4431,7 +4717,12 @@ class ResultsBrowserWindow(QMainWindow):
         if photo:
             self._delete_photos([photo], in_fullscreen=True)
 
-    def _delete_selected_photos(self):
+    def _on_permanent_delete_photo(self, photo: dict):
+        """全屏模式永久删除当前图片（⌘⌥⌫ / Shift+Delete）。/ Fullscreen permanent delete."""
+        if photo:
+            self._delete_photos([photo], in_fullscreen=True, permanent=True)
+
+    def _delete_selected_photos(self, permanent: bool = False):
         """
         Delete 键 / Command(Ctrl) + Backspace：删除网格勾选的照片（无勾选则当前
         选中的那张）或全屏当前图片。
@@ -4443,6 +4734,10 @@ class ResultsBrowserWindow(QMainWindow):
         Delete key / Cmd(Ctrl)+Backspace: delete the checked grid photos (or the
         current one), or the fullscreen photo. Uses the strict checked set —
         the comparison getter injects an unchecked anchor photo.
+
+        参数 / Parameters:
+            permanent (bool): 永久删除快捷键触发(⌘⌥⌫ / Shift+Delete)
+                / triggered by the permanent-delete shortcut.
         """
         in_fullscreen = (self._stack.currentIndex() == 1)
         if in_fullscreen:
@@ -4453,76 +4748,334 @@ class ResultsBrowserWindow(QMainWindow):
             if not target_photos and self._detail_panel._current_photo:
                 target_photos = [self._detail_panel._current_photo]
         if target_photos:
-            self._delete_photos(target_photos, in_fullscreen=in_fullscreen)
+            self._delete_photos(target_photos, in_fullscreen=in_fullscreen, permanent=permanent)
 
-    def _confirm_delete(self, target_photos: list) -> bool:
+    def _trash_name(self) -> str:
+        """当前平台回收站的叫法(废纸篓 / 回收站)/ the platform's trash name."""
+        key = "browser.trash_name_mac" if sys.platform == "darwin" else "browser.trash_name_win"
+        return self.i18n.t(key)
+
+    def _delete_summary(self, jobs: list) -> str:
         """
-        删除前确认（可勾选「以后不再询问」）；设置里关闭确认时直接返回 True。
+        本次删除的规模说明:照片张数、实际文件数(含 XMP / 配对 JPEG)与总大小。
 
-        Ask before deleting (with "don't ask again"); True when confirmation is
-        disabled in settings.
-        """
-        from advanced_config import get_advanced_config
-        cfg = get_advanced_config()
-        if not cfg.delete_confirm:
-            return True
-        from PySide6.QtWidgets import QCheckBox
-        msg_box = QMessageBox(self)
-        msg_box.setWindowTitle(self.i18n.t("browser.delete_title"))
-        msg_box.setIcon(QMessageBox.Warning)
-        yes_btn = msg_box.addButton(self.i18n.t("browser.delete_confirm_btn"), QMessageBox.AcceptRole)
-        msg_box.addButton(self.i18n.t("browser.delete_cancel_btn"), QMessageBox.RejectRole)
-        cb = QCheckBox(self.i18n.t("browser.delete_no_ask"))
-        msg_box.setCheckBox(cb)
-        if len(target_photos) == 1:
-            msg_box.setText(self.i18n.t("browser.delete_msg").format(
-                filename=target_photos[0].get("filename", "")))
-        else:
-            msg_box.setText(self.i18n.t("browser.delete_multi_msg", count=len(target_photos)))
-        msg_box.exec()
-        if msg_box.clickedButton() != yes_btn:
-            return False
-        if cb.isChecked():
-            cfg.set_delete_confirm(False)
-            cfg.save()
-        return True
+        Describe the delete: photo count, file count (with sidecars / paired
+        JPEGs) and total size.
 
-    def _trash_photo_files(self, photo: dict) -> bool:
-        """
-        把照片本体移入回收站，成功后再清理它的 XMP 边车、配套相机 JPEG 与内部缓存（#131）。
-
-        附属文件清理失败只记日志、不算删除失败——本体已经进了回收站。
-
-        Trash the photo, then its sidecar, paired JPEG and cache files (#131). Failing to
-        clean a companion is logged but does not fail the delete.
+        参数 / Parameters:
+            jobs (list): _photo_delete_job 的结果 / delete jobs.
 
         返回 / Returns:
-            bool: 本体是否已删除（无路径的数据库残留记录也算成功）
-            whether the photo itself is gone (a path-less DB row counts as done).
+            str: 如「45 张照片（共 135 个文件，3.2 GB）」/ e.g. "45 photos (135 files, 3.2 GB)".
+        """
+        from ui.detail_panel import _format_file_size
+        files = 0
+        size = 0
+        for main, companions, _caches in jobs:
+            for path in ([main] if main else []) + list(companions):
+                try:
+                    size += os.path.getsize(path)
+                    files += 1
+                except OSError:
+                    pass
+        return self.i18n.t("browser.delete_summary").format(
+            count=len(jobs), files=files, size=_format_file_size(size))
+
+    def _burst_delete_note(self, bursts: list) -> str:
+        """
+        折叠连拍的删除说明:几组、共几张,以及组内星级分布与皇冠精选张数。
+
+        折叠时组里其它照片看不见,删除前要让用户知道整组里有什么水平的照片,
+        例如「3★ 2 张、2★ 3 张，含 👑 精选 1 张」。
+
+        Describe the collapsed bursts being deleted: group / photo counts, the
+        star breakdown and how many carry the crown pick — the other members
+        are invisible while collapsed.
+
+        参数 / Parameters:
+            bursts (list): 折叠的连拍卡片记录(含 burst_photos)/ collapsed cards.
+
+        返回 / Returns:
+            str: 说明文字;无连拍时为空串 / note text, "" when no bursts.
+        """
+        if not bursts:
+            return ""
+        members = [m for card in bursts for m in (card.get("burst_photos") or [])]
+        counts = Counter()
+        for m in members:
+            try:
+                counts[int(m.get("rating") or 0)] += 1
+            except (TypeError, ValueError):
+                counts[0] += 1
+        items = []
+        for rating in sorted(counts, reverse=True):
+            stars = self.i18n.t("browser.rating_nobird") if rating < 0 else f"{rating}★"
+            items.append(self.i18n.t("browser.delete_burst_rating_item").format(
+                stars=stars, count=counts[rating]))
+        picked = sum(1 for m in members if m.get("picked"))
+        picked_text = (self.i18n.t("browser.delete_burst_picked").format(count=picked)
+                       if picked else "")
+        return self.i18n.t("browser.delete_burst_note").format(
+            groups=len(bursts), members=len(members),
+            ratings=self.i18n.t("browser.delete_burst_rating_sep").join(items),
+            picked=picked_text)
+
+    def _expand_bursts_for_review(self, bursts: list) -> None:
+        """
+        「展开连拍，逐张挑选」:什么都不删,只在网格里展开这些连拍并清掉勾选,
+        让用户逐张勾选要删的再按删除。
+
+        "Expand to choose": delete nothing; expand these bursts in the grid
+        and clear the checks so the user can pick members one by one.
+
+        参数 / Parameters:
+            bursts (list): 折叠的连拍卡片记录 / collapsed burst cards.
+        """
+        for card in bursts:
+            bid = card.get("burst_id")
+            if bid is not None:
+                self._expanded_bursts.add(bid)
+        self._thumb_grid.clear_multi_select()
+        self._update_display_list()
+
+    def _confirm_delete(self, target_photos: list, jobs: list, permanent: bool = False,
+                        bursts: Optional[list] = None) -> Optional[str]:
+        """
+        删除前确认,返回删除方式。
+
+        - permanent=True(快捷键 / 右键「永久删除」):始终弹「永久删除」确认,
+          默认按钮是「取消」,不受「删除前确认」设置影响。
+        - 设置里关闭了确认:直接按「移到回收站」处理,不弹框。
+        - 否则弹三选一:取消 / 永久删除(红色)/ 移到回收站(默认按钮,回车即此项)。
+          「以后不再询问」只在选「移到回收站」时生效——永久删除不可撤销,
+          永远不能被设成免确认。
+
+        - 涉及折叠连拍(bursts 非空)时也总会弹框,即使关闭了确认:组里其它照片
+          看不见,框里列出星级分布,并多一个「展开连拍，逐张挑选」(返回 "expand",
+          什么都不删);这种框不提供「不再询问」。
+
+        Confirm a delete and return how to delete. A permanent request always
+        asks (default button: Cancel), regardless of the setting. With
+        confirmation off, "trash" is returned silently — unless collapsed
+        bursts are involved: their other members are hidden, so the dialog
+        always shows, lists the star breakdown and offers "Expand to choose"
+        ("expand", deletes nothing), without "don't ask again". Otherwise a
+        3-way dialog: Cancel / Delete Permanently (red) / Move to Trash
+        (default). "Don't ask again" only applies when Trash is chosen — a
+        permanent delete can never be made prompt-free.
+
+        参数 / Parameters:
+            target_photos (list): 要删除的照片 / photos to delete.
+            jobs (list): 对应的删除任务,用于统计文件数与大小 / delete jobs.
+            permanent (bool): 是否为永久删除请求 / permanent request.
+            bursts (Optional[list]): 本次涉及的折叠连拍卡片 / collapsed burst cards.
+
+        返回 / Returns:
+            Optional[str]: "trash" / "permanent" / "expand";取消为 None
+            / None on cancel.
+        """
+        from advanced_config import get_advanced_config
+        from ui.custom_dialogs import DeleteConfirmDialog
+        cfg = get_advanced_config()
+        trash = self._trash_name()
+        bursts = bursts or []
+        if not permanent and not bursts and not cfg.delete_confirm:
+            return "trash"
+        summary = self._delete_summary(jobs)
+        note = self._burst_delete_note(bursts)
+        burst_text = f"\n\n{note}" if note else ""
+        t = self.i18n.t
+        links = [("expand", t("browser.delete_expand_btn"))] if bursts else None
+
+        if permanent:
+            dlg = DeleteConfirmDialog(
+                self, t("browser.delete_permanent_title"),
+                t("browser.delete_permanent_msg").format(summary=summary, trash=trash, burst=burst_text),
+                buttons=[("permanent", t("browser.delete_permanent_btn"), "danger"),
+                         ("cancel", t("browser.delete_cancel_btn"), "primary")],
+                default_key="cancel", links=links)
+            dlg.exec()
+            return dlg.choice if dlg.choice in ("permanent", "expand") else None
+
+        dlg = DeleteConfirmDialog(
+            self, t("browser.delete_title"),
+            t("browser.delete_choice_msg").format(summary=summary, trash=trash, burst=burst_text),
+            buttons=[("permanent", t("browser.delete_permanent_btn"), "danger"),
+                     ("cancel", t("browser.delete_cancel_btn"), "secondary"),
+                     ("trash", t("browser.delete_to_trash_btn").format(trash=trash), "primary")],
+            default_key="trash", links=links,
+            # 涉及连拍的框不提供「不再询问」/ no "don't ask again" when bursts are involved
+            checkbox_text=None if bursts else t("browser.delete_no_ask_trash").format(trash=trash))
+        dlg.exec()
+        if dlg.choice == "trash":
+            if dlg.checked:
+                cfg.set_delete_confirm(False)
+                cfg.save()
+            return "trash"
+        if dlg.choice in ("permanent", "expand"):
+            return dlg.choice           # 勾选框对永久删除无效 / checkbox ignored
+        return None
+
+    def _photo_delete_job(self, photo: dict) -> tuple:
+        """
+        在主线程算好一张照片的删除任务:本体路径 + 附属文件 + 缓存文件(#131)。
+
+        附属文件必须在本体移走前算:本体走了就无法再确认同名关系。
+
+        Build one photo's delete job on the GUI thread: main path, companions
+        and cache files (#131). Companions are collected before the main file
+        disappears.
+
+        参数 / Parameters:
+            photo (dict): 照片记录 / photo record.
+
+        返回 / Returns:
+            tuple: (本体路径或空串, 附属文件列表, 缓存文件列表)
+            / (main path or "", companions, caches).
         """
         photo = self._resolve_photo_paths(photo)
         filepath = photo.get("current_path") or photo.get("original_path") or ""
         if not filepath:
-            return True
-        # 先算附属文件：本体移走后就无法再确认同名关系
-        # Collect companions before the main file disappears
+            return ("", [], [])
         companions, caches = _photo_companion_files(photo)
-        if not _move_to_trash(filepath):
-            return False
-        from tools.utils import log_message
-        for path in companions:
-            if not _move_to_trash(path):
-                log_message(f"[Delete] companion not trashed: {path}")
-        for path in caches:
-            try:
-                os.remove(path)
-            except OSError as e:
-                log_message(f"[Delete] cache not removed: {path}: {e}")
-        return True
+        return (filepath, companions, caches)
 
-    def _delete_photos(self, target_photos: list, in_fullscreen: bool) -> None:
+    def _delete_photos(self, target_photos: list, in_fullscreen: bool,
+                       permanent: bool = False) -> None:
         """
-        删除照片的唯一实现：确认 → 回收站 → DB → 四份内存列表 → 网格 → 跳到相邻一张。
+        删除照片入口：确认(选择回收站 / 永久删除)→ 删除 → 收尾(_finish_delete)。
+
+        一张照片(全屏 Delete 等)在主线程直接删,一次批量调用约 0.2 秒;多张则
+        放到后台线程按批删,显示可取消的进度条,删完由 _on_photo_delete_finished
+        回主线程收尾。删除进行中再按删除键直接忽略,避免同一张被删两次。
+
+        Delete entry: confirm → trash → _finish_delete. A single photo is
+        trashed inline (~0.2s for one batch call); several go to a worker
+        thread in batches with a cancellable progress dialog, finishing on
+        the GUI thread. Delete requests during a running delete are ignored.
+
+        参数 / Parameters:
+            target_photos (list): 要删除的照片 / photos to delete.
+            in_fullscreen (bool): 是否在全屏查看器中删除 / deleting from fullscreen.
+            permanent (bool): 永久删除请求(快捷键 / 右键),总会先确认
+                / permanent request (shortcut / menu); always confirmed.
+        """
+        if self._delete_cancel is not None:
+            return
+        target_photos = [p for p in target_photos if p and p.get("filename")]
+        bursts = []
+        if not in_fullscreen:
+            # 网格里的连拍卡片代表整组:展开成全部成员一起删(全屏只删眼前这一张)
+            # A grid burst card stands for the whole burst; fullscreen deletes
+            # only the photo on screen.
+            bursts = [p for p in target_photos
+                      if p.get("is_burst_group") and len(p.get("burst_photos") or []) > 1]
+            target_photos = _expand_burst_groups(target_photos)
+        if not target_photos:
+            return
+        jobs = [self._photo_delete_job(p) for p in target_photos]
+        mode = self._confirm_delete(target_photos, jobs, permanent=permanent, bursts=bursts)
+        if mode == "expand":
+            self._expand_bursts_for_review(bursts)
+            return
+        if mode is None:
+            return
+        permanent = (mode == "permanent")
+        if permanent:
+            from tools.utils import log_message
+            log_message(f"[Delete] permanent delete requested: {len(jobs)} photos")
+        if len(jobs) == 1:
+            self._finish_delete(target_photos, _trash_photo_jobs(jobs, permanent=permanent),
+                                in_fullscreen)
+            return
+
+        label = (self.i18n.t("browser.delete_permanent_progress").format(count=len(jobs))
+                 if permanent else
+                 self.i18n.t("browser.delete_progress").format(count=len(jobs), trash=self._trash_name()))
+        progress = StyledProgressDialog(
+            label, self.i18n.t("buttons.cancel"), 0, len(jobs), self,
+        )
+        progress.setWindowTitle(self.i18n.t("browser.delete_title"))
+        progress.setWindowModality(Qt.WindowModal)
+        # 永久删除很快,半秒内做完就不闪进度框 / permanent is fast: no flash under 0.5s
+        progress.setMinimumDuration(500 if permanent else 0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.setValue(0)
+
+        cancel = threading.Event()
+        progress.canceled.connect(cancel.set)
+        self._delete_cancel = cancel
+        self._delete_progress_dialog = progress
+        self._delete_pending = (target_photos, in_fullscreen)
+        result_box: dict = {}
+        self._delete_result_box = result_box
+
+        def _emit_progress(done: int, total: int) -> None:
+            try:
+                self.photo_delete_progress.emit(done, total)
+            except RuntimeError:
+                pass
+
+        def _run() -> None:
+            from tools.utils import log_message
+            try:
+                outcome = _trash_photo_jobs(jobs, _emit_progress, cancel.is_set, permanent=permanent)
+            except Exception as e:  # noqa: BLE001 — 结果必须送回主线程 / the result must reach the GUI
+                log_message(f"[Delete] batch delete crashed: {e}")
+                # 崩溃时以磁盘为准判定哪些本体已不在 / on a crash, trust the disk
+                outcome = [True if not job[0] else (False if os.path.lexists(job[0]) else True)
+                           for job in jobs]
+            result_box["outcome"] = outcome
+            try:
+                self.photo_delete_finished.emit(outcome)
+            except RuntimeError:
+                pass
+
+        self._delete_thread = threading.Thread(target=_run, daemon=True)
+        self._delete_thread.start()
+
+    @Slot(int, int)
+    def _on_photo_delete_progress(self, done: int, total: int) -> None:
+        """
+        更新删除进度框(主线程槽)/ Update the delete progress dialog (GUI slot).
+
+        参数 / Args:
+            done (int): 已处理张数 / photos processed.
+            total (int): 总张数 / total photos.
+        """
+        dialog = self._delete_progress_dialog
+        if dialog is not None and not dialog.wasCanceled():
+            dialog.setValue(done)
+
+    @Slot(object)
+    def _on_photo_delete_finished(self, outcome: list) -> None:
+        """
+        后台删除结束:关进度框,按逐张结果收尾(主线程槽)。取消时已删的照片
+        照常从界面与数据库移除,未处理的保持原样。
+
+        Background delete done: close the dialog and finish with the
+        per-photo outcome (GUI slot). On cancel the already-trashed photos
+        are removed as usual; unprocessed ones are left untouched.
+
+        参数 / Args:
+            outcome (list): _trash_photo_jobs 的逐张结果 / per-photo outcome.
+        """
+        dialog = self._delete_progress_dialog
+        pending = self._delete_pending
+        self._delete_cancel = None
+        self._delete_thread = None
+        self._delete_progress_dialog = None
+        self._delete_pending = None
+        if dialog is not None:
+            dialog.close()
+            dialog.deleteLater()
+        if pending is not None:
+            self._finish_delete(pending[0], outcome, pending[1])
+
+    def _finish_delete(self, target_photos: list, outcome: list, in_fullscreen: bool) -> None:
+        """
+        删除收尾的唯一实现：报失败 → DB → 四份内存列表 → 网格 → 跳到相邻一张。
 
         此前全屏 Delete 键与 Ctrl+Backspace 各有一份实现，都漏改了全屏方向键
         使用的导航列表 _fullscreen_nav_photos 和第三份缓存 _raw_filtered_photos：
@@ -4536,18 +5089,16 @@ class ResultsBrowserWindow(QMainWindow):
 
         参数 / Parameters:
             target_photos (list): 要删除的照片 / photos to delete.
+            outcome (list): 与 target_photos 对应的 True/False/None(取消未处理)
+                / per-photo True / False / None (not attempted).
             in_fullscreen (bool): 是否在全屏查看器中删除 / deleting from fullscreen.
         """
-        target_photos = [p for p in target_photos if p and p.get("filename")]
-        if not target_photos or not self._confirm_delete(target_photos):
-            return
-
         deleted_photos = []
         failed_paths = []
-        for photo in target_photos:
-            if self._trash_photo_files(photo):
+        for photo, ok in zip(target_photos, outcome):
+            if ok:
                 deleted_photos.append(photo)
-            else:
+            elif ok is False:
                 failed_paths.append(photo.get("current_path") or photo.get("original_path") or "")
         if failed_paths:
             QMessageBox.warning(
@@ -4708,6 +5259,10 @@ class ResultsBrowserWindow(QMainWindow):
         elif key == Qt.Key_A and (event.modifiers() & Qt.ControlModifier):
             if not in_fullscreen and self._stack.currentIndex() != 2:
                 self._thumb_grid.select_all()
+        elif is_permanent_delete_shortcut(event):
+            # 永久删除:macOS ⌘⌥⌫(同访达「立即删除」)/ Windows Shift+Delete,总会先确认
+            # Permanent delete: Cmd+Opt+Backspace / Shift+Delete; always confirmed
+            self._delete_selected_photos(permanent=True)
         elif key == Qt.Key_Delete or (key == Qt.Key_Backspace and (event.modifiers() & Qt.ControlModifier)):
             # Delete 键（Windows 用户的习惯，#129）与 macOS 的 Command+Backspace
             # （Qt 在 macOS 上把 Command 映射为 ControlModifier）都删除选中照片。
@@ -4743,6 +5298,22 @@ class ResultsBrowserWindow(QMainWindow):
 
     def cleanup(self):
         """释放线程和 DB 连接。"""
+        # 关窗时让后台删除停在当前批之后(一批最多约 1 秒),避免关窗后还在动文件
+        # Stop a running delete after its current batch before tearing down
+        if self._delete_cancel is not None:
+            self._delete_cancel.set()
+            thread = self._delete_thread
+            if thread is not None:
+                thread.join(timeout=10)
+            # 排队中的收尾槽要等 DB 关掉之后才跑,这里先把已进回收站的照片从 DB 删掉
+            # The queued finish slot would run after the DB closes; drop trashed rows now
+            pending = self._delete_pending
+            outcome = self._delete_result_box.get("outcome")
+            if pending is not None and outcome is not None and self._db:
+                for photo, ok in zip(pending[0], outcome):
+                    if ok:
+                        self._db.delete_photo(_photo_db_key(photo))
+            self._delete_pending = None
         # 关窗时取消正在进行的复制，并等当前块写完、临时文件清掉再继续
         # Cancel a running copy and wait briefly so its temp file gets removed
         if self._copy_cancel is not None:

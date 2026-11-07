@@ -1785,6 +1785,9 @@ class SuperPickyMainWindow(QMainWindow):
         """创建进度区域"""
         # 进度条 - 直接添加到父布局
         self.progress_bar = QProgressBar()
+        # 全局样式只对这个 objectName 限高 3px(细线样式),其它进度条保持正常高度
+        # GLOBAL_STYLE caps only this objectName at 3px; other bars stay full height
+        self.progress_bar.setObjectName("mainProgressBar")
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(False)

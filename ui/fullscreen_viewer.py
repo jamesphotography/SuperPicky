@@ -6,6 +6,7 @@ _FullscreenImageLabel: 支持滚轮缩放 + paintEvent 绘制焦点圆圈/十字
 """
 
 import os
+import sys
 import threading as _threading
 from collections import OrderedDict
 from typing import Optional
@@ -13,8 +14,14 @@ from typing import Optional
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QFrame
 )
-from PySide6.QtCore import Qt, Signal, QThread, QTimer, Slot, QEvent, QSize, QObject
-from PySide6.QtGui import QPixmap, QImage, QPainter, QPen, QColor, QBrush, QImageReader
+from PySide6.QtCore import (
+    Qt, Signal, QThread, QTimer, Slot, QEvent, QSize, QObject,
+    QBuffer, QByteArray, QIODevice,
+)
+from PySide6.QtGui import (
+    QPixmap, QImage, QPainter, QPen, QColor, QBrush, QImageReader,
+    QImageIOHandler, QTransform,
+)
 
 from tools.file_utils import sibling_jpeg
 from tools.zh_convert import zh_text
@@ -76,6 +83,149 @@ def _decode_capped(path: str, max_edge: int) -> QImage:
         ))
     img = reader.read()
     return img if img is not None else QImage()
+
+
+def is_permanent_delete_shortcut(event) -> bool:
+    """
+    是否为「永久删除」快捷键:macOS 为 ⌘⌥⌫(与访达「立即删除」一致),
+    Windows / 其他平台为 Shift+Delete(与资源管理器一致)。
+    Qt 在 macOS 上把 Command 映射为 ControlModifier、Option 为 AltModifier。
+
+    Whether the key event is the permanent-delete shortcut: Cmd+Option+
+    Backspace on macOS (as Finder's "Delete Immediately"), Shift+Delete
+    elsewhere (as Explorer). Qt maps Command to ControlModifier on macOS.
+
+    参数 / Parameters:
+        event (QKeyEvent): 按键事件 / key event.
+
+    返回 / Returns:
+        bool: 是否为永久删除快捷键 / whether it is the shortcut.
+    """
+    key = event.key()
+    mods = event.modifiers()
+    if sys.platform == "darwin":
+        return (key in (Qt.Key_Backspace, Qt.Key_Delete)
+                and bool(mods & Qt.ControlModifier) and bool(mods & Qt.AltModifier))
+    return key == Qt.Key_Delete and bool(mods & Qt.ShiftModifier)
+
+
+# RAW 内嵌大图比当前显示图至少大这么多才值得替换(避免同尺寸重复解码)
+# Embedded RAW preview must beat the shown image by this factor to be used.
+_RAW_EMBED_MIN_GAIN = 1.1
+
+# 长宽比容差:内嵌图转正后与当前显示图比例相差超过此值即视为方向不对,放弃替换
+# Aspect tolerance: beyond this the embedded image is assumed mis-oriented.
+_ASPECT_TOLERANCE = 0.03
+
+
+def _oriented_size(path: str) -> Optional[tuple]:
+    """
+    读图片头部,返回按 EXIF 方向转正后的 (宽, 高);读不到返回 None。
+
+    QImageReader.size() 给的是未旋转的存储尺寸,竖拍 JPEG(EXIF 方向 6/8)
+    显示时宽高互换,这里一并换算。
+
+    Read the header and return the (width, height) after EXIF orientation;
+    None when unreadable. QImageReader.size() is the stored size, so a
+    portrait JPEG (orientation 6/8) has its dimensions swapped here.
+
+    参数 / Parameters:
+        path (str): 图片路径 / image path.
+
+    返回 / Returns:
+        Optional[tuple]: (w, h) 或 None / (w, h) or None.
+    """
+    reader = QImageReader(path)
+    reader.setAutoTransform(True)
+    size = reader.size()
+    if not size.isValid():
+        return None
+    w, h = size.width(), size.height()
+    if reader.transformation() & QImageIOHandler.TransformationRotate90:
+        w, h = h, w
+    return (w, h)
+
+
+def _apply_raw_flip(img: QImage, flip: int) -> QImage:
+    """
+    按 LibRaw 的 sizes.flip 方向码把图转正。
+
+    flip: 0=不转, 3=180°, 5=逆时针 90°, 6=顺时针 90°(LibRaw 约定)。
+
+    Rotate an image upright per LibRaw's sizes.flip code
+    (0=none, 3=180°, 5=90° CCW, 6=90° CW).
+
+    参数 / Parameters:
+        img (QImage): 待旋转图 / image to rotate.
+        flip (int): LibRaw 方向码 / LibRaw flip code.
+
+    返回 / Returns:
+        QImage: 转正后的图(未知方向码原样返回)/ upright image.
+    """
+    angle = {3: 180, 5: 270, 6: 90}.get(int(flip or 0))
+    if not angle:
+        return img
+    return img.transformed(QTransform().rotate(angle))
+
+
+def _decode_raw_embedded(raw_path: str, shown_size: tuple) -> QImage:
+    """
+    从 RAW 里取相机内嵌的大尺寸 JPEG,作为 100% 检视用的全尺寸图。
+
+    场景:RAW + 小尺寸 JPEG 双格式拍摄(如 Z9 的 JPEG S 档 2688×1792)时,
+    结果浏览器显示的是那张小 JPEG,放大到 100% 就糊;而 NEF 里内嵌的
+    JpgFromRaw 是接近全尺寸的(实测 5392×3592,提取约 10ms),色彩也与相机
+    直出一致,不需要真的解 RAW。
+
+    只在内嵌图比当前显示图大 _RAW_EMBED_MIN_GAIN 倍以上、且转正后长宽比
+    与当前显示图一致时返回;任何不满足或出错都返回空图(调用方保留原图)。
+
+    Pull the camera's large embedded JPEG out of a RAW for 100% inspection.
+    With RAW + small-JPEG shooting (e.g. Z9 JPEG S, 2688x1792) the browser
+    shows the small JPEG, which is blurry at 100%; the NEF's JpgFromRaw is
+    near full size (measured 5392x3592, ~10ms) with camera colours, so no
+    demosaic is needed. Returns a null image unless the embedded preview is
+    clearly larger and, once upright, matches the shown aspect ratio.
+
+    参数 / Parameters:
+        raw_path (str): RAW 文件路径 / RAW file path.
+        shown_size (tuple): 当前显示图转正后的 (宽, 高) / upright (w, h) shown.
+
+    返回 / Returns:
+        QImage: 内嵌大图,不可用时为 isNull 的空图 / embedded image or null.
+    """
+    try:
+        import rawpy
+        with rawpy.imread(raw_path) as raw:
+            flip = raw.sizes.flip
+            thumb = raw.extract_thumb()
+    except Exception as e:
+        print(f"[Fullscreen] RAW embedded preview unavailable: {os.path.basename(raw_path)}: {e}")
+        return QImage()
+    if thumb is None or thumb.format != rawpy.ThumbFormat.JPEG:
+        return QImage()
+
+    data = QByteArray(bytes(thumb.data))
+    buf = QBuffer(data)
+    buf.open(QIODevice.ReadOnly)
+    reader = QImageReader(buf)
+    reader.setAutoTransform(True)
+    img = reader.read()
+    if img is None or img.isNull():
+        return QImage()
+    # 内嵌 JPEG 自身没带方向信息时(多数机身方向记在 RAW 里),按 RAW 方向转正
+    # When the embedded JPEG carries no orientation itself, use the RAW's.
+    if reader.transformation() == QImageIOHandler.TransformationNone:
+        img = _apply_raw_flip(img, flip)
+
+    sw, sh = shown_size
+    if max(img.width(), img.height()) < max(sw, sh) * _RAW_EMBED_MIN_GAIN:
+        return QImage()                    # 不比当前图大 / not larger than shown
+    if sw <= 0 or sh <= 0 or abs(img.width() / img.height() - sw / sh) > _ASPECT_TOLERANCE * (sw / sh):
+        print(f"[Fullscreen] RAW embedded preview aspect mismatch, kept shown image: "
+              f"{os.path.basename(raw_path)} {img.width()}x{img.height()} vs {sw}x{sh}")
+        return QImage()
+    return img
 
 
 # ============================================================
@@ -243,10 +393,23 @@ class _ImageLoader(QThread):
     """
     ready = Signal(object)   # QImage
 
-    def __init__(self, path: str, parent=None, max_edge: Optional[int] = None):
+    def __init__(self, path: str, parent=None, max_edge: Optional[int] = None,
+                 raw_path: Optional[str] = None, shown_size: Optional[tuple] = None):
+        """
+        参数 / Parameters:
+            path (str): 显示用 JPEG 路径 / display JPEG path.
+            parent: Qt 父对象 / Qt parent.
+            max_edge (Optional[int]): 封顶长边;None 为全分辨率 / decode cap.
+            raw_path (Optional[str]): 全分辨率补解时可选的 RAW 路径,优先取其
+                内嵌大图 / optional RAW for the full-res top-up.
+            shown_size (Optional[tuple]): path 转正后的 (宽, 高),配合 raw_path
+                判断内嵌图是否更大 / upright size of path.
+        """
         super().__init__(parent)
         self._path = path
         self._max_edge = max_edge
+        self._raw_path = raw_path
+        self._shown_size = shown_size
         self._cancelled = False
 
     def cancel(self):
@@ -255,6 +418,16 @@ class _ImageLoader(QThread):
     def run(self):
         if self._cancelled:
             return
+        if self._raw_path and self._shown_size:
+            # 全分辨率补解:先试 RAW 内嵌大图(显示的是小相机 JPEG 时才会更大)
+            # Full-res top-up: try the RAW's larger embedded JPEG first.
+            img = _decode_raw_embedded(self._raw_path, self._shown_size)
+            if not img.isNull():
+                if not self._cancelled:
+                    self.ready.emit(img)
+                return
+            if max(self._shown_size) <= _HD_CACHE_MAX_EDGE:
+                return                      # 显示图已是全分辨率 / already full-res
         if self._path and os.path.exists(self._path):
             if self._max_edge:
                 img = _decode_capped(self._path, self._max_edge)
@@ -836,6 +1009,9 @@ class FullscreenViewer(QWidget):
     # viewer's own photo and the next edit silently aborts on a stale path.
     burst_sequence_requested = Signal(object)
     delete_requested = Signal(object)   # 功能1：携带当前 photo dict
+    # 永久删除快捷键(⌘⌥⌫ / Shift+Delete)→ 携带当前 photo dict
+    # Permanent-delete shortcut → carries the current photo dict
+    permanent_delete_requested = Signal(object)
     context_menu_requested = Signal(object, object)   # (photo, QPoint全局坐标)
     species_edit_requested = Signal(object)   # 左栏「编辑鸟种」→ 父窗口复用既有处理
     crop_advice_requested = Signal(object)    # 左栏「裁剪建议」→ 父窗口复用既有处理
@@ -1551,6 +1727,36 @@ class FullscreenViewer(QWidget):
                 return op
         return None
 
+    @staticmethod
+    def _resolve_raw_for_topup(photo: dict, hd_path: str) -> Optional[str]:
+        """
+        找出可用于 100% 补全尺寸的 RAW:仅当显示图是相机直出 JPEG(不在
+        .superpicky 缓存里)且照片本体是存在的 RAW 时返回。
+
+        显示图本就取自 RAW 内嵌预览(.superpicky/cache 下)时,再从 RAW 提取
+        只会得到同一张图,故不返回。
+
+        Return the RAW usable for the 100% top-up: only when the shown image
+        is a camera JPEG (outside the .superpicky cache) and the photo itself
+        is an existing RAW. A cached preview already came from the RAW.
+
+        参数 / Parameters:
+            photo (dict): 照片记录 / photo record.
+            hd_path (str): 当前显示用的高清图路径 / shown HD image path.
+
+        返回 / Returns:
+            Optional[str]: RAW 路径或 None / RAW path or None.
+        """
+        from constants import RAW_EXTENSIONS
+        parts = os.path.normpath(hd_path).split(os.sep)
+        if ".superpicky" in parts:
+            return None
+        for key in ("current_path", "original_path"):
+            p = photo.get(key)
+            if p and os.path.splitext(p)[1].lower() in RAW_EXTENSIONS and os.path.isfile(p):
+                return p
+        return None
+
     @Slot(object)
     def _on_image_ready(self, img: QImage, path: str = ""):
         """后台加载完成：转存进高清缓存，并更新图片显示。"""
@@ -1572,21 +1778,31 @@ class FullscreenViewer(QWidget):
     def _start_fullres_load(self):
         """
         停留计时到期:为当前照片启动全分辨率补解(不入缓存)。
-        源图长边不超过封顶值时缓存里已是全分辨率,直接跳过。
+
+        - 显示图是相机直出 JPEG 且有配对 RAW 时(RAW + 小 JPEG 拍摄),后台
+          先试 RAW 内嵌的大尺寸 JPEG——只看显示图尺寸会误判「已是全分辨率」。
+        - 否则显示图长边不超过封顶值时缓存里已是全分辨率,直接跳过。
 
         Dwell expired: start the full-res top-up for the current photo
-        (never cached). Skipped when the source is within the cap —
-        the cached image is already full resolution.
+        (never cached). With a camera JPEG shown next to a RAW (RAW + small
+        JPEG), the worker first tries the RAW's large embedded JPEG — the
+        shown size alone would wrongly look "already full-res". Otherwise
+        it is skipped when the shown image is within the cap.
         """
         if not self._current_photo:
             return
         path = self._resolve_hd_path(self._current_photo)
         if not path:
             return
-        src = QImageReader(path).size()     # 仅读头部 / header only
-        if src.isValid() and max(src.width(), src.height()) <= _HD_CACHE_MAX_EDGE:
+        shown = _oriented_size(path)        # 仅读头部 / header only
+        raw_path = self._resolve_raw_for_topup(self._current_photo, path)
+        if raw_path and shown:
+            self._fullres_loader = _ImageLoader(
+                path, self, raw_path=raw_path, shown_size=shown)
+        elif shown and max(shown) <= _HD_CACHE_MAX_EDGE:
             return
-        self._fullres_loader = _ImageLoader(path, self)   # max_edge=None → 全分辨率
+        else:
+            self._fullres_loader = _ImageLoader(path, self)   # max_edge=None → 全分辨率
         _path_capture = path
         self._fullres_loader.ready.connect(
             lambda img, p=_path_capture: self._on_fullres_ready(img, p)
@@ -1678,6 +1894,9 @@ class FullscreenViewer(QWidget):
             self._img_label.toggle_zoom()
         elif key == _Qt.Key_Escape:
             self.close_requested.emit()
+        elif is_permanent_delete_shortcut(event):
+            if self._current_photo:
+                self.permanent_delete_requested.emit(self._current_photo)
         elif key in (_Qt.Key_Delete, _Qt.Key_X):
             if self._current_photo:
                 self.delete_requested.emit(self._current_photo)
