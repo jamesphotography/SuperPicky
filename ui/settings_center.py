@@ -453,14 +453,13 @@ class SettingsCenter(QDialog):
         btn.setProperty("collapsibleHeader", True)
         btn.setStyleSheet(f"""
             QPushButton {{
-                color: {COLORS['text_tertiary']};
-                font-size: 12px;
+                {self._GROUP_TITLE_QSS()}
                 background: transparent;
                 border: none;
                 text-align: left;
                 padding: 4px 0px;
             }}
-            QPushButton:hover {{ color: {COLORS['text_secondary']}; }}
+            QPushButton:hover {{ color: {COLORS['accent_hover']}; }}
         """)
         lay.addWidget(btn)
 
@@ -583,10 +582,19 @@ class SettingsCenter(QDialog):
         QLabel: the heading label
         """
         label = QLabel(text)
-        label.setStyleSheet(
-            f"color:{COLORS['accent']};font-size:14px;font-weight:700;"
-        )
+        label.setStyleSheet(self._GROUP_TITLE_QSS())
         return label
+
+    @staticmethod
+    def _GROUP_TITLE_QSS() -> str:
+        """
+        分组标题的共用样式(强调色 14px 加粗):常用页 _group_title 与高级页
+        _collapsible 标题按钮共用,保证两处层级一致。
+
+        Shared group-heading style (accent, 14px, bold) used by the Common page's
+        _group_title and the Advanced page's _collapsible header button.
+        """
+        return f"color:{COLORS['accent']};font-size:14px;font-weight:700;"
 
     # ── 精选小节 / Culling sections ──────────────────────────────────────────
 
@@ -722,6 +730,9 @@ class SettingsCenter(QDialog):
         quota_row = QHBoxLayout()
         quota_label = QLabel(self.i18n.t("settings.culling_quota_split_label"))
         quota_label.setStyleSheet(f"color:{COLORS['text_secondary']};font-size:12px;")
+        # 文案较长:保持 160 宽(与 V1 滑块标签对齐)并允许换行,避免被截断。
+        # Long text: keep the 160 width (aligned with the V1 slider labels) and wrap.
+        quota_label.setWordWrap(True)
         quota_label.setFixedWidth(160)
         self._cull_quota = QuotaBar(
             int(get_quota3_for_skill(self._current_skill_key, cfg)),
@@ -3037,7 +3048,7 @@ class SettingsCenter(QDialog):
         style_combo_popup(self._video_mode_combo)
         mode_row.addWidget(self._video_mode_combo)
         mode_row.addStretch(1)
-        lay.addLayout(mode_row)
+        vl.addLayout(mode_row)
 
         # ── 分隔线 / Divider ──────────────────────────────────────────────────
         vl.addWidget(self._divider())

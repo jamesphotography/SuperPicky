@@ -96,8 +96,12 @@ def test_labs_video_suboptions_follow_switch_and_keep_values():
     w = SettingsCenter(get_i18n(), start_page="labs")
     try:
         assert w._video_opts_box.isHidden()
+        # 识别模式行也必须在容器内并随之隐藏 / mode row hides with the box
+        assert w._video_opts_box.isAncestorOf(w._video_mode_combo)
+        assert not w._video_mode_combo.isVisibleTo(w)
         w._video_auto_check.setChecked(True)
         assert not w._video_opts_box.isHidden()
+        assert w._video_mode_combo.isVisibleTo(w)
         assert cfg.config["video_auto_process_in_main"] is True
         w._video_max_frames.setValue(120)
         w._video_auto_check.setChecked(False)
