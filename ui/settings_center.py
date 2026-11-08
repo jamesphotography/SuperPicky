@@ -733,6 +733,29 @@ class SettingsCenter(QDialog):
         lay.addLayout(quota_row)
         self._quota_row_widgets = (quota_label, self._cull_quota)
 
+        # 脱焦判定锐度线(300-800,步长 10;与 set_v2_focus_arbitration_sharpness
+        # clamp 一致)。仅 V2 评星生效,V1 下置灰(见 _apply_algo_visibility)。
+        # Out-of-focus sharpness line (300-800, step 10; matches the setter
+        # clamp). V2 only; greyed out under V1 (see _apply_algo_visibility).
+        arb_row = QHBoxLayout()
+        arb_label = QLabel(self.i18n.t("settings.focus_arb_label"))
+        arb_label.setStyleSheet(f"color:{COLORS['text_secondary']};font-size:12px;")
+        arb_label.setFixedWidth(160)
+        self._focus_arb_spin = QSpinBox()
+        self._focus_arb_spin.setRange(300, 800)
+        self._focus_arb_spin.setSingleStep(10)
+        self._focus_arb_spin.setValue(int(cfg.v2_focus_arbitration_sharpness))
+        self._focus_arb_spin.valueChanged.connect(self._on_focus_arb_changed)
+        arb_row.addWidget(arb_label)
+        arb_row.addWidget(self._focus_arb_spin)
+        arb_row.addStretch(1)
+        lay.addLayout(arb_row)
+        arb_hint = QLabel(self.i18n.t("settings.focus_arb_hint"))
+        arb_hint.setWordWrap(True)
+        arb_hint.setStyleSheet(f"color:{COLORS['text_muted']};font-size:11px;")
+        lay.addWidget(arb_hint)
+        self._focus_arb_widgets = (arb_label, self._focus_arb_spin, arb_hint)
+
         # 锐度滑块 (100-600, int; 对应 min_sharpness，范围与 set_min_sharpness clamp 一致)
         # Sharpness slider (100-600 integer; maps to min_sharpness, matches the
         # set_min_sharpness clamp range)
@@ -1607,6 +1630,9 @@ class SettingsCenter(QDialog):
             w.setVisible(self._rating_v2)
         for w in self._sharp_row_widgets + self._nima_row_widgets:
             w.setVisible(not self._rating_v2)
+        # 脱焦判定线仅 V2 生效:V1 下置灰 / the focus line is V2-only: grey out under V1
+        for w in getattr(self, "_focus_arb_widgets", ()):
+            w.setEnabled(self._rating_v2)
 
     def _on_algo_selected(self, algo_key: str) -> None:
         """
@@ -1833,6 +1859,21 @@ class SettingsCenter(QDialog):
         cfg.set_custom_quota2(q2)
         cfg.save()
 
+    def _on_focus_arb_changed(self, value: int) -> None:
+        """
+        脱焦判定锐度线变化 → 立即写入配置并保存。
+
+        Out-of-focus sharpness line changed: persist immediately.
+
+        参数 / Parameters:
+            value (int): 新锐度线(300-800)/ new line value.
+        """
+        from advanced_config import get_advanced_config
+
+        cfg = get_advanced_config()
+        cfg.set_v2_focus_arbitration_sharpness(value)
+        cfg.save()
+
     def _on_ai_confidence_changed(self, value: int) -> None:
         """AI 置信度滑块变化 → 立即持久化(与技能档/自定义状态无关)。
         AI confidence slider changed → persist immediately (independent of
@@ -2001,6 +2042,7 @@ class SettingsCenter(QDialog):
         cfg.set_min_confidence(self._cull_ai.value() / 100.0)
         cfg.set_min_sharpness(self._cull_sharp.value())
         cfg.set_min_nima(self._cull_nima.value() / 10.0)
+        cfg.set_v2_focus_arbitration_sharpness(self._focus_arb_spin.value())
         cfg.set_burst_fps(self._cull_burst_fps.value())
         cfg.set_flight_check(self._cull_flight.isChecked())
         cfg.set_burst_check(self._cull_burst.isChecked())

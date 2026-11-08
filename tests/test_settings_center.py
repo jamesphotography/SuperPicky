@@ -1101,3 +1101,45 @@ def test_common_headings_and_advanced_collapsibles():
     assert w._apps_list.isVisible()
     assert buttons[3].text().startswith("▾")
     w.close()
+
+
+def test_focus_arb_spin_range_save_and_v1_disable():
+    """
+    验证高级页「脱焦判定锐度线」控件:范围 300-800、步长 10、初值取配置;
+    setValue 立即写盘;切到 V1 后置灰,切回 V2 恢复可用。
+
+    Verify the Advanced-page out-of-focus sharpness-line spinbox: range
+    300-800, step 10, initial value from config; setValue persists
+    immediately; disabled under V1, enabled again under V2.
+    """
+    import tempfile
+    import advanced_config as _ac_mod
+    from advanced_config import AdvancedConfig
+    from ui.settings_center import SettingsCenter
+    from tools.i18n import get_i18n
+
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+        tmp_path = f.name
+    _orig_get = _ac_mod.get_advanced_config
+    try:
+        cfg = AdvancedConfig(config_file=tmp_path)
+        _ac_mod.get_advanced_config = lambda: cfg
+        w = SettingsCenter(get_i18n())
+        spin = w._focus_arb_spin
+        assert spin.minimum() == 300 and spin.maximum() == 800
+        assert spin.singleStep() == 10
+        assert spin.value() == int(cfg.v2_focus_arbitration_sharpness)
+        assert spin.isEnabled()
+
+        spin.setValue(450)
+        assert cfg.v2_focus_arbitration_sharpness == 450.0
+        assert AdvancedConfig(config_file=tmp_path).v2_focus_arbitration_sharpness == 450.0
+
+        w._algo_legacy_checkbox.setChecked(True)
+        assert not spin.isEnabled()
+        w._algo_legacy_checkbox.setChecked(False)
+        assert spin.isEnabled()
+        w.close()
+    finally:
+        _ac_mod.get_advanced_config = _orig_get
+        os.unlink(tmp_path)

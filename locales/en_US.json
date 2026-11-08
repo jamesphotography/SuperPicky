@@ -626,6 +626,8 @@
     "culling_ai_label": "AI Confidence",
     "culling_sharp_label": "Sharpness Threshold",
     "culling_quota_label": "3-Star Quota (top % of rankable photos; no-bird/blurry excluded)",
+    "focus_arb_label": "Out-of-focus sharpness line",
+    "focus_arb_hint": "When the camera's focus point is off the bird: a head sharpness at or above this line counts as in focus (no penalty); below it the shot counts as out of focus and gets 2★ at most. Default 520; V2 rating only.",
     "culling_quota_split_label": "Star Quota Split (drag dividers; no-bird/blurry excluded)",
     "culling_nima_label": "Aesthetics Threshold (TOPIQ)",
     "culling_detect_section": "Detection Switches",

@@ -626,6 +626,8 @@
     "culling_ai_label": "AI 置信度",
     "culling_sharp_label": "锐度阈值",
     "culling_quota_label": "3星配额（可选照片中前 %，无鸟/糊片不占分母）",
+    "focus_arb_label": "脱焦判定锐度线",
+    "focus_arb_hint": "相机记录的对焦点在鸟外时：鸟头锐度达到此值，视为合焦、不扣分；不到此值，视为脱焦，最多 2★。默认 520，仅 V2 评星生效。",
     "culling_quota_split_label": "星级配额分配（拖动分隔点，无鸟/糊片不占分母）",
     "culling_nima_label": "美学阈值（TOPIQ）",
     "culling_detect_section": "检测开关",
