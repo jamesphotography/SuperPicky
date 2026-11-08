@@ -7,7 +7,7 @@ classification, a sequential queue and outcome aggregation.
 """
 import os
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from core.recursive_scanner import (
     DEFAULT_SCAN_MAX_DEPTH,
@@ -170,6 +170,57 @@ def classify_folder(path: str) -> str:
     return STATE_FRESH
 
 
+def queue_state(path: str) -> str:
+    """
+    多目录队列用的目录状态：在 classify_folder 基础上认出批次模式处理过的父目录。
+
+    批次模式下父目录的 report.db 只写在各子目录里、从不写进自己，classify_folder 只看
+    自己的 report.db 会把它判成 fresh——队列就不会默认跳过它，「全部重新处理」也不先
+    复原，扫描还会因为照片都在被排除的星级/鸟种目录里而记一条「无照片」错误（spec §4.3）。
+    所以：classify_folder 为 fresh、目录有结果（folder_has_results，含子目录批次）、并且
+    扫描不到任何可处理的照片时，算 processed。还有能扫到照片的父目录（部分子目录没
+    处理）仍为 fresh，照常处理（批次模式会跳过已处理的子目录）。
+    「扫不到」与开始前预扫描 / 加入列表时的判定相同：scan_directories 返回空表。
+    列表缓存的张数不能用来判断：扫描为 0 时它换成了各 report.db 的计数
+    （ui.folder_list_widget.folder_row_count），所以这里重新扫描；只有 fresh 且有结果的
+    目录（即批次父目录）才会走到扫描，普通目录不多花时间。扫描出错时保守地返回 fresh。
+
+    参数:
+    path (str): 目录
+
+    返回:
+    str: STATE_FRESH / STATE_RESUME / STATE_PROCESSED
+
+    Folder state for the multi-folder queue: classify_folder plus batch-mode
+    processed parents. A batch parent keeps report.db only in its
+    sub-folders, so classify_folder calls it fresh and the queue would
+    neither skip it by default nor restore it before "reprocess all", and
+    the scan would log a "no photos" error. Hence a fresh folder that has
+    results (folder_has_results) and no scannable photos (scan_directories
+    returns nothing, the same test as the pre-scan and list validation) is
+    processed. A parent that still has scannable photos stays fresh. The
+    list's cached counts cannot decide this (they fall back to report.db
+    counts when the scan is 0), so the folder is rescanned — only fresh
+    folders with results get that far. A failing scan conservatively yields
+    fresh.
+
+    Parameters:
+    path (str): the folder
+
+    Return:
+    str: STATE_FRESH / STATE_RESUME / STATE_PROCESSED
+    """
+    state = classify_folder(path)
+    if state != STATE_FRESH or not folder_has_results(path):
+        return state
+    try:
+        if scan_directories(path, max_depth=DEFAULT_SCAN_MAX_DEPTH):
+            return STATE_FRESH
+    except Exception:  # noqa: BLE001 — 扫描失败按 fresh 处理 / treat a failed scan as fresh
+        return STATE_FRESH
+    return STATE_PROCESSED
+
+
 @dataclass
 class FolderOutcome:
     """
@@ -193,19 +244,32 @@ class FolderQueue:
     skip folders are marked "skipped" at construction and never yielded.
     """
 
-    def __init__(self, folders: List[str], reprocess_all: bool) -> None:
+    def __init__(self, folders: List[str], reprocess_all: bool,
+                 states: Optional[Dict[str, str]] = None) -> None:
         """
-        参数: folders 目录列表（保持顺序）；reprocess_all 是否重处理已处理目录。
+        参数:
+        folders (List[str]): 目录列表（保持顺序）
+        reprocess_all (bool): 是否重处理已处理目录
+        states (Optional[Dict[str, str]]): 开始前预检已经算好的状态（queue_state 的结果）；
+            给了就直接采用，保证预检框列出的与队列实际执行的一致，也免得批次父目录再扫一遍。
+            缺的目录（例如不存在、没进预检）用 queue_state 现算。
 
-        Parameters: folders in order; reprocess_all re-runs processed folders.
+        Parameters:
+        folders (List[str]): folders in order
+        reprocess_all (bool): re-run processed folders
+        states (Optional[Dict[str, str]]): states already computed by the
+            pre-check (queue_state); used as-is so the dialog and the plan
+            agree and batch parents are not rescanned. Missing entries are
+            computed with queue_state.
         """
         self._folders: List[str] = list(folders)
         self.plan: List[Tuple[str, str]] = []
         self._outcomes = {}
         self._cursor = 0
         self._stopped = False
+        states = states or {}
         for path in self._folders:
-            state = classify_folder(path)
+            state = states[path] if path in states else queue_state(path)
             if state == STATE_RESUME:
                 action = "resume"
             elif state == STATE_PROCESSED:

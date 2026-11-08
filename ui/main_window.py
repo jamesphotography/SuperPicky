@@ -883,6 +883,12 @@ class SuperPickyMainWindow(QMainWindow):
         # 单目录处理（开关开启、列表 1 个目录）启动时锁住了列表编辑，结束槽据此解锁
         # Set when a single-folder run locked the folder list; terminal slots unlock
         self._single_run_locked = False
+        # 单目录重置（不属于队列「重新处理」或整组重置）的后台线程在跑：_is_lab_processing
+        # 据此把它算作处理中（挂起开关切换、退出要确认），结束槽里清掉
+        # A single-folder reset thread (not a queue reprocess nor a group reset)
+        # is running; _is_lab_processing counts it as processing. Cleared by the
+        # reset terminal slots.
+        self._single_reset_active = False
         self.current_progress = 0
         self.total_files = 0
         self._main_window_placement_saved = False
@@ -1675,10 +1681,12 @@ class SuperPickyMainWindow(QMainWindow):
     def _quit_app(self):
         """完全退出应用（清理由 aboutToQuit 信号统一处理）"""
         # 任务进行中时先确认，避免托盘"完全退出"误杀处理任务。多目录队列在跑时
-        # （含目录之间、「重新处理」的重置阶段，此时没有存活的工作线程）同样要确认
+        # （含目录之间、「重新处理」的重置阶段，此时没有存活的工作线程）以及单目录
+        # 重置进行中（重置线程正在移动照片）同样要确认
         # Confirm first if a task is running, so tray "Quit" cannot kill it by
         # accident — including a running folder queue with no live worker
-        # (between folders or during a reprocess reset)
+        # (between folders or during a reprocess reset) and a single-folder
+        # reset whose thread is still moving photos
         if self._is_lab_processing():
             reply = StyledMessageBox.question(
                 self,
@@ -2134,19 +2142,23 @@ class SuperPickyMainWindow(QMainWindow):
 
     def _is_lab_processing(self) -> bool:
         """
-        是否正在处理（工作线程存活、多目录队列在跑，或多目录整组重置在跑）。
+        是否正在处理（工作线程存活、多目录队列在跑、多目录整组重置在跑，或单目录重置
+        的后台线程在跑——重置同样在移动照片，期间不能切换目录栏或无确认退出）。
 
         返回:
         bool: 处理中为 True
 
         Whether processing is under way (worker alive, the folder queue running,
-        or a multi-folder group reset running).
+        a multi-folder group reset running, or a single-folder reset thread
+        running — a reset moves photos too, so the folder bar must not switch
+        and quitting must ask).
 
         Return:
         bool: True while processing
         """
         return ((self.worker is not None and self.worker.is_alive())
-                or self._queue is not None or self._reset_queue is not None)
+                or self._queue is not None or self._reset_queue is not None
+                or self._single_reset_active)
 
     def _is_multi_mode(self) -> bool:
         """
@@ -2318,15 +2330,19 @@ class SuperPickyMainWindow(QMainWindow):
         _on_error（以及多目录队列结束时）调用。
 
         注意：这些槽经排队连接执行时工作线程可能还没真正退出（is_alive 仍为 True），
-        所以这里不再检查工作线程，只要求队列与整组重置都已结束（_queue、_reset_queue 为 None）。
+        所以这里不再检查工作线程，只要求队列、整组重置与单目录重置都已结束
+        （_queue、_reset_queue 为 None，_single_reset_active 为 False）。单目录重置结束时
+        由 _on_reset_complete / _on_reset_error 先清标记再调用本方法。
 
         Apply a deferred multi-folder switch-off (or switch-on) once processing
-        ends. Called from _on_finished / _on_cancelled / _on_error (and when the
-        folder queue or a group reset ends). The worker thread may still be
-        alive while these queued slots run, so only the queue and the group
-        reset (_queue / _reset_queue is None) are checked here.
+        ends. Called from _on_finished / _on_cancelled / _on_error, when the
+        folder queue or a group reset ends, and at the end of a single reset
+        (after its flag is cleared). The worker thread may still be alive while
+        these queued slots run, so only the queue, the group reset and the
+        single reset are checked here.
         """
-        if self._queue is not None or self._reset_queue is not None:
+        if (self._queue is not None or self._reset_queue is not None
+                or self._single_reset_active):
             return
         if self._lab_multi_pending_on:
             # 处理中打开的开关：现在才切到列表（期间又关掉则放弃）
@@ -3447,6 +3463,38 @@ class SuperPickyMainWindow(QMainWindow):
         self._single_run_locked = False
         self._set_queue_editing(True)
 
+    def _begin_single_reset(self) -> None:
+        """
+        单目录重置的后台线程即将启动：记为处理中（_single_reset_active），实验室目录列表
+        显示时（开关开启、列表 1 个目录）与 _launch_worker 一样锁住目录选择入口，防止重置
+        中途加入目录或改掉 directory_path。开关关闭时不锁，单目录界面与 dev 一致。
+        只由 _do_reset_directory 在不属于队列「重新处理」、也不属于整组重置时调用。
+
+        A single-folder reset thread is about to start: mark it as processing
+        and, while the Labs folder list is shown, lock folder selection exactly
+        like _launch_worker does. With the switch off nothing is locked (same
+        single-folder UI as dev). Called by _do_reset_directory only when the
+        reset is neither a queue reprocess nor part of a group reset.
+        """
+        self._single_reset_active = True
+        if self._lab_multi_active:
+            self._set_queue_editing(False)
+            self._single_run_locked = True
+
+    def _end_single_reset(self) -> None:
+        """
+        单目录重置结束（_on_reset_complete / _on_reset_error 的单目录分支开头）：清掉
+        处理中标记并解开 _begin_single_reset 锁住的目录选择入口。挂起的开关切换由调用方
+        在刷新状态之后用 _apply_pending_lab_switch 应用。
+
+        A single-folder reset ended (start of the single branch of
+        _on_reset_complete / _on_reset_error): clear the processing flag and
+        unlock folder selection. The caller applies a deferred switch change
+        with _apply_pending_lab_switch after refreshing state.
+        """
+        self._single_reset_active = False
+        self._unlock_single_run()
+
     def _start_queue(self) -> None:
         """
         多目录模式点「开始」：所有开始前的询问在第一个目录开始前一次问完，再按列表顺序
@@ -3519,11 +3567,13 @@ class SuperPickyMainWindow(QMainWindow):
             return
         self._maybe_prompt_video_first_run(existing)
 
-        # 4. 预检：上次没处理完的接着处理；已处理过的默认跳过，可勾选全部重新处理
+        # 4. 预检：上次没处理完的接着处理；已处理过的默认跳过，可勾选全部重新处理。
+        #    状态用 queue_state：批次模式处理过的父目录（结果只在子目录、扫不到照片）也算已处理
         # 4. Pre-check: unfinished folders resume; processed ones are skipped
-        #    unless "Reprocess all" is ticked
-        from core.folder_queue import FolderQueue, STATE_PROCESSED, STATE_RESUME, classify_folder
-        states = {f: classify_folder(f) for f in existing}
+        #    unless "Reprocess all" is ticked. queue_state also treats a
+        #    batch-mode processed parent (results only in sub-folders) as processed
+        from core.folder_queue import FolderQueue, STATE_PROCESSED, STATE_RESUME, queue_state
+        states = {f: queue_state(f) for f in existing}
         resume_dirs = [f for f in existing if states[f] == STATE_RESUME]
         processed_dirs = [f for f in existing if states[f] == STATE_PROCESSED]
         reprocess_all = False
@@ -3565,7 +3615,9 @@ class SuperPickyMainWindow(QMainWindow):
 
         # 6. 建队列并开始 / Build the queue and start
         from ui.folder_list_widget import count_photos
-        self._queue = FolderQueue(folders, reprocess_all)
+        # 沿用预检算好的状态，预检框列出的与队列执行的一致
+        # Reuse the pre-check states so the dialog and the plan agree
+        self._queue = FolderQueue(folders, reprocess_all, states=states)
         self._queue_stop_requested = False
         self._queue_pending_launch = None
         self._queue_current = None
@@ -4494,7 +4546,20 @@ class SuperPickyMainWindow(QMainWindow):
                 traceback.print_exc()
                 error_signal.emit(error_msg)
 
-        threading.Thread(target=run_reset, daemon=True).start()
+        # 单目录重置（不是队列的「重新处理」，也不是整组重置——那两者已由 _queue /
+        # _reset_queue 记为处理中）：线程启动前记为处理中并按需锁住目录列表
+        # A single reset (neither a queue reprocess nor a group reset, which
+        # _queue / _reset_queue already track): mark it and lock the list if shown
+        single_reset = self._queue is None and self._reset_queue is None
+        if single_reset:
+            self._begin_single_reset()
+        try:
+            threading.Thread(target=run_reset, daemon=True).start()
+        except Exception:
+            # 线程没起来：撤销标记与锁，交给调用方处理 / thread failed to start: undo, re-raise
+            if single_reset:
+                self._end_single_reset()
+            raise
 
     def _on_reset_complete(self, success, restore_stats=None, exif_stats=None):
         """
@@ -4504,10 +4569,16 @@ class SuperPickyMainWindow(QMainWindow):
         多目录整组重置中（_reset_queue 不为 None）同样不弹提示、不走 _check_report_csv，
         只记该目录结果并推进到下一个（见 _reset_group_folder_done）。
 
+        单目录重置：清掉处理中标记并解锁目录列表（_end_single_reset），照旧弹提示、
+        刷新状态，最后应用重置期间挂起的实验室开关切换。
+
         Reset finished. When the folder queue reset a folder for reprocessing,
         skip the message box and _check_report_csv and launch it directly.
         During a group reset (_reset_queue not None) likewise skip both and
         just record the folder and advance (see _reset_group_folder_done).
+        A single reset clears its processing flag and unlocks the list
+        (_end_single_reset), keeps its message and refresh, then applies a
+        Labs switch change deferred during the reset.
         """
         if self._queue is not None and self._queue_pending_launch:
             # 部分文件没能移回原位：记一行警告，处理照常继续（与单目录一样不中止）
@@ -4537,6 +4608,9 @@ class SuperPickyMainWindow(QMainWindow):
             else:
                 self._reset_group_folder_done(True)
             return
+        # 单目录重置：先清处理中标记、解锁列表，最后应用挂起的开关切换
+        # Single reset: clear the flag and unlock first; apply a deferred switch last
+        self._end_single_reset()
         if success:
             self._update_status(self.i18n.t("labels.ready"), COLORS['accent'])
             self._log(self.i18n.t("messages.reset_complete_log"))
@@ -4567,9 +4641,9 @@ class SuperPickyMainWindow(QMainWindow):
             self._suppress_results_browser_once = False
             self._update_status_banner("ready")
             self._update_action_buttons("ready")
-            return
-
-        self._check_report_csv()
+        else:
+            self._check_report_csv()
+        self._apply_pending_lab_switch()
 
     def _on_reset_error(self, error_msg):
         """
@@ -4585,6 +4659,9 @@ class SuperPickyMainWindow(QMainWindow):
             self._log(f"Error: {error_msg}", "error")
             self._reset_group_folder_done(False, str(error_msg))
             return
+        # 单目录重置：清标记、解锁；刷新状态后应用挂起的开关切换
+        # Single reset: clear the flag and unlock; apply a deferred switch after refreshing
+        self._end_single_reset()
         self._log(f"Error: {error_msg}", "error")
         self._update_status("Error", COLORS['error'])
         self._show_message(
@@ -4593,6 +4670,7 @@ class SuperPickyMainWindow(QMainWindow):
             "error"
         )
         self._check_report_csv()
+        self._apply_pending_lab_switch()
 
     @Slot()
     def _maybe_prompt_video_first_run(self, directories: Optional[List[str]] = None):

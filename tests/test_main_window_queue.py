@@ -831,3 +831,80 @@ def test_start_queue_reuses_cached_counts(tmp_path, env, monkeypatch):
         assert w._queue_total == 4
     finally:
         w.close()
+
+
+def _batch_parent(root: Path, name: str) -> str:
+    """
+    批次模式处理过的父目录：day1/day2 各有 report.db，照片在星级目录里，父目录没有 report.db。
+    A batch-mode processed parent (report.db only in day1/day2).
+    """
+    parent = root / name
+    for day in ("day1", "day2"):
+        _mark_processed(str(parent / day))
+        (parent / day / "3星_优选").mkdir()
+        (parent / day / "3星_优选" / "a.jpg").write_bytes(b"\xff\xd8\xff\xd9")
+    return os.path.normpath(str(parent))
+
+
+def test_batch_parent_processed_skipped_by_default(tmp_path, env, monkeypatch):
+    """
+    批次模式处理过的父目录（结果只在子目录）默认跳过：预检框列在「已处理」里、带「全部
+    重新处理」勾选框；不重置、不启动、汇总为 skipped，也不记「无照片」错误。
+    A processed batch parent is skipped by default and listed under processed.
+    """
+    parent = _batch_parent(tmp_path, "parent")
+    b = _photo_dir(tmp_path, "b")
+    w = _window()
+    try:
+        r = _Recorder()
+        r.install(w, monkeypatch)
+        _multi(w, [parent, b])
+        w._start_queue()
+        assert len(_FakePrecheckDialog.instances) == 1
+        dlg = _FakePrecheckDialog.instances[0]
+        assert dlg.checkbox_text == w.i18n.t("dialogs.queue_reprocess_all")
+        expected = w.i18n.t("dialogs.queue_precheck_processed", folders=parent)
+        assert expected in dlg.message
+        assert r.resets == []
+        assert [c[0] for c in r.launches] == [b]
+        outcomes = {o.path: o.status for o in w._queue.outcomes}
+        assert outcomes[parent] == "skipped"
+        w._on_finished(_stats())
+        _flush()
+        assert w._queue is None
+        assert _core(w.i18n.t("health.no_photos_title")) not in _console(w)
+    finally:
+        w._queue = None
+        w.close()
+
+
+def test_batch_parent_reprocess_all_resets_then_launches(tmp_path, env, monkeypatch):
+    """
+    批次父目录 + 全部重新处理：先 _do_reset_directory(skip_exif_reset=True, skip_confirm=True)，
+    重置完成（照片回到各子目录）后扫描并启动该父目录。
+    Reprocess-all on a batch parent: quick restore first, then scan and launch.
+    """
+    parent = _batch_parent(tmp_path, "parent")
+    b = _photo_dir(tmp_path, "b")
+    w = _window()
+    try:
+        r = _Recorder()
+        r.install(w, monkeypatch)
+        _multi(w, [parent, b])
+        _FakePrecheckDialog.next_checked = True
+        w._start_queue()
+        assert r.resets == [(parent, {"skip_exif_reset": True, "skip_confirm": True})]
+        assert r.launches == []
+        # 模拟重置：照片从星级目录回到各子目录根部 / simulate the reset moving photos back
+        for day in ("day1", "day2"):
+            src = Path(parent, day, "3星_优选", "a.jpg")
+            src.rename(Path(parent, day, "a.jpg"))
+        w._on_reset_complete(True, {"restored": 2}, {})
+        _flush()
+        assert len(r.launches) == 1
+        path, resume, scan, _clear = r.launches[0]
+        assert (path, resume) == (parent, False)
+        assert sum(s.photo_count for s in scan) == 2
+    finally:
+        w._queue = None
+        w.close()

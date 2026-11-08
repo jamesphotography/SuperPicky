@@ -164,3 +164,73 @@ def test_validate_accepts_batch_parent_with_processed_subfolders(tmp_path, monke
     parent = _batch_parent(tmp_path)
     assert fq.classify_folder(str(parent)) == fq.STATE_FRESH
     assert fq.validate_new_folder([], str(parent)) is None
+
+
+# ========== 批次模式处理过的父目录 / Batch-mode processed parents ==========
+
+def _batch_parent(root, name="parent", fresh_day=False):
+    """
+    批次模式处理过的父目录：day1/day2 各有 report.db，照片都在星级目录里（扫描排除），
+    父目录自己没有 report.db。fresh_day=True 时再加一个还没处理、有照片的 day3。
+    A batch-mode processed parent; fresh_day adds an unprocessed day3 with photos.
+    """
+    parent = root / name
+    for day in ("day1", "day2"):
+        (parent / day / ".superpicky").mkdir(parents=True)
+        (parent / day / ".superpicky" / "report.db").write_bytes(b"")
+        (parent / day / "3星_优选").mkdir()
+        (parent / day / "3星_优选" / "a.jpg").write_bytes(b"x")
+    if fresh_day:
+        (parent / "day3").mkdir()
+        (parent / "day3" / "b.jpg").write_bytes(b"x")
+    return os.path.normpath(str(parent))
+
+
+def test_queue_state_batch_parent_processed(tmp_path):
+    """结果全在子目录、扫不到照片的父目录算「已处理」；classify_folder 仍为 fresh。"""
+    parent = _batch_parent(tmp_path)
+    assert fq.classify_folder(parent) == fq.STATE_FRESH
+    assert fq.queue_state(parent) == fq.STATE_PROCESSED
+
+
+def test_queue_state_partly_processed_parent_stays_fresh(tmp_path):
+    """还有能扫到的照片（没处理完的子目录）的父目录仍要处理（fresh）。"""
+    parent = _batch_parent(tmp_path, fresh_day=True)
+    assert fq.queue_state(parent) == fq.STATE_FRESH
+
+
+def test_queue_state_plain_states_unchanged(tmp_path):
+    """普通目录：fresh / processed / resume 与 classify_folder 一致。"""
+    fresh = tmp_path / "fresh"
+    fresh.mkdir()
+    (fresh / "a.jpg").write_bytes(b"x")
+    done = tmp_path / "done"
+    (done / ".superpicky").mkdir(parents=True)
+    (done / ".superpicky" / "report.db").write_bytes(b"")
+    resume = tmp_path / "resume"
+    (resume / ".superpicky").mkdir(parents=True)
+    (resume / ".superpicky" / "resume_state.json").write_text("{}", encoding="utf-8")
+    for d in (fresh, done, resume):
+        assert fq.queue_state(str(d)) == fq.classify_folder(str(d))
+    assert fq.queue_state(str(tmp_path / "missing")) == fq.STATE_FRESH
+
+
+def test_folder_queue_batch_parent_skip_or_reprocess(tmp_path):
+    """FolderQueue：批次父目录默认 skip（结果 skipped），全部重新处理时 reprocess。"""
+    parent = _batch_parent(tmp_path)
+    fresh = tmp_path / "fresh"
+    fresh.mkdir()
+    (fresh / "a.jpg").write_bytes(b"x")
+    q = fq.FolderQueue([parent, str(fresh)], reprocess_all=False)
+    assert q.plan == [(parent, "skip"), (str(fresh), "process")]
+    assert q.outcomes[0].status == "skipped"
+    q2 = fq.FolderQueue([parent, str(fresh)], reprocess_all=True)
+    assert q2.plan == [(parent, "reprocess"), (str(fresh), "process")]
+
+
+def test_folder_queue_uses_given_states(tmp_path):
+    """传入预检算好的 states 时直接采用，不重新判定（预检框与队列计划必然一致）。"""
+    a = tmp_path / "a"
+    a.mkdir()
+    q = fq.FolderQueue([str(a)], reprocess_all=False, states={str(a): fq.STATE_PROCESSED})
+    assert q.plan == [(str(a), "skip")]

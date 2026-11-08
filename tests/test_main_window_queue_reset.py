@@ -442,3 +442,165 @@ def test_reset_start_failure_logged_via_i18n(tmp_path, env, monkeypatch):
         assert "Reset " + dirs[0] not in text
     finally:
         w.close()
+
+
+# ========== 单目录重置也算「处理中」/ A single-folder reset counts as processing ==========
+
+class _NoStartThread:
+    """
+    不启动的后台线程替身：真实 _do_reset_directory 走到 Thread(...).start() 为止，
+    重置完成由测试直接调用 _on_reset_complete / _on_reset_error 模拟。
+    Thread stand-in that never runs; tests drive completion by hand.
+    """
+
+    started: List[Any] = []
+
+    def __init__(self, target=None, daemon=None) -> None:
+        self.target = target
+
+    def start(self) -> None:
+        _NoStartThread.started.append(self.target)
+
+
+def _patch_reset_thread(monkeypatch) -> None:
+    """把 main_window 的 threading.Thread 换成不启动的替身 / Swap in the non-starting thread."""
+    import ui.main_window as mw
+    _NoStartThread.started = []
+    monkeypatch.setattr(mw, "threading",
+                        types.SimpleNamespace(Thread=_NoStartThread, Lock=mw.threading.Lock,
+                                              RLock=mw.threading.RLock,
+                                              Event=mw.threading.Event))
+
+
+def test_single_reset_defers_switch_on_and_keeps_buttons_disabled(tmp_path, env, monkeypatch):
+    """
+    开关关闭时单目录重置进行中打开多目录开关：挂起——列表不出现、开始/重置保持禁用；
+    重置完成后才切到列表并放入该目录，按钮恢复。
+    Switching the Labs list on during a single reset is deferred: Start/Reset
+    stay disabled until the reset completes, then the list appears seeded.
+    """
+    a = _photo_dir(tmp_path, "a")
+    w = _window()
+    try:
+        _patch_reset_thread(monkeypatch)
+        w._handle_directory_selection(a)
+        w._reset_directory()
+        assert len(_NoStartThread.started) == 1
+        assert w._is_lab_processing()
+
+        w.config.set_lab_multi_folder(True)
+        w._apply_lab_multi_folder()
+        assert w._folder_list.isHidden()
+        assert w._folder_list.folders() == []
+        assert not w.start_btn.isEnabled()
+        assert not w.reset_btn.isEnabled()
+
+        w._on_reset_complete(True, {"restored": 0, "failed": 0}, {})
+        assert not w._is_lab_processing()
+        assert not w._folder_list.isHidden()
+        assert w._folder_list.folders() == [a]
+        assert w.start_btn.isEnabled()
+    finally:
+        w.close()
+
+
+@pytest.mark.parametrize("outcome", ["complete", "error"])
+def test_single_reset_with_lab_on_locks_list(tmp_path, env, monkeypatch, outcome):
+    """
+    开关开启、列表 1 个目录时单目录重置：重置中不能添加目录（列表、最近目录锁住），
+    结束（完成或出错）后解锁。
+    Lab on with one folder: during a single reset the list cannot be edited
+    (no adding a second folder); it is unlocked when the reset ends.
+    """
+    a = _photo_dir(tmp_path, "a")
+    w = _window()
+    try:
+        _patch_reset_thread(monkeypatch)
+        w.config.set_lab_multi_folder(True)
+        w._apply_lab_multi_folder()
+        w._folder_list.set_folders([a])
+        assert not w._is_multi_mode()
+        w._reset_directory()
+        assert len(_NoStartThread.started) == 1
+        assert w._reset_queue is None
+        assert w._is_lab_processing()
+        assert w._folder_list._editable is False
+        assert not w._folder_list.add_button().isEnabled()
+        assert not w._recent_menu.isEnabled()
+
+        if outcome == "complete":
+            w._on_reset_complete(True, {"restored": 0, "failed": 0}, {})
+        else:
+            w._on_reset_error("坏了")
+        assert not w._is_lab_processing()
+        assert w._folder_list._editable is True
+        assert w._folder_list.add_button().isEnabled()
+        assert w._recent_menu.isEnabled()
+        assert w._folder_list.folders() == [a]
+    finally:
+        w.close()
+
+
+def test_single_reset_switch_off_deferred_then_applied(tmp_path, env, monkeypatch):
+    """开关开启、单目录重置中关掉开关：挂起，重置出错结束后才收回单目录界面。"""
+    a = _photo_dir(tmp_path, "a")
+    w = _window()
+    try:
+        _patch_reset_thread(monkeypatch)
+        w.config.set_lab_multi_folder(True)
+        w._apply_lab_multi_folder()
+        w._folder_list.set_folders([a])
+        w._reset_directory()
+        w.config.set_lab_multi_folder(False)
+        w._apply_lab_multi_folder()
+        assert not w._folder_list.isHidden()
+        w._on_reset_error("坏了")
+        assert w._folder_list.isHidden()
+        assert not w.dir_input.isHidden()
+        assert w.dir_input.isEnabled()
+        assert w.directory_path == a
+    finally:
+        w.close()
+
+
+def test_single_reset_with_lab_off_leaves_inputs_as_dev(tmp_path, env, monkeypatch):
+    """开关关闭时单目录重置：输入框、浏览按钮、最近目录菜单都不禁用（与 dev 相同）。"""
+    a = _photo_dir(tmp_path, "a")
+    w = _window()
+    try:
+        _patch_reset_thread(monkeypatch)
+        w._handle_directory_selection(a)
+        w._reset_directory()
+        assert w.dir_input.isEnabled()
+        assert w._browse_btn.isEnabled()
+        assert w._recent_menu.isEnabled()
+        w._on_reset_complete(True, {"restored": 0, "failed": 0}, {})
+        assert w.dir_input.isEnabled()
+        assert len(env["messages"]) == 1  # 单目录完成提示照旧 / single-folder message as before
+    finally:
+        w.close()
+
+
+def test_quit_during_single_reset_asks(tmp_path, env, monkeypatch):
+    """单目录重置进行中托盘退出要确认；答「取消」不退出；重置结束后退出不再确认。"""
+    from ui.custom_dialogs import StyledMessageBox
+    a = _photo_dir(tmp_path, "a")
+    w = _window()
+    try:
+        _patch_reset_thread(monkeypatch)
+        w._handle_directory_selection(a)
+        w._reset_directory()
+        asked, quits = [], []
+        monkeypatch.setattr(StyledMessageBox, "question",
+                            staticmethod(lambda *a_, **k: asked.append(a_[1]) or StyledMessageBox.Yes))
+        monkeypatch.setattr(w, "_force_quit", lambda: quits.append(1))
+        w._quit_app()
+        assert asked == [w.i18n.t("messages.exit_title")]
+        assert quits == []
+
+        w._on_reset_complete(True, {"restored": 0, "failed": 0}, {})
+        asked.clear()
+        w._quit_app()
+        assert asked == [] and quits == [1]
+    finally:
+        w.close()
