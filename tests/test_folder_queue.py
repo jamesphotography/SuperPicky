@@ -234,3 +234,51 @@ def test_folder_queue_uses_given_states(tmp_path):
     a.mkdir()
     q = fq.FolderQueue([str(a)], reprocess_all=False, states={str(a): fq.STATE_PROCESSED})
     assert q.plan == [(str(a), "skip")]
+
+
+def _leftover_folder(root, name="leftover", with_photo_at_top=False):
+    """
+    处理过、但 report.db 已不在的目录：只剩 .superpicky/cache，照片在上次整理出的
+    星级目录里（扫描排除）。with_photo_at_top=True 时顶层还有一张没处理的照片。
+    A processed folder whose report.db is gone: only .superpicky/cache remains
+    and the photos sit in last run's rating folder.
+    """
+    d = root / name
+    (d / ".superpicky" / "cache").mkdir(parents=True)
+    (d / "3星_优选").mkdir()
+    (d / "3星_优选" / "a.jpg").write_bytes(b"x")
+    if with_photo_at_top:
+        (d / "b.jpg").write_bytes(b"x")
+    return os.path.normpath(str(d))
+
+
+def test_validate_accepts_leftover_folder_without_report_db(tmp_path, monkeypatch):
+    """
+    没有 report.db、只剩 .superpicky 的已整理目录可加入列表（单目录下它也能选中并
+    重置）；没有 .superpicky 的空目录仍是 no_photos。
+    A leftover folder (.superpicky, no report.db) is addable; a plain empty
+    folder is still rejected.
+    """
+    monkeypatch.setattr(fq, "is_dangerous_root", lambda p: (False, ""))
+    leftover = _leftover_folder(tmp_path)
+    empty = tmp_path / "empty"
+    (empty / "3星_优选").mkdir(parents=True)
+    (empty / "3星_优选" / "a.jpg").write_bytes(b"x")
+    assert fq.validate_new_folder([], leftover) is None
+    assert fq.validate_new_folder([], str(empty)) == fq.REJECT_NO_PHOTOS
+
+
+def test_queue_state_leftover_folder_is_processed(tmp_path):
+    """
+    这种目录在队列里按「已处理」对待：默认跳过，全部重新处理 = 先重置再处理；
+    顶层还有能扫到的照片时仍为 fresh，照常处理。
+    Treated as processed (skip by default, reprocess resets first); still
+    fresh when there are scannable photos.
+    """
+    leftover = _leftover_folder(tmp_path)
+    assert fq.classify_folder(leftover) == fq.STATE_FRESH
+    assert fq.queue_state(leftover) == fq.STATE_PROCESSED
+    assert fq.FolderQueue([leftover], reprocess_all=False).plan == [(leftover, "skip")]
+    assert fq.FolderQueue([leftover], reprocess_all=True).plan == [(leftover, "reprocess")]
+    partial = _leftover_folder(tmp_path, "partial", with_photo_at_top=True)
+    assert fq.queue_state(partial) == fq.STATE_FRESH

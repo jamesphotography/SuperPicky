@@ -58,7 +58,9 @@ def folder_row_count(path: str) -> Optional[int]:
     dirs = folder_queue.result_dirs(path)
     if not dirs:
         if folder_queue.classify_folder(path) == folder_queue.STATE_FRESH:
-            return n
+            # 留有 .superpicky、照片还在上次整理的子目录里：显示「已处理」而不是「0 张」
+            # Leftover .superpicky with photos in last run's folders: show "processed", not 0
+            return None if folder_queue.has_leftover_output(path) else n
         # 只有续跑进度、还没有 report.db：沿用原来对自身的只读计数（通常读不出 → None）
         # Resume state only: keep the previous read-only count of the folder itself
         dirs = [path]

@@ -94,10 +94,42 @@ def validate_new_folder(existing: List[str], new: str) -> Optional[str]:
         # folders, so the scan finds none; they must still be addable. A
         # batch-mode parent has report.db only in its sub-folders, which
         # classify_folder does not see, hence folder_has_results as well.
-        if classify_folder(new) != STATE_FRESH or folder_has_results(new):
+        if (classify_folder(new) != STATE_FRESH or folder_has_results(new)
+                or has_leftover_output(new)):
             return None
         return REJECT_NO_PHOTOS
     return None
+
+
+def has_leftover_output(path: str) -> bool:
+    """
+    目录是否留有 SuperPicky 处理痕迹（.superpicky 文件夹），但不一定有 report.db。
+
+    report.db 可能因老版本、手动清理等原因不在了，而照片仍在上次整理出的星级/鸟种
+    子目录里，扫描得 0 张。单目录下这种目录照样能选中、点「重置」把照片移回来；
+    多目录也要能加入列表，按「已处理」对待（默认跳过；全部重新处理 = 先重置再处理），
+    否则只能先关掉实验室开关、切回单目录重置。
+
+    参数:
+    path (str): 目录
+
+    返回:
+    bool: 有 .superpicky 文件夹为 True
+
+    Whether the folder carries SuperPicky's working folder (.superpicky) even
+    without a report.db. The db may be gone (old version, manual cleanup) while
+    photos still sit in the rating/species folders of the last run, so the scan
+    finds none. Single-folder mode can still select and reset such a folder;
+    the multi-folder list must accept it too and treat it as processed (skipped
+    by default; "reprocess all" resets first).
+
+    Parameters:
+    path (str): the folder
+
+    Return:
+    bool: True if .superpicky exists
+    """
+    return os.path.isdir(os.path.join(path, ".superpicky"))
 
 
 def _report_db_exists(path: str) -> bool:
@@ -211,7 +243,13 @@ def queue_state(path: str) -> str:
     str: STATE_FRESH / STATE_RESUME / STATE_PROCESSED
     """
     state = classify_folder(path)
-    if state != STATE_FRESH or not folder_has_results(path):
+    if state != STATE_FRESH:
+        return state
+    # 没有 report.db 但留有 .superpicky 的目录（照片还在上次整理的子目录里）同样按
+    # 「扫不到照片 → 已处理」判定，见 has_leftover_output。
+    # A folder with .superpicky but no report.db (photos still in last run's
+    # sub-folders) follows the same "nothing to scan -> processed" rule.
+    if not (folder_has_results(path) or has_leftover_output(path)):
         return state
     try:
         if scan_directories(path, max_depth=DEFAULT_SCAN_MAX_DEPTH):
