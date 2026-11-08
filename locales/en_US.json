@@ -905,6 +905,7 @@
     "mid_quota": "Good (#{rank} of {group_size})",
     "rest_quota": "Average (#{rank} of {group_size})",
     "eye_capped": "Good (low eye visibility, capped at 2 stars)",
+    "focus_capped": "Good (focus point off the bird, capped at 2 stars)",
     "burst_capped": "Good (burst 3-star cap reached, demoted to 2 stars)",
     "species_floor": "Good (species floor: the only photo of this species raised to 2 stars)",
     "floor_capped": "Good (ranked for 3 stars, but sharpness below the 3-star floor)"
@@ -927,6 +928,7 @@
     "why_rest": "Why 1★: {place}, outside the 2★ places (top {c2})",
     "why_floor_capped": "Why not 3★: {place}, ranked high enough for 3★, but head sharpness {val} is below the 3★ minimum {floor}",
     "why_eye_capped": "Why not 3★: {place}, ranked high enough for 3★, but the eye is not clearly visible, so 2★ at most",
+    "why_focus_capped": "Why not 3★: {place}, ranked high enough for 3★, but the camera's focus point was off the bird and the head isn't sharp enough to overrule it, so 2★ at most",
     "why_burst_capped": "Why not 3★: {place}, ranked high enough for 3★, but this burst already has {cap} 3★ shots (max {cap} per burst)",
     "why_species_floor": "Why {stars}: no photo of \"{species}\" in this batch reached 2★; this is its best, originally {prev}, raised to {stars} by the species floor so deleting 0★/1★ never removes the species entirely",
     "why_angle_poor": "Why {stars}: neither eye nor beak visible (poor angle), not ranked, fixed at {stars}",

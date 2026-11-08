@@ -9,7 +9,8 @@
 - 综合分 Q = 0.65×锐度批内百分位 + 0.35×TOPIQ批内百分位,
   外加小幅加减分:飞鸟+0.06、精焦+0.04、脱焦−0.06、曝光问题−0.06。
 - 配额定星:3★ = Q 前 quota3%(且归一化锐度≥300 兜底),2★ = 其后 quota2%,
-  其余 1★;眼睛可见度<0.5 的照片星级封顶 2★;同一连拍组 3★ 封顶 N 张。
+  其余 1★;眼睛可见度<0.5 的照片星级封顶 2★;
+  对焦点在鸟外(仲裁后仍为 WORST)→ 封顶 2★(不递补);同一连拍组 3★ 封顶 N 张。
 
 Rating V2 core: batch-relative ranking with quotas (pure functions, no Qt/IO).
 Hard gates keep absolute semantics; the composite score Q ranks the gated
@@ -306,6 +307,12 @@ def assign_ratings(
             if p.best_eye < EYE_CAP_THRESHOLD and star > 2:
                 star = 2
                 reason_key = "rating_v2.eye_capped"
+            # 对焦点在鸟外且鸟头不够清晰(仲裁后仍为 WORST)→ 封顶 2★,空出的 3★ 名额不递补
+            # Focus outside the bird and head not sharp enough (still WORST after
+            # arbitration) -> cap at 2 stars; the freed 3-star slot is not backfilled
+            if p.focus_status == "WORST" and star > 2:
+                star = 2
+                reason_key = "rating_v2.focus_capped"
             # reason_args 供题注使用(core/rating_caption.py):组内名次/张数、
             # 本批(排序池)百分位与配额;percent 为旧键,保留兼容。
             # reason_args feed the caption: in-group rank/size, pool

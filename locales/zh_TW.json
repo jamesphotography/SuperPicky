@@ -1197,6 +1197,7 @@
     "mid_quota": "良好（同種第{rank}/{group_size}）",
     "rest_quota": "普通（同種第{rank}/{group_size}）",
     "eye_capped": "良好（眼睛可見度低，封頂2星）",
+    "focus_capped": "良好（對焦點在鳥外，封頂2星）",
     "burst_capped": "良好（連拍組3星已滿，降為2星）",
     "species_floor": "良好（鳥種保底：本批該鳥種唯一提到 2星的照片）",
     "floor_capped": "良好（名次夠3星，但銳度未達3星下限）"
@@ -1219,6 +1220,7 @@
     "why_rest": "為什麼是 1★：{place}，在 2★ 名額（前 {c2} 張）之外",
     "why_floor_capped": "為什麼不是 3★：{place}，名次夠 3★，但頭部銳度 {val} 低於 3★ 最低要求 {floor}",
     "why_eye_capped": "為什麼不是 3★：{place}，名次夠 3★，但看不清眼睛，最多給 2★",
+    "why_focus_capped": "為什麼不是 3★：{place}，名次夠 3★，但相機對焦點在鳥外、鳥頭也不夠清晰，最多給 2★",
     "why_burst_capped": "為什麼不是 3★：{place}，名次夠 3★，但同一組連拍已有 {cap} 張 3★（每組最多 {cap} 張）",
     "why_species_floor": "為什麼是 {stars}：本批「{species}」沒有一張達到 2★，這張是其中最好的，原本 {prev}，按鳥種保底提到 {stars}——刪 0★/1★ 時不會把這種鳥整個刪掉",
     "why_angle_poor": "為什麼是 {stars}：看不到眼睛和鳥喙（角度不佳），不參與排名，固定 {stars}",

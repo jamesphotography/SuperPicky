@@ -50,12 +50,13 @@ _OUTCOME_BY_REASON = {
     "rating_v2.mid_quota": "mid",
     "rating_v2.rest_quota": "rest",
     "rating_v2.eye_capped": "eye_capped",
+    "rating_v2.focus_capped": "focus_capped",
     "rating_v2.burst_capped": "burst_capped",
     "rating_v2.species_floor": "species_floor",
 }
 
 # 进入 V2 排序池的结果类型（有组内名次与本批百分位）/ outcomes ranked in the V2 pool
-RANKED_OUTCOMES = {"top", "floor_capped", "mid", "rest", "eye_capped", "burst_capped"}
+RANKED_OUTCOMES = {"top", "floor_capped", "mid", "rest", "eye_capped", "focus_capped", "burst_capped"}
 
 # 眼睛「看得清」的可见度门槛，与 V2 的 2★ 封顶门槛一致 / eye-visible threshold (= V2 eye cap)
 EYE_CLEAR = 0.5
@@ -229,6 +230,8 @@ def _why(f: CaptionFacts, t: Translator) -> Optional[str]:
                      val=f"{(f.norm_sharpness or 0):.0f}", floor=f"{(f.sharp_floor3 or 0):.0f}")
         if o == "eye_capped":
             return t("caption.why_eye_capped", place=place)
+        if o == "focus_capped":
+            return t("caption.why_focus_capped", place=place)
         return t("caption.why_burst_capped", place=place, cap=f.burst_cap or 0)
     if f.v1_reason:
         return t("caption.why_v1", stars=stars, reason=f.v1_reason)

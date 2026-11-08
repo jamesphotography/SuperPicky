@@ -335,3 +335,28 @@ def test_v2_branch_reads_configured_arbitration_threshold():
     assert arbitrated and w == 0.9
     (w, _), arbitrated = arbitrate_focus_weights((0.5, 0.8), 484.0, 520.0)
     assert not arbitrated and w == 0.5
+
+
+def test_worst_focus_capped_at_two_stars_without_backfill():
+    """仲裁后仍 WORST 的照片封顶 2★，空出的 3★ 名额不递补 / WORST capped, no backfill."""
+    from core.rating_quota import assign_ratings
+    photos = [_metrics(key="a", norm_sharpness=484.0, focus_status="WORST", is_flying=True),
+              _metrics(key="b", norm_sharpness=400.0, focus_status="GOOD"),
+              _metrics(key="c", norm_sharpness=350.0, focus_status="GOOD")]
+    r = assign_ratings(photos, quota3=33, quota2=33, species_floor=False)
+    assert r["a"].rating == 2 and r["a"].reason_key == "rating_v2.focus_capped"
+    assert r["b"].rating == 2 and r["b"].reason_key == "rating_v2.mid_quota"   # 不递补 / no backfill
+    assert r["c"].rating == 1
+
+
+def test_bad_focus_not_capped():
+    from core.rating_quota import assign_ratings
+    r = assign_ratings([_metrics(key="a", focus_status="BAD")], quota3=100, quota2=0, species_floor=False)
+    assert r["a"].rating == 3
+
+
+def test_focus_cap_keeps_species_floor():
+    from core.rating_quota import assign_ratings
+    r = assign_ratings([_metrics(key="a", focus_status="WORST", species="X", species_confirmed=True)],
+                       quota3=100, quota2=0)
+    assert r["a"].rating == 2
