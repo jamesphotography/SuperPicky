@@ -20,28 +20,20 @@ _app = QApplication.instance() or QApplication([])
 
 
 @pytest.fixture
-def grid(monkeypatch):
-    """
-    带 5 张照片的网格，并可控制「当前按下的修饰键」。
-    A grid with 5 photos plus a controllable keyboard-modifier stub.
-    """
+def grid():
+    """带 5 张照片的网格 / A grid with 5 photos."""
     from tools.i18n import get_i18n
     from ui.thumbnail_grid import ThumbnailGrid
 
     g = ThumbnailGrid(get_i18n())
     g._photos = [{"filename": f"p{i}"} for i in range(5)]
-    state = {"mods": Qt.NoModifier}
-    monkeypatch.setattr(QApplication, "keyboardModifiers",
-                        staticmethod(lambda: state["mods"]))
-    g._test_mods = state
     yield g
     g.close()
 
 
 def _click(g, idx: int, mods=Qt.NoModifier) -> None:
     """模拟带修饰键点击第 idx 张 / Simulate a click on photo idx with modifiers."""
-    g._test_mods["mods"] = mods
-    g._on_card_clicked(g._photos[idx])
+    g._handle_card_click(g._photos[idx], mods)
 
 
 def _checked(g) -> list:
