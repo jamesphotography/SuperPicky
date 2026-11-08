@@ -2388,12 +2388,28 @@ class SuperPickyMainWindow(QMainWindow):
         参数:
         path (Optional[str]): 要打开的目录；不传时用 directory_path（单目录调用方不变）
 
+        多目录模式（spec §4.4）：先按列表设置目录标签，再以 ask_batches=False 打开
+        path（若它有结果）或列表里第一个有结果的目录；不同目录绝不合并。
+        单目录：先清掉标签，再按原来的方式打开（open_directory 只传目录）。
+
         Open/switch the results browser and hide the main window.
+        Multi-folder mode (spec §4.4): set the folder tabs from the list, then
+        open path (if it has results) or the first listed folder with results,
+        with ask_batches=False; folders are never merged. Single folder: clear
+        the tabs, then open exactly as before.
 
         Parameters:
         path (Optional[str]): folder to open; defaults to directory_path
         """
+        multi = self._is_multi_mode()
+        folders: List[str] = self._multi_folders() if multi else []
         target = path or self.directory_path
+        if multi:
+            from core.recursive_scanner import is_processed
+            with_results = [f for f in folders if f and is_processed(f)]
+            if not (path and is_processed(path)) and with_results:
+                target = with_results[0]
+            target = target or (folders[0] if folders else "")
         if not target:
             return
         from ui.results_browser_window import ResultsBrowserWindow
@@ -2404,7 +2420,12 @@ class SuperPickyMainWindow(QMainWindow):
             # 浏览器里改过鸟种/星级后，回到主窗口时面板要跟上库的现状
             # Edits made in the browser must show up on the panel when it closes.
             self._results_browser.closed.connect(self._refresh_completion_after_browse)
-        self._results_browser.open_directory(target)
+        if multi:
+            self._results_browser.set_folder_tabs(folders)
+            self._results_browser.open_directory(target, ask_batches=False)
+        else:
+            self._results_browser.set_folder_tabs([])
+            self._results_browser.open_directory(target)
         # 最大化打开：14 寸小屏或放大字体时，1280x780 的默认窗口会挤压三栏布局
         # Open maximized: on 14" screens or with enlarged text the 1280x780
         # default squeezes the three-column layout.
