@@ -127,7 +127,7 @@ def _radio_style() -> str:
 # 4.6 restores "video": stripping every entry point left the main-flow video
 # processing reachable only through a pre-existing config value, so upgraders
 # who had it on kept using it while everyone else had no way to enable it.
-PAGE_ORDER: list[str] = ["culling", "birdid", "output", "video", "apps", "about"]
+PAGE_ORDER: list[str] = ["culling", "birdid", "output", "video", "apps", "labs", "about"]
 
 _PAGE_ICON: dict[str, str] = {
     "culling": "gem.svg",
@@ -135,6 +135,7 @@ _PAGE_ICON: dict[str, str] = {
     "output": "download.svg",
     "video": "video.svg",
     "apps": "layout-grid.svg",
+    "labs": "flask-conical.svg",
     "about": "info.svg",
 }
 
@@ -144,6 +145,7 @@ _PAGE_TITLE_KEY: dict[str, str] = {
     "output": "settings.nav_output",
     "video": "settings.nav_video",
     "apps": "settings.nav_apps",
+    "labs": "settings.nav_labs",
     "about": "settings.nav_about",
 }
 
@@ -287,6 +289,8 @@ class SettingsCenter(QDialog):
             return self._build_video_page()
         if key == "apps":
             return self._build_apps_page()
+        if key == "labs":
+            return self._build_labs_page()
         if key == "about":
             return self._build_about_page()
         return self._placeholder(self.i18n.t(_PAGE_TITLE_KEY[key]))
@@ -2382,6 +2386,117 @@ class SettingsCenter(QDialog):
 
     # ── 视频页 / Video page ───────────────────────────────────────────────────
 
+    def _build_labs_page(self) -> QWidget:
+        """
+        构建「实验室」页:「更多功能」(生成报告 / 导出到 eBird)与「实验功能」(多目录选鸟)。
+
+        三个开关默认全关,勾选变化立即写入 advanced_config 并落盘(与其他页的
+        即时保存模型一致);done() 里的 _save_labs() 只做兜底。
+
+        Build the Labs page: "More features" (report / eBird export) and
+        "Experimental" (multi-folder culling). All three default to off; a
+        toggle is written to advanced_config and saved immediately, with
+        _save_labs() in done() as a safety net only.
+
+        返回 / Returns:
+            QWidget: 实验室页 / Labs page widget.
+        """
+        from advanced_config import get_advanced_config
+
+        t = self.i18n.t
+        cfg = get_advanced_config()
+
+        page = QWidget()
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        # 同其他页:macOS 下 viewport 需显式透明 / same as other pages: transparent viewport on macOS
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+
+        inner = QWidget()
+        inner.setObjectName(_PAGE_BODY_OBJECT_NAME)
+        inner.setStyleSheet(_PAGE_BODY_QSS)
+        lay = QVBoxLayout(inner)
+        lay.setContentsMargins(24, 20, 24, 20)
+        lay.setSpacing(10)
+
+        def _title(text: str) -> QLabel:
+            lbl = QLabel(text)
+            lbl.setStyleSheet(
+                f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;")
+            return lbl
+
+        def _hint(text: str, indent: int = 0) -> QLabel:
+            lbl = QLabel(text)
+            lbl.setWordWrap(True)
+            lbl.setStyleSheet(
+                f"color:{COLORS['text_muted']};font-size:11px;margin-left:{indent}px;")
+            return lbl
+
+        def _toggle(label: str, desc: str, checked: bool) -> QCheckBox:
+            cb = QCheckBox(label)
+            cb.setChecked(checked)
+            cb.setStyleSheet(self._checkbox_qss())
+            lay.addWidget(cb)
+            lay.addWidget(_hint(desc, 24))
+            return cb
+
+        # ── 更多功能 / More features ──────────────────────────────────────────
+        lay.addWidget(_title(t("settings.labs_more_title")))
+        lay.addWidget(_hint(t("settings.labs_more_hint")))
+        self._lab_report_cb = _toggle(
+            t("settings.labs_report"), t("settings.labs_report_desc"),
+            cfg.lab_report_export)
+        self._lab_ebird_cb = _toggle(
+            t("settings.labs_ebird"), t("settings.labs_ebird_desc"),
+            cfg.lab_ebird_export)
+
+        lay.addSpacing(6)
+        lay.addWidget(self._divider())
+        lay.addSpacing(6)
+
+        # ── 实验功能 / Experimental ───────────────────────────────────────────
+        title_row = QHBoxLayout()
+        title_row.setSpacing(8)
+        title_row.addWidget(_title(t("settings.labs_exp_title")))
+        badge = QLabel(t("settings.labs_badge"))
+        badge.setStyleSheet(
+            f"color:{COLORS['warning']};background-color:rgba(234,179,8,0.18);"
+            "border-radius:4px;padding:1px 6px;font-size:10px;font-weight:600;")
+        title_row.addWidget(badge)
+        title_row.addStretch(1)
+        lay.addLayout(title_row)
+        lay.addWidget(_hint(t("settings.labs_exp_hint")))
+        self._lab_multi_cb = _toggle(
+            t("settings.labs_multi_folder"), t("settings.labs_multi_folder_desc"),
+            cfg.lab_multi_folder)
+
+        # 勾选变化即时保存 / immediate save on toggle
+        self._lab_report_cb.toggled.connect(lambda _c: self._save_labs())
+        self._lab_ebird_cb.toggled.connect(lambda _c: self._save_labs())
+        self._lab_multi_cb.toggled.connect(lambda _c: self._save_labs())
+
+        lay.addStretch(1)
+        scroll.setWidget(inner)
+        page_lay = QVBoxLayout(page)
+        page_lay.setContentsMargins(0, 0, 0, 0)
+        page_lay.addWidget(scroll)
+        return page
+
+    def _save_labs(self) -> None:
+        """
+        把实验室页三个开关写入 advanced_config 并落盘(幂等)。
+
+        Write the three Labs toggles to advanced_config and save (idempotent).
+        """
+        from advanced_config import get_advanced_config
+
+        cfg = get_advanced_config()
+        cfg.set_lab_report_export(self._lab_report_cb.isChecked())
+        cfg.set_lab_ebird_export(self._lab_ebird_cb.isChecked())
+        cfg.set_lab_multi_folder(self._lab_multi_cb.isChecked())
+        cfg.save()
+
     def _build_video_page(self) -> QWidget:
         """
         构建视频处理设置页。
@@ -3484,4 +3599,6 @@ class SettingsCenter(QDialog):
             self._save_video()
         if hasattr(self, "_apps_list"):
             self._save_apps()
+        if hasattr(self, "_lab_multi_cb"):
+            self._save_labs()
         super().done(r)

@@ -24,10 +24,11 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QLabel, QPushButton, QStatusBar,
     QSlider, QComboBox, QMessageBox, QSizePolicy, QApplication,
-    QStackedWidget, QMenu, QInputDialog, QLineEdit, QProgressDialog
+    QStackedWidget, QMenu, QInputDialog, QLineEdit, QProgressDialog,
+    QScrollArea, QFrame
 )
-from PySide6.QtCore import Qt, Signal, Slot, QProcess, QSize, QTimer
-from PySide6.QtGui import QAction, QKeyEvent, QIcon
+from PySide6.QtCore import Qt, Signal, Slot, QProcess, QSize, QTimer, QEvent
+from PySide6.QtGui import QAction, QKeyEvent, QIcon, QFont, QFontMetrics
 from ui.custom_dialogs import StyledMessageBox, StyledProgressDialog
 from PySide6.QtWidgets import QDialog
 from ui.directory_select_dialog import DirectorySelectDialog
@@ -2127,6 +2128,13 @@ class ResultsBrowserWindow(QMainWindow):
         self._delete_result_box: dict = {}
         self._copy_dest: str = ""
         self._copy_plan = None
+        # 多目录标签（实验室多目录，spec §4.4）：[(目录, 标签按钮)]；空表 = 不显示标签排。
+        # _opened_folder 是最近一次 open_directory 打开的目录，用于高亮对应标签。
+        # Folder tabs (Labs multi-folder, spec §4.4): [(folder, tab button)]; empty
+        # means no tab row. _opened_folder is the folder last passed to
+        # open_directory and decides which tab is highlighted.
+        self._folder_tabs: list = []
+        self._opened_folder: str = ""
 
         self._setup_window()
         self._setup_menu()
@@ -2201,6 +2209,11 @@ class ResultsBrowserWindow(QMainWindow):
         center_layout = QVBoxLayout(center_widget)
         center_layout.setContentsMargins(0, 0, 0, 0)
         center_layout.setSpacing(0)
+
+        # 目录标签排在工具栏上方，只在多目录且至少 2 个目录有结果时显示
+        # The folder tab row sits above the toolbar; shown only for 2+ result folders
+        self._folder_tab_area = self._build_folder_tab_row()
+        center_layout.addWidget(self._folder_tab_area)
 
         self._toolbar = self._build_toolbar()
         center_layout.addWidget(self._toolbar)
@@ -2476,6 +2489,8 @@ class ResultsBrowserWindow(QMainWindow):
 
         self._export_menu_btn.setMenu(export_menu)
         layout.addWidget(self._export_menu_btn)
+        # 报告 / eBird 入口由实验室开关决定可见性 / visibility follows the Labs switches
+        self._refresh_lab_entries()
 
         layout.addSpacing(8)
 
@@ -2513,6 +2528,229 @@ class ResultsBrowserWindow(QMainWindow):
 
         return bar
 
+    # 标签文字里目录名的最大像素宽度：超出则中间省略，完整路径见悬停提示
+    # Max pixel width of a folder name on a tab; longer names are elided in the middle
+    _FOLDER_TAB_NAME_MAX_PX = 220
+
+    def _build_folder_tab_row(self) -> QScrollArea:
+        """
+        构建目录标签排：一个只横向滚动的 QScrollArea，里面是一行筹码样式的标签。
+
+        标签多或目录名长时只会出现横向滚动条，不会把窗口撑宽，也不挤压下方工具栏。
+        默认隐藏，由 set_folder_tabs 决定是否显示。
+
+        返回:
+        QScrollArea: 标签排容器（已隐藏）
+
+        Build the folder tab row: a horizontally scrolling QScrollArea holding
+        one row of chip-style tabs. Many tabs or long names only add a
+        horizontal scrollbar; the window is never widened. Hidden until
+        set_folder_tabs decides to show it.
+
+        Return:
+        QScrollArea: the (hidden) tab row container
+        """
+        area = QScrollArea()
+        area.setObjectName("folderTabArea")
+        area.setFrameShape(QFrame.NoFrame)
+        area.setWidgetResizable(True)
+        area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        # 44px 放得下 28px 标签 + 上下边距；横向滚动条出现时占用下边距那一条
+        # 44px fits a 28px tab plus margins; a horizontal scrollbar takes the bottom margin
+        area.setFixedHeight(44)
+        area.setStyleSheet(f"""
+            QScrollArea#folderTabArea {{
+                background-color: {COLORS['bg_elevated']};
+                border: none;
+                border-bottom: 1px solid {COLORS['border_subtle']};
+            }}
+            QWidget#folderTabRow {{ background: transparent; }}
+        """)
+
+        row = QWidget()
+        row.setObjectName("folderTabRow")
+        self._folder_tab_layout = QHBoxLayout(row)
+        self._folder_tab_layout.setContentsMargins(16, 6, 16, 6)
+        self._folder_tab_layout.setSpacing(6)
+        self._folder_tab_layout.addStretch(1)
+        area.setWidget(row)
+        area.hide()
+        return area
+
+    @staticmethod
+    def _folder_tab_style(active: bool) -> str:
+        """
+        目录标签样式：沿用过滤面板评分筹码的圆角描边外观；选中的用强调色底。
+
+        参数:
+        active (bool): 是否为当前打开的目录
+
+        返回:
+        str: 按钮样式表
+
+        Folder tab style: the rating-chip look from the filter panel; the
+        active tab gets the accent background.
+
+        Parameters:
+        active (bool): whether this is the folder currently open
+
+        Return:
+        str: button stylesheet
+        """
+        if active:
+            return (
+                f"QPushButton {{ background-color: {COLORS['accent']};"
+                f" border: 1px solid {COLORS['accent']};"
+                f" border-radius: 6px;"
+                f" color: {COLORS['bg_void']};"
+                f" font-size: 13px; padding: 3px 10px; }}"
+            )
+        return (
+            f"QPushButton {{ background-color: transparent;"
+            f" border: 1px solid {COLORS['border']};"
+            f" border-radius: 6px;"
+            f" color: {COLORS['text_secondary']};"
+            f" font-size: 13px; padding: 3px 10px; }}"
+            f" QPushButton:hover {{ background-color: {COLORS['bg_card']};"
+            f" border-color: {COLORS['text_muted']}; color: {COLORS['text_primary']}; }}"
+        )
+
+    def set_folder_tabs(self, folders: list) -> None:
+        """
+        设置目录标签（多目录处理后由主窗口调用；单目录时传空表清掉）。
+
+        规则（spec §4.4）:
+          * 只为有结果的目录建标签（core.folder_queue.result_dirs 非空）：自己有
+            ``.superpicky/report.db``，或者是批次模式处理过的父目录——它的 report.db
+            在各个子目录里。查找器与 open_directory 用的是同一个
+            （find_processed_subdirs），所以有标签的目录一定打得开。
+          * 少于 2 个标签时整排隐藏（单个目录没有可切换的对象）。
+          * 文字为「目录名 · N」，N 是该目录所有批次 summarize_directories 只读计数之和
+            （不升级 schema）；任一批次计数失败或读不出时只显示目录名，标签照样保留。
+          * 当前打开的目录对应的标签高亮。
+
+        参数:
+        folders (list): 主界面列表里的目录（按列表顺序）；空表 = 清掉标签
+
+        Set the folder tabs (called by the main window after multi-folder
+        work; an empty list clears them). Only folders with results get a tab
+        (own report.db, or a parent whose batch-mode results live in
+        sub-folders; same finder open_directory uses); fewer than 2 tabs hide
+        the row; labels read "name · N" where N sums the read-only counts of
+        the folder's batches, falling back to the bare name when any count
+        fails; the open folder's tab is highlighted.
+
+        Parameters:
+        folders (list): folders from the main-window list, in list order; [] clears
+        """
+        from core.folder_queue import result_dirs
+
+        # 清掉旧标签 / drop the old tabs
+        for _path, btn in self._folder_tabs:
+            self._folder_tab_layout.removeWidget(btn)
+            btn.deleteLater()
+        self._folder_tabs = []
+
+        seen: set = set()
+        result_folders: list = []
+        batches: dict = {}            # 目录 -> 它的批次目录 / folder -> its batch folders
+        for folder in folders or []:
+            if not folder:
+                continue
+            key = os.path.normcase(os.path.abspath(folder))
+            if key in seen:
+                continue
+            seen.add(key)
+            dirs = result_dirs(folder)   # 不抛异常 / never raises
+            if dirs:
+                result_folders.append(folder)
+                batches[folder] = dirs
+
+        if len(result_folders) < 2:
+            self._folder_tab_area.hide()
+            return
+
+        # 批次计数：一次只读查询全部批次，再按目录求和
+        # Batch counts: one read-only query for all batches, summed per folder
+        batch_counts: dict = {}
+        try:
+            # 模块属性查找（而非 from-import 到局部）便于测试替换
+            # Attribute lookup (not a local from-import) so tests can patch it
+            import tools.merged_report_db as merged_report_db
+            all_batches = [d for f in result_folders for d in batches[f]]
+            for entry in merged_report_db.summarize_directories(all_batches):
+                batch_counts[entry.get("path")] = entry.get("photos")
+        except Exception as e:  # noqa: BLE001 — 计数只是附加信息 / counts are optional
+            from tools.utils import log_message
+            log_message(f"[Browser] folder tab count failed: {e}")
+            batch_counts = {}
+
+        # 用标签实际字号（13px，见 _folder_tab_style）量宽度，省略位置才准
+        # Measure with the tab's real 13px font so eliding matches what is drawn
+        tab_font = QFont(self.font())
+        tab_font.setPixelSize(13)
+        metrics = QFontMetrics(tab_font)
+        for i, folder in enumerate(result_folders):
+            name = os.path.basename(folder.rstrip("/\\")) or folder
+            name = metrics.elidedText(name, Qt.ElideMiddle, self._FOLDER_TAB_NAME_MAX_PX)
+            parts = [batch_counts.get(d) for d in batches[folder]]
+            n = sum(parts) if parts and all(isinstance(x, int) for x in parts) else None
+            text = f"{name} \u00b7 {n}" if n is not None else name
+            btn = QPushButton(text)
+            btn.setCheckable(True)
+            btn.setFixedHeight(28)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setToolTip(folder)
+            btn.clicked.connect(lambda _checked=False, p=folder: self._on_folder_tab_clicked(p))
+            # 插在末尾的 stretch 之前 / insert before the trailing stretch
+            self._folder_tab_layout.insertWidget(i, btn)
+            self._folder_tabs.append((folder, btn))
+
+        self._refresh_folder_tab_highlight()
+        self._folder_tab_area.show()
+
+    def _refresh_folder_tab_highlight(self) -> None:
+        """
+        按 _opened_folder 高亮对应标签，其余恢复常态。
+
+        Highlight the tab matching _opened_folder and reset the others.
+        """
+        current = (os.path.normcase(os.path.abspath(self._opened_folder))
+                   if self._opened_folder else "")
+        for folder, btn in self._folder_tabs:
+            active = bool(current) and os.path.normcase(os.path.abspath(folder)) == current
+            btn.setChecked(active)
+            btn.setStyleSheet(self._folder_tab_style(active))
+
+    def _on_folder_tab_clicked(self, folder: str) -> None:
+        """
+        点目录标签：按单独打开该目录的方式打开（不弹批次清单），然后高亮该标签。
+
+        点当前目录的标签不重新载入；后台删除 / 复制进行中不切换（两者的进度框是
+        窗口模态的，正常点不到这里，这是防御）。
+
+        参数:
+        folder (str): 标签对应的目录
+
+        Tab click: open the folder exactly as when opened alone (no batch
+        picker), then highlight its tab. Clicking the open folder's tab does
+        not reload; a running delete/copy blocks switching (their progress
+        dialogs are window-modal, so this is only a guard).
+
+        Parameters:
+        folder (str): the tab's folder
+        """
+        same = (bool(self._opened_folder)
+                and os.path.normcase(os.path.abspath(self._opened_folder))
+                == os.path.normcase(os.path.abspath(folder)))
+        if same or self._delete_thread is not None or self._copy_thread is not None:
+            self._refresh_folder_tab_highlight()
+            return
+        self.open_directory(folder, ask_batches=False)
+        self._opened_folder = folder
+        self._refresh_folder_tab_highlight()
+
     def _setup_statusbar(self):
         self._status_bar = QStatusBar()
         self._status_bar.setStyleSheet(f"""
@@ -2530,18 +2768,25 @@ class ResultsBrowserWindow(QMainWindow):
     #  公共接口
     # ------------------------------------------------------------------
 
-    def open_directory(self, directory: str):
+    def open_directory(self, directory: str, ask_batches: bool = True) -> None:
         """
         打开一个目录的选鸟结果。
 
         目录下若有多个已处理批次，先弹目录清单让用户挑（并可继续添加别处、
         别的盘上的目录）；只有一个批次就直接打开，不拿一行的选择框去打扰他。
+        ask_batches=False（多目录标签切换时）不弹清单，直接载入全部批次——
+        这仍是「该目录单独打开」的结果，只是免去逐个标签都弹一次的打扰。
 
         参数 / Args:
             directory: 用户选中的目录
+            ask_batches: 有多个批次时是否弹清单；False 则全部载入。
+                单目录调用方不传，行为不变。
+                Whether to ask when several batches exist; False loads them all.
         """
         if not directory:
             return
+        # 记下打开的目录，供目录标签高亮 / remembered for folder-tab highlighting
+        self._opened_folder = directory
 
         if self._db:
             try:
@@ -2553,22 +2798,25 @@ class ResultsBrowserWindow(QMainWindow):
         self._is_merged = False
         self._sub_dirs = []
 
-        chosen = self._resolve_directories(directory)
+        chosen = self._resolve_directories(directory, ask_batches)
+        if self._folder_tabs:
+            self._refresh_folder_tab_highlight()
         if not chosen:
             return
         self._apply_selection(chosen)
 
-    def _resolve_directories(self, directory: str) -> list:
+    def _resolve_directories(self, directory: str, ask_batches: bool = True) -> list:
         """
         决定要载入哪些目录。
 
         三种情况 / Three cases:
-          * 多个批次 → 弹清单让用户挑（预填找到的批次）
+          * 多个批次 → 弹清单让用户挑（预填找到的批次）；ask_batches=False 时全部载入
           * 一个批次 → 直接用它
           * 没有结果 → 给出原有提示，什么都不载入
 
         参数 / Args:
             directory: 用户选中的目录
+            ask_batches: 多个批次时是否弹清单 / ask when several batches exist
 
         返回 / Returns:
             list: 要载入的目录；用户取消或无结果时为空
@@ -2577,6 +2825,8 @@ class ResultsBrowserWindow(QMainWindow):
 
         processed = find_processed_subdirs(directory)
         if len(processed) > 1:
+            if not ask_batches:
+                return processed
             return self._ask_which_batches(processed)
         if processed:
             return processed
@@ -2669,6 +2919,11 @@ class ResultsBrowserWindow(QMainWindow):
             self._db = None
         self._is_merged = False
         self._sub_dirs = []
+        # 合并后看的已不是某一个标签对应的目录：取消高亮，标签保留以便切回
+        # The merged view no longer matches a single tab: clear the highlight,
+        # keep the tabs so the user can switch back.
+        self._opened_folder = ""
+        self._refresh_folder_tab_highlight()
         self._apply_selection(chosen)
 
     def _count_db_photos(self, directory: str) -> int:
@@ -5191,6 +5446,38 @@ class ResultsBrowserWindow(QMainWindow):
     # ------------------------------------------------------------------
     #  键盘快捷键
     # ------------------------------------------------------------------
+
+
+    def _refresh_lab_entries(self) -> None:
+        """
+        按实验室开关显示/隐藏导出菜单里的「报告」「eBird」两项；菜单里没有任何
+        可见项时（如 Windows 且两开关都关）隐藏整个导出按钮。
+
+        Show/hide the report and eBird menu items per the Labs switches; hide
+        the whole export button when no menu item is visible.
+        """
+        from advanced_config import get_advanced_config
+        cfg = get_advanced_config()
+        self._report_action.setVisible(bool(cfg.lab_report_export))
+        self._ebird_action.setVisible(bool(cfg.lab_ebird_export))
+        menu = self._export_menu_btn.menu()
+        any_visible = any(a.isVisible() for a in menu.actions())
+        self._export_menu_btn.setVisible(any_visible)
+
+    def showEvent(self, event) -> None:
+        """显示时刷新实验室入口 / refresh Labs entries when shown."""
+        super().showEvent(event)
+        self._refresh_lab_entries()
+
+    def changeEvent(self, event) -> None:
+        """
+        窗口重新激活（如设置中心关闭后）时刷新实验室入口。
+        Refresh Labs entries when the window is re-activated (e.g. after the
+        Settings Center closes).
+        """
+        super().changeEvent(event)
+        if event.type() == QEvent.ActivationChange and self.isActiveWindow():
+            self._refresh_lab_entries()
 
     def keyPressEvent(self, event: QKeyEvent):
         key = event.key()
