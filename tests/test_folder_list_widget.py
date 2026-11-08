@@ -216,3 +216,63 @@ def test_last_change_kind(widget, tmp_path):
     assert widget.last_change() == "add"
     widget.remove_buttons()[0].click()
     assert widget.last_change() == "remove"
+
+
+def _drop(widget, paths):
+    """
+    模拟从访达/资源管理器一次拖入多个路径：先发 dragEnter，再发 drop。
+    Simulate dropping several paths at once: dragEnter, then drop.
+
+    返回: (dragEnter 是否接受, drop 是否接受)
+    """
+    from PySide6.QtCore import QMimeData, QPointF, QPoint, Qt, QUrl
+    from PySide6.QtGui import QDragEnterEvent, QDropEvent
+
+    mime = QMimeData()
+    mime.setUrls([QUrl.fromLocalFile(p) for p in paths])
+    enter = QDragEnterEvent(QPoint(5, 5), Qt.CopyAction, mime,
+                            Qt.LeftButton, Qt.NoModifier)
+    widget.dragEnterEvent(enter)
+    drop = QDropEvent(QPointF(5, 5), Qt.CopyAction, mime,
+                      Qt.LeftButton, Qt.NoModifier)
+    widget.dropEvent(drop)
+    return enter.isAccepted(), drop.isAccepted()
+
+
+def test_drop_several_folders_adds_all_in_order(widget, tmp_path):
+    """一次拖入 3 个目录：全部按拖入顺序加入，各发一次 foldersChanged。"""
+    seen = []
+    widget.foldersChanged.connect(seen.append)
+    dirs = [_photo_dir(tmp_path, n) for n in ("c", "a", "b")]
+    entered, dropped = _drop(widget, dirs)
+    assert entered and dropped
+    assert widget.folders() == [folder_queue.normalize_folder(d) for d in dirs]
+    assert len(seen) == 3
+    assert widget.dialog_calls == []
+
+
+def test_drop_mixed_items_checks_each(widget, tmp_path):
+    """
+    拖入的混合内容逐个检查：已在列表的静默忽略、没有照片的弹提示、普通文件跳过，
+    其余照常加入。
+    Mixed drop: duplicate ignored silently, no-photo folder warned, plain file
+    skipped, the rest added.
+    """
+    a = _photo_dir(tmp_path, "a")
+    widget.try_add(a)
+    b = _photo_dir(tmp_path, "b")
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    loose = tmp_path / "loose.jpg"
+    loose.write_bytes(b"x")
+    _drop(widget, [a, str(loose), str(empty), b])
+    assert widget.folders() == [folder_queue.normalize_folder(a), folder_queue.normalize_folder(b)]
+    assert len(widget.dialog_calls) == 1
+
+
+def test_drop_ignored_while_editing_disabled(widget, tmp_path):
+    """处理中（列表锁定）拖入无效。"""
+    widget.set_enabled_editing(False)
+    entered, _ = _drop(widget, [_photo_dir(tmp_path, "a")])
+    assert not entered
+    assert widget.folders() == []

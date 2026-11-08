@@ -348,6 +348,11 @@ class FolderListWidget(QWidget):
 
     def dropEvent(self, event: QDropEvent) -> None:
         """逐个尝试加入拖入的目录 / Try to add each dropped directory."""
+        # 拖动途中队列可能已经开始（列表锁定），落下时再查一次
+        # The queue may have started mid-drag (list locked); re-check on drop
+        if not self._editable:
+            event.ignore()
+            return
         added = False
         for url in event.mimeData().urls():
             if url.isLocalFile() and os.path.isdir(url.toLocalFile()):
