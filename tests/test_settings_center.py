@@ -1015,6 +1015,7 @@ def test_skill_preset_on_common_drives_rating_on_advanced_then_done():
     w.done(0)
     assert cfg.skill_level == "master"
     assert cfg.birdid_confidence == 77
+    w.close()
 
 
 def test_restore_defaults_rebuilds_four_pages(monkeypatch):

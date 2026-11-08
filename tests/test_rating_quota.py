@@ -324,6 +324,19 @@ def test_v2_focus_arbitration_default_and_clamp(tmp_path):
     assert "v2_focus_arbitration_sharpness" not in AdvancedConfig.PRESERVE_ON_RESET
 
 
+def test_v2_focus_arbitration_getter_survives_bad_stored_value(tmp_path):
+    """手改配置文件的非数值/越界值：读取时回退默认或钳制，不抛异常。"""
+    import json
+    from advanced_config import AdvancedConfig
+    from core.rating_quota import FOCUS_ARBITRATION_SHARPNESS
+    path = tmp_path / "bad.json"
+    for raw, expected in (("abc", FOCUS_ARBITRATION_SHARPNESS), (None, FOCUS_ARBITRATION_SHARPNESS),
+                          (50, 300.0), (99999, 800.0)):
+        path.write_text(json.dumps({"v2_focus_arbitration_sharpness": raw}), encoding="utf-8")
+        cfg = AdvancedConfig(config_file=str(path))
+        assert cfg.v2_focus_arbitration_sharpness == expected
+
+
 def test_v2_branch_reads_configured_arbitration_threshold():
     """V2 分支读配置字段（而非常量），450 线下 484 锐度被仲裁为合焦。"""
     from pathlib import Path

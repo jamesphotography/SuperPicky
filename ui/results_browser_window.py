@@ -1612,9 +1612,9 @@ def _build_context_menu(parent_widget, photo: dict, directory: str):
             _act.triggered.connect(_set_rating)
             rating_menu.addAction(_act)
 
-    # 用户配置的外部应用列表（设置 → 外部应用）。前 9 个显示 Ctrl/Cmd+N 快捷键提示，
+    # 用户配置的外部应用列表（设置 → 高级 → 外部应用）。前 9 个显示 Ctrl/Cmd+N 快捷键提示，
     # 浏览器窗口的 keyPressEvent 负责真正响应快捷键（#128）。
-    # External apps from settings; the first nine show their Ctrl/Cmd+N hint,
+    # External apps from settings (Settings → Advanced → External apps); the first nine show their Ctrl/Cmd+N hint,
     # the browser's keyPressEvent handles the actual shortcut (#128).
     # 范围规则与「修改鸟种」「删除」相同：点中的照片在勾选集里就打开整个勾选集，
     # 否则只打开这一张；全屏只打开当前这张。多张时文案写明张数。

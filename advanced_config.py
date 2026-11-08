@@ -240,7 +240,8 @@ class AdvancedConfig:
 
         # V4.3 Phase 4: 主流程视频集成 / Main-flow video integration
         # video_auto_process_in_main : 选鸟时是否自动分析视频（默认关——大多数用户不拍视频，
-        #                              设置中心「实验室」页开启；首页快速面板「视频」开关同步）
+        #                              设置中心「实验室」页开启；首页已无视频开关 /
+        #                              off by default; enabled only on the Labs page, no home-panel switch）
         # video_species_mode         : 默认识别模式 instant/fast/full（默认 instant 极速）
         # video_enable_species_id    : 是否启用鸟种识别（默认开）
         # video_enable_flight        : 是否启用飞行检测（默认开）
@@ -576,8 +577,16 @@ class AdvancedConfig:
         """
         V2 脱焦判定锐度线 (300-800)。
         V2 focus-arbitration sharpness line (300-800).
+        读取时钳制；手改配置文件的非数值回退默认值。
+        Clamped on read; a non-numeric hand-edited value falls back to the default.
         """
-        return float(self.config.get("v2_focus_arbitration_sharpness", _V2_FOCUS_ARB_DEFAULT))
+        try:
+            value = float(self.config.get("v2_focus_arbitration_sharpness", _V2_FOCUS_ARB_DEFAULT))
+        except (TypeError, ValueError):
+            return float(_V2_FOCUS_ARB_DEFAULT)
+        if value != value:  # NaN 守卫 / NaN guard
+            return float(_V2_FOCUS_ARB_DEFAULT)
+        return max(300.0, min(800.0, value))
 
     @property
     def rescue_scan_enabled(self) -> bool:

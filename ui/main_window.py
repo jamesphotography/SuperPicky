@@ -1654,7 +1654,7 @@ class SuperPickyMainWindow(QMainWindow):
         Ask on first close whether to keep running in the tray or quit
         (#123). Closing used to always hide to the tray, so Windows users
         believed the app had exited while the process kept running. The
-        choice is remembered and can be changed in Settings → External Apps.
+        choice is remembered and can be changed in Settings → Advanced → External apps.
 
         Return:
         Optional[str]: "tray" / "quit", or None when the dialog is dismissed
@@ -1881,7 +1881,7 @@ class SuperPickyMainWindow(QMainWindow):
         header_layout.addWidget(version_label)
 
         # Task 7: 技能水平 chip — 只读展示，点击后打开设置中心（culling 页）
-        # Task 7: skill level chip — read-only display; click opens SettingsCenter (culling page)
+        # Task 7: skill level chip — read-only display; click opens SettingsCenter (Common page)
         self.skill_level_label = QLabel("")
         self.skill_level_label.setStyleSheet(f"""
             color: {COLORS['accent']};
@@ -3112,7 +3112,7 @@ class SuperPickyMainWindow(QMainWindow):
     def _confirm_start(self) -> bool:
         """
         开始选片确认框。开着识鸟时多一个「更换国家…」：打开设置中心识鸟页，关掉后重新弹出确认框、
-        显示新国家（#145，此前要点「否」→ 设置 → 识鸟 → 国家 → 更多国家 → 再点开始）。
+        显示新国家（#145，此前要点「否」→ 设置 → 常用 → 国家 → 更多国家 → 再点开始）。
 
         返回:
         bool: 用户确认开始返回 True
@@ -4764,17 +4764,18 @@ class SuperPickyMainWindow(QMainWindow):
         首页「快速调整」参数面板:锐度/美学两滑块 + 飞行/连拍/识鸟/视频四开关。
 
         所有控件双向绑定 advanced_config(单一事实源):初值从 config 读,改动写回 config;
-        范围与设置中心精选页一致(锐度 100-600,美学 0-70 即 0.0-7.0),避免两处不一致或截断。
-        手动改滑块视为自定义档(skill_level=custom 并同步 custom_*),与设置中心精选页协同一致。
+        范围与设置中心高级页评星一致(锐度 100-600,美学 0-70 即 0.0-7.0),避免两处不一致或截断。
+        手动改滑块视为自定义档(skill_level=custom 并同步 custom_*),与设置中心高级页评星协同一致。
         初值在 connect 之前设置,故不会在构建时误触发回调。
-        「视频」开关默认关闭(大多数用户不需要视频识鸟),绑定 video_auto_process_in_main,
-        与设置中心「视频」页的总开关双向同步。
+        首页已无「视频」开关:视频处理自 2026-11 起只在设置中心「实验室」页开启
+        (绑定 video_auto_process_in_main,默认关闭)。
 
-        Home quick-adjust panel: sharpness/aesthetics sliders + flight/burst/birdid/video toggles.
-        Two-way bound to advanced_config (SSOT); ranges match the Settings Center culling page.
-        Editing a slider marks the skill level as custom (consistent with the culling page).
-        The "Video" toggle defaults to off (most users don't need video bird-ID) and is bound
-        to video_auto_process_in_main, kept in sync with the Video page in Settings Center.
+        Home quick-adjust panel: sharpness/aesthetics sliders + flight/burst/birdid toggles.
+        Two-way bound to advanced_config (SSOT); ranges match the Settings Center Advanced page (Rating).
+        Editing a slider marks the skill level as custom (consistent with the Advanced page (Rating)).
+        There is no Video toggle on the home panel any more: since 2026-11 video processing
+        is enabled only on the Labs page of the Settings Center (video_auto_process_in_main,
+        default off).
         """
         cfg = self.config
         params_frame = QFrame()
@@ -4820,7 +4821,7 @@ class SuperPickyMainWindow(QMainWindow):
         self.birdid_check.stateChanged.connect(self._on_birdid_check_changed)
         params_layout.addLayout(header_layout)
 
-        # 滑块区:锐度 + 美学(范围对齐设置中心精选页)/ Sliders aligned with culling page
+        # 滑块区:锐度 + 美学(范围对齐设置中心高级页评星)/ Sliders aligned with Advanced page (Rating)
         sliders_layout = QVBoxLayout()
         sliders_layout.setSpacing(16)
 
@@ -4865,10 +4866,10 @@ class SuperPickyMainWindow(QMainWindow):
         # V4.6+三段配额:「星级配额分配条」QuotaBar(批内相对评星)取代原单一
         # 3星配额滑块——一条 3★/2★/1★ 三段条,拖分隔点即改配额(和恒 100%,1★ 为
         # 余量)。v2 下只显示此条,旧阈值滑块隐藏(仍构建,供 v1 回滚与既有测试)。
-        # 约束与 set_custom_quota3/2 clamp 一致(SSOT),与设置中心精选页双向同步。
+        # 约束与 set_custom_quota3/2 clamp 一致(SSOT),与设置中心高级页评星双向同步。
         # V4.6 + 3-seg quota: the QuotaBar (3★/2★/1★ split) replaces the single
         # 3-star quota slider; ranges match the setter clamps (SSOT), two-way
-        # synced with the Settings Center culling page.
+        # synced with the Settings Center Advanced page (Rating).
         from core.rating_quota import get_quota3_for_skill, get_quota2_for_skill
         from ui.quota_bar import QuotaBar
         quota_layout = QHBoxLayout()
@@ -4922,7 +4923,7 @@ class SuperPickyMainWindow(QMainWindow):
 
         Star quota split (V2): persist custom_quota3/quota2 and switch the skill
         level to "custom" (1★ is the derived remainder). Consistent with the
-        Settings Center culling page.
+        Settings Center Advanced page (Rating).
         """
         if getattr(self, "_params_loading", False):
             return
@@ -4934,7 +4935,7 @@ class SuperPickyMainWindow(QMainWindow):
         self._refresh_skill_chip()
 
     def _mark_custom_skill(self):
-        """手动改阈值 → 技能档转「自定义」并同步 custom_*,与设置中心精选页协同一致。"""
+        """手动改阈值 → 技能档转「自定义」并同步 custom_*,与设置中心高级页评星协同一致。"""
         cfg = self.config
         cfg.set_custom_sharpness(self.sharp_slider.value())
         cfg.set_custom_aesthetics(self.nima_slider.value() / 10.0)
