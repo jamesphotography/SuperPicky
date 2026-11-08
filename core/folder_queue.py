@@ -99,6 +99,58 @@ def _report_db_exists(path: str) -> bool:
     return os.path.exists(os.path.join(path, ".superpicky", "report.db"))
 
 
+def result_dirs(path: str) -> List[str]:
+    """
+    返回保存这个目录选鸟结果的批次目录（各自带 .superpicky/report.db）。
+
+    目录自己有 report.db → [path]（嵌在里面的批次是重复副本，结果浏览器同样只认外层）；
+    否则按批次模式的落盘方式找子目录里的批次（tools.merged_report_db.find_processed_subdirs，
+    与结果浏览器 open_directory 用的是同一个查找器）。父目录在批次模式下把 report.db
+    写进各个子目录、从不写进自己，所以只看自己的 report.db 会漏掉它。
+    读不了（目录不存在、权限不足）时返回空表，不抛异常。
+
+    参数:
+    path (str): 用户列表里的目录
+
+    返回:
+    List[str]: 批次目录绝对路径；没有结果时为空
+
+    Batch folders holding this folder's results. Own report.db -> [path];
+    otherwise the processed sub-folders a batch-mode run wrote (same finder
+    the results browser uses). Never raises; unreadable -> [].
+
+    Parameters:
+    path (str): a folder from the user's list
+
+    Return:
+    List[str]: batch folder paths; empty when there are no results
+    """
+    if not path:
+        return []
+    try:
+        if _report_db_exists(path):
+            return [path]
+        from tools.merged_report_db import find_processed_subdirs
+        return list(find_processed_subdirs(path))
+    except Exception:  # noqa: BLE001 — 判定结果有无不能让调用方崩溃 / must not raise
+        return []
+
+
+def folder_has_results(path: str) -> bool:
+    """
+    目录是否有选鸟结果：自己有 report.db，或子目录里有批次（见 result_dirs）。
+
+    参数:
+    path (str): 目录
+
+    返回:
+    bool: 是否有结果
+
+    Whether the folder has results: its own report.db or processed sub-batches.
+    """
+    return bool(result_dirs(path))
+
+
 def classify_folder(path: str) -> str:
     """
     分类目录状态：有续跑进度 -> resume；有 report.db -> processed；否则 fresh。
@@ -186,6 +238,7 @@ class FolderQueue:
         return [self._outcomes[p] for p in self._folders]
 
     def processed_folders(self) -> List[str]:
-        """当前存在 report.db 的目录（列表顺序），供浏览器标签使用。
-        Folders that currently have a report.db, in list order."""
-        return [p for p in self._folders if _report_db_exists(p)]
+        """当前有结果的目录（列表顺序；判定见 folder_has_results，含结果在子目录里的父目录）。
+        Folders that currently have results (own report.db or processed
+        sub-batches), in list order."""
+        return [p for p in self._folders if folder_has_results(p)]

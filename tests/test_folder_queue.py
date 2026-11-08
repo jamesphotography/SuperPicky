@@ -117,3 +117,23 @@ def test_processed_folders_order(tmp_path, monkeypatch):
     (tmp_path / "z" / ".superpicky" / "report.db").write_bytes(b"")
     q = fq.FolderQueue(dirs, False)
     assert q.processed_folders() == [dirs[0], dirs[2]]
+
+
+def test_processed_folders_includes_parent_with_processed_subfolders(tmp_path, monkeypatch):
+    """
+    批次模式的父目录把 report.db 写进子目录、不写进自己，也算有结果。
+    A batch-mode parent (report.db only in sub-folders) counts as having results.
+    """
+    monkeypatch.setattr(fq, "classify_folder", lambda p: "fresh")
+    parent = tmp_path / "parent"
+    for day in ("day1", "day2"):
+        (parent / day / ".superpicky").mkdir(parents=True)
+        (parent / day / ".superpicky" / "report.db").write_bytes(b"")
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    q = fq.FolderQueue([str(parent), str(plain)], False)
+    assert q.processed_folders() == [str(parent)]
+    assert fq.folder_has_results(str(parent))
+    assert sorted(fq.result_dirs(str(parent))) == sorted(
+        [str(parent / "day1"), str(parent / "day2")])
+    assert fq.result_dirs(str(tmp_path / "missing")) == []

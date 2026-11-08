@@ -187,6 +187,59 @@ def test_real_tab_click_switches_folder(browser, three_folders):
     assert browser._folder_tabs[1][1].isChecked()
 
 
+@pytest.fixture
+def parent_and_plain(tmp_path) -> Tuple[str, str, List[str]]:
+    """
+    批次模式的父目录（day1 两张、day2 五张，自己没有 report.db）+ 一个普通已处理目录。
+    A batch-mode parent (day1: 2, day2: 5, no own report.db) plus a plain processed folder.
+    """
+    parent = str(tmp_path / "trip")
+    d1 = _make_result_folder(os.path.join(parent, "day1"), 2)
+    d2 = _make_result_folder(os.path.join(parent, "day2"), 5)
+    plain = _make_result_folder(str(tmp_path / "plain"), 4)
+    return parent, plain, [d1, d2]
+
+
+def test_parent_with_processed_subfolders_gets_summed_tab(browser, parent_and_plain, monkeypatch):
+    parent, plain, _subs = parent_and_plain
+    assert not os.path.exists(os.path.join(parent, ".superpicky", "report.db"))
+    browser.set_folder_tabs([parent, plain])
+    assert [p for p, _btn in browser._folder_tabs] == [parent, plain]
+    assert [btn.text() for _p, btn in browser._folder_tabs] == ["trip · 7", "plain · 4"]
+    calls = _record_open(monkeypatch, browser)
+    browser._opened_folder = plain
+    browser._folder_tabs[0][1].click()
+    assert calls == [(parent, False)]
+
+
+def test_parent_tab_falls_back_to_name_when_a_batch_count_fails(browser, parent_and_plain,
+                                                                monkeypatch):
+    import tools.merged_report_db as mrd
+    parent, plain, subs = parent_and_plain
+    real = mrd.summarize_directories
+
+    def _partial(dirs):
+        out = real(dirs)
+        for e in out:
+            if e["path"] == subs[0]:
+                e["photos"] = None
+        return out
+
+    monkeypatch.setattr(mrd, "summarize_directories", _partial)
+    browser.set_folder_tabs([parent, plain])
+    assert [btn.text() for _p, btn in browser._folder_tabs] == ["trip", "plain · 4"]
+
+
+def test_real_parent_tab_opens_all_its_batches(browser, parent_and_plain):
+    parent, plain, subs = parent_and_plain
+    browser.open_directory(plain)
+    browser.set_folder_tabs([parent, plain])
+    browser._folder_tabs[0][1].click()
+    assert sorted(browser._sub_dirs) == sorted(subs)
+    assert len(browser._all_photos) == 7
+    assert browser._folder_tabs[0][1].isChecked()
+
+
 class _FakeBrowser:
     """记录调用顺序的浏览器替身 / Browser stand-in recording call order."""
 
@@ -254,3 +307,15 @@ def test_main_multi_respects_explicit_path(three_folders):
     fake = _FakeBrowser()
     SuperPickyMainWindow._auto_open_results(_fake_main(fake, True, [a, b, c]), c)
     assert fake.calls == [("tabs", [a, b, c]), ("open", c, False)]
+
+
+def test_main_multi_counts_parent_with_subfolder_results(tmp_path, parent_and_plain):
+    """列表首项是批次模式父目录：它算有结果，被打开 / a batch parent counts as having results."""
+    from ui.main_window import SuperPickyMainWindow
+    parent, plain, _subs = parent_and_plain
+    empty = str(tmp_path / "empty")
+    os.makedirs(empty)
+    fake = _FakeBrowser()
+    order = [empty, parent, plain]
+    SuperPickyMainWindow._auto_open_results(_fake_main(fake, True, order))
+    assert fake.calls == [("tabs", order), ("open", parent, False)]

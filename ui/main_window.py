@@ -2405,9 +2405,11 @@ class SuperPickyMainWindow(QMainWindow):
         folders: List[str] = self._multi_folders() if multi else []
         target = path or self.directory_path
         if multi:
-            from core.recursive_scanner import is_processed
-            with_results = [f for f in folders if f and is_processed(f)]
-            if not (path and is_processed(path)) and with_results:
+            # 有结果 = 自己有 report.db 或子目录里有批次（父目录走批次模式时结果在子目录）
+            # Has results = own report.db or processed sub-batches (parent batch mode)
+            from core.folder_queue import folder_has_results
+            with_results = [f for f in folders if f and folder_has_results(f)]
+            if not (path and folder_has_results(path)) and with_results:
                 target = with_results[0]
             target = target or (folders[0] if folders else "")
         if not target:

@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
     QScrollArea, QFrame
 )
 from PySide6.QtCore import Qt, Signal, Slot, QProcess, QSize, QTimer, QEvent
-from PySide6.QtGui import QAction, QKeyEvent, QIcon
+from PySide6.QtGui import QAction, QKeyEvent, QIcon, QFont, QFontMetrics
 from ui.custom_dialogs import StyledMessageBox, StyledProgressDialog
 from PySide6.QtWidgets import QDialog
 from ui.directory_select_dialog import DirectorySelectDialog
@@ -2621,29 +2621,30 @@ class ResultsBrowserWindow(QMainWindow):
         设置目录标签（多目录处理后由主窗口调用；单目录时传空表清掉）。
 
         规则（spec §4.4）:
-          * 只为已处理（有 ``.superpicky/report.db``）的目录建标签——与
-            open_directory 判断「能直接打开」的标准一致（core.recursive_scanner.is_processed）；
-            只在子目录里有批次的目录不建标签：多目录队列处理的正是列表里的目录本身，
-            它们的结果就在自己的 report.db 里，再去递归扫子目录既慢又会多出用户没处理过的标签。
+          * 只为有结果的目录建标签（core.folder_queue.result_dirs 非空）：自己有
+            ``.superpicky/report.db``，或者是批次模式处理过的父目录——它的 report.db
+            在各个子目录里。查找器与 open_directory 用的是同一个
+            （find_processed_subdirs），所以有标签的目录一定打得开。
           * 少于 2 个标签时整排隐藏（单个目录没有可切换的对象）。
-          * 文字为「目录名 · N」，N 来自 summarize_directories 的只读计数（不升级 schema）；
-            计数失败或读不出时只显示目录名，标签照样保留。
+          * 文字为「目录名 · N」，N 是该目录所有批次 summarize_directories 只读计数之和
+            （不升级 schema）；任一批次计数失败或读不出时只显示目录名，标签照样保留。
           * 当前打开的目录对应的标签高亮。
 
         参数:
         folders (list): 主界面列表里的目录（按列表顺序）；空表 = 清掉标签
 
         Set the folder tabs (called by the main window after multi-folder
-        work; an empty list clears them). Only processed folders (own
-        report.db, the same test open_directory uses) get a tab; fewer than 2
-        tabs hide the row; labels read "name · N" from a read-only count and
-        fall back to the bare name when counting fails; the open folder's tab
-        is highlighted.
+        work; an empty list clears them). Only folders with results get a tab
+        (own report.db, or a parent whose batch-mode results live in
+        sub-folders; same finder open_directory uses); fewer than 2 tabs hide
+        the row; labels read "name · N" where N sums the read-only counts of
+        the folder's batches, falling back to the bare name when any count
+        fails; the open folder's tab is highlighted.
 
         Parameters:
         folders (list): folders from the main-window list, in list order; [] clears
         """
-        from core.recursive_scanner import is_processed
+        from core.folder_queue import result_dirs
 
         # 清掉旧标签 / drop the old tabs
         for _path, btn in self._folder_tabs:
@@ -2653,6 +2654,7 @@ class ResultsBrowserWindow(QMainWindow):
 
         seen: set = set()
         result_folders: list = []
+        batches: dict = {}            # 目录 -> 它的批次目录 / folder -> its batch folders
         for folder in folders or []:
             if not folder:
                 continue
@@ -2660,34 +2662,41 @@ class ResultsBrowserWindow(QMainWindow):
             if key in seen:
                 continue
             seen.add(key)
-            try:
-                if is_processed(folder):
-                    result_folders.append(folder)
-            except OSError:
-                continue
+            dirs = result_dirs(folder)   # 不抛异常 / never raises
+            if dirs:
+                result_folders.append(folder)
+                batches[folder] = dirs
 
         if len(result_folders) < 2:
             self._folder_tab_area.hide()
             return
 
-        counts: dict = {}
+        # 批次计数：一次只读查询全部批次，再按目录求和
+        # Batch counts: one read-only query for all batches, summed per folder
+        batch_counts: dict = {}
         try:
             # 模块属性查找（而非 from-import 到局部）便于测试替换
             # Attribute lookup (not a local from-import) so tests can patch it
             import tools.merged_report_db as merged_report_db
-            for entry in merged_report_db.summarize_directories(result_folders):
-                counts[entry.get("path")] = entry.get("photos")
+            all_batches = [d for f in result_folders for d in batches[f]]
+            for entry in merged_report_db.summarize_directories(all_batches):
+                batch_counts[entry.get("path")] = entry.get("photos")
         except Exception as e:  # noqa: BLE001 — 计数只是附加信息 / counts are optional
             from tools.utils import log_message
             log_message(f"[Browser] folder tab count failed: {e}")
-            counts = {}
+            batch_counts = {}
 
-        metrics = self.fontMetrics()
+        # 用标签实际字号（13px，见 _folder_tab_style）量宽度，省略位置才准
+        # Measure with the tab's real 13px font so eliding matches what is drawn
+        tab_font = QFont(self.font())
+        tab_font.setPixelSize(13)
+        metrics = QFontMetrics(tab_font)
         for i, folder in enumerate(result_folders):
             name = os.path.basename(folder.rstrip("/\\")) or folder
             name = metrics.elidedText(name, Qt.ElideMiddle, self._FOLDER_TAB_NAME_MAX_PX)
-            n = counts.get(folder)
-            text = f"{name} \u00b7 {n}" if isinstance(n, int) else name
+            parts = [batch_counts.get(d) for d in batches[folder]]
+            n = sum(parts) if parts and all(isinstance(x, int) for x in parts) else None
+            text = f"{name} \u00b7 {n}" if n is not None else name
             btn = QPushButton(text)
             btn.setCheckable(True)
             btn.setFixedHeight(28)
