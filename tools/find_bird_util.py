@@ -370,6 +370,13 @@ def _build_superpicky_folder_set():
         pass
     names.update(_LEGACY_RATING_FOLDERS)
     names.update(_OTHER_BIRDS_LABELS)
+    # 视频整理的「无鸟」目录（三语）：视频清单丢了也要能摊平复原
+    # Video organizer's "no bird" folder (all languages): flatten even without its manifest
+    try:
+        from constants import NO_BIRD_FOLDER_ALIASES
+        names.update(NO_BIRD_FOLDER_ALIASES)
+    except Exception:
+        pass
 
     # 鸟名（简体原样 + 台湾鸟名 + 英文空格转下划线，与照片端命名一致）
     # Species names: Simplified, Taiwan (zh_TW UI) and English with underscores.
@@ -413,10 +420,59 @@ def _count_subdirs(path: str) -> int:
 
 
 def _is_superpicky_folder(name: str) -> bool:
-    """目录名是否为 SuperPicky 生成（鸟名/评分/其他鸟类/burst_）。"""
+    """目录名是否为 SuperPicky 生成（鸟名/评分/其他鸟类/无鸟/burst_）。"""
     if name.startswith("burst_"):
         return True
     return name in _build_superpicky_folder_set()
+
+
+def _has_superpicky_children(path: str) -> bool:
+    """
+    目录的直接子目录里是否有星级目录（三语 + legacy）或 burst_ 目录。
+
+    「先鸟种后星级」布局下 SuperPicky 建的鸟种目录里一定有星级目录，所以按结构就能
+    认出它，不依赖鸟名。鸟名会随鸟名库更新改名（如 IOC 15.1 把「澳洲鸨」改成
+    「澳洲鹭鸨」），只按当前库的名字认，旧版本建的鸟种目录就被当成用户目录跳过，
+    重置时里面的照片不会移回来。
+
+    参数:
+    path (str): 顶层目录
+
+    返回:
+    bool: 有星级或 burst_ 子目录为 True；读不了时为 False
+
+    Whether the folder's direct sub-folders include a rating folder (any
+    language, plus legacy names) or a burst_ folder. A species-first species
+    folder always holds rating folders, so it is recognised by structure,
+    independent of the name — species names change with name-database
+    updates, and an old species folder would otherwise be skipped by reset.
+    """
+    try:
+        from constants import ALL_RATING_FOLDER_NAMES
+        rating_names = set(ALL_RATING_FOLDER_NAMES) | set(_LEGACY_RATING_FOLDERS)
+    except Exception:
+        rating_names = set(_LEGACY_RATING_FOLDERS)
+    try:
+        with os.scandir(path) as entries:
+            for entry in entries:
+                if not entry.is_dir(follow_symlinks=False):
+                    continue
+                if entry.name in rating_names or entry.name.startswith("burst_"):
+                    return True
+    except OSError:
+        return False
+    return False
+
+
+def _is_superpicky_top_folder(path: str, name: str) -> bool:
+    """
+    顶层目录是否由 SuperPicky 生成：名字认得出（_is_superpicky_folder），或结构认得出
+    （_has_superpicky_children，旧鸟名的鸟种目录）。
+
+    Whether a top-level folder was made by SuperPicky: a known name, or the
+    species-folder structure (rating / burst_ sub-folders) for renamed species.
+    """
+    return _is_superpicky_folder(name) or _has_superpicky_children(path)
 
 
 def is_ignorable_reset_residue(filename: str) -> bool:
@@ -484,8 +540,9 @@ def force_flatten_directory(directory, log_callback=None, i18n=None) -> dict:
     """
     高级重置核心：把「SuperPicky 生成的顶层目录」内的文件递归移回 directory 根。
 
-    仅处理顶层目录名匹配（鸟名 中+英 / 评分名 中+英 / 其他鸟类 / burst_）的目录，
-    用户自建目录原样不动。同名文件跳过、不覆盖、只移动不删除；移完删除清空的目录。
+    仅处理 SuperPicky 生成的顶层目录：名字匹配（鸟名 中+英 / 评分名 中+英 / 其他鸟类 /
+    无鸟 / burst_），或结构匹配（直接子目录里有星级或 burst_ 目录——旧版鸟名、已改名的
+    鸟种目录靠这条认出），用户自建目录原样不动。同名文件跳过、不覆盖、只移动不删除；移完删除清空的目录。
     隐藏文件 / AppleDouble(._*) / .superpicky 内部目录一律跳过（不污染根目录；
     .superpicky 由随后的 reset() 统一删除）。
 
@@ -531,7 +588,7 @@ def force_flatten_directory(directory, log_callback=None, i18n=None) -> dict:
             continue
         if entry.startswith("."):  # 隐藏 / .superpicky 等内部目录，跳过
             continue
-        if _is_superpicky_folder(entry):
+        if _is_superpicky_top_folder(entry_path, entry):
             matched_dirs.append(entry_path)
 
     stats["folders_matched"] = len(matched_dirs)

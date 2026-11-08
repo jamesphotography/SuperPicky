@@ -307,3 +307,69 @@ def test_v2_focus_arbitration_threshold_matches_field_review():
     for sharp in (423.0, 388.0):
         (w, _), arbitrated = arbitrate_focus_weights((0.5, 0.8), sharp, thr)
         assert not arbitrated and w == 0.5
+
+
+def test_v2_focus_arbitration_default_and_clamp(tmp_path):
+    """配置字段默认 520，setter 钳制到 300–800，且不进 PRESERVE_ON_RESET。"""
+    from advanced_config import AdvancedConfig
+    from core.rating_quota import FOCUS_ARBITRATION_SHARPNESS
+    cfg = AdvancedConfig(config_file=str(tmp_path / "c.json"))
+    assert cfg.v2_focus_arbitration_sharpness == FOCUS_ARBITRATION_SHARPNESS == 520.0
+    cfg.set_v2_focus_arbitration_sharpness(100)
+    assert cfg.v2_focus_arbitration_sharpness == 300.0
+    cfg.set_v2_focus_arbitration_sharpness(5000)
+    assert cfg.v2_focus_arbitration_sharpness == 800.0
+    cfg.set_v2_focus_arbitration_sharpness(450)
+    assert cfg.v2_focus_arbitration_sharpness == 450.0
+    assert "v2_focus_arbitration_sharpness" not in AdvancedConfig.PRESERVE_ON_RESET
+
+
+def test_v2_focus_arbitration_getter_survives_bad_stored_value(tmp_path):
+    """手改配置文件的非数值/越界值：读取时回退默认或钳制，不抛异常。"""
+    import json
+    from advanced_config import AdvancedConfig
+    from core.rating_quota import FOCUS_ARBITRATION_SHARPNESS
+    path = tmp_path / "bad.json"
+    for raw, expected in (("abc", FOCUS_ARBITRATION_SHARPNESS), (None, FOCUS_ARBITRATION_SHARPNESS),
+                          (50, 300.0), (99999, 800.0)):
+        path.write_text(json.dumps({"v2_focus_arbitration_sharpness": raw}), encoding="utf-8")
+        cfg = AdvancedConfig(config_file=str(path))
+        assert cfg.v2_focus_arbitration_sharpness == expected
+
+
+def test_v2_branch_reads_configured_arbitration_threshold():
+    """V2 分支读配置字段（而非常量），450 线下 484 锐度被仲裁为合焦。"""
+    from pathlib import Path
+    from core.focus_point_detector import arbitrate_focus_weights
+    src = (Path(__file__).resolve().parent.parent / "core" / "photo_processor.py").read_text(encoding="utf-8")
+    assert "self.config.v2_focus_arbitration_sharpness" in src
+    assert "V2_FOCUS_ARBITRATION_SHARPNESS" not in src
+    (w, _), arbitrated = arbitrate_focus_weights((0.5, 0.8), 484.0, 450.0)
+    assert arbitrated and w == 0.9
+    (w, _), arbitrated = arbitrate_focus_weights((0.5, 0.8), 484.0, 520.0)
+    assert not arbitrated and w == 0.5
+
+
+def test_worst_focus_capped_at_two_stars_without_backfill():
+    """仲裁后仍 WORST 的照片封顶 2★，空出的 3★ 名额不递补 / WORST capped, no backfill."""
+    from core.rating_quota import assign_ratings
+    photos = [_metrics(key="a", norm_sharpness=484.0, focus_status="WORST", is_flying=True),
+              _metrics(key="b", norm_sharpness=400.0, focus_status="GOOD"),
+              _metrics(key="c", norm_sharpness=350.0, focus_status="GOOD")]
+    r = assign_ratings(photos, quota3=33, quota2=33, species_floor=False)
+    assert r["a"].rating == 2 and r["a"].reason_key == "rating_v2.focus_capped"
+    assert r["b"].rating == 2 and r["b"].reason_key == "rating_v2.mid_quota"   # 不递补 / no backfill
+    assert r["c"].rating == 1
+
+
+def test_bad_focus_not_capped():
+    from core.rating_quota import assign_ratings
+    r = assign_ratings([_metrics(key="a", focus_status="BAD")], quota3=100, quota2=0, species_floor=False)
+    assert r["a"].rating == 3
+
+
+def test_focus_cap_keeps_species_floor():
+    from core.rating_quota import assign_ratings
+    r = assign_ratings([_metrics(key="a", focus_status="WORST", species="X", species_confirmed=True)],
+                       quota3=100, quota2=0)
+    assert r["a"].rating == 2

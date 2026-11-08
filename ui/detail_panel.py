@@ -333,6 +333,11 @@ class DetailPanel(QWidget):
         self._current_photo: Optional[dict] = None
         self._use_crop_view = False     # True=裁切图, False=全图
         self._loader: Optional[_ImageLoader] = None
+        # 最近一次 ▲/▼ 的方向（+1 / -1），在发 rating_change_requested 之前设置，
+        # 浏览器批量改星级时按它把同一方向套用到每张勾选的照片。
+        # Direction of the last ▲/▼ press (+1 / -1), set before emitting
+        # rating_change_requested; batch rating applies it to every checked photo.
+        self.last_rating_step: int = 0
 
         self.setFixedWidth(300)
         self.setStyleSheet(f"background-color: {COLORS['bg_elevated']}; border-left: 1px solid {COLORS['border_subtle']};")
@@ -763,6 +768,9 @@ class DetailPanel(QWidget):
             return
         self._current_photo["rating"] = new_val
         self._refresh_metadata()
+        # 批量改星级时浏览器据此把同一方向套用到每张勾选的照片
+        # The browser applies the same direction to every checked photo
+        self.last_rating_step = -1
         self.rating_change_requested.emit(dict(self._current_photo), new_val)
 
     def _on_rating_inc(self):
@@ -775,6 +783,9 @@ class DetailPanel(QWidget):
             return
         self._current_photo["rating"] = new_val
         self._refresh_metadata()
+        # 批量改星级时浏览器据此把同一方向套用到每张勾选的照片
+        # The browser applies the same direction to every checked photo
+        self.last_rating_step = 1
         self.rating_change_requested.emit(dict(self._current_photo), new_val)
 
     def _on_copy_exif(self):

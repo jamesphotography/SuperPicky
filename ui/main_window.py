@@ -10,7 +10,7 @@ import threading
 import subprocess
 from types import SimpleNamespace
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 
 def get_resource_path(relative_path):
@@ -146,6 +146,16 @@ def _format_wall_clock(ts: float) -> str:
     from datetime import datetime as _dt2
 
     return _dt2.fromtimestamp(ts).strftime("%H:%M:%S")
+
+
+# 预扫描失败的哨兵：_prescan 扫描本身抛异常时返回它（区别于 None=已阻断、
+# list=扫描结果），调用方据此给 worker 传 scan_results=None，保持「扫描失败
+# 不阻断、交给 worker 自己扫描」的原语义。不用 [] 是因为空列表表示「没有照片」。
+# Sentinel returned by _prescan when the scan itself raises (distinct from
+# None = blocked and a list = results). The caller then passes
+# scan_results=None to the worker, keeping "scan failure doesn't block".
+# Not [] because an empty list means "no photos".
+_SCAN_FAILED = object()
 
 
 #: #145 开始确认框里「更换国家…」按钮的返回值（Yes=1 / No=0 之外）
@@ -832,6 +842,53 @@ class SuperPickyMainWindow(QMainWindow):
         self.directory_path = ""
         self.worker = None
         self.worker_signals = None
+        # 多目录队列（实验室功能）：处理多个目录时持有 FolderQueue，空闲时为 None
+        # Multi-folder queue (Labs): holds a FolderQueue while processing several folders, else None
+        self._queue = None
+        # 队列运行时的辅助状态（见 _start_queue）/ Queue run-time state (see _start_queue)
+        # _queue_current: 正在处理（或正在重置）的目录 / folder being processed or reset
+        # _queue_pending_launch: 「重新处理」的目录，重置完成后再启动 / reprocess folder awaiting its reset
+        # _queue_stop_requested: 用户点了停止 / the user pressed Stop
+        # _queue_counts / _queue_total / _queue_done_photos: 总进度换算 / overall progress mapping
+        self._queue_current: Optional[str] = None
+        self._queue_pending_launch: Optional[str] = None
+        self._queue_stop_requested = False
+        self._queue_counts: Dict[str, int] = {}
+        self._queue_total = 0
+        self._queue_done_photos = 0
+        # 多目录整组重置（见 _reset_group）：_reset_queue 为剩下待重置的目录，
+        # 不为 None 即表示整组重置进行中（最后一个目录重置期间为空列表）
+        # Multi-folder group reset (see _reset_group): _reset_queue holds the
+        # folders still to reset; not None means a group reset is running
+        # (an empty list while the last folder is being reset)
+        self._reset_queue: Optional[List[str]] = None
+        # _reset_group_total: 本组目录数 / folders in the group
+        # _reset_group_done: 完整重置成功的目录数 / folders reset cleanly
+        # _reset_group_failed: (目录, 原因) / (folder, reason) for failures
+        # _reset_group_current: 正在重置的目录 / folder being reset
+        self._reset_group_total = 0
+        self._reset_group_done = 0
+        self._reset_group_failed: List[Tuple[str, str]] = []
+        self._reset_group_current: Optional[str] = None
+        # _prescan(warn=False) 的阻断原因 / blocking reason from _prescan(warn=False)
+        self._prescan_error = ""
+        # 主界面当前是否显示多目录列表；关开关遇到处理中时记下挂起，处理结束后再收起
+        # Whether the folder list is currently shown; a switch-off during processing is deferred
+        self._lab_multi_active = False
+        self._lab_multi_pending_off = False
+        # 处理中打开开关同样挂起：立即切到列表会把正在处理的目录的按钮恢复成可「重置」
+        # A switch-on during processing is deferred too: showing the list at once
+        # would re-enable Reset for the folder being processed
+        self._lab_multi_pending_on = False
+        # 单目录处理（开关开启、列表 1 个目录）启动时锁住了列表编辑，结束槽据此解锁
+        # Set when a single-folder run locked the folder list; terminal slots unlock
+        self._single_run_locked = False
+        # 单目录重置（不属于队列「重新处理」或整组重置）的后台线程在跑：_is_lab_processing
+        # 据此把它算作处理中（挂起开关切换、退出要确认），结束槽里清掉
+        # A single-folder reset thread (not a queue reprocess nor a group reset)
+        # is running; _is_lab_processing counts it as processing. Cleared by the
+        # reset terminal slots.
+        self._single_reset_active = False
         self.current_progress = 0
         self.total_files = 0
         self._main_window_placement_saved = False
@@ -890,6 +947,10 @@ class SuperPickyMainWindow(QMainWindow):
         if not self.config.is_first_run:
             # 非首次运行：根据保存的水平设置滑块
             self._apply_skill_level_thresholds(self.config.skill_level)
+
+        # 实验室「多目录」开关：决定目录栏显示单目录输入框还是目录列表
+        # Labs multi-folder switch: show the single-folder input or the folder list
+        self._apply_lab_multi_folder()
 
 
 
@@ -1172,7 +1233,7 @@ class SuperPickyMainWindow(QMainWindow):
         # Ctrl+, 在 macOS 显示为 ⌘,（打开设置的标准快捷键），Windows 为 Ctrl+,
         # Ctrl+, renders as Cmd+, on macOS (the standard open-settings key).
         settings_action.setShortcut(QKeySequence("Ctrl+,"))
-        settings_action.triggered.connect(lambda: self._open_settings_center("culling"))
+        settings_action.triggered.connect(lambda: self._open_settings_center("common"))
         settings_menu.addAction(settings_action)
 
         repair_action = QAction(self.i18n.t("menu.environment_repair"), self)
@@ -1222,6 +1283,26 @@ class SuperPickyMainWindow(QMainWindow):
         if not hasattr(self, '_recent_menu'):
             return
         self._recent_menu.clear()
+        # 以界面上实际显示的是否为目录列表为准（开关在处理中改动会挂起到处理结束）
+        # Follow whether the folder list is actually shown (switch changes made
+        # during processing are deferred until it ends)
+        multi_on = bool(self._lab_multi_active)
+        # 多目录开启时，目录组列在单目录条目之前；关闭时不显示目录组
+        # With multi-folder on, directory groups come before single entries; hidden when off
+        if multi_on:
+            groups = self.config.get_recent_directory_groups()
+            sep = "、" if str(getattr(self.i18n, "current_lang", "")).startswith("zh") else ", "
+            for group in groups:
+                label = self.i18n.t(
+                    "menu.recent_group", count=len(group),
+                    names=self._group_names_text(group, sep))
+                action = QAction(label, self)
+                action.setToolTip("\n".join(group))
+                action.triggered.connect(
+                    lambda checked=False, g=list(group): self._restore_recent_group(g))
+                self._recent_menu.addAction(action)
+            if groups:
+                self._recent_menu.addSeparator()
         dirs = self.config.get_recent_directories()
         offline_prefix = self.i18n.t("menu.recent_dirs_offline")  # "(脱机)" or "(Offline)"
         if dirs:
@@ -1229,7 +1310,11 @@ class SuperPickyMainWindow(QMainWindow):
                 available = os.path.isdir(d)
                 label = d if available else f"{offline_prefix} {d}"
                 action = QAction(label, self)
-                if available:
+                if available and multi_on:
+                    # 多目录开启时点单个目录：替换整个列表 / replaces the whole list
+                    action.triggered.connect(
+                        lambda checked=False, path=d: self._set_folder_list_logged([path]))
+                elif available:
                     action.triggered.connect(lambda checked=False, path=d: self._handle_directory_selection(path))
                 else:
                     action.triggered.connect(
@@ -1243,9 +1328,81 @@ class SuperPickyMainWindow(QMainWindow):
         clear_action.triggered.connect(self._clear_recent_directories)
         self._recent_menu.addAction(clear_action)
 
+    @staticmethod
+    def _group_names_text(dirs: List[str], sep: str, limit: int = 60) -> str:
+        """
+        把目录组的各目录名（basename）连成一行，超过 limit 个字符时截断并加「…」。
+
+        参数:
+        dirs (List[str]): 目录路径列表
+        sep (str): 连接符（中文界面「、」，英文 ", "）
+        limit (int): 最大字符数（不含省略号）
+
+        返回:
+        str: 例如 "A、B、C" 或截断后的 "A、B、C…"
+
+        Join the folders' basenames; truncate to `limit` characters plus "…".
+
+        Parameters:
+        dirs (List[str]): folder paths
+        sep (str): separator ("、" for Chinese UIs, ", " otherwise)
+        limit (int): maximum characters before the ellipsis
+
+        Return:
+        str: e.g. "A, B, C" or a truncated "A, B, C…"
+        """
+        names = sep.join(os.path.basename(os.path.normpath(d)) or d for d in dirs)
+        if len(names) > limit:
+            names = names[:limit] + "…"
+        return names
+
+    def _restore_recent_group(self, group: List[str]) -> None:
+        """
+        把「最近目录」里的一个目录组放回多目录列表；不存在的目录（如外接盘未连接）
+        跳过，各写一条 warning 日志，不弹窗不中断。
+
+        参数:
+        group (List[str]): 目录组
+
+        Put a recent directory group back into the folder list; missing folders
+        (e.g. an unplugged drive) are skipped with one warning log line each.
+
+        Parameters:
+        group (List[str]): the directory group
+        """
+        self._set_folder_list_logged(group)
+
+    def _set_folder_list_logged(self, paths: List[str]) -> None:
+        """
+        用 set_folders 替换目录列表，并把没放进去的目录逐个写 warning 日志：
+        不存在的（如外接盘未连接）用 logs.recent_group_missing；重叠/危险/无照片的用
+        logs.folder_list_rejected（原因取添加时同一份提示文字）。不弹窗、不中断。
+        用于恢复最近目录组、点单个最近目录（多目录开启时）和打开开关时放入当前目录。
+
+        参数:
+        paths (List[str]): 要放入列表的目录
+
+        Replace the folder list via set_folders and log one warning per folder
+        that did not make it in: missing ones (e.g. an unplugged drive) and
+        rejected ones (overlap / dangerous / no photos, with the same reason
+        text as when adding). No dialogs, no interruption. Used for recent
+        groups, single recent entries (multi-folder on) and the switch-on seed.
+
+        Parameters:
+        paths (List[str]): folders to put in the list
+        """
+        missing = self._folder_list.set_folders(paths)
+        for d in missing:
+            self._log(self.i18n.t("logs.recent_group_missing", directory=d), "warning")
+        for d, code in self._folder_list.rejected():
+            reason = self.i18n.t(f"labels.folder_reject_{code}", directory=d).replace("\n", " ")
+            self._log(self.i18n.t("logs.folder_list_rejected", reason=reason), "warning")
+
     def _clear_recent_directories(self):
         """清空最近目录历史。"""
         self.config.config["recent_directories"] = []
+        # 目录组同属「最近目录」历史，一并清除 / groups are part of the same history
+        self.config.config["recent_directory_groups"] = []
         self.config.save()
         self._refresh_recent_menu()
 
@@ -1497,7 +1654,7 @@ class SuperPickyMainWindow(QMainWindow):
         Ask on first close whether to keep running in the tray or quit
         (#123). Closing used to always hide to the tray, so Windows users
         believed the app had exited while the process kept running. The
-        choice is remembered and can be changed in Settings → External Apps.
+        choice is remembered and can be changed in Settings → Advanced → External apps.
 
         Return:
         Optional[str]: "tray" / "quit", or None when the dialog is dismissed
@@ -1523,9 +1680,14 @@ class SuperPickyMainWindow(QMainWindow):
 
     def _quit_app(self):
         """完全退出应用（清理由 aboutToQuit 信号统一处理）"""
-        # 任务进行中时先确认，避免托盘"完全退出"误杀处理任务
-        # Confirm first if a task is running, so tray "Quit" cannot kill it by accident
-        if self.worker and self.worker.is_alive():
+        # 任务进行中时先确认，避免托盘"完全退出"误杀处理任务。多目录队列在跑时
+        # （含目录之间、「重新处理」的重置阶段，此时没有存活的工作线程）以及单目录
+        # 重置进行中（重置线程正在移动照片）同样要确认
+        # Confirm first if a task is running, so tray "Quit" cannot kill it by
+        # accident — including a running folder queue with no live worker
+        # (between folders or during a reprocess reset) and a single-folder
+        # reset whose thread is still moving photos
+        if self._is_lab_processing():
             reply = StyledMessageBox.question(
                 self,
                 self.i18n.t("messages.exit_title"),
@@ -1535,9 +1697,26 @@ class SuperPickyMainWindow(QMainWindow):
             )
             if reply != StyledMessageBox.No:  # 未确认退出 / quit not confirmed
                 return
+            self._stop_processing_for_quit()
+        self._force_quit()
+
+    def _stop_processing_for_quit(self) -> None:
+        """
+        退出前停掉处理：先停队列（后面的目录不再开始），再停工作线程与防休眠。
+
+        Stop processing before quitting: stop the queue first (no further
+        folders start), then the worker and caffeinate.
+        """
+        if self._queue is not None:
+            self._queue_stop_requested = True
+            self._queue.stop()
+        if self._reset_queue is not None:
+            # 整组重置：后面的目录不再开始（正在重置的那个随进程结束）
+            # Group reset: no further folders start (the running one ends with the process)
+            self._reset_queue.clear()
+        if self.worker and self.worker.is_alive():
             self.worker.request_stop()
             self.worker._stop_caffeinate()  # V3.8.1: 确保终止 caffeinate 进程
-        self._force_quit()
 
     def _force_quit(self):
         """不再确认，直接退出（清理由 aboutToQuit 信号统一处理）"""
@@ -1702,7 +1881,7 @@ class SuperPickyMainWindow(QMainWindow):
         header_layout.addWidget(version_label)
 
         # Task 7: 技能水平 chip — 只读展示，点击后打开设置中心（culling 页）
-        # Task 7: skill level chip — read-only display; click opens SettingsCenter (culling page)
+        # Task 7: skill level chip — read-only display; click opens SettingsCenter (Common page)
         self.skill_level_label = QLabel("")
         self.skill_level_label.setStyleSheet(f"""
             color: {COLORS['accent']};
@@ -1712,7 +1891,7 @@ class SuperPickyMainWindow(QMainWindow):
             border-radius: 4px;
         """)
         self.skill_level_label.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.skill_level_label.mousePressEvent = lambda _ev: self._open_settings_center("culling")
+        self.skill_level_label.mousePressEvent = lambda _ev: self._open_settings_center("common")
         header_layout.addSpacing(8)
         header_layout.addWidget(self.skill_level_label)
 
@@ -1732,6 +1911,17 @@ class SuperPickyMainWindow(QMainWindow):
         self.dir_input.pathDropped.connect(self._on_path_dropped)     # V3.9: 拖放目录
         dir_layout.addWidget(self.dir_input, 1)
 
+        # 实验室多目录列表：与 dir_input 同处一行，二者只显示一个（由 _apply_lab_multi_folder 切换）。
+        # 默认隐藏，隐藏的控件不占布局空间，开关关闭时目录栏与原来完全一致。
+        # Labs folder list: shares the row with dir_input; only one is shown
+        # (toggled by _apply_lab_multi_folder). Hidden by default, so the
+        # single-folder bar is unchanged while the switch is off.
+        from ui.folder_list_widget import FolderListWidget
+        self._folder_list = FolderListWidget()
+        self._folder_list.setVisible(False)
+        self._folder_list.foldersChanged.connect(self._on_folders_changed)
+        dir_layout.addWidget(self._folder_list, 1)
+
         browse_btn = QPushButton("  " + self.i18n.t("labels.browse"))
         browse_btn.setIcon(load_tinted_icon("folder.svg", ICON_IDLE, 16))
         browse_btn.setIconSize(QSize(16, 16))
@@ -1739,6 +1929,9 @@ class SuperPickyMainWindow(QMainWindow):
         browse_btn.setMinimumWidth(100)
         browse_btn.clicked.connect(self._browse_directory)
         dir_layout.addWidget(browse_btn)
+        # 多目录模式下列表自带「添加目录」，浏览按钮随输入框一起隐藏
+        # In multi-folder mode the list has its own add button; browse hides with the input
+        self._browse_btn = browse_btn
 
         parent_layout.addLayout(dir_layout)
 
@@ -1945,6 +2138,283 @@ class SuperPickyMainWindow(QMainWindow):
         self._check_report_csv()
         self._maybe_prompt_resume_after_selection()
 
+    # ========== 实验室：多目录 / Labs: multi-folder ==========
+
+    def _is_lab_processing(self) -> bool:
+        """
+        是否正在处理（工作线程存活、多目录队列在跑、多目录整组重置在跑，或单目录重置
+        的后台线程在跑——重置同样在移动照片，期间不能切换目录栏或无确认退出）。
+
+        返回:
+        bool: 处理中为 True
+
+        Whether processing is under way (worker alive, the folder queue running,
+        a multi-folder group reset running, or a single-folder reset thread
+        running — a reset moves photos too, so the folder bar must not switch
+        and quitting must ask).
+
+        Return:
+        bool: True while processing
+        """
+        return ((self.worker is not None and self.worker.is_alive())
+                or self._queue is not None or self._reset_queue is not None
+                or self._single_reset_active)
+
+    def _is_multi_mode(self) -> bool:
+        """
+        多目录模式：实验室开关打开，且列表里至少有 2 个目录。
+
+        返回:
+        bool: 是否多目录模式
+
+        Multi-folder mode: the Labs switch is on and the list holds at least 2 folders.
+
+        Return:
+        bool: whether multi-folder mode is active
+        """
+        return bool(self.config.lab_multi_folder) and len(self._folder_list.folders()) >= 2
+
+    def _multi_folders(self) -> List[str]:
+        """
+        待处理目录：开关打开时为列表内容，否则为 [directory_path]（未选目录时为 []）。
+
+        返回:
+        List[str]: 目录列表
+
+        Folders to process: the list contents when the switch is on, otherwise
+        [directory_path] (or [] when nothing is selected).
+
+        Return:
+        List[str]: folder paths
+        """
+        if self.config.lab_multi_folder:
+            return self._folder_list.folders()
+        return [self.directory_path] if self.directory_path else []
+
+    def _apply_lab_multi_folder(self) -> None:
+        """
+        按 lab_multi_folder 切换目录栏：开启显示目录列表，关闭显示单目录输入框。
+
+        - 开启：显示列表；若已选目录且列表为空，把它放进列表作为第一项。
+        - 关闭：显示输入框；列表有多个目录时只保留第一个，并对它走一遍
+          _handle_directory_selection（界面回到单目录）。
+        - 处理中（工作线程存活、队列或整组重置在跑）两个方向都不切换，只记下挂起，由
+          _apply_pending_lab_switch 在处理结束后应用。开启也必须挂起：放入列表会经
+          _on_folders_changed 刷新按钮，把正在处理的目录的「重置」重新启用、「停止」
+          变回「开始」，用户就能在文件还在移动时重置它。
+
+        Toggle the directory bar per lab_multi_folder: list when on, single input
+        when off. Switching on seeds the list with the selected folder; switching
+        off keeps only the first folder and re-selects it. While processing,
+        both directions are deferred until _apply_pending_lab_switch runs: an
+        immediate switch-on would refresh the buttons through
+        _on_folders_changed, re-enabling Reset (and turning Stop back into
+        Start) for the folder whose files are still being moved.
+        """
+        if self.config.lab_multi_folder:
+            self._lab_multi_pending_off = False
+            if not self._lab_multi_active and self._is_lab_processing():
+                self._lab_multi_pending_on = True
+                self._schedule_pending_lab_poll()
+                return
+            self._switch_to_multi_folder()
+            return
+
+        self._lab_multi_pending_on = False
+        if not self._lab_multi_active:
+            # 本来就是单目录界面，无需切换 / already single-folder
+            self._lab_multi_pending_off = False
+            return
+        if self._is_lab_processing():
+            self._lab_multi_pending_off = True
+            self._schedule_pending_lab_poll()
+            return
+        self._switch_to_single_folder()
+
+    def _schedule_pending_lab_poll(self) -> None:
+        """
+        只有单个工作线程在跑（无队列、无整组重置）时，每秒复查一次挂起的开关切换。
+        工作线程发出 finished 后还要停防休眠才退出：若用户恰在结束槽执行之后、线程退出
+        之前切换开关，就再没有结束槽来应用它，靠这个复查兜底。队列与整组重置结束时
+        自己会调用 _apply_pending_lab_switch，不需要复查。
+
+        While only a single worker runs (no queue / group reset), re-check a
+        deferred switch change every second. The worker exits slightly after
+        emitting `finished`; a switch flipped in that gap would otherwise wait
+        for the next run. Queue and group-reset ends apply it themselves.
+        """
+        if self._queue is None and self._reset_queue is None:
+            QTimer.singleShot(1000, self._poll_pending_lab_switch)
+
+    def _poll_pending_lab_switch(self) -> None:
+        """
+        复查挂起的开关切换：仍在处理则继续等；处理已结束就应用（见 _schedule_pending_lab_poll）。
+
+        Re-check a deferred switch change: keep waiting while processing,
+        apply it once processing has ended.
+        """
+        if not (self._lab_multi_pending_on or self._lab_multi_pending_off):
+            return
+        if self._is_lab_processing():
+            self._schedule_pending_lab_poll()
+            return
+        self._apply_pending_lab_switch()
+        if not self._lab_multi_active and self.directory_path:
+            # 收回单目录后按单目录刷新状态条（不自动打开浏览器）
+            # Refresh as single-folder after collapsing (no browser auto-open)
+            self._check_report_csv(auto_open=False)
+
+    def _switch_to_multi_folder(self) -> None:
+        """
+        显示目录列表、隐藏单目录输入框；已选目录且列表为空时把它放进列表作为第一项
+        （放不进去时写 warning 日志，见 _set_folder_list_logged）。可重复调用。
+
+        Show the folder list instead of the single-folder bar; seed it with the
+        selected folder when empty (logging a warning if it cannot be added).
+        Idempotent.
+        """
+        self._lab_multi_pending_on = False
+        self._lab_multi_active = True
+        self.dir_input.setVisible(False)
+        self._browse_btn.setVisible(False)
+        self._folder_list.setVisible(True)
+        if self.directory_path and not self._folder_list.folders():
+            self._set_folder_list_logged([self.directory_path])
+        self._refresh_recent_menu()
+
+    def _switch_to_single_folder(self, refresh_state: bool = True) -> None:
+        """
+        收起目录列表、回到单目录界面；列表有多个目录时只保留第一个。
+
+        第一个目录通常就是当前 directory_path（≥2 个时它总被设为第一个），此时不重新走
+        _handle_directory_selection——否则会重复记「已选目录」、重放上次日志到控制台、
+        并再排一次自动打开浏览器（处理结束的槽里已经排过一次）。只有第一个目录与
+        directory_path 不同时才完整选中它。
+
+        参数:
+        refresh_state (bool): 第一个目录即当前目录时，是否用 _check_report_csv(auto_open=False)
+            把状态条/按钮恢复为单目录。由处理结束的槽调用时传 False（槽已刷新过状态）。
+
+        Collapse the folder list back to the single-folder bar, keeping only the
+        first folder. That folder normally already is directory_path; it is then
+        not re-selected (no duplicate log, console replay or second browser open).
+        It is fully selected only when it differs from directory_path.
+
+        Parameters:
+        refresh_state (bool): when the first folder is already current, whether to
+            restore the single-folder banner/buttons via _check_report_csv(auto_open=False).
+            Terminal slots pass False since they have already refreshed state.
+        """
+        folders = self._folder_list.folders()
+        self._lab_multi_pending_off = False
+        # 先标记非激活，清空列表发出的 foldersChanged 不会再被当作选择处理
+        # Mark inactive first so the foldersChanged from clearing is ignored
+        self._lab_multi_active = False
+        self._folder_list.set_folders([])
+        self._folder_list.setVisible(False)
+        self.dir_input.setVisible(True)
+        self._browse_btn.setVisible(True)
+        if len(folders) >= 2:
+            first = os.path.normpath(folders[0])
+            if first == os.path.normpath(self.directory_path or ""):
+                self.dir_input.setText(first)
+                if refresh_state:
+                    self._check_report_csv(auto_open=False)
+            else:
+                self._handle_directory_selection(first)
+        self._refresh_recent_menu()
+
+    def _apply_pending_lab_switch(self) -> None:
+        """
+        处理结束后应用挂起的「关闭多目录」。由 _on_finished / _on_cancelled /
+        _on_error（以及多目录队列结束时）调用。
+
+        注意：这些槽经排队连接执行时工作线程可能还没真正退出（is_alive 仍为 True），
+        所以这里不再检查工作线程，只要求队列、整组重置与单目录重置都已结束
+        （_queue、_reset_queue 为 None，_single_reset_active 为 False）。单目录重置结束时
+        由 _on_reset_complete / _on_reset_error 先清标记再调用本方法。
+
+        Apply a deferred multi-folder switch-off (or switch-on) once processing
+        ends. Called from _on_finished / _on_cancelled / _on_error, when the
+        folder queue or a group reset ends, and at the end of a single reset
+        (after its flag is cleared). The worker thread may still be alive while
+        these queued slots run, so only the queue, the group reset and the
+        single reset are checked here.
+        """
+        if (self._queue is not None or self._reset_queue is not None
+                or self._single_reset_active):
+            return
+        if self._lab_multi_pending_on:
+            # 处理中打开的开关：现在才切到列表（期间又关掉则放弃）
+            # A switch-on made during processing: show the list now (dropped if switched off since)
+            self._lab_multi_pending_on = False
+            if self.config.lab_multi_folder and not self._lab_multi_active:
+                self._switch_to_multi_folder()
+            return
+        if not self._lab_multi_pending_off:
+            return
+        if self.config.lab_multi_folder:
+            # 处理期间又把开关打开了：放弃挂起 / switched back on meanwhile
+            self._lab_multi_pending_off = False
+            return
+        # 处理结束的槽已刷新过状态条/按钮，这里不再刷新
+        # The terminal slot has already refreshed banner/buttons
+        self._switch_to_single_folder(refresh_state=False)
+
+    def _on_folders_changed(self, folders: List[str]) -> None:
+        """
+        目录列表变化：1 个目录时完全等同单目录选择（但「移除」到只剩 1 个不算选择，
+        只刷新状态，不重放日志、不自动打开浏览器）；≥2 个时 directory_path 取第一个，
+        状态条显示「已选 N 个目录」，任一目录有结果（自己的 report.db 或批次模式子目录里的，
+        见 folder_has_results）时按钮为 has_results，否则 ready。
+
+        参数:
+        folders (List[str]): 列表当前的目录
+
+        Folder list changed: one folder behaves exactly like a single selection
+        (except that removing down to one is not a selection: state is only
+        refreshed, no console replay or browser auto-open); two or more set
+        directory_path to the first, show "N folders selected" and set the
+        buttons to has_results if any folder has results (own report.db or
+        batch-mode sub-folders, see folder_has_results), else ready.
+
+        Parameters:
+        folders (List[str]): current folders in the list
+        """
+        if not self._lab_multi_active:
+            return
+        if not folders:
+            self.directory_path = ""
+            self.dir_input.clear()
+            self._update_status_banner("idle")
+            self._update_action_buttons("idle")
+            return
+        if len(folders) == 1:
+            first = os.path.normpath(folders[0])
+            if first == os.path.normpath(self.directory_path or ""):
+                # 从多个减到 1 个且剩下的就是当前目录：只把状态条/按钮恢复为单目录，
+                # 不重放日志、不自动弹浏览器（用户只是移除了别的目录）
+                # Shrunk to the current folder: restore single-folder banner/buttons only
+                self._check_report_csv(auto_open=False)
+            elif self._folder_list.last_change() == "remove":
+                # 移除不等于选择：只把 directory_path / 输入框指向剩下的目录并刷新状态，
+                # 不重放日志、不写最近目录、不自动打开浏览器；断点续传在点「开始」时再问
+                # Removing is not choosing: point directory_path at the remaining
+                # folder and refresh state only (resume is asked on Start)
+                self.directory_path = first
+                self.dir_input.setText(first)
+                self._resume_prompt_handled = False
+                self._check_report_csv(auto_open=False)
+            else:
+                self._handle_directory_selection(first)
+            return
+        from core.folder_queue import folder_has_results
+        self.directory_path = os.path.normpath(folders[0])
+        self.dir_input.setText(self.directory_path)
+        has_results = any(folder_has_results(d) for d in folders)
+        self._update_status_banner("multi_selected", len(folders))
+        self._update_action_buttons("has_results" if has_results else "ready")
+
     def _check_directory_health(self, directory: str):
         """检查目标目录的磁盘空间和写权限，结果输出到 UI 日志。"""
         import shutil
@@ -2041,9 +2511,38 @@ class SuperPickyMainWindow(QMainWindow):
         else:
             self._open_finder_results()
 
-    def _auto_open_results(self):
-        """打开/切换结果浏览器窗口，并隐藏主窗口。"""
-        if not self.directory_path:
+    def _auto_open_results(self, path: Optional[str] = None) -> None:
+        """
+        打开/切换结果浏览器窗口，并隐藏主窗口。
+
+        参数:
+        path (Optional[str]): 要打开的目录；不传时用 directory_path（单目录调用方不变）
+
+        多目录模式（spec §4.4）：先按列表设置目录标签，再以 ask_batches=False 打开
+        path（若它有结果）或列表里第一个有结果的目录；不同目录绝不合并。
+        单目录：先清掉标签，再按原来的方式打开（open_directory 只传目录）。
+
+        Open/switch the results browser and hide the main window.
+        Multi-folder mode (spec §4.4): set the folder tabs from the list, then
+        open path (if it has results) or the first listed folder with results,
+        with ask_batches=False; folders are never merged. Single folder: clear
+        the tabs, then open exactly as before.
+
+        Parameters:
+        path (Optional[str]): folder to open; defaults to directory_path
+        """
+        multi = self._is_multi_mode()
+        folders: List[str] = self._multi_folders() if multi else []
+        target = path or self.directory_path
+        if multi:
+            # 有结果 = 自己有 report.db 或子目录里有批次（父目录走批次模式时结果在子目录）
+            # Has results = own report.db or processed sub-batches (parent batch mode)
+            from core.folder_queue import folder_has_results
+            with_results = [f for f in folders if f and folder_has_results(f)]
+            if not (path and folder_has_results(path)) and with_results:
+                target = with_results[0]
+            target = target or (folders[0] if folders else "")
+        if not target:
             return
         from ui.results_browser_window import ResultsBrowserWindow
         if not hasattr(self, '_results_browser') or self._results_browser is None:
@@ -2053,7 +2552,12 @@ class SuperPickyMainWindow(QMainWindow):
             # 浏览器里改过鸟种/星级后，回到主窗口时面板要跟上库的现状
             # Edits made in the browser must show up on the panel when it closes.
             self._results_browser.closed.connect(self._refresh_completion_after_browse)
-        self._results_browser.open_directory(self.directory_path)
+        if multi:
+            self._results_browser.set_folder_tabs(folders)
+            self._results_browser.open_directory(target, ask_batches=False)
+        else:
+            self._results_browser.set_folder_tabs([])
+            self._results_browser.open_directory(target)
         # 最大化打开：14 寸小屏或放大字体时，1280x780 的默认窗口会挤压三栏布局
         # Open maximized: on 14" screens or with enlarged text the 1280x780
         # default squeezes the three-column layout.
@@ -2063,18 +2567,29 @@ class SuperPickyMainWindow(QMainWindow):
         # 浏览器打开后隐藏主窗口（托盘图标保持可用）
         self.hide()
 
-    def _open_finder_results(self):
-        """不保留预览图时，直接在 Finder 打开结果目录。"""
-        if not self.directory_path:
+    def _open_finder_results(self, path: Optional[str] = None) -> None:
+        """
+        不保留预览图时，直接在 Finder / 资源管理器打开结果目录。
+
+        参数:
+        path (Optional[str]): 要打开的目录；不传时用 directory_path（单目录调用方不变）
+
+        Open the results folder in Finder / Explorer (no previews kept).
+
+        Parameters:
+        path (Optional[str]): folder to open; defaults to directory_path
+        """
+        target = path or self.directory_path
+        if not target:
             return
         import sys
         try:
             if sys.platform == 'darwin':
-                subprocess.Popen(['open', self.directory_path])
+                subprocess.Popen(['open', target])
             elif sys.platform == 'win32':
-                subprocess.Popen(['explorer', self.directory_path])
+                subprocess.Popen(['explorer', target])
             else:
-                subprocess.Popen(['xdg-open', self.directory_path])
+                subprocess.Popen(['xdg-open', target])
         except Exception as e:
             self._log(self.i18n.t("logs.open_folder_failed", error=e), "warning")
 
@@ -2108,8 +2623,9 @@ class SuperPickyMainWindow(QMainWindow):
     def _update_status_banner(self, state: str, data=None):
         """更新状态条显示。
 
-        state: "idle" | "ready" | "has_results" | "processing" | "done"
-        data: 对 has_results/done 传入 stats dict；对 processing 传入 filename str
+        state: "idle" | "ready" | "has_results" | "processing" | "done" | "multi_selected"
+        data: 对 has_results/done 传入 stats dict；对 processing 传入 filename str；
+              对 multi_selected 传入目录数 int
         """
         if not hasattr(self, '_status_banner'):
             return
@@ -2132,6 +2648,22 @@ class SuperPickyMainWindow(QMainWindow):
             import html as _html
             text = self.i18n.t("labels.dir_ready").format(
                 dirname=_html.escape(dirname)).replace(" ", "&nbsp;")
+            self._status_banner.setText(self._status_folder_icon_html() + "&nbsp;&nbsp;" + text)
+            self._status_banner.setStyleSheet(f"""
+                QLabel {{
+                    background-color: {COLORS['bg_card']};
+                    color: {COLORS['text_secondary']};
+                    border: 1px solid {COLORS['accent']};
+                    border-radius: 6px;
+                    font-size: 12px;
+                    padding: 0 12px;
+                }}
+            """)
+        elif state == "multi_selected":
+            # 实验室多目录：已选 N 个目录，样式同 ready / Labs: N folders selected, styled as ready
+            import html as _html
+            text = _html.escape(self.i18n.t("labels.multi_selected", count=int(data or 0))
+                                ).replace(" ", "&nbsp;")
             self._status_banner.setText(self._status_folder_icon_html() + "&nbsp;&nbsp;" + text)
             self._status_banner.setStyleSheet(f"""
                 QLabel {{
@@ -2254,8 +2786,12 @@ class SuperPickyMainWindow(QMainWindow):
             self.view_results_btn.style().unpolish(self.view_results_btn)
             self.view_results_btn.style().polish(self.view_results_btn)
 
-    def _check_report_csv(self):
-        """检查是否有 report.db，更新状态条，有结果时自动弹出浏览器。"""
+    def _check_report_csv(self, auto_open: bool = True):
+        """检查是否有 report.db，更新状态条，有结果时自动弹出浏览器。
+
+        auto_open: 为 False 时只刷新状态条/按钮，不自动弹出浏览器（多目录列表缩回 1 个时用）。
+        auto_open: when False, only refresh banner/buttons without opening the browser.
+        """
         if not self.directory_path:
             return
 
@@ -2275,7 +2811,7 @@ class SuperPickyMainWindow(QMainWindow):
             self._update_action_buttons("has_results")
             # 只有保留预览图时才自动弹出浏览器（无预览图时浏览器无内容）
             from advanced_config import get_advanced_config as _get_adv
-            if _get_adv().keep_temp_files:
+            if auto_open and _get_adv().keep_temp_files:
                 QTimer.singleShot(300, self._auto_open_results)
         else:
             self._update_status_banner("ready")
@@ -2293,13 +2829,27 @@ class SuperPickyMainWindow(QMainWindow):
             """)
 
     @Slot()
-    def _is_removable_source(self) -> bool:
+    def _is_removable_source(self, path: Optional[str] = None) -> bool:
         """
         检测源目录是否位于可移动磁盘（存储卡 / U 盘）。检测失败时保守返回 False。
+
+        参数:
+        path (Optional[str]): 要检测的目录；不传时用 directory_path（单目录调用方不变，
+            多目录队列逐个目录传入）
+
+        返回:
+        bool: 位于可移动磁盘为 True
+
         Detect whether the source folder sits on a removable drive (card / USB).
         Returns False on any detection error so it never blocks legitimate use.
+
+        Parameters:
+        path (Optional[str]): folder to check; defaults to directory_path
+
+        Return:
+        bool: True when on a removable drive
         """
-        path = self.directory_path
+        path = path or self.directory_path
         if not path:
             return False
         try:
@@ -2403,8 +2953,13 @@ class SuperPickyMainWindow(QMainWindow):
         开始按钮：没在处理时开始选片，处理中则是「停止」（#144）。
         Start button: starts culling, or acts as Stop while processing (#144).
         """
-        if self.worker and self.worker.is_alive():
+        # 多目录队列在跑时（含目录之间、「重新处理」的重置阶段，此时没有存活的工作线程）
+        # 按钮同样是「停止」/ While the queue runs (even between folders or during a
+        # reprocess reset, when no worker is alive) the button is Stop as well
+        if self._queue is not None or (self.worker and self.worker.is_alive()):
             self._request_stop_processing()
+        elif self._is_multi_mode():
+            self._start_queue()
         else:
             self._start_processing()
 
@@ -2413,9 +2968,14 @@ class SuperPickyMainWindow(QMainWindow):
         确认后请求工作线程停止；线程退出后经 cancelled 信号进 _on_cancelled 恢复界面。
         已处理的照片保留评分，下次开始时由「未完成记录」提示继续或重来。
 
+        多目录队列在跑时同时停掉整个队列：后面的目录不再开始。若此刻没有工作线程
+        （正在为「重新处理」重置目录），由 _on_reset_complete 发现已停止并收尾。
+
         Ask the worker to stop after confirmation; the UI is restored in
         _on_cancelled when the worker emits `cancelled`. Processed photos keep
         their ratings and the resume prompt offers continue/restart next time.
+        With the folder queue running the whole queue stops; if no worker is
+        alive (a reprocess reset is running) _on_reset_complete finishes it.
         """
         reply = StyledMessageBox.question(
             self,
@@ -2424,9 +2984,14 @@ class SuperPickyMainWindow(QMainWindow):
             yes_text=self.i18n.t("labels.stop_processing"),
             no_text=self.i18n.t("buttons.cancel")
         )
-        if reply != StyledMessageBox.Yes or not (self.worker and self.worker.is_alive()):
+        worker_alive = bool(self.worker and self.worker.is_alive())
+        if reply != StyledMessageBox.Yes or not (worker_alive or self._queue is not None):
             return
-        self.worker.request_stop()
+        if self._queue is not None:
+            self._queue_stop_requested = True
+            self._queue.stop()
+        if worker_alive:
+            self.worker.request_stop()
         self.start_btn.setEnabled(False)
         self.start_btn.setText(self.i18n.t("labels.stopping"))
         self._update_status(self.i18n.t("labels.stopping"), COLORS['warning'])
@@ -2444,9 +3009,21 @@ class SuperPickyMainWindow(QMainWindow):
         """
         用户中途停止：恢复按钮与状态条（有 report.db 就显示已有结果）。
         Stopped midway: restore buttons and banner (showing results if any).
+        In queue mode the current folder is recorded as stopped and the whole
+        queue ends; later folders stay not_started.
         """
+        if self._queue is not None:
+            # 队列：记当前目录为 stopped，停掉整个队列并收尾
+            # Queue: record the current folder as stopped, stop and finish the queue
+            self._queue_folder_ended("stopped", stats=stats)
+            self._queue_stop_requested = True
+            self._queue.stop()
+            self._queue_finish()
+            return
+        self._unlock_single_run()
         self._update_status(self.i18n.t("labels.stopped"), COLORS['warning'])
         self._check_report_csv()
+        self._apply_pending_lab_switch()
 
     def _burst_note(self, cfg) -> str:
         """
@@ -2535,7 +3112,7 @@ class SuperPickyMainWindow(QMainWindow):
     def _confirm_start(self) -> bool:
         """
         开始选片确认框。开着识鸟时多一个「更换国家…」：打开设置中心识鸟页，关掉后重新弹出确认框、
-        显示新国家（#145，此前要点「否」→ 设置 → 识鸟 → 国家 → 更多国家 → 再点开始）。
+        显示新国家（#145，此前要点「否」→ 设置 → 常用 → 国家 → 更多国家 → 再点开始）。
 
         返回:
         bool: 用户确认开始返回 True
@@ -2559,7 +3136,7 @@ class SuperPickyMainWindow(QMainWindow):
                 buttons=buttons,
             ).exec()
             if reply == START_CONFIRM_CHANGE_COUNTRY:
-                self._open_settings_center("birdid")
+                self._open_settings_center("common")
                 continue
             return reply == StyledMessageBox.Yes
 
@@ -2609,17 +3186,13 @@ class SuperPickyMainWindow(QMainWindow):
                 no_text=self.i18n.t("labels.no")
             )
             if reply == StyledMessageBox.Yes:
-                # 用户选择现在配置国家：打开设置中心 birdid 页
-                # User chose to configure now: open Settings Center on birdid page
-                self._open_settings_center("birdid")
+                # 用户选择现在配置国家：打开设置中心常用页（国家/地区在此）
+                # User chose to configure now: open the common page (country/region live there)
+                self._open_settings_center("common")
                 return  # 等用户配置后再开始 / Wait for user to configure
 
         if not self._confirm_start():
             return
-
-        # V4.3 Phase 4: 视频首次提示 — 检测到视频且用户从未被提示过时弹一次
-        # V4.3 Phase 4: First-run prompt — show once when videos are found
-        self._maybe_prompt_video_first_run()
 
         resume_processing = False
         try:
@@ -2660,53 +3233,96 @@ class SuperPickyMainWindow(QMainWindow):
             )
             return
 
-        # 2. 照片数量预扫描（阻断型）
-        scan_results = None
+        # 2. 照片数量预扫描（阻断型）/ Photo pre-scan (blocking)
+        scan = self._prescan(self.directory_path)
+        if scan is None:
+            return
+        scan_results = None if scan is _SCAN_FAILED else scan
+
+        self._launch_worker(self.directory_path, resume_processing, scan_results)
+
+    def _prescan(self, directory: str, warn: bool = True) -> Optional[object]:
+        """
+        开始前的危险目录检查与照片数量预扫描（阻断型）。
+
+        危险目录或没有照片时弹警告并返回 None（调用方应直接中止）；
+        扫描本身抛异常时不阻断，返回哨兵 _SCAN_FAILED，调用方据此给 worker
+        传 scan_results=None，交由 worker 自己扫描。
+
+        参数:
+        directory (str): 要处理的源目录
+        warn (bool): 为 False 时不弹窗（多目录队列中途不打断用户），阻断原因写入
+            self._prescan_error，由调用方记日志
+
+        返回:
+        None | object | list: None=已阻断（已弹窗或已写 _prescan_error）；
+        _SCAN_FAILED=扫描异常；否则为 scan_directories 的结果列表（非空）
+
+        Dangerous-root check and photo pre-scan before processing (blocking).
+        Shows a warning and returns None when the folder is dangerous or has no
+        photos (the caller should stop). If the scan itself raises, it does not
+        block: returns the _SCAN_FAILED sentinel so the caller passes
+        scan_results=None to the worker, which then scans on its own.
+
+        Parameters:
+        directory (str): Source folder to process
+        warn (bool): when False no dialog is shown (the folder queue must not
+            interrupt the user mid-run); the reason goes to self._prescan_error
+
+        Return:
+        None | object | list: None = blocked (dialog shown or _prescan_error
+        set); _SCAN_FAILED = scan raised; otherwise the non-empty list from
+        scan_directories
+        """
+        self._prescan_error = ""
         try:
             from core.recursive_scanner import DEFAULT_SCAN_MAX_DEPTH, is_dangerous_root, scan_directories
 
-            is_dangerous, reason = is_dangerous_root(self.directory_path)
+            is_dangerous, reason = is_dangerous_root(directory)
             if is_dangerous:
-                StyledMessageBox.warning(
-                    self,
-                    self.i18n.t("health.dangerous_dir_title"),
-                    self.i18n.t(
-                        "health.dangerous_dir_msg",
-                        directory=self.directory_path,
-                        reason=reason,
-                    ),
+                title = self.i18n.t("health.dangerous_dir_title")
+                message = self.i18n.t(
+                    "health.dangerous_dir_msg",
+                    directory=directory,
+                    reason=reason,
                 )
-                return
+                if warn:
+                    StyledMessageBox.warning(self, title, message)
+                else:
+                    self._prescan_error = f"{title}: {message}"
+                return None
 
-            scan_results = scan_directories(self.directory_path, max_depth=DEFAULT_SCAN_MAX_DEPTH)
+            scan_results = scan_directories(directory, max_depth=DEFAULT_SCAN_MAX_DEPTH)
             if not scan_results:
-                StyledMessageBox.warning(
-                    self,
-                    self.i18n.t("health.no_photos_title"),
-                    self.i18n.t("health.no_photos_msg", directory=self.directory_path),
-                )
-                return
+                title = self.i18n.t("health.no_photos_title")
+                message = self.i18n.t("health.no_photos_msg", directory=directory)
+                if warn:
+                    StyledMessageBox.warning(self, title, message)
+                else:
+                    self._prescan_error = f"{title}: {message}"
+                return None
+            return scan_results
         except Exception:
-            pass  # 扫描失败不阻断，交给 worker 处理
+            return _SCAN_FAILED  # 扫描失败不阻断，交给 worker 处理 / scan failure doesn't block
 
-        # 3. 模型预加载状态提示（非阻断）
-        if not self._preload_done:
-            self._log(self.i18n.t("health.models_still_loading"), "warning")
-        # ────────────────────────────────────────────────────────
+    def _build_ui_settings(self) -> list:
+        """
+        从 advanced_config 组装传给 WorkerThread 的 9 项 ui_settings 列表。
 
-        # 清空日志和进度
-        self.log_text.clear()
-        self.progress_bar.setValue(0)
-        self.progress_info_label.setText("")
-        self.progress_percent_label.setText("")
+        返回:
+        list: [置信度%, 锐度阈值, 美学阈值, 保存裁切, 归一化模式, 飞鸟检测,
+        曝光检测(固定 False), 连拍检测, 识鸟开关]
 
-        self._update_status(self.i18n.t("labels.processing"), COLORS['warning'])
-        self._log(self.i18n.t("logs.processing_start"))
+        Build the 9-item ui_settings list for WorkerThread from advanced_config.
 
+        Return:
+        list: [confidence %, sharpness, aesthetics, save crop, normalization,
+        flight, exposure (always False), burst, bird ID auto-identify]
+        """
         # Task 7: 准备 UI 设置 — 改从 advanced_config 读取，不再依赖已删除的参数面板控件
         # Task 7: Prepare UI settings — read from advanced_config; old panel widgets removed
         _adv = get_advanced_config()
-        ui_settings = [
+        return [
             int(_adv.min_confidence * 100),   # [0] AI 置信度 / AI confidence
             int(_adv.min_sharpness),           # [1] 锐度阈值 / sharpness threshold
             _adv.min_nima,                     # [2] NIMA 美学阈值 / NIMA aesthetics threshold
@@ -2717,6 +3333,55 @@ class SuperPickyMainWindow(QMainWindow):
             bool(_adv.burst_check),            # [7] 连拍检测 / burst detection
             bool(_adv.birdid_auto_identify),   # [8] 识鸟开关 / bird ID auto-identify
         ]
+
+    def _launch_worker(self, directory: str, resume: bool, scan_results: Optional[list],
+                       clear_log: bool = True) -> None:
+        """
+        清空日志/进度、连接信号并启动一个目录的 WorkerThread（不弹任何确认框）。
+
+        所有开始前的提示与自检由调用方负责（单目录为 _start_processing；
+        多目录队列只问一次，再对每个目录调用本方法）。
+
+        参数:
+        directory (str): 要处理的源目录
+        resume (bool): 是否从断点续处理
+        scan_results (Optional[list]): 预扫描结果；None 表示由 worker 自己扫描
+        clear_log (bool): 是否清空控制台日志。单目录为 True（原行为）；多目录队列
+            在开始时清一次，之后每个目录都传 False，前面目录的日志保留可见
+
+        Clear log/progress, wire signals and start the WorkerThread for one
+        folder, without any confirmation dialogs. All start-up prompts and
+        health checks are the caller's job (_start_processing for one folder;
+        the multi-folder queue asks once, then calls this per folder).
+
+        Parameters:
+        directory (str): Source folder to process
+        resume (bool): Whether to resume from saved state
+        scan_results (Optional[list]): Pre-scan results; None lets the worker scan
+        clear_log (bool): whether to clear the console. True for one folder (the
+            original behaviour); the queue clears once at start and passes False
+            so earlier folders' logs stay visible
+        """
+        # 3. 模型预加载状态提示（非阻断）
+        if not self._preload_done:
+            self._log(self.i18n.t("health.models_still_loading"), "warning")
+        # ────────────────────────────────────────────────────────
+
+        # 清空日志和进度（队列模式进度显示总进度，不归零）
+        # Clear log and progress (in queue mode the bar shows overall progress)
+        if clear_log:
+            self.log_text.clear()
+        if self._queue is not None:
+            self._queue_show_progress(0)
+        else:
+            self.progress_bar.setValue(0)
+            self.progress_percent_label.setText("")
+        self.progress_info_label.setText("")
+
+        self._update_status(self.i18n.t("labels.processing"), COLORS['warning'])
+        self._log(self.i18n.t("logs.processing_start"))
+
+        ui_settings = self._build_ui_settings()
 
         # 创建信号
         self.worker_signals = WorkerSignals()
@@ -2734,20 +3399,560 @@ class SuperPickyMainWindow(QMainWindow):
         self._update_action_buttons("processing")
         self._update_status_banner("processing")
 
+        # 实验室多目录列表显示时（开关开启、列表 1 个目录的单目录处理），处理中锁住列表、
+        # 最近目录菜单，防止中途改掉正在处理的目录；队列自己会锁。开关关闭时什么都不做，
+        # 单目录界面与 dev 完全一致（dev 处理中从不禁用输入框/浏览按钮）。
+        # With the Labs folder list shown (single run of a one-folder list), lock
+        # the list and recent menu during the run; the queue locks on its own.
+        # With the switch off this is a no-op, keeping the single-folder UI as on dev.
+        if self._queue is None and self._lab_multi_active:
+            self._set_queue_editing(False)
+            self._single_run_locked = True
+
         # 启动工作线程
         self.worker = WorkerThread(
-            self.directory_path,
+            directory,
             ui_settings,
             self.worker_signals,
             self.i18n,
-            resume=resume_processing,
+            resume=resume,
             scan_results=scan_results,
         )
         self.worker.start()
 
+    # ========== 实验室：多目录队列执行 / Labs: multi-folder queue ==========
+
+    def _set_queue_editing(self, on: bool) -> None:
+        """
+        队列运行期间禁用（结束后恢复）会改变目录选择的入口：列表增删、最近目录菜单、
+        浏览按钮与路径输入框。避免处理中途改了列表或 directory_path。
+
+        参数:
+        on (bool): True=允许编辑；False=禁止
+
+        Disable (or re-enable) everything that changes the folder selection while
+        the queue runs: list add/remove, the recent-folders menu, browse and the
+        path input, so the list and directory_path cannot change mid-run.
+
+        Parameters:
+        on (bool): True to allow editing, False to block it
+        """
+        self._folder_list.set_enabled_editing(on)
+        if hasattr(self, '_recent_menu'):
+            self._recent_menu.setEnabled(on)
+            self._recent_menu.menuAction().setEnabled(on)
+        self._browse_btn.setEnabled(on)
+        self.dir_input.setEnabled(on)
+
+    def _unlock_single_run(self) -> None:
+        """
+        单目录处理结束（_on_finished / _on_cancelled / _on_error 的单目录分支）时，
+        解开 _launch_worker 锁住的目录选择入口；队列或整组重置在跑时不动（它们自己解锁）。
+        必须在 _apply_pending_lab_switch 之前调用，收回单目录时输入框才是可用的。
+
+        Unlock the folder selection locked by _launch_worker when a single run
+        ends; leaves it alone while a queue or group reset runs. Call before
+        _apply_pending_lab_switch so the restored single-folder bar is enabled.
+        """
+        if not self._single_run_locked or self._queue is not None or self._reset_queue is not None:
+            return
+        self._single_run_locked = False
+        self._set_queue_editing(True)
+
+    def _begin_single_reset(self) -> None:
+        """
+        单目录重置的后台线程即将启动：记为处理中（_single_reset_active），实验室目录列表
+        显示时（开关开启、列表 1 个目录）与 _launch_worker 一样锁住目录选择入口，防止重置
+        中途加入目录或改掉 directory_path。开关关闭时不锁，单目录界面与 dev 一致。
+        只由 _do_reset_directory 在不属于队列「重新处理」、也不属于整组重置时调用。
+
+        A single-folder reset thread is about to start: mark it as processing
+        and, while the Labs folder list is shown, lock folder selection exactly
+        like _launch_worker does. With the switch off nothing is locked (same
+        single-folder UI as dev). Called by _do_reset_directory only when the
+        reset is neither a queue reprocess nor part of a group reset.
+        """
+        self._single_reset_active = True
+        if self._lab_multi_active:
+            self._set_queue_editing(False)
+            self._single_run_locked = True
+
+    def _end_single_reset(self) -> None:
+        """
+        单目录重置结束（_on_reset_complete / _on_reset_error 的单目录分支开头）：清掉
+        处理中标记并解开 _begin_single_reset 锁住的目录选择入口。挂起的开关切换由调用方
+        在刷新状态之后用 _apply_pending_lab_switch 应用。
+
+        A single-folder reset ended (start of the single branch of
+        _on_reset_complete / _on_reset_error): clear the processing flag and
+        unlock folder selection. The caller applies a deferred switch change
+        with _apply_pending_lab_switch after refreshing state.
+        """
+        self._single_reset_active = False
+        self._unlock_single_run()
+        # 多目录开关开着、列表里只有一个目录时走的是单目录重置：同样重新统计列表张数
+        # With the multi-folder switch on and one listed folder the single reset
+        # runs; recount the list rows as well
+        if self._lab_multi_active:
+            self._folder_list.refresh_counts()
+
+    def _start_queue(self) -> None:
+        """
+        多目录模式点「开始」：所有开始前的询问在第一个目录开始前一次问完，再按列表顺序
+        逐个处理（每个目录走与单目录完全相同的 _prescan + _launch_worker）。
+
+        询问顺序与单目录 _start_processing 一致：初始化检查 → 存储卡警告（列出位于存储卡
+        的目录，一次）→ 识鸟国家提示 → 开始确认 → 首次视频提示 → 预检框（有「上次没
+        处理完」或「已处理过」的目录时，一个 DeleteConfirmDialog 列出两组，带「全部重新
+        处理」勾选框）→ ExifTool 健康检查。任何一步取消：什么都不启动、什么都不改。
+
+        Multi-folder Start: every pre-start prompt is asked once before the first
+        folder, then folders run one by one in list order, each through the same
+        _prescan + _launch_worker as a single folder. Prompt order mirrors
+        _start_processing: initialization, removable warning (once, listing the
+        card folders), Bird-ID country prompt, start confirmation, first-run video
+        prompt, the pre-check dialog (only when some folder is unfinished or
+        already processed; offers "Reprocess all"), then the ExifTool check.
+        Cancelling anywhere starts and changes nothing.
+        """
+        if self._queue is not None or (self.worker and self.worker.is_alive()):
+            StyledMessageBox.warning(
+                self,
+                self.i18n.t("messages.hint"),
+                self.i18n.t("messages.processing")
+            )
+            return
+        if not self._require_initialization_for_processing():
+            return
+
+        folders = [os.path.normpath(f) for f in self._multi_folders()]
+        if not folders:
+            StyledMessageBox.warning(
+                self,
+                self.i18n.t("messages.hint"),
+                self.i18n.t("messages.select_dir_first")
+            )
+            return
+        existing = [f for f in folders if os.path.isdir(f)]
+
+        # 1. 存储卡警告：一次，列出位于存储卡上的目录
+        # 1. Removable-drive warning: once, listing the folders on a card
+        removable = [f for f in existing if self._is_removable_source(f)]
+        if removable:
+            reply = StyledMessageBox.question(
+                self,
+                self.i18n.t("messages.removable_warning_title"),
+                self.i18n.t("messages.queue_removable_message", folders="\n".join(removable)),
+                yes_text=self.i18n.t("labels.yes"),
+                no_text=self.i18n.t("labels.no")
+            )
+            if reply != StyledMessageBox.Yes:
+                return
+
+        # 2. 识鸟国家提示（条件与单目录相同）/ Bird-ID country prompt (same condition)
+        _adv_confirm = get_advanced_config()
+        if _adv_confirm.birdid_auto_identify and _adv_confirm.birdid_country_code is None:
+            reply = StyledMessageBox.question(
+                self,
+                self.i18n.t("birdid.country_prompt_title"),
+                self.i18n.t("birdid.country_prompt_message"),
+                yes_text=self.i18n.t("labels.yes"),
+                no_text=self.i18n.t("labels.no")
+            )
+            if reply == StyledMessageBox.Yes:
+                self._open_settings_center("common")
+                return
+
+        # 3. 开始确认：一次 / start confirmation: once
+        if not self._confirm_start():
+            return
+
+        # 4. 预检：上次没处理完的接着处理；已处理过的默认跳过，可勾选全部重新处理。
+        #    状态用 queue_state：批次模式处理过的父目录（结果只在子目录、扫不到照片）也算已处理
+        # 4. Pre-check: unfinished folders resume; processed ones are skipped
+        #    unless "Reprocess all" is ticked. queue_state also treats a
+        #    batch-mode processed parent (results only in sub-folders) as processed
+        from core.folder_queue import FolderQueue, STATE_PROCESSED, STATE_RESUME, queue_state
+        states = {f: queue_state(f) for f in existing}
+        resume_dirs = [f for f in existing if states[f] == STATE_RESUME]
+        processed_dirs = [f for f in existing if states[f] == STATE_PROCESSED]
+        reprocess_all = False
+        if resume_dirs or processed_dirs:
+            from ui import custom_dialogs as _cd
+            parts = []
+            if resume_dirs:
+                parts.append(self.i18n.t("dialogs.queue_precheck_resume",
+                                         folders="\n".join(resume_dirs)))
+            if processed_dirs:
+                parts.append(self.i18n.t("dialogs.queue_precheck_processed",
+                                         folders="\n".join(processed_dirs)))
+            dlg = _cd.DeleteConfirmDialog(
+                self,
+                title=self.i18n.t("dialogs.queue_precheck_title"),
+                message="\n\n".join(parts),
+                buttons=[("cancel", self.i18n.t("buttons.cancel"), "secondary"),
+                         ("start", self.i18n.t("dialogs.queue_start"), "primary")],
+                default_key="start",
+                checkbox_text=(self.i18n.t("dialogs.queue_reprocess_all")
+                               if processed_dirs else None),
+            )
+            dlg.exec()
+            if dlg.choice != "start":
+                return
+            reprocess_all = bool(dlg.checked)
+
+        # 5. ExifTool 健康检查：一次 / ExifTool health check: once
+        try:
+            from tools.exiftool_manager import get_exiftool_manager
+            get_exiftool_manager()
+        except Exception as _et_err:
+            StyledMessageBox.warning(
+                self,
+                self.i18n.t("health.exiftool_error_title"),
+                self.i18n.t("health.exiftool_error_msg", error=str(_et_err)),
+            )
+            return
+
+        # 6. 建队列并开始 / Build the queue and start
+        from ui.folder_list_widget import count_photos
+        # 沿用预检算好的状态，预检框列出的与队列执行的一致
+        # Reuse the pre-check states so the dialog and the plan agree
+        self._queue = FolderQueue(folders, reprocess_all, states=states)
+        self._queue_stop_requested = False
+        self._queue_pending_launch = None
+        self._queue_current = None
+        self._resume_prompt_handled = False
+        # 总进度的分母：各待处理目录的照片数，优先用列表加入时缓存的张数，读不出才重新数
+        # （每个目录启动前的预扫描还会按实际张数修正，「重新处理」的目录在重置后修正）
+        # Overall progress denominator: photos of each runnable folder, reusing
+        # the list's cached counts and counting only when absent (each launch
+        # corrects it from the real pre-scan; reprocess folders after the reset)
+        self._queue_counts = {}
+        for p, action in self._queue.plan:
+            if action == "skip":
+                continue
+            cached = self._folder_list.cached_count(p)
+            self._queue_counts[p] = cached if cached is not None else count_photos(p)
+        self._queue_total = sum(self._queue_counts.values())
+        self._queue_done_photos = 0
+
+        self.config.add_recent_directory_group(folders)
+        self._refresh_recent_menu()
+        self._set_queue_editing(False)
+
+        # 日志只在队列开始时清一次 / the console is cleared once, at queue start
+        self.log_text.clear()
+        self.progress_bar.setValue(0)
+        self.progress_percent_label.setText("")
+        self.progress_info_label.setText("")
+        self._update_status(self.i18n.t("labels.processing"), COLORS['warning'])
+        self._update_action_buttons("processing")
+        self._update_status_banner("processing")
+        self._queue_advance()
+
+    def _queue_advance(self) -> None:
+        """
+        取下一个目录并启动；没有下一个（或已停止）就调用 _queue_finish()。
+
+        每个目录：先把 directory_path 指向它（其余代码读的就是它）；目录不存在（外接盘
+        拔了）记出错并继续；"reprocess" 先走与单目录「重来」同一路径的快速复原，在
+        _on_reset_complete 里再扫描启动；"process" / "resume" 直接扫描启动。扫描阻断
+        （无照片等）记出错并继续，从不中止整个队列。
+
+        Take the next folder and start it, or call _queue_finish() when none is
+        left (or the queue was stopped). directory_path is pointed at the folder
+        first (other code reads it). A missing folder (unplugged drive) is
+        recorded as an error and skipped; "reprocess" first runs the same quick
+        restore as the single-folder restart and launches from
+        _on_reset_complete; "process"/"resume" scan and launch directly. A
+        blocked scan is an error for that folder only; the queue never aborts.
+        """
+        queue = self._queue
+        if queue is None:
+            return
+        order = [p for p, _action in queue.plan]
+        while True:
+            item = queue.next_item()
+            if item is None:
+                self._queue_finish()
+                return
+            path, action = item
+            self._queue_current = path
+            self.directory_path = path
+            self.dir_input.setText(path)
+            self._log(self.i18n.t("logs.queue_folder_start",
+                                  i=order.index(path) + 1, n=len(order), path=path), "info")
+            if not os.path.isdir(path):
+                err = self.i18n.t("logs.queue_folder_missing")
+                self._log(self.i18n.t("logs.queue_folder_error", path=path, error=err), "error")
+                self._queue_folder_ended("error", error=err)
+                continue
+            if action == "reprocess":
+                self._queue_pending_launch = path
+                self._do_reset_directory(skip_exif_reset=True, skip_confirm=True)
+                # 重置期间保持「停止」可用 / keep Stop available during the reset
+                if self._queue is not None and self._queue_pending_launch:
+                    self._update_action_buttons("processing")
+                return
+            if self._queue_launch(path, resume=(action == "resume")):
+                return
+
+    def _queue_launch(self, path: str, resume: bool) -> bool:
+        """
+        对一个目录做与单目录相同的预扫描并启动工作线程（不弹窗、不清日志）。
+
+        参数:
+        path (str): 目录
+        resume (bool): 是否从断点续处理
+
+        返回:
+        bool: 已启动为 True；扫描阻断（已记为出错）为 False
+
+        Pre-scan one folder exactly like a single folder and start its worker
+        (no dialogs, no log clearing).
+
+        Parameters:
+        path (str): the folder
+        resume (bool): whether to resume from saved state
+
+        Return:
+        bool: True when launched; False when the scan blocked it (recorded as error)
+        """
+        scan = self._prescan(path, warn=False)
+        if scan is None:
+            err = self._prescan_error or self.i18n.t("health.no_photos_title")
+            self._log(self.i18n.t("logs.queue_folder_error", path=path, error=err), "error")
+            self._queue_folder_ended("error", error=err)
+            return False
+        scan_results = None if scan is _SCAN_FAILED else scan
+        if scan_results is not None:
+            # 用实际扫描修正总进度分母 / correct the overall denominator from the real scan
+            actual = sum(item.photo_count for item in scan_results)
+            self._queue_total += actual - self._queue_counts.get(path, 0)
+            self._queue_counts[path] = actual
+        # 上一个目录的线程发出 finished 后只剩停防休眠，稍等它退出再起下一个
+        # The previous worker only stops caffeinate after `finished`; let it exit
+        if self.worker is not None and self.worker.is_alive():
+            self.worker.join(timeout=5)
+        self._launch_worker(path, resume, scan_results, clear_log=False)
+        return True
+
+    def _queue_reset_done(self, success: bool, error: str) -> None:
+        """
+        「重新处理」的重置结束：已停止则收尾；失败记出错并继续；成功则扫描并启动。
+        扫描放在重置之后——重置会把照片从星级/鸟种目录移回根目录，重置前的扫描结果
+        已经失效（与单目录「重置后再点开始」的顺序一致）。
+
+        参数:
+        success (bool): 重置是否成功
+        error (str): 失败原因
+
+        A reprocess reset ended: finish if stopped; on failure record an error
+        and continue; on success scan and launch. The scan happens after the
+        reset because the reset moves photos back out of rating/species
+        folders, which invalidates any earlier scan (same order as a single
+        folder: reset, then press Start).
+
+        Parameters:
+        success (bool): whether the reset succeeded
+        error (str): failure reason
+        """
+        path = self._queue_pending_launch
+        self._queue_pending_launch = None
+        if self._queue_stop_requested:
+            self._queue_folder_ended("stopped")
+            self._queue_finish()
+            return
+        if not success:
+            self._log(self.i18n.t("logs.queue_folder_error", path=path, error=error), "error")
+            self._queue_folder_ended("error", error=error)
+            QTimer.singleShot(0, self._queue_advance)
+            return
+        if not self._queue_launch(path, resume=False):
+            QTimer.singleShot(0, self._queue_advance)
+
+    def _queue_folder_ended(self, status: str, stats: Optional[dict] = None,
+                            error: str = "") -> None:
+        """
+        记下当前目录的结果，并把它的照片数计入已完成（总进度用）。
+
+        参数:
+        status (str): done / error / stopped
+        stats (Optional[dict]): 工作线程的统计
+        error (str): 出错原因
+
+        Record the current folder's outcome and add its photos to the done
+        count used for overall progress.
+
+        Parameters:
+        status (str): done / error / stopped
+        stats (Optional[dict]): the worker's stats
+        error (str): failure reason
+        """
+        path = self._queue_current
+        if self._queue is None or path is None:
+            return
+        self._queue.record(path, status, stats, error)
+        self._queue_done_photos += self._queue_counts.get(path, 0)
+        self._queue_current = None
+        self._queue_show_progress(0)
+
+    def _queue_show_progress(self, value: int) -> None:
+        """
+        把当前目录的百分比换算成全部目录的总进度并显示：
+        (已完成张数 + value/100 × 当前目录张数) / 总张数。
+
+        参数:
+        value (int): 当前目录的进度百分比
+
+        Show overall progress: (done photos + value/100 x current folder
+        photos) / total photos.
+
+        Parameters:
+        value (int): the current folder's percentage
+        """
+        total = self._queue_total
+        current = self._queue_counts.get(self._queue_current, 0) if self._queue_current else 0
+        if total > 0:
+            pct = int((self._queue_done_photos + value / 100.0 * current) * 100 / total)
+        else:
+            pct = int(value)
+        pct = max(0, min(100, pct))
+        self.progress_bar.setValue(pct)
+        self.progress_percent_label.setText(f"{pct}%")
+
+    def _restore_multi_folder_ui(self) -> None:
+        """
+        多目录队列或整组重置结束后恢复界面：恢复目录选择入口；directory_path 回到
+        列表第一个目录；状态条显示「已选 N 个目录」，按钮按是否还有目录留有结果
+        （.superpicky/report.db）给 has_results / ready。列表不足 2 个时退回单目录的
+        _check_report_csv(auto_open=False)（运行中列表被锁，正常走不到这一支）。
+
+        Restore the UI after the folder queue or a group reset: re-enable folder
+        selection; directory_path back to the first listed folder; banner
+        "N folders selected"; buttons has_results / ready depending on whether
+        any folder still has results (folder_has_results). With fewer than 2 folders fall back to
+        the single-folder _check_report_csv(auto_open=False) (the list is locked
+        while running, so this branch is not normally reached).
+        """
+        self._set_queue_editing(True)
+        # 处理 / 重置移动过照片，列表里加入时算的张数已过时，重新统计
+        # Processing / resetting moved photos; recount the rows
+        self._folder_list.refresh_counts()
+        folders = self._folder_list.folders()
+        if folders:
+            self.directory_path = os.path.normpath(folders[0])
+            self.dir_input.setText(self.directory_path)
+        # 有结果 = 自己的 report.db 或批次模式子目录里的（父目录的结果在子目录）
+        # Has results = own report.db or batch-mode sub-folders
+        from core.folder_queue import folder_has_results
+        has_results = any(folder_has_results(d) for d in folders)
+        if len(folders) >= 2:
+            self._update_status_banner("multi_selected", len(folders))
+            self._update_action_buttons("has_results" if has_results else "ready")
+        else:
+            self._check_report_csv(auto_open=False)
+
+    def _queue_finish(self) -> None:
+        """
+        队列收尾（只做一次）：控制台写汇总（每个目录一行：状态、张数、星级分布，并列出
+        出错目录）；恢复编辑入口与按钮；未被用户停止时响一次提示音、用最后一个完成目录
+        刷新一次识鸟面板、只打开一次结果（保留预览图开浏览器，否则只开第一个有结果的
+        目录）；最后应用挂起的实验室开关变化。
+
+        Finish the queue once: write the summary (one line per folder with
+        status, count and star distribution, then the failed folders); restore
+        editing and buttons; unless stopped by the user, play the sound once,
+        refresh the Bird-ID panel once from the last finished folder and open
+        results once (browser when previews are kept, else only the first
+        folder with results); finally apply a deferred Labs switch change.
+        """
+        queue = self._queue
+        if queue is None:
+            return
+        outcomes = queue.outcomes
+        processed = queue.processed_folders()
+        stopped = self._queue_stop_requested
+        # 先置空：_apply_pending_lab_switch 只在没有队列时生效
+        # Clear first: _apply_pending_lab_switch only applies without a queue
+        self._queue = None
+        self._queue_current = None
+        self._queue_pending_launch = None
+        self._queue_stop_requested = False
+
+        # 汇总 / Summary
+        self._log("\n" + self.i18n.t("messages.queue_summary_title"), "info")
+        for o in outcomes:
+            status_text = self.i18n.t(f"messages.queue_status_{o.status}")
+            if o.stats:
+                line = self.i18n.t(
+                    "messages.queue_summary_line",
+                    path=o.path, status=status_text,
+                    total=o.stats.get("total", 0),
+                    n3=o.stats.get("star_3", 0), n2=o.stats.get("star_2", 0),
+                    n1=o.stats.get("star_1", 0), n0=o.stats.get("star_0", 0),
+                    nb=o.stats.get("no_bird", 0),
+                )
+            else:
+                line = self.i18n.t("messages.queue_summary_line_short",
+                                   path=o.path, status=status_text)
+            self._log(line, "error" if o.status == "error" else None)
+        errors = [o for o in outcomes if o.status == "error"]
+        if errors:
+            self._log(self.i18n.t("messages.queue_summary_errors") + "\n"
+                      + "\n".join(f"  {o.path}: {o.error}" for o in errors), "error")
+
+        # 恢复界面 / Restore the UI
+        # 没有一个目录完成且有出错：显示「错误」，不能是绿色「完成」；有完成但也有出错：
+        # 「完成」用警告色。全部按选择跳过（无出错）仍是「完成」。
+        # No folder done and some errored -> "Error", never a green "Complete";
+        # done plus errors -> "Complete" in the warning colour.
+        any_done = any(o.status == "done" for o in outcomes)
+        any_error = any(o.status == "error" for o in outcomes)
+        if stopped:
+            self._update_status(self.i18n.t("labels.stopped"), COLORS['warning'])
+        elif any_error and not any_done:
+            self._update_status(self.i18n.t("labels.error"), COLORS['error'])
+            self.progress_info_label.setText(self.i18n.t("labels.error"))
+        else:
+            self._update_status(self.i18n.t("labels.complete"),
+                                COLORS['warning'] if any_error else COLORS['success'])
+            self.progress_bar.setValue(100)
+            self.progress_percent_label.setText("100%")
+            self.progress_info_label.setText(self.i18n.t("labels.complete"))
+        self._restore_multi_folder_ui()
+
+        if not stopped:
+            done = [o for o in outcomes if o.status == "done"]
+            if done:
+                self._play_completion_sound()
+                if hasattr(self, 'birdid_dock') and self.birdid_dock:
+                    panel_stats = dict(done[-1].stats)
+                    self._apply_current_results(done[-1].path, panel_stats)
+                    self.birdid_dock.show_completion_message(panel_stats)
+            if processed:
+                first = processed[0]
+                if get_advanced_config().keep_temp_files:
+                    QTimer.singleShot(800, lambda p=first: self._auto_open_results(p))
+                else:
+                    QTimer.singleShot(800, lambda p=first: self._open_finder_results(p))
+
+        # 处理中关掉的多目录开关，在此应用；收回单目录后按单目录刷新状态条
+        # Apply a switch-off deferred during processing; then refresh as single-folder
+        was_active = self._lab_multi_active
+        self._apply_pending_lab_switch()
+        if was_active and not self._lab_multi_active and self.directory_path:
+            self._check_report_csv(auto_open=False)
+
     @Slot(int)
     def _on_progress(self, value):
-        """进度更新"""
+        """
+        进度更新。多目录队列在跑时把当前目录的百分比换算成全部目录的总进度。
+        Progress update; in queue mode the per-folder percentage is mapped to overall.
+        """
+        if self._queue is not None:
+            self._queue_show_progress(value)
+            return
         self.progress_bar.setValue(value)
         self.progress_percent_label.setText(f"{value}%")
 
@@ -2766,7 +3971,20 @@ class SuperPickyMainWindow(QMainWindow):
 
     @Slot(dict)
     def _on_finished(self, stats):
-        """处理完成"""
+        """
+        处理完成。多目录队列在跑时只记下本目录结果并推进到下一个目录，
+        统计报告、识鸟面板、提示音、打开结果都留到 _queue_finish 统一做一次。
+
+        Processing finished. In queue mode only record this folder and advance;
+        the report, Bird-ID panel, sound and result opening happen once in
+        _queue_finish.
+        """
+        if self._queue is not None:
+            self._queue_folder_ended("done", stats=stats)
+            # 不在工作线程信号的槽里重入推进 / never advance re-entrantly from the slot
+            QTimer.singleShot(0, self._queue_advance)
+            return
+        self._unlock_single_run()
         self.progress_bar.setValue(100)
         self.progress_percent_label.setText("100%")
         self.progress_info_label.setText(self.i18n.t("labels.complete"))
@@ -2813,12 +4031,26 @@ class SuperPickyMainWindow(QMainWindow):
         else:
             QTimer.singleShot(800, self._open_finder_results)
 
+        # 处理中关掉的多目录开关，在此应用 / apply a switch-off deferred during processing
+        self._apply_pending_lab_switch()
+
     @Slot(str)
     def _on_error(self, error_msg):
-        """处理错误"""
+        """
+        处理错误。多目录队列在跑时记下目录名与错误，跳到下一个目录继续。
+        Processing error; in queue mode log folder + error and continue with the next folder.
+        """
+        if self._queue is not None:
+            path = self._queue_current or self.directory_path
+            self._log(self.i18n.t("logs.queue_folder_error", path=path, error=error_msg), "error")
+            self._queue_folder_ended("error", error=str(error_msg))
+            QTimer.singleShot(0, self._queue_advance)
+            return
+        self._unlock_single_run()
         self._log(f"Error: {error_msg}", "error")
         self._update_status(self.i18n.t("errors.error_title"), COLORS['error'])
         self._check_report_csv()  # 恢复按钮状态 + 状态条
+        self._apply_pending_lab_switch()
 
     @Slot()
     def _quick_restore_directory(self):
@@ -2830,9 +4062,175 @@ class SuperPickyMainWindow(QMainWindow):
     
     @Slot()
     def _reset_directory(self):
-        """完整重置目录（移动文件 + 重置EXIF）"""
+        """
+        完整重置目录（移动文件 + 重置EXIF）。多目录模式下作用于整个列表（_reset_group）。
+
+        Full reset (move files back + reset EXIF). In multi-folder mode it acts
+        on the whole list (_reset_group).
+        """
+        if self._is_multi_mode():
+            self._reset_group()
+            return
         self._do_reset_directory(skip_exif_reset=False, skip_confirm=False)
-    
+
+    def _reset_group(self) -> None:
+        """
+        多目录整组重置：一次确认（正文列出全部目录），然后按列表顺序逐个设置
+        directory_path 并调用与单目录相同的
+        _do_reset_directory(skip_exif_reset=False, skip_confirm=True)；
+        下一个由 _on_reset_complete / _on_reset_error 在上一个结束后经
+        QTimer.singleShot(0, …) 推进。每个目录的完成提示都抑制，最后由
+        _reset_group_finish 只弹一次汇总。想只重置一个目录，需先把其他目录移出列表。
+
+        Multi-folder group reset: one confirmation listing every folder, then
+        for each folder in order set directory_path and call the same
+        _do_reset_directory(skip_exif_reset=False, skip_confirm=True) as a
+        single-folder reset. _on_reset_complete / _on_reset_error advance to the
+        next one via QTimer.singleShot(0, …). Per-folder messages are suppressed;
+        _reset_group_finish shows a single summary. To reset only one folder the
+        user removes the others from the list first.
+        """
+        if self._is_lab_processing():
+            return  # 已有处理或重置在进行 / something is already running
+        folders = [os.path.normpath(p) for p in self._multi_folders()]
+        if not folders:
+            return
+        reply = StyledMessageBox.question(
+            self,
+            self.i18n.t("messages.reset_confirm_title"),
+            self.i18n.t("messages.reset_group_confirm", count=len(folders),
+                        folders="\n".join(folders)),
+            yes_text=self.i18n.t("labels.yes"),
+            no_text=self.i18n.t("labels.no")
+        )
+        if reply != StyledMessageBox.Yes:
+            return
+
+        self._reset_queue = list(folders)
+        self._reset_group_total = len(folders)
+        self._reset_group_done = 0
+        self._reset_group_failed = []
+        self._reset_group_current = None
+        # 日志只在开始时清一次，各目录重置时不再清（见 _do_reset_directory）
+        # Clear the log once here; per-folder resets keep it (see _do_reset_directory)
+        self.log_text.clear()
+        self._set_queue_editing(False)
+        self.reset_btn.setEnabled(False)
+        self.start_btn.setEnabled(False)
+        self._reset_group_advance()
+
+    def _reset_group_advance(self) -> None:
+        """
+        取下一个目录并开始重置；不存在的目录（外接盘没连）写日志、记为失败并跳过；
+        没有下一个时调用 _reset_group_finish()。
+
+        Start resetting the next folder; a missing folder (drive unplugged) is
+        logged, recorded as failed and skipped; with none left call
+        _reset_group_finish().
+        """
+        if self._reset_queue is None:
+            return
+        while self._reset_queue:
+            path = self._reset_queue.pop(0)
+            index = self._reset_group_total - len(self._reset_queue)
+            self._log("\n" + self.i18n.t("logs.queue_folder_start", i=index,
+                                         n=self._reset_group_total, path=path))
+            if not os.path.isdir(path):
+                reason = self.i18n.t("logs.queue_folder_missing")
+                self._log(f"❌ {path}: {reason}", "error")
+                self._reset_group_failed.append((path, reason))
+                continue
+            self._reset_group_current = path
+            self.directory_path = path
+            self.dir_input.setText(path)
+            try:
+                self._do_reset_directory(skip_exif_reset=False, skip_confirm=True)
+            except Exception as e:
+                # 启动重置本身失败（极少见）：记失败并继续下一个
+                # Starting the reset itself failed (rare): record and continue
+                self._log(self.i18n.t("logs.reset_group_start_failed", path=path, error=e), "error")
+                self._reset_group_failed.append((path, str(e)))
+                self._reset_group_current = None
+                continue
+            return
+        self._reset_group_finish()
+
+    def _reset_group_folder_done(self, success: bool, reason: str = "") -> None:
+        """
+        当前目录重置结束（由 _on_reset_complete / _on_reset_error 调用）：记成功或失败，
+        再经 QTimer.singleShot(0, …) 推进到下一个（不在信号槽里重入）。
+
+        参数:
+        success (bool): 该目录是否完整重置成功
+        reason (str): 失败原因（success 为 False 时使用）
+
+        Record the current folder's result (called from _on_reset_complete /
+        _on_reset_error) and advance via QTimer.singleShot(0, …) so the next
+        reset does not start re-entrantly inside the slot.
+
+        Parameters:
+        success (bool): whether the folder was reset cleanly
+        reason (str): failure reason, used when success is False
+        """
+        path = self._reset_group_current or self.directory_path
+        self._reset_group_current = None
+        if success:
+            self._reset_group_done += 1
+        else:
+            self._reset_group_failed.append((path, reason))
+        QTimer.singleShot(0, self._reset_group_advance)
+
+    def _reset_group_finish(self) -> None:
+        """
+        整组重置收尾（只做一次）：恢复编辑入口、directory_path 回到第一个目录、状态条
+        「已选 N 个目录」、按钮按是否仍有结果设置（不走 _check_report_csv）；弹一次
+        汇总提示（成功目录数 + 失败目录列表）；最后应用挂起的实验室开关变化。
+
+        Finish the group reset once: restore editing, directory_path back to
+        the first folder, "N folders selected" banner and buttons (no
+        _check_report_csv); show one summary (count + failed folders); then
+        apply a deferred Labs switch change.
+        """
+        if self._reset_queue is None:
+            return
+        done = self._reset_group_done
+        failed = list(self._reset_group_failed)
+        # 先置空：_apply_pending_lab_switch / _is_lab_processing 以此判断已结束
+        # Clear first: _apply_pending_lab_switch / _is_lab_processing rely on it
+        self._reset_queue = None
+        self._reset_group_current = None
+        self._reset_group_failed = []
+
+        if failed:
+            self._update_status(self.i18n.t("labels.error") if done == 0
+                                else self.i18n.t("labels.ready"),
+                                COLORS['error'] if done == 0 else COLORS['warning'])
+        else:
+            self._update_status(self.i18n.t("labels.ready"), COLORS['accent'])
+        self._restore_multi_folder_ui()
+
+        msg_parts = [self.i18n.t("messages.reset_group_done", count=done)]
+        if failed:
+            lines = "\n".join(f"{p}: {r}" if r else p for p, r in failed)
+            msg_parts.append(self.i18n.t("messages.reset_group_failed", folders=lines))
+        else:
+            msg_parts.append(self.i18n.t("messages.ready_for_analysis"))
+        self._log("\n" + self.i18n.t("messages.reset_group_done", count=done))
+        if failed:
+            self._log(self.i18n.t("messages.reset_group_failed", folders=lines), "error")
+        self._show_message(
+            self.i18n.t("messages.reset_complete_title"),
+            "\n\n".join(msg_parts),
+            "warning" if failed else "info"
+        )
+
+        # 重置期间关掉的多目录开关，在此应用；收回单目录后按单目录刷新状态条
+        # Apply a switch-off deferred during the reset; then refresh as single-folder
+        was_active = self._lab_multi_active
+        self._apply_pending_lab_switch()
+        if was_active and not self._lab_multi_active and self.directory_path:
+            self._check_report_csv(auto_open=False)
+
     def _do_reset_directory(self, skip_exif_reset=False, skip_confirm=False):
         """执行目录重置
         
@@ -2879,7 +4277,10 @@ class SuperPickyMainWindow(QMainWindow):
             except Exception as e:
                 print(f"⚠️  Results browser release failed: {e}")
 
-        self.log_text.clear()
+        # 多目录队列中（「重新处理」）或整组重置中不清日志，前面目录的日志保留
+        # Inside the folder queue (reprocess) or a group reset keep earlier folders' logs
+        if self._queue is None and self._reset_queue is None:
+            self.log_text.clear()
         self.reset_btn.setEnabled(False)
         self.start_btn.setEnabled(False)
 
@@ -3148,10 +4549,71 @@ class SuperPickyMainWindow(QMainWindow):
                 traceback.print_exc()
                 error_signal.emit(error_msg)
 
-        threading.Thread(target=run_reset, daemon=True).start()
+        # 单目录重置（不是队列的「重新处理」，也不是整组重置——那两者已由 _queue /
+        # _reset_queue 记为处理中）：线程启动前记为处理中并按需锁住目录列表
+        # A single reset (neither a queue reprocess nor a group reset, which
+        # _queue / _reset_queue already track): mark it and lock the list if shown
+        single_reset = self._queue is None and self._reset_queue is None
+        if single_reset:
+            self._begin_single_reset()
+        try:
+            threading.Thread(target=run_reset, daemon=True).start()
+        except Exception:
+            # 线程没起来：撤销标记与锁，交给调用方处理 / thread failed to start: undo, re-raise
+            if single_reset:
+                self._end_single_reset()
+            raise
 
     def _on_reset_complete(self, success, restore_stats=None, exif_stats=None):
-        """重置完成"""
+        """
+        重置完成。多目录队列为「重新处理」而重置时，不弹提示、不走
+        _check_report_csv，直接扫描并启动该目录（见 _queue_reset_done）。
+
+        多目录整组重置中（_reset_queue 不为 None）同样不弹提示、不走 _check_report_csv，
+        只记该目录结果并推进到下一个（见 _reset_group_folder_done）。
+
+        单目录重置：清掉处理中标记并解锁目录列表（_end_single_reset），照旧弹提示、
+        刷新状态，最后应用重置期间挂起的实验室开关切换。
+
+        Reset finished. When the folder queue reset a folder for reprocessing,
+        skip the message box and _check_report_csv and launch it directly.
+        During a group reset (_reset_queue not None) likewise skip both and
+        just record the folder and advance (see _reset_group_folder_done).
+        A single reset clears its processing flag and unlocks the list
+        (_end_single_reset), keeps its message and refresh, then applies a
+        Labs switch change deferred during the reset.
+        """
+        if self._queue is not None and self._queue_pending_launch:
+            # 部分文件没能移回原位：记一行警告，处理照常继续（与单目录一样不中止）
+            # Some files could not be moved back: warn once, processing continues
+            failed = (restore_stats or {}).get('failed', 0)
+            if failed:
+                self._log(self.i18n.t("logs.queue_reset_partial",
+                                      path=self._queue_pending_launch, failed=failed), "warning")
+            self._queue_reset_done(bool(success), "" if success else
+                                   self.i18n.t("messages.reset_failed_log"))
+            return
+        if self._reset_queue is not None:
+            # 多目录整组重置：不弹单个目录的提示、不走 _check_report_csv，记结果后推进
+            # Group reset: no per-folder message or _check_report_csv; record and advance
+            failed = (restore_stats or {}).get('failed', 0)
+            if not success:
+                self._log(self.i18n.t("messages.reset_failed_log"), "error")
+                self._reset_group_folder_done(False, self.i18n.t("messages.reset_failed_log"))
+            elif failed:
+                # 有文件没能移回原位：该目录列为失败，提醒用户检查
+                # Some files were not moved back: list the folder as failed
+                path = self._reset_group_current or self.directory_path
+                self._log(self.i18n.t("logs.reset_group_partial", path=path, failed=failed),
+                          "warning")
+                self._reset_group_folder_done(
+                    False, self.i18n.t("messages.reset_group_partial_reason", failed=failed))
+            else:
+                self._reset_group_folder_done(True)
+            return
+        # 单目录重置：先清处理中标记、解锁列表，最后应用挂起的开关切换
+        # Single reset: clear the flag and unlock first; apply a deferred switch last
+        self._end_single_reset()
         if success:
             self._update_status(self.i18n.t("labels.ready"), COLORS['accent'])
             self._log(self.i18n.t("messages.reset_complete_log"))
@@ -3182,12 +4644,27 @@ class SuperPickyMainWindow(QMainWindow):
             self._suppress_results_browser_once = False
             self._update_status_banner("ready")
             self._update_action_buttons("ready")
-            return
-
-        self._check_report_csv()
+        else:
+            self._check_report_csv()
+        self._apply_pending_lab_switch()
 
     def _on_reset_error(self, error_msg):
-        """重置错误"""
+        """
+        重置错误。多目录队列中不弹窗：记该目录出错并继续下一个。
+        Reset error; in queue mode record the folder as an error and continue.
+        """
+        if self._queue is not None and self._queue_pending_launch:
+            self._queue_reset_done(False, str(error_msg))
+            return
+        if self._reset_queue is not None:
+            # 多目录整组重置：不弹出错框，记该目录失败并继续下一个
+            # Group reset: no error box; record the folder as failed and continue
+            self._log(f"Error: {error_msg}", "error")
+            self._reset_group_folder_done(False, str(error_msg))
+            return
+        # 单目录重置：清标记、解锁；刷新状态后应用挂起的开关切换
+        # Single reset: clear the flag and unlock; apply a deferred switch after refreshing
+        self._end_single_reset()
         self._log(f"Error: {error_msg}", "error")
         self._update_status("Error", COLORS['error'])
         self._show_message(
@@ -3196,48 +4673,7 @@ class SuperPickyMainWindow(QMainWindow):
             "error"
         )
         self._check_report_csv()
-
-    @Slot()
-    def _maybe_prompt_video_first_run(self):
-        """
-        V4.3 Phase 4: 首次发现视频时弹一次性提示
-
-        触发条件：当前目录扫描到至少 1 个视频文件 + 用户从未被提示过
-        提示内容：告知主流程会自动处理视频；用户可关闭
-        副作用：写 advanced_config 标记已提示，下次不再弹
-
-        First-run prompt when videos are detected; one-time only.
-        """
-        try:
-            from advanced_config import get_advanced_config
-            cfg = get_advanced_config()
-        except Exception:
-            return
-        if cfg.config.get("video_first_run_prompted"):
-            return
-        # 检测是否有视频 / Check if any video exists
-        try:
-            from core.recursive_scanner import scan_directories
-            results = scan_directories(self.directory_path)
-            total_videos = sum(item.video_count for item in results)
-        except Exception:
-            return
-        if total_videos == 0:
-            return
-
-        # 弹一次性提示 / Show one-time dialog
-        msg = self.i18n.t("dialogs.video_first_tip_body", count=total_videos)
-        reply = StyledMessageBox.question(
-            self, self.i18n.t("dialogs.video_first_tip_title"), msg,
-            yes_text=self.i18n.t("dialogs.enable_btn"), no_text=self.i18n.t("dialogs.skip_btn")
-        )
-        # 不论用户怎么选，都标记已提示
-        # Mark as prompted regardless of choice
-        cfg.config["video_first_run_prompted"] = True
-        cfg.set_video_auto_process_in_main(reply == StyledMessageBox.Yes)
-        # 首页「视频」开关需同步反映这里的选择，否则会显示旧值直到设置中心刷新一次
-        # Keep the home-panel "Video" toggle in sync with this choice
-        self._refresh_param_panel()
+        self._apply_pending_lab_switch()
 
     def _open_video_analyzer(self):
         """
@@ -3271,7 +4707,7 @@ class SuperPickyMainWindow(QMainWindow):
             title, msg = language_changed_notice(lang_code)
             StyledMessageBox.information(self, title, msg)
 
-    def _open_settings_center(self, start_page: str = "culling") -> None:
+    def _open_settings_center(self, start_page: str = "common") -> None:
         """打开设置中心弹窗，关闭后刷新依赖值（技能 chip、识鸟面板状态）。
 
         Task 7: 统一设置入口。所有参数、水平、识鸟等配置都在设置中心内完成。
@@ -3283,14 +4719,18 @@ class SuperPickyMainWindow(QMainWindow):
         After close: refresh skill chip + call birdid_dock.reload_from_config (Task 8).
 
         Parameters:
-            start_page (str): 设置中心初始显示页 key / Initial page key ("culling"/"about"/etc.)
+            start_page (str): 设置中心初始显示页 key（"common"/"advanced"/"labs"/"about"；
+                旧页键由设置中心映射）/ Initial page key (legacy keys are mapped by
+                the Settings Center)
         """
         from ui.settings_center import SettingsCenter
         dlg = SettingsCenter(self.i18n, parent=self, start_page=start_page)
         dlg.exec()
 
-        # 设置中心里也能改界面语言：同步菜单栏语言子菜单的勾选（跟随系统时都不勾）
-        # The Settings Center can change the language too: sync the menu checks.
+        # 同步菜单栏语言子菜单的勾选（跟随系统时都不勾）。设置中心已不再提供语言
+        # 选择（spec D4），这里保留为无害的兜底同步。
+        # Sync the menu-bar language checks. The Settings Center no longer offers a
+        # language picker (spec D4); this stays as a harmless safety sync.
         for code, action in getattr(self, "lang_actions", {}).items():
             action.setChecked(code == self.config.language)
 
@@ -3299,6 +4739,8 @@ class SuperPickyMainWindow(QMainWindow):
         self._refresh_skill_chip()
         # 刷新首页快速参数面板,与设置中心改动保持一致(SSOT 双向同步)
         self._refresh_param_panel()
+        # 实验室页可能改了多目录开关：切换目录栏 / the Labs page may have flipped multi-folder
+        self._apply_lab_multi_folder()
 
         # Task 8 guard: birdid_dock.reload_from_config 由 Task 8 提供
         # Task 8 guard: reload_from_config is provided by Task 8
@@ -3322,17 +4764,18 @@ class SuperPickyMainWindow(QMainWindow):
         首页「快速调整」参数面板:锐度/美学两滑块 + 飞行/连拍/识鸟/视频四开关。
 
         所有控件双向绑定 advanced_config(单一事实源):初值从 config 读,改动写回 config;
-        范围与设置中心精选页一致(锐度 100-600,美学 0-70 即 0.0-7.0),避免两处不一致或截断。
-        手动改滑块视为自定义档(skill_level=custom 并同步 custom_*),与设置中心精选页协同一致。
+        范围与设置中心高级页评星一致(锐度 100-600,美学 0-70 即 0.0-7.0),避免两处不一致或截断。
+        手动改滑块视为自定义档(skill_level=custom 并同步 custom_*),与设置中心高级页评星协同一致。
         初值在 connect 之前设置,故不会在构建时误触发回调。
-        「视频」开关默认关闭(大多数用户不需要视频识鸟),绑定 video_auto_process_in_main,
-        与设置中心「视频」页的总开关双向同步。
+        首页已无「视频」开关:视频处理自 2026-11 起只在设置中心「实验室」页开启
+        (绑定 video_auto_process_in_main,默认关闭)。
 
-        Home quick-adjust panel: sharpness/aesthetics sliders + flight/burst/birdid/video toggles.
-        Two-way bound to advanced_config (SSOT); ranges match the Settings Center culling page.
-        Editing a slider marks the skill level as custom (consistent with the culling page).
-        The "Video" toggle defaults to off (most users don't need video bird-ID) and is bound
-        to video_auto_process_in_main, kept in sync with the Video page in Settings Center.
+        Home quick-adjust panel: sharpness/aesthetics sliders + flight/burst/birdid toggles.
+        Two-way bound to advanced_config (SSOT); ranges match the Settings Center Advanced page (Rating).
+        Editing a slider marks the skill level as custom (consistent with the Advanced page (Rating)).
+        There is no Video toggle on the home panel any more: since 2026-11 video processing
+        is enabled only on the Labs page of the Settings Center (video_auto_process_in_main,
+        default off).
         """
         cfg = self.config
         params_frame = QFrame()
@@ -3378,7 +4821,7 @@ class SuperPickyMainWindow(QMainWindow):
         self.birdid_check.stateChanged.connect(self._on_birdid_check_changed)
         params_layout.addLayout(header_layout)
 
-        # 滑块区:锐度 + 美学(范围对齐设置中心精选页)/ Sliders aligned with culling page
+        # 滑块区:锐度 + 美学(范围对齐设置中心高级页评星)/ Sliders aligned with Advanced page (Rating)
         sliders_layout = QVBoxLayout()
         sliders_layout.setSpacing(16)
 
@@ -3423,10 +4866,10 @@ class SuperPickyMainWindow(QMainWindow):
         # V4.6+三段配额:「星级配额分配条」QuotaBar(批内相对评星)取代原单一
         # 3星配额滑块——一条 3★/2★/1★ 三段条,拖分隔点即改配额(和恒 100%,1★ 为
         # 余量)。v2 下只显示此条,旧阈值滑块隐藏(仍构建,供 v1 回滚与既有测试)。
-        # 约束与 set_custom_quota3/2 clamp 一致(SSOT),与设置中心精选页双向同步。
+        # 约束与 set_custom_quota3/2 clamp 一致(SSOT),与设置中心高级页评星双向同步。
         # V4.6 + 3-seg quota: the QuotaBar (3★/2★/1★ split) replaces the single
         # 3-star quota slider; ranges match the setter clamps (SSOT), two-way
-        # synced with the Settings Center culling page.
+        # synced with the Settings Center Advanced page (Rating).
         from core.rating_quota import get_quota3_for_skill, get_quota2_for_skill
         from ui.quota_bar import QuotaBar
         quota_layout = QHBoxLayout()
@@ -3480,7 +4923,7 @@ class SuperPickyMainWindow(QMainWindow):
 
         Star quota split (V2): persist custom_quota3/quota2 and switch the skill
         level to "custom" (1★ is the derived remainder). Consistent with the
-        Settings Center culling page.
+        Settings Center Advanced page (Rating).
         """
         if getattr(self, "_params_loading", False):
             return
@@ -3492,7 +4935,7 @@ class SuperPickyMainWindow(QMainWindow):
         self._refresh_skill_chip()
 
     def _mark_custom_skill(self):
-        """手动改阈值 → 技能档转「自定义」并同步 custom_*,与设置中心精选页协同一致。"""
+        """手动改阈值 → 技能档转「自定义」并同步 custom_*,与设置中心高级页评星协同一致。"""
         cfg = self.config
         cfg.set_custom_sharpness(self.sharp_slider.value())
         cfg.set_custom_aesthetics(self.nima_slider.value() / 10.0)
@@ -4268,7 +5711,7 @@ class SuperPickyMainWindow(QMainWindow):
 
         # 兜底退出路径（托盘不可用 / 系统注销）：维持原有确认与清理逻辑
         # Fallback quit path (no tray / session shutdown): keep old confirm + cleanup
-        if self.worker and self.worker.is_alive() and not saving_session:
+        if self._is_lab_processing() and not saving_session:
             reply = StyledMessageBox.question(
                 self,
                 self.i18n.t("messages.exit_title"),
@@ -4278,8 +5721,8 @@ class SuperPickyMainWindow(QMainWindow):
             )
 
             if reply == StyledMessageBox.No:  # 用户点击"是"退出
-                self.worker.request_stop()
-                self.worker._stop_caffeinate()  # V3.8.1: 确保终止 caffeinate 进程
+                # 队列在跑时一并停队列 / also stops a running folder queue
+                self._stop_processing_for_quit()
                 self._stop_birdid_server()  # V4.0: 停止识鸟 API 服务
                 self._force_quit()          # 已确认过，不再二次弹窗 / already confirmed
                 event.accept()
