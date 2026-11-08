@@ -318,3 +318,24 @@ def test_empty_list_hides_rows_area(widget):
     """没有目录时行区域隐藏、高度为 0。"""
     assert widget._scroll.height() == 0
     assert not widget._scroll.isVisibleTo(widget)
+
+
+def test_refresh_counts_recounts_without_emitting(widget, tmp_path):
+    """
+    重置把照片移回目录后 refresh_counts 重新统计：行与合计更新，不发 foldersChanged。
+    After a reset moves photos back, refresh_counts updates rows and total
+    without emitting foldersChanged.
+    """
+    a = _photo_dir(tmp_path, "a")
+    widget.try_add(a)
+    norm = folder_queue.normalize_folder(a)
+    assert widget.cached_count(norm) == 1
+    # 模拟重置：两张照片从星级目录移回了顶层 / photos moved back by a reset
+    (tmp_path / "a" / "b.jpg").write_bytes(b"x")
+    (tmp_path / "a" / "c.jpg").write_bytes(b"x")
+    seen = []
+    widget.foldersChanged.connect(seen.append)
+    widget.refresh_counts()
+    assert widget.cached_count(norm) == 3
+    assert "3" in widget._total_label.text()
+    assert seen == []

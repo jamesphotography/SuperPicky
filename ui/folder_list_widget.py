@@ -398,6 +398,28 @@ class FolderListWidget(QWidget):
         self._scroll_pending = False
         bar.setValue(maximum)
 
+    def refresh_counts(self) -> None:
+        """
+        重新统计每个目录的照片数并刷新各行与合计（目录本身不变，不发 foldersChanged）。
+        重置把照片移回目录、处理把照片移进星级/鸟种目录之后调用，否则列表还显示加入时
+        算的旧数（例如重置后仍显示「已处理」）。滚动位置保持不动。
+
+        Recount every folder's photos and refresh the rows and total (folders
+        unchanged, no foldersChanged). Call after a reset moved photos back or
+        a run moved them into rating/species folders; otherwise the rows keep
+        the counts from when they were added. The scroll position is kept.
+        """
+        for path in self._folders:
+            self._counts[path] = folder_row_count(path)
+        bar = self._scroll.verticalScrollBar()
+        pos = bar.value()
+        last = self._last_change
+        # 不当作「添加」，免得滚到底 / not an "add", so no scroll-to-bottom
+        self._last_change = "set"
+        self._rebuild()
+        self._last_change = last
+        bar.setValue(pos)
+
     def is_scrollable(self) -> bool:
         """
         行数超过可见上限、需要滚动时为 True（供测试与界面检查）。

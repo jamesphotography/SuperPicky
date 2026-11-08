@@ -3494,6 +3494,11 @@ class SuperPickyMainWindow(QMainWindow):
         """
         self._single_reset_active = False
         self._unlock_single_run()
+        # 多目录开关开着、列表里只有一个目录时走的是单目录重置：同样重新统计列表张数
+        # With the multi-folder switch on and one listed folder the single reset
+        # runs; recount the list rows as well
+        if self._lab_multi_active:
+            self._folder_list.refresh_counts()
 
     def _start_queue(self) -> None:
         """
@@ -3836,6 +3841,9 @@ class SuperPickyMainWindow(QMainWindow):
         while running, so this branch is not normally reached).
         """
         self._set_queue_editing(True)
+        # 处理 / 重置移动过照片，列表里加入时算的张数已过时，重新统计
+        # Processing / resetting moved photos; recount the rows
+        self._folder_list.refresh_counts()
         folders = self._folder_list.folders()
         if folders:
             self.directory_path = os.path.normpath(folders[0])

@@ -583,3 +583,29 @@ def test_switch_on_after_finished_slot_applies_when_worker_exits(tmp_path, monke
     finally:
         w.worker = None
         w.close()
+
+
+def test_counts_refreshed_after_group_reset_or_queue_and_single_reset(tmp_path, monkeypatch):
+    """
+    整组重置 / 队列结束（_restore_multi_folder_ui）和列表里只有一个目录时的单目录重置
+    （_end_single_reset）之后，列表张数都要重新统计。
+    Rows are recounted after a group reset / queue end and after a single
+    reset while the multi-folder switch is on.
+    """
+    w = _window()
+    try:
+        _set_lab(w, True)
+        a = _photo_dir(tmp_path, "a")
+        b = _photo_dir(tmp_path, "b")
+        w._folder_list.set_folders([a, b])
+        calls = []
+        monkeypatch.setattr(w._folder_list, "refresh_counts", lambda: calls.append(1))
+        w._restore_multi_folder_ui()
+        assert calls == [1]
+        w._end_single_reset()
+        assert calls == [1, 1]
+        _set_lab(w, False)
+        w._end_single_reset()
+        assert calls == [1, 1]          # 开关关着不统计 / not when the switch is off
+    finally:
+        w.close()
