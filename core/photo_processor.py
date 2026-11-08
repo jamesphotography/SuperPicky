@@ -1601,7 +1601,6 @@ class PhotoProcessor:
             MIN_TOPIQ as V2_MIN_TOPIQ,
             W_SHARP as V2_W_SHARP,
             W_TOPIQ as V2_W_TOPIQ,
-            FOCUS_ARBITRATION_SHARPNESS as V2_FOCUS_ARBITRATION_SHARPNESS,
             needs_focus_check as needs_focus_check_v2,
         )
         v2_enabled = self.config.rating_algorithm == "v2"
@@ -2963,9 +2962,9 @@ class PhotoProcessor:
                     # gate), upgrade to GOOD (0.9/1.0). Pixel evidence beats EXIF
                     # focus-point metadata; truly-blurred shots keep the verdict.
                     _orig_focus_w = focus_sharpness_weight
-                    # V2 用固定门槛（与技能滑块解耦，见 rating_quota.FOCUS_ARBITRATION_SHARPNESS），
+                    # V2 用固定门槛（与技能滑块解耦，见配置 v2_focus_arbitration_sharpness，默认 rating_quota.FOCUS_ARBITRATION_SHARPNESS），
                     # V1 沿用用户锐度门槛 / V2 uses a fixed threshold, V1 keeps the user's
-                    _arb_thr = (V2_FOCUS_ARBITRATION_SHARPNESS if v2_enabled
+                    _arb_thr = (float(self.config.v2_focus_arbitration_sharpness) if v2_enabled
                                 else float(self.settings.sharpness_threshold))
                     (focus_sharpness_weight, focus_topiq_weight), _focus_arbitrated = arbitrate_focus_weights(
                         (focus_sharpness_weight, focus_topiq_weight),

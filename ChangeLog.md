@@ -1,3 +1,50 @@
+# SuperPicky 4.6.5 RC4
+
+**What's new since RC3:**
+
+- **Settings reorganised into four pages: Common, Advanced, Labs, About.** Everyday options
+  (skill level, flight/burst detection, Bird ID region, folder layout) are on Common; everything
+  else is grouped on Advanced in collapsible sections. Interface language is now changed only
+  from the Settings menu.
+- **Out-of-focus shots no longer get 3★ (Rating V2).** If the camera's focus point was outside
+  the bird and the head is not sharp enough to overrule it, the photo is capped at 2★ and the
+  caption says why. The line is adjustable in Settings > Advanced > Rating (default 520). (#158)
+- **Labs: Report, eBird export, multi-folder culling and video.** Report and eBird export are now
+  hidden until you switch them on in Settings > Labs. New in Labs: add several folders and cull
+  them one after another, with results shown per folder and Reset applying to the whole list.
+  Video processing has moved to Labs; if you had it on, it stays on.
+- **Change stars for many photos at once.** With several photos ticked in the results browser,
+  number keys 0-5, Up/Down, the panel arrows and the new right-click "Set Rating" apply to all of
+  them (asks first when more than 5 photos would change).
+- Photos without focus information are no longer hidden by the focus filter, so a 0★ photo you
+  re-rated stays visible. (#159)
+- Ctrl/Cmd+click after a single click now includes the first photo, as in Explorer and Finder.
+  (#160)
+- Reset now also restores folders named with older bird names and the "No bird" video folders.
+- This test build has no CUDA 13 installer; RTX 50 users can use the CPU or CUDA 11.8 build.
+
+---
+
+# SuperPicky 4.6.5 RC4（中文）
+
+**相比 RC3 的变化：**
+
+- **设置整合为四页：常用、高级、实验室、关于。** 日常会改的（摄影水平、飞鸟/连拍检测、识鸟地区、
+  分类目录布局）都在「常用」；其余按类别收在「高级」里，可以折叠。界面语言改为只在「设置」菜单里切换。
+- **脱焦照片不再拿 3★（V2 评星）。** 相机对焦点在鸟外、鸟头又不够清晰到足以推翻时，最多给 2★，题注写明
+  原因。判定线可在「设置 → 高级 → 评星」里调（默认 520）。（#158）
+- **实验室：生成报告、导出 eBird、多目录选鸟和视频。** 生成报告和导出 eBird 默认隐藏，需在「设置 →
+  实验室」里打开。实验室新增多目录选鸟：一次加入多个文件夹，按顺序逐个处理，结果按目录分开显示，
+  重置作用于整个列表。视频处理也移到了实验室；原来开着的会保持开启。
+- **可以一次给多张照片改星级。** 在结果浏览器勾选多张后，数字键 0-5、上下方向键、面板上的箭头以及
+  右键新增的「设置星级」都作用于全部勾选的照片（星级会变的超过 5 张时先确认）。
+- 没有对焦信息的照片不再被对焦筛选挡掉，改过星级的 0★ 照片不会从网格里消失。（#159）
+- 单击一张后再 Ctrl/Cmd+点击，第一张也算选中，与资源管理器和访达一致。（#160）
+- 重置时，用旧鸟名建的鸟种文件夹和视频的「无鸟」文件夹也能复原。
+- 本测试版不提供 CUDA 13 安装包，RTX 50 显卡请用 CPU 版或 CUDA 11.8 版。
+
+---
+
 # SuperPicky 4.6.5 RC3
 
 **What's new since RC2:**

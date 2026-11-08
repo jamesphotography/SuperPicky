@@ -14,6 +14,7 @@ from pathlib import Path
 import sys
 from typing import Dict, List, Optional
 from tools.i18n import t as _t
+from core.rating_quota import FOCUS_ARBITRATION_SHARPNESS as _V2_FOCUS_ARB_DEFAULT
 from config import get_app_config_dir, get_lazy_registry
 
 
@@ -145,6 +146,9 @@ class AdvancedConfig:
         # V4.6: No-bird rescue scan
         "rescue_scan_enabled": True,   # 判无鸟/低置信度时触发 1024px 重扫 + 识鸟守门
         "rescue_birdid_gate": 10,      # 弱候选的识鸟确认门槛 (0-100, top1 置信度百分比)
+        # V2 评星「脱焦判定」锐度线：EXIF 对焦判差但头部锐度达此线则升为合焦 (300-800, 步长 10)
+        # V2 focus-arbitration sharpness line (300-800, step 10); default from rating_quota
+        "v2_focus_arbitration_sharpness": _V2_FOCUS_ARB_DEFAULT,
 
         # V4.6: 匿名使用统计 (spec: docs/specs/2026-08-21-usage-analytics-design.md)
         # 默认开启、设置中心可关；上报内容为版本/系统/架构/语言与按日轮换的
@@ -209,6 +213,16 @@ class AdvancedConfig:
         # 最近选鸟目录历史（最多保留 10 个，按最近使用时间倒序）
         "recent_directories": [],
 
+        # 最近多目录选鸟组（每组 >=2 个目录，最多 10 组，最新在前）
+        # Recent multi-folder groups (each >=2 dirs, max 10, newest first)
+        "recent_directory_groups": [],
+
+        # 实验室开关（默认关闭，恢复默认时同样关闭）
+        # Labs switches (off by default; also turned off by restore-defaults)
+        "lab_report_export": False,
+        "lab_ebird_export": False,
+        "lab_multi_folder": False,
+
         # 主窗口位置和最大化状态。普通几何与最大化状态分开存储，便于跨屏幕校验。
         # Main-window placement and maximized state. Normal geometry is stored
         # separately from maximized state so it can be validated across monitors.
@@ -226,16 +240,15 @@ class AdvancedConfig:
 
         # V4.3 Phase 4: 主流程视频集成 / Main-flow video integration
         # video_auto_process_in_main : 选鸟时是否自动分析视频（默认关——大多数用户不拍视频，
-        #                              首页快速面板「视频」开关 + 首次发现视频的一次性提示均可开启）
+        #                              设置中心「实验室」页开启；首页已无视频开关 /
+        #                              off by default; enabled only on the Labs page, no home-panel switch）
         # video_species_mode         : 默认识别模式 instant/fast/full（默认 instant 极速）
         # video_enable_species_id    : 是否启用鸟种识别（默认开）
         # video_enable_flight        : 是否启用飞行检测（默认开）
-        # video_first_run_prompted   : 首次发现视频弹一次性提示后标记（避免重复弹）
         "video_auto_process_in_main": False,
         "video_species_mode": "instant",
         "video_enable_species_id": True,
         "video_enable_flight": True,
-        "video_first_run_prompted": False,
 
         # V4.4: 识鸟设置统一进 advanced_config(原 birdid_dock_settings.json)
         "birdid_auto_identify": False,
@@ -361,7 +374,7 @@ class AdvancedConfig:
         # 个人选择 / personal choices
         "language", "telemetry_enabled",
         # 一次性标记与迁移标记 / one-time and migration flags
-        "is_first_run", "correction_consent_shown", "video_first_run_prompted",
+        "is_first_run", "correction_consent_shown",
         "birdid_dock_settings_migrated",
         # 安装初始化与运行库状态 / installation and runtime state
         "initialization_completed", "initialization_manifest_version",
@@ -373,7 +386,7 @@ class AdvancedConfig:
         # 更新检查状态 / update-check state
         "ignored_update_version", "include_prerelease", "auto_check_updates",
         # 使用记录与窗口状态 / history and window state
-        "recent_directories", "main_window_geometry", "main_window_maximized",
+        "recent_directories", "recent_directory_groups", "main_window_geometry", "main_window_maximized",
         "browser_copy_dir",
     })
 
@@ -560,6 +573,22 @@ class AdvancedConfig:
         return bool(self.config.get("correction_consent_shown", False))
 
     @property
+    def v2_focus_arbitration_sharpness(self) -> float:
+        """
+        V2 脱焦判定锐度线 (300-800)。
+        V2 focus-arbitration sharpness line (300-800).
+        读取时钳制；手改配置文件的非数值回退默认值。
+        Clamped on read; a non-numeric hand-edited value falls back to the default.
+        """
+        try:
+            value = float(self.config.get("v2_focus_arbitration_sharpness", _V2_FOCUS_ARB_DEFAULT))
+        except (TypeError, ValueError):
+            return float(_V2_FOCUS_ARB_DEFAULT)
+        if value != value:  # NaN 守卫 / NaN guard
+            return float(_V2_FOCUS_ARB_DEFAULT)
+        return max(300.0, min(800.0, value))
+
+    @property
     def rescue_scan_enabled(self) -> bool:
         """无鸟补救扫描开关 / No-bird rescue scan toggle."""
         return self.config.get("rescue_scan_enabled", True)
@@ -612,6 +641,21 @@ class AdvancedConfig:
         """设置纠错样本提交首次说明已展示，并持久化。"""
         self.config["correction_consent_shown"] = bool(value)
         self.save()
+
+    def set_v2_focus_arbitration_sharpness(self, value: float) -> None:
+        """
+        设置 V2 脱焦判定锐度线，钳制到 300-800（与 UI 控件范围一致）。
+
+        参数:
+        value (float): 锐度线
+
+        Set the V2 focus-arbitration sharpness line, clamped to 300-800
+        (matches the UI widget range).
+
+        Parameters:
+        value (float): sharpness line
+        """
+        self.config["v2_focus_arbitration_sharpness"] = max(300.0, min(800.0, float(value)))
 
     def set_rescue_scan_enabled(self, value: bool) -> None:
         """设置无鸟补救扫描开关 / Toggle the no-bird rescue scan."""
@@ -1034,6 +1078,30 @@ class AdvancedConfig:
         self.config["delete_confirm"] = bool(value)
 
     @property
+    def lab_report_export(self) -> bool:
+        """实验室：报告导出开关 / Labs: report export switch."""
+        return bool(self.config.get("lab_report_export", False))
+
+    @property
+    def lab_ebird_export(self) -> bool:
+        """实验室：eBird 导出开关 / Labs: eBird export switch."""
+        return bool(self.config.get("lab_ebird_export", False))
+
+    @property
+    def lab_multi_folder(self) -> bool:
+        """实验室：多目录选鸟开关 / Labs: multi-folder culling switch."""
+        return bool(self.config.get("lab_multi_folder", False))
+
+    def set_lab_report_export(self, value: bool) -> None:
+        self.config["lab_report_export"] = bool(value)
+
+    def set_lab_ebird_export(self, value: bool) -> None:
+        self.config["lab_ebird_export"] = bool(value)
+
+    def set_lab_multi_folder(self, value: bool) -> None:
+        self.config["lab_multi_folder"] = bool(value)
+
+    @property
     def close_action(self) -> str:
         """
         主窗口关闭按钮的行为（#123）："ask" / "tray" / "quit"；非法值按 "ask" 处理。
@@ -1347,6 +1415,39 @@ class AdvancedConfig:
         dirs = [d for d in self.config.get("recent_directories", []) if d != directory]
         dirs.insert(0, directory)
         self.config["recent_directories"] = dirs[:10]
+        self.save()
+
+    def get_recent_directory_groups(self) -> list:
+        """
+        返回最近多目录组列表（最新在前）。只保留「list[str] 且长度>=2」的条目，
+        防御手改坏的配置。
+
+        Return recent multi-folder groups (newest first), keeping only entries
+        that are list[str] with >= 2 items, to guard against hand-edited configs.
+        """
+        raw = self.config.get("recent_directory_groups", [])
+        if not isinstance(raw, list):
+            return []
+        return [
+            list(g) for g in raw
+            if isinstance(g, list) and len(g) >= 2 and all(isinstance(x, str) for x in g)
+        ]
+
+    def add_recent_directory_group(self, dirs: list) -> None:
+        """
+        记录一组目录：按集合判重（不论顺序），保留本次顺序并插到最前，
+        最多 10 组；少于 2 个目录时忽略；写完保存。
+
+        Record a directory group: dedup by set (order-insensitive), keep this
+        call's order at the front, cap at 10; ignore groups of < 2; then save().
+        """
+        group = [d for d in dirs if isinstance(d, str)]
+        if len(group) < 2:
+            return
+        key = set(group)
+        groups = [g for g in self.get_recent_directory_groups() if set(g) != key]
+        groups.insert(0, group)
+        self.config["recent_directory_groups"] = groups[:10]
         self.save()
 
     def get_dict(self) -> Dict[str, object]:

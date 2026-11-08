@@ -1411,7 +1411,21 @@ class ThumbnailGrid(QScrollArea):
     def _on_card_clicked(self, photo: dict):
         """处理卡片点击，支持 Ctrl/Shift 多选（C3）。"""
         from PySide6.QtWidgets import QApplication
-        modifiers = QApplication.keyboardModifiers()
+        self._handle_card_click(photo, QApplication.keyboardModifiers())
+
+    def _handle_card_click(self, photo: dict, modifiers) -> None:
+        """
+        按修饰键处理一次卡片点击：普通点击单选，Ctrl(macOS 为 Command) 切换勾选，
+        Shift 范围勾选。拆出来是为了让测试直接传修饰键，不必替换 Qt 的静态方法。
+
+        参数:
+            photo: 被点击的照片记录
+            modifiers: Qt.KeyboardModifiers（点击时按下的修饰键）
+
+        Handle one card click for the given modifiers: plain click selects,
+        Ctrl/Cmd toggles the check, Shift checks a range. Split out so tests can
+        pass modifiers directly instead of patching a Qt static method.
+        """
         photo_key = _photo_key(photo)
         photo_keys = [_photo_key(p) for p in self._photos]
         try:
@@ -1420,7 +1434,20 @@ class ThumbnailGrid(QScrollArea):
             clicked_idx = -1
 
         if modifiers & Qt.ControlModifier:
-            # Ctrl+点击：切换该照片的多选状态
+            # Ctrl+点击：切换该照片的多选状态。
+            # 与资源管理器 / 访达一致：还没有勾选任何照片时，第一次 Ctrl+点击
+            # 把当前单选的那张（带绿框的）一并勾上——此前它只有绿框不算选中，
+            # 右键「N 张」少算一张（#160）。
+            # Ctrl+click toggles the photo. Like Explorer / Finder, the first
+            # Ctrl+click with nothing checked also checks the currently selected
+            # (outlined) photo; it used to be left out of "N selected" (#160).
+            if (not self._multi_selected and self._selected_key is not None
+                    and self._selected_key != photo_key
+                    and self._selected_key in photo_keys):
+                self._multi_selected.add(self._selected_key)
+                card = self._cards.get(self._selected_key)
+                if card:
+                    card.set_multi_selected(True)
             if photo_key in self._multi_selected:
                 self._multi_selected.discard(photo_key)
                 card = self._cards.get(photo_key)

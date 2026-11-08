@@ -55,3 +55,54 @@ def test_flatten_keeps_folders_that_still_hold_real_files(tmp_path):
     assert (root / "DSC1.NEF").read_bytes() == b"root copy"
     assert (root / "我的整理" / "笔记.txt").exists()
     assert stats["skipped"] == 1 and stats["dirs_removed"] == 0
+
+
+def test_flatten_restores_renamed_species_folders_by_structure(tmp_path):
+    """
+    旧版鸟名建的鸟种目录（如「澳洲鸨」，现库里已改名「澳洲鹭鸨」）按结构认出：
+    里面有星级 / burst_ 子目录，照片移回根目录，空目录清掉。
+    Species folders named with an old (since renamed) species name are
+    recognised by their rating / burst_ sub-folders and flattened.
+    """
+    root = tmp_path
+    _touch(root / "澳洲鸨" / "3星_优选" / "a.NEF")
+    _touch(root / "澳洲鸨" / "4星_精华" / "b.NEF")
+    _touch(root / "杂色鹦鹉" / "2星_良好" / "burst_044" / "c.NEF")
+    _touch(root / "杂色鹦鹉" / "._2星_良好")
+    _touch(root / "Old_Name_Bird" / "burst_001" / "d.NEF")
+
+    stats = force_flatten_directory(str(root), log_callback=lambda _m: None)
+
+    for name in ("a.NEF", "b.NEF", "c.NEF", "d.NEF"):
+        assert (root / name).exists(), name
+    assert not (root / "澳洲鸨").exists()
+    assert not (root / "杂色鹦鹉").exists()
+    assert not (root / "Old_Name_Bird").exists()
+    assert stats["moved"] == 4 and stats["folders_matched"] == 3
+
+
+def test_flatten_restores_no_bird_video_folder(tmp_path):
+    """视频整理的「无鸟」目录（三语）即使清单丢了也能摊平复原。"""
+    root = tmp_path
+    _touch(root / "无鸟" / "v1.MOV")
+    _touch(root / "No bird" / "v2.MP4")
+    stats = force_flatten_directory(str(root), log_callback=lambda _m: None)
+    assert (root / "v1.MOV").exists() and (root / "v2.MP4").exists()
+    assert not (root / "无鸟").exists() and not (root / "No bird").exists()
+    assert stats["moved"] == 2
+
+
+def test_flatten_leaves_unrelated_user_folders(tmp_path):
+    """
+    用户自建目录（不是鸟名、子目录也不是星级 / burst_）原样不动，哪怕名字带「星」。
+    User folders without rating / burst_ sub-folders stay untouched.
+    """
+    root = tmp_path
+    _touch(root / "DJI_001_JAMES" / "PANORAMA" / "p.JPG")
+    _touch(root / "4星" / "x.NEF")
+    _touch(root / "StarTrail" / "星轨" / "s.NEF")
+    stats = force_flatten_directory(str(root), log_callback=lambda _m: None)
+    assert (root / "DJI_001_JAMES" / "PANORAMA" / "p.JPG").exists()
+    assert (root / "4星" / "x.NEF").exists()
+    assert (root / "StarTrail" / "星轨" / "s.NEF").exists()
+    assert stats["moved"] == 0 and stats["folders_matched"] == 0

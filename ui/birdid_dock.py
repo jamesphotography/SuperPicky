@@ -639,10 +639,12 @@ class BirdIDDockWidget(QDockWidget):
     Bird identification dock panel - dark theme.
 
     配置（国家/区域/自动识别开关）从 advanced_config 读取，不再内置配置控件。
-    通过 open_settings_requested signal 让主窗口打开设置中心的 "birdid" 页。
+    通过 open_settings_requested signal 让主窗口打开设置中心的 "common" 页
+    （国家/地区与自动识鸟都在常用页；旧键 "birdid" 也会被映射到这里）。
     Configuration (country/region/auto-identify) is read from advanced_config;
     no built-in config widgets remain. Emits open_settings_requested to let the
-    main window open the Settings Center on the "birdid" page.
+    main window open the Settings Center on the "common" page (the legacy
+    "birdid" key is mapped there too).
     """
 
     # 请求主窗口打开设置中心指定页 / Request main window to open Settings Center page

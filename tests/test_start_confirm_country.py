@@ -97,7 +97,8 @@ def _button_texts(box) -> list:
 def test_change_country_reopens_with_new_country(i18n, monkeypatch):
     ok, shown, opened = _run_confirm(i18n, monkeypatch, [START_CONFIRM_CHANGE_COUNTRY, StyledMessageBox.Yes])
     assert ok is True
-    assert opened == ["birdid"]
+    # 国家/地区在设置中心「常用」页 / country & region live on the common page
+    assert opened == ["common"]
     assert len(shown) == 2, "换完国家回到确认框 / back to the confirmation"
     assert i18n.t("dialogs.change_country") in shown[0]
 

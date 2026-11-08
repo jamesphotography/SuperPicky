@@ -86,6 +86,9 @@ def test_caps_explain_why_not_three_stars():
     eye = build_caption(_ranked(rating=2, outcome="eye_capped", best_eye=0.03), ZH)
     assert "名次够 3★，但看不清眼睛，最多给 2★" in eye.split("\n")[1]
     assert "✗ 看不清眼睛（可见度 3%）" in eye
+    foc = build_caption(_ranked(rating=2, outcome="focus_capped", focus_status="WORST", focus_weight=0.5), ZH)
+    assert "名次够 3★，但相机对焦点在鸟外、鸟头也不够清晰，最多给 2★" in foc.split("\n")[1]
+    assert outcome_from_reason_key("rating_v2.focus_capped") == "focus_capped"
     burst = build_caption(_ranked(rating=2, outcome="burst_capped", burst_cap=2), ZH)
     assert "同一组连拍已有 2 张 3★（每组最多 2 张）" in burst.split("\n")[1]
 
