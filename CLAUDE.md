@@ -52,6 +52,8 @@ All user settings are managed by the unified Settings Center. Read these convent
 - **技能等级 / Skill level**：用 `core.skill_presets`（无 Qt 依赖）做 档↔阈值 换算。手动改阈值 → `skill_level="custom"` 并同步 `custom_sharpness`/`custom_aesthetics`（精选页与首页都遵循此协同，避免 GUI/CLI 路径发散）。
 - **开关样式 / Checkbox style**：统一用 `ui.icon_utils.checkbox_indicator_qss`（圆圈=未选 / 带勾圆圈=选中），勿用全局默认方块。
 - **识鸟设置 / BirdID**：`birdid_*` 字段在 `advanced_config`；启动时 `migrate_birdid_dock_settings()` 从旧 `birdid_dock_settings.json` 幂等迁移（接线在 `main.py`）；区域数据加载用 `core/region_data.py`；识鸟面板 `birdid_dock` 只负责运行时 UI（选图/截图/结果）。
+- **实验室 / Labs**：设置中心「实验室」页（`PAGE_ORDER` 中 `labs`）放先锋功能与默认隐藏的功能。新增此类功能用 `lab_*` 开关（`DEFAULT_CONFIG` 默认 `False`），入口必须按开关隐藏（参考结果浏览器 `_refresh_lab_entries`）；`lab_*` 是用户设置，**不进** `PRESERVE_ON_RESET`。多目录选鸟的纯逻辑在 `core/folder_queue.py`，主窗口按列表顺序逐个复用单目录流程（`_prescan` / `_launch_worker`），不得对两个用户目录求 `relpath`。
+  The Settings Center "Labs" page (`labs` in `PAGE_ORDER`) hosts pioneer / hidden-by-default features. Add such a feature behind a `lab_*` switch (`False` in `DEFAULT_CONFIG`) and hide its entry points by that switch (see the results browser's `_refresh_lab_entries`); `lab_*` are user settings and MUST NOT go into `PRESERVE_ON_RESET`. Multi-folder culling keeps its pure logic in `core/folder_queue.py`; the main window runs folders one by one through the single-folder flow (`_prescan` / `_launch_worker`) and must never compute `relpath` between two user folders.
 - **已删除 / Removed**：`ui/about_dialog.py`、`ui/advanced_settings_dialog.py`（内容并入设置中心）。`ui/skill_level_dialog.py` 仅保留被复用的 `SkillLevelCard`/`SkillLevelSelector`/`get_skill_level_thresholds`。
 - 设计与计划文档 / Design & plan docs：`docs/specs/2026-06-24-settings-center-design.md`、`docs/plans/2026-06-24-settings-center.md`。
 
