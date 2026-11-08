@@ -178,3 +178,59 @@ SuperPicky 已有 YOLO 鸟类/鸟眼检测算法，切忌盲目相信任何单�
 | **`PySide6`** | `>=6.6.0` | `6.12.0` | **1. 高分屏 (HiDPI) 渲染修复**：消除 macOS Retina 与 Windows 缩放下的 1px 绘制抖动与虚化；<br>**2. 纹理异步载入性能优化**：多图翻页更平滑。 | **打包环境建议跟进**：对 SuperPicky 画面对焦框精细贴合与 100% 裁切画质呈现有正向收益。 |
 | **`torch` / `torchvision`** | `2.8.0` (macOS MPS) | `2.15.0` | **1. Apple Silicon Metal (MPS) 算子库补全**；<br>**2. MPS 显存分配器优化**：降低大批量挑图爆统一内存风险。 | **保持观望**：目前 2.8.0 运行稳定，升级需重新评估打包后体积，暂无紧迫性。 |
 
+---
+
+## 9. 审阅意见（Claude，2026-11-08）
+
+> 以下为对本文档的事实核对与代码对照结果，供原作者复核并提出意见。核对来源：ExifTool 官方更新日志 `https://exiftool.org/history.html`、ExifTool GitHub PR #400/#464/#465/#488/#490/#496/#505/#506/#507、PyPI（`pip index versions`）、本仓库代码（dev `56007975`）、RC3 打包日志（GitHub Actions run 42364959134）。
+
+### 9.1 事实核对
+
+| 文档说法 | 核对结果 |
+| :--- | :--- |
+| 13.55 为正式版，13.60/13.61 为开发版 | ✅ 正确。13.55 = 2026-04-07 production release；13.60 = 2026-10-28、13.61 = 2026-11-05，均为开发版。13.50 也是 production。 |
+| 13.61 修复索尼 ARW 写入后 Imaging Edge 打不开（#465） | ✅ 正确。PR #465「Write ExifIFD before SubIFD for Sony RAW images」，作者在 ILCE-1/7M4/7CR/6400 上验证。适用范围见 9.3。 |
+| 13.61 修复 `-j` 读大二进制标签性能（#496） | ✅ 正确。但 SuperPicky 只按名读取少量指定标签并配合 `-n`，不读大块二进制标签，预计收益很小。 |
+| 佳能 `AFDetectedSubject` / `AFTrackingTarget` / `AFDetectedParts` / `AFTrackingArea` / `AFEyeUsed` 需 13.60+ | ✅ 来自 PR #488（R5 Mark II 等），随 13.60 发布。 |
+| 13.61 解码佳能「快门前 200ms」追焦历史 | ⚠️ 需修正。PR #507 新增 `AFTrackingHistory`（11 款 DIGIC X 机身），原文为环形记录约 **0.2–0.5 秒**、约 60Hz 采样，并非固定 200ms。 |
+| 富士 `FaceElementTypes` 鸟眼、奥之心 `SubjectDetect*` / `AISubjectTrackingMode` 依赖 13.6x | ❌ 13.5x–13.61 更新日志中均未出现这些字段；可能在更早版本已支持，需用样片实测确认，**不应作为升级 13.61 的理由**。表格中富士 19–22、奥之心 257/258 等取值也需样片验证。 |
+| 尼康 Z6III 固件 2.0 支持 | ✅ 13.60 更新日志「Update for Nikon Z6iii firmware 2.0」。 |
+| §5.2 路径 `SuperPicky/exiftools/VERSION.json`、`SuperPicky/tests/...` | ⚠️ 仓库内路径无 `SuperPicky/` 前缀：`exiftools/VERSION.json`、`tests/test_exiftool_*.py`（三个测试文件均存在）。 |
+
+### 9.2 文档未覆盖的现有实现
+
+1. **对焦点读取与仲裁已存在。** `core/focus_point_detector.py` 已支持尼康、索尼、佳能、奥之心、富士、松下 6 个品牌的对焦点坐标读取（经常驻 ExifTool 进程，`-n`）；issue #107 已实现「对焦点是否落在鸟框内」校验与锐度/美学权重仲裁（`verify_focus_in_bbox` / `arbitrate_focus_weights`，在 `core/photo_processor.py` 中调用）。
+   - 建议：阶段二**不要**新建平行的 `NormalizedAFInfo` 体系与仲裁矩阵，而是在现有各品牌 `_detect_*` 中增加读取「机内识别部位（眼/头/身）」，作为现有仲裁的一个新输入。
+2. **ExifTool 同步策略是「只跟正式版」。** `scripts/sync_exiftool.py` + `.github/workflows/sync-exiftool.yml`（每周一自动运行）只同步 production release 并开 PR。换用开发版 13.61 等于改变这条既定策略。
+3. **鸟眼位置来自关键点模型**（非 YOLO 检测鸟眼）。§1.1「YOLO 鸟类/鸟眼检测」表述不准确：YOLO 只检测鸟，眼/喙由关键点模型给出。
+
+### 9.3 索尼 ARW 的实际影响（对 #465 的补充）
+
+- SuperPicky 对所有专有 RAW（NEF/CR3/ARW/ORF/RAF…，DNG 除外）**规则一致、不区分品牌**：默认只写 XMP 侧车，不改 RAW 本体（`tools/exiftool_manager.py` `_is_sidecar_raw`；`advanced_config.get_arw_write_mode_for_file`）。
+- 用户在「元数据写入方式 → 写入文件」下勾选子选项「也写入 RAW 本体」（`raw_embed_metadata`，默认关）后，走带校验的写法：复制 → 写副本 → 比对关键结构标签（`_read_arw_structure`：PreviewImageStart、ThumbnailOffset、JpgFromRawStart、StripOffsets、HiddenDataOffset、SR2SubIFDOffset、FileSize）→ 一致才替换，否则回退侧车。
+- 因此 #465 **对默认设置无影响**；但对勾选了「写入 RAW 本体」的索尼用户有影响：13.55 下 SubIFD 会写在 ExifIFD 之前，**现有结构比对是否能识别这种 IFD 顺序变化尚未验证**。若识别不了，可能用改坏的副本替换原 ARW。
+- 待验证：用真实 ARW + Imaging Edge 实测「也写入 RAW 本体」。能拦住 → 维持现状等下一个正式版；拦不住 → 临时让 ARW 即使勾选也只写侧车。
+- **当前决定（项目作者 2026-11-08）：暂不修改，保持现状。**
+
+### 9.4 第三方依赖的实际情况（对 §8 的补充）
+
+- §8 的 PyPI 最新版本号均核对无误（ultralytics 8.4.207、rawpy 0.28.0、pillow-heif 1.8.1、PySide6 6.12.0、torch 2.15.0）。各条「重大突破」的具体内容**未逐条核实**。
+- 「当前使用版本」列有误导：`rawpy`、`pillow-heif`、`PySide6` 在 `requirements_base.txt` 中只写最低版本，CI 为全新安装，**打包时已自动是最新版**。RC3 打包日志实际安装：rawpy 0.28.0、pillow-heif 1.8.1、PySide6 6.12.0、Pillow 13.0.0、numpy 2.5.4、opencv-python 5.0.0.93。§8 中这三项的「推荐升级」已自动满足。
+- 真正锁定版本的只有 `ultralytics==8.4.147`（曾因全局替换 `Image.open` 导致打开 NEF 弹窗）和 Mac 的 `torch==2.8.0`（影响打包体积），均维持不动。
+- 本机开发环境曾落后于打包版本（rawpy 0.26.1、PySide6 6.10.2、ultralytics 8.3.239 等），已于 2026-11-08 按 `requirements_mac.txt` 与 RC3 打包版本对齐。
+
+### 9.5 结论与建议
+
+1. **阶段一（升级 13.61）：暂不做。** 主要收益（#465）只影响主动勾选「写入 RAW 本体」的索尼用户；#496 收益小；富士/奥之心字段与 13.6x 无关。等下一个 ExifTool 正式版由每周自动同步更新即可。仅当决定做佳能 R5 Mark II / R1 等机型的机内部位识别时，才需要 13.60+。
+2. **阶段二（机内鸟眼识别融合）：方向可取，先摸底再决定。**
+   - 先收集各品牌开启鸟/鸟眼识别对焦的真实 RAW 样片（佳能 R5 Mark II / R1、富士 X-H2S/X-T5、OM-1），用 `exiftool -a -G1 -s` 导出全部 AF 相关字段，确认实际可用字段与取值，再修订 §3 表格与 §6.2 规则。
+   - 实施时在 `core/focus_point_detector.py` 上扩展，接入现有 `arbitrate_focus_weights`，不另起体系。
+   - 收益主要在佳能/富士/奥之心用户；尼康、索尼按 §3 表格没有部位标记，收益有限。
+
+### 9.6 请原作者重点回应
+
+1. 富士 `FaceElementTypes` 取值 19/20/21/22、奥之心 `SubjectDetectStatus` 257/258 的出处（是否有样片或 ExifTool 标签文档依据）？
+2. 若阶段二只扩展现有 `focus_point_detector`，§6.1 的 `NormalizedAFInfo` 是否还有必要？
+3. §6.3 仲裁矩阵中「相机假合焦 → 报警扣分」：现有 #107 仲裁的做法是「对焦点不在鸟框内 → 降低锐度/美学权重」，二者是否需要合并成一套规则？
+4. §8 中 ultralytics「CPU 推理 2x」、PySide6「HiDPI 1px 抖动修复」等说法的出处链接。
+
