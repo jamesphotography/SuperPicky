@@ -9,12 +9,16 @@ import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
+from constants import HEIF_EXTENSIONS, JPG_EXTENSIONS, RAW_EXTENSIONS
 from core.recursive_scanner import (
     DEFAULT_SCAN_MAX_DEPTH,
     is_dangerous_root,
     scan_directories,
 )
 from tools.resume_state import ResumeStateManager
+
+# 照片扩展名，与 core.recursive_scanner 扫描用的同源 / same sources as the scanner
+_PHOTO_EXTENSIONS = frozenset(RAW_EXTENSIONS + JPG_EXTENSIONS + HEIF_EXTENSIONS)
 
 REJECT_DUPLICATE = "duplicate"
 REJECT_OVERLAP = "overlap"
@@ -101,35 +105,63 @@ def validate_new_folder(existing: List[str], new: str) -> Optional[str]:
     return None
 
 
-def has_leftover_output(path: str) -> bool:
+def _has_photo_anywhere(path: str) -> bool:
     """
-    目录是否留有 SuperPicky 处理痕迹（.superpicky 文件夹），但不一定有 report.db。
-
-    report.db 可能因老版本、手动清理等原因不在了，而照片仍在上次整理出的星级/鸟种
-    子目录里，扫描得 0 张。单目录下这种目录照样能选中、点「重置」把照片移回来；
-    多目录也要能加入列表，按「已处理」对待（默认跳过；全部重新处理 = 先重置再处理），
-    否则只能先关掉实验室开关、切回单目录重置。
+    目录（含所有子目录，跳过 . 开头的隐藏项如 .superpicky、._*）里是否至少有一张照片。
+    找到第一张就返回；读不了的子目录跳过。
 
     参数:
     path (str): 目录
 
     返回:
-    bool: 有 .superpicky 文件夹为 True
+    bool: 有照片为 True
 
-    Whether the folder carries SuperPicky's working folder (.superpicky) even
-    without a report.db. The db may be gone (old version, manual cleanup) while
-    photos still sit in the rating/species folders of the last run, so the scan
-    finds none. Single-folder mode can still select and reset such a folder;
-    the multi-folder list must accept it too and treat it as processed (skipped
-    by default; "reprocess all" resets first).
+    Whether the folder or any sub-folder holds at least one photo, skipping
+    hidden entries (.superpicky, ._*). Returns on the first hit; unreadable
+    sub-folders are skipped.
+    """
+    for root, dirs, files in os.walk(path):
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
+        for name in files:
+            if (not name.startswith(".")
+                    and os.path.splitext(name)[1].lower() in _PHOTO_EXTENSIONS):
+                return True
+    return False
+
+
+def has_leftover_output(path: str) -> bool:
+    """
+    目录是否是「处理过、report.db 已不在、照片还在上次整理出的子目录里」：
+    留有 .superpicky 文件夹，并且子目录里确实还有照片。
+
+    report.db 可能因老版本、手动清理等原因不在了，而照片仍在星级/鸟种子目录里，
+    扫描得 0 张。单目录下这种目录照样能选中、点「重置」把照片移回来；多目录也要能
+    加入列表，按「已处理」对待（默认跳过；全部重新处理 = 先重置再处理），否则只能
+    先关掉实验室开关、切回单目录重置。
+    只剩空的鸟种/星级文件夹、照片早已移走的目录不算——重置不出任何照片，仍按
+    「没有照片」拒绝。
+
+    参数:
+    path (str): 目录
+
+    返回:
+    bool: 有 .superpicky 且子目录里有照片为 True
+
+    Whether the folder was processed, lost its report.db, and still keeps
+    photos in last run's sub-folders: .superpicky exists and some sub-folder
+    holds a photo. Such a folder must be addable (single-folder mode can
+    select and reset it) and is treated as processed. A folder left with
+    only empty rating/species folders does not count and is still rejected
+    as having no photos.
 
     Parameters:
     path (str): the folder
 
     Return:
-    bool: True if .superpicky exists
+    bool: True if .superpicky exists and photos remain in sub-folders
     """
-    return os.path.isdir(os.path.join(path, ".superpicky"))
+    return (os.path.isdir(os.path.join(path, ".superpicky"))
+            and _has_photo_anywhere(path))
 
 
 def _report_db_exists(path: str) -> bool:

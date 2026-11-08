@@ -282,3 +282,28 @@ def test_queue_state_leftover_folder_is_processed(tmp_path):
     assert fq.FolderQueue([leftover], reprocess_all=True).plan == [(leftover, "reprocess")]
     partial = _leftover_folder(tmp_path, "partial", with_photo_at_top=True)
     assert fq.queue_state(partial) == fq.STATE_FRESH
+
+
+def test_leftover_skeleton_without_photos_is_rejected(tmp_path, monkeypatch):
+    """
+    只剩 .superpicky 和空的鸟种/星级/连拍文件夹、照片早已移走的目录：重置不出任何
+    照片，按「没有照片」拒绝，队列状态也不是「已处理」。
+    A leftover folder with only empty species/rating/burst folders (photos
+    long gone) is rejected as having no photos and is not "processed".
+    """
+    monkeypatch.setattr(fq, "is_dangerous_root", lambda p: (False, ""))
+    d = tmp_path / "skeleton"
+    (d / ".superpicky" / "cache").mkdir(parents=True)
+    (d / ".superpicky" / "cache" / "x.jpg").write_bytes(b"x")   # 缓存不算 / cache ignored
+    (d / "杂色鹦鹉" / "2星_良好" / "burst_044").mkdir(parents=True)
+    (d / "杂色鹦鹉" / "3星_优选").mkdir()
+    (d / "杂色鹦鹉" / "3星_优选" / "._a.NEF").write_bytes(b"x")  # AppleDouble 不算
+    path = os.path.normpath(str(d))
+    assert not fq.has_leftover_output(path)
+    assert fq.validate_new_folder([], path) == fq.REJECT_NO_PHOTOS
+    assert fq.queue_state(path) == fq.STATE_FRESH
+    # 深层还有一张照片时可加入 / accepted once a photo remains deep inside
+    (d / "杂色鹦鹉" / "2星_良好" / "burst_044" / "a.NEF").write_bytes(b"x")
+    assert fq.has_leftover_output(path)
+    assert fq.validate_new_folder([], path) is None
+    assert fq.queue_state(path) == fq.STATE_PROCESSED
