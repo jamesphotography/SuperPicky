@@ -839,18 +839,23 @@ class ReportDB:
             where_clauses.append(f"rating IN ({placeholders})")
             params.extend(ratings)
 
-        # 是否包含低评分（0 星），这类照片 focus_status/is_flying 可能是 NULL
-        has_low_rating = ratings is None or (isinstance(ratings, list) and any(r <= 0 for r in ratings))
-
+        # 对焦 / 飞行为 NULL 表示「没有这项信息」（低分照片常见，用户手动把它
+        # 改成高星级后依旧是 NULL）。这两个筛选只判断有信息的照片，NULL 一律
+        # 放行——此前只在选了 0 星时放行，于是手动改成 4★ 的照片在任何筛选组合
+        # 下都不出现（#159）。
+        # NULL focus / flight means "no data" (typical of low-rated shots, and it
+        # stays NULL after the user re-rates the photo). These filters only judge
+        # photos that have the data; NULL always passes. It used to pass only when
+        # 0★ was selected, so a photo re-rated 0★→4★ vanished from every filter
+        # combination (#159).
         focus_statuses = filters.get("focus_statuses")
         if isinstance(focus_statuses, list):
             if not focus_statuses:
                 return []
             placeholders = ", ".join(["?"] * len(focus_statuses))
-            condition = f"focus_status IN ({placeholders})"
-            if has_low_rating:
-                condition = f"({condition} OR focus_status IS NULL)"
-            where_clauses.append(condition)
+            where_clauses.append(
+                f"(focus_status IN ({placeholders}) OR focus_status IS NULL "
+                f"OR focus_status = '')")
             params.extend(focus_statuses)
 
         is_flying = filters.get("is_flying")
@@ -858,10 +863,8 @@ class ReportDB:
             if not is_flying:
                 return []
             placeholders = ", ".join(["?"] * len(is_flying))
-            condition = f"is_flying IN ({placeholders})"
-            if has_low_rating:
-                condition = f"({condition} OR is_flying IS NULL)"
-            where_clauses.append(condition)
+            where_clauses.append(
+                f"(is_flying IN ({placeholders}) OR is_flying IS NULL)")
             params.extend(is_flying)
 
         species_col = None
