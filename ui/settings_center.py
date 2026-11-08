@@ -2,14 +2,17 @@
 """
 统一设置中心:左侧分类导航 + 右侧内容页。
 
-取代旧高级设置/技能等级/关于弹窗入口,统管精选/识鸟/输出/外部应用/关于五页。
+取代旧高级设置/技能等级/关于弹窗入口,统管 常用/高级/实验室/关于 四页
+(2026-11 整合:原 精选/识鸟/输出/视频/外部应用 五页拆成小节后重新拼装)。
 所有控件走「统一即时保存」模型:每个控件的 changed 信号即时写回 advanced_config,
 关闭对话框(完成/ESC/关闭按钮)经 done() 再做一次幂等兜底 flush。
 
 Unified Settings Center: left-side category nav + right-side content pages.
 
 Replaces the old advanced settings / skill level / about dialog entry points,
-covering five pages (culling / bird-ID / output / external apps / about). Every
+covering four pages (common / advanced / labs / about; the 2026-11
+consolidation split the former culling / bird-ID / output / video / apps pages
+into sections and reassembled them). Every
 control uses the unified immediate-save model: each control's changed signal
 persists to advanced_config right away, and closing the dialog (Done / ESC /
 close button) runs one idempotent safety-net flush via done().
@@ -21,7 +24,7 @@ import subprocess
 import sys
 from typing import Any, Callable, cast
 
-from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QStandardItem
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -117,36 +120,47 @@ def _radio_style() -> str:
 
 # 导航项与 stack 页都由这一个列表驱动，增删页面改它即可。
 #
-# 4.6: "video" 页恢复。ExtremeSimple 当初一次摘掉了三个视频入口（首页开关、
-# 菜单栏「视频分析」、本页），但主流程的处理代码与 video_auto_process_in_main
-# 守卫都留着——结果是升级前开过的老用户照常在用，没开过的人却永远打不开，
-# 而「参数设置可开启」的日志指向一个已不存在的入口。这里把设置入口还回去，
-# 让开关重新可达；首页快速面板的「视频」开关维持剥离，保持首页极简。
+# 2026-11 设置中心整合(spec D1):原 精选/识鸟/输出/视频/外部应用 五页拆成小节
+# 函数(_sec_*),重新拼装成「常用」(日常会改的)与「高级」(按原模块分组、可折叠)
+# 两页;视频移入「实验室」(spec D2)。视频设置仍读写 video_auto_process_in_main
+# 等原字段,入口一直可达——不重蹈 4.5.0 摘掉入口却留着守卫的覆辙。
 #
 # Both the nav items and the stacked pages come from this single list.
-# 4.6 restores "video": stripping every entry point left the main-flow video
-# processing reachable only through a pre-existing config value, so upgraders
-# who had it on kept using it while everyone else had no way to enable it.
-PAGE_ORDER: list[str] = ["culling", "birdid", "output", "video", "apps", "labs", "about"]
+# 2026-11 consolidation (spec D1): the former culling / bird-ID / output /
+# video / apps pages were split into _sec_* sections and reassembled into
+# "common" (everyday settings) and "advanced" (grouped by module, collapsible);
+# video moved into "labs" (spec D2) and stays reachable through the same
+# video_auto_process_in_main field.
+PAGE_ORDER: list[str] = ["common", "advanced", "labs", "about"]
 
 _PAGE_ICON: dict[str, str] = {
-    "culling": "gem.svg",
-    "birdid": "bird.svg",
-    "output": "download.svg",
-    "video": "video.svg",
-    "apps": "layout-grid.svg",
+    "common": "gem.svg",
+    "advanced": "layout-grid.svg",
     "labs": "flask-conical.svg",
     "about": "info.svg",
 }
 
 _PAGE_TITLE_KEY: dict[str, str] = {
-    "culling": "settings.nav_culling",
-    "birdid": "settings.nav_birdid",
-    "output": "settings.nav_output",
-    "video": "settings.nav_video",
-    "apps": "settings.nav_apps",
+    "common": "settings.nav_common",
+    "advanced": "settings.nav_advanced",
     "labs": "settings.nav_labs",
     "about": "settings.nav_about",
+}
+
+# 旧页键 → 新页键。整合前的调用方(主窗口菜单/首页档位标签/识鸟面板信号等)
+# 传的是旧页键;show_page / _rebuild_pages 先查这张表,保证漏改的调用也能落到
+# 对应的新页,而不是停在第一页不动。国家/地区在常用页,所以 "birdid" → common。
+# Legacy page key → new page key. Callers written before the consolidation
+# (menu, home skill chip, Bird ID dock signal, ...) pass the old keys;
+# show_page / _rebuild_pages translate through this table first so a missed
+# caller still lands on the right page instead of staying on the first one.
+# Country/region live on the common page, hence "birdid" → common.
+_LEGACY_PAGE_KEY: dict[str, str] = {
+    "culling": "common",
+    "birdid": "common",
+    "output": "common",
+    "video": "labs",
+    "apps": "advanced",
 }
 
 
@@ -168,7 +182,8 @@ class SettingsCenter(QDialog):
     参数 / Parameters:
         i18n: i18n 实例,提供 .t(key) 方法 / i18n instance with .t(key) method.
         parent: 父窗口 / Parent widget.
-        start_page: 初始显示的页 key / Initial page key to show.
+        start_page: 初始显示的页 key(旧页键经 _LEGACY_PAGE_KEY 映射)/
+            Initial page key to show (legacy keys mapped via _LEGACY_PAGE_KEY).
     """
 
     # 官网版本查询结果信号：(has_update, latest_version, error)。
@@ -178,7 +193,7 @@ class SettingsCenter(QDialog):
     # any widget — never update UI from the worker thread.
     site_version_checked = Signal(bool, str, str)
 
-    def __init__(self, i18n, parent: QWidget | None = None, start_page: str = "culling") -> None:
+    def __init__(self, i18n, parent: QWidget | None = None, start_page: str = "common") -> None:
         super().__init__(parent)
         self.i18n = i18n
         self.setWindowTitle(i18n.t("settings.window_title"))
@@ -209,22 +224,28 @@ class SettingsCenter(QDialog):
             item.setData(Qt.UserRole, key)
             self._nav.addItem(item)
 
-        # 左栏 = 导航 + 底部常驻的界面语言选择（任何一页都看得到；英文系统的中文用户
-        # 反馈找不到菜单栏里的语言子菜单）
-        # Left column = nav + an always-visible UI-language picker at the bottom
-        # (users on English systems could not find the menu-bar submenu).
+        # 左栏只有导航。界面语言只留在菜单栏「设置 → 语言」(spec D4),
+        # 不再在这里放第二个入口。
+        # The left column holds only the nav. The UI language lives solely in
+        # the menu bar's Settings → Language (spec D4), not here as well.
         left = QWidget()
         left.setFixedWidth(160)
         left_lay = QVBoxLayout(left)
         left_lay.setContentsMargins(0, 0, 0, 10)
         left_lay.setSpacing(4)
         left_lay.addWidget(self._nav, 1)
-        left_lay.addWidget(self._build_language_picker())
         root.addWidget(left)
 
         # 右侧内容区 / Right-side content area
         right = QVBoxLayout()
 
+        # 四页必须在同一轮里全部建好:档位卡片(常用页)的回调直接读评星控件(高级
+        # 页),_save_birdid 同时读两页的识鸟控件,done() 的兜底保存也要求各小节
+        # 都在。_rebuild_pages 走同一条路径。
+        # All four pages are built in one pass: the skill cards (common) read the
+        # rating widgets (advanced), _save_birdid reads Bird ID widgets on both
+        # pages, and done()'s flush expects every section; _rebuild_pages
+        # follows the same path.
         self._stack = QStackedWidget()
         for key in PAGE_ORDER:
             self._stack.addWidget(self._build_page(key))
@@ -279,113 +300,158 @@ class SettingsCenter(QDialog):
         返回 / Returns:
             QWidget: 内容页 widget / Content page widget.
         """
-        if key == "culling":
-            return self._build_culling_page()
-        if key == "birdid":
-            return self._build_birdid_page()
-        if key == "output":
-            return self._build_output_page()
-        if key == "video":
-            return self._build_video_page()
-        if key == "apps":
-            return self._build_apps_page()
+        if key == "common":
+            return self._build_common_page()
+        if key == "advanced":
+            return self._build_advanced_page()
         if key == "labs":
             return self._build_labs_page()
         if key == "about":
             return self._build_about_page()
         return self._placeholder(self.i18n.t(_PAGE_TITLE_KEY[key]))
 
-    def _build_culling_page(self) -> QWidget:
+    def _build_common_page(self) -> QWidget:
         """
-        构建精选(Culling)设置页。
+        构建「常用」页:日常会改的设置,分三个小节(spec 第 4 节 ①)。
 
-        包含:技能等级单选卡片行(含"自定义")、3星配额/锐度/美学阈值滑块、
-        飞鸟检测/连拍检测(含缩进的连拍速度)/无鸟补救扫描开关，以及底部折叠的
-        「高级选项」(AI 置信度滑块 + 旧版 V1 评星算法开关)。
+        - 选片:摄影水平(档位卡片)、飞鸟检测、连拍检测
+        - 识鸟:自动识鸟、国家/地区(含「编辑…」)、鸟名显示格式
+        - 整理与提示:分类目录布局、完成提示音、删除前确认
 
-        技能等级 ↔ 阈值协同逻辑:
-          - 选技能等级预设 → `_on_skill_preset_selected` 置 `_suppress=True`、
-            填充对应阈值滑块、再置 False，避免回调回环。
-          - 手动拖动任一阈值 → `_on_cull_threshold_changed` 检查 `_suppress`，
-            若未抑制则将 `_current_skill_key` 切为 "custom" 并刷新卡片选中态。
+        档位 ↔ 阈值协同:选档位 → _on_skill_preset_selected 置 _suppress=True 后
+        填充高级页的配额条或 V1 滑块再置 False;手动改阈值 → _on_cull_threshold_changed
+        在未抑制时把档位切为 "custom"。连拍开关同步高级页「连拍速度」行的启用状态。
+        这些回调都直接读高级页的控件,所以两页必须在同一轮里一起建(见 __init__)。
 
-        统一即时保存(Task: unify save model):每个控件的 changed 信号都直接
-        持久化对应字段，不再依赖"完成"按钮做统一保存；ESC/关窗与点"完成"
-        效果一致(见 SettingsCenter.done() 的兜底 flush)。`_save_culling()`
-        仍保留为一次性批量落盘的辅助方法(供测试与偶发的兜底调用)。
+        每个控件的 changed 信号即时持久化;done() 再做一次幂等兜底 flush。
 
-        Build the Culling settings page.
+        返回:
+        QWidget: 常用页
 
-        Contains: a row of skill-level cards (incl. "custom"), quota/sharpness/
-        aesthetics threshold sliders, flight/burst (with an indented burst-fps
-        row)/rescue-scan toggles, and a bottom "Advanced" disclosure holding the
-        AI-confidence slider and the legacy V1 rating-algorithm toggle.
+        Build the "Common" page: everyday settings in three sections (spec §4 ①):
+        Culling (skill cards, flight, burst), Bird ID (auto-identify,
+        country/region with "Edit…", name format) and Organizing & alerts
+        (folder layout, completion sound, delete confirmation).
 
-        Coordination logic:
-          - Selecting a skill preset → _on_skill_preset_selected sets _suppress=True,
-            fills sliders, then False — prevents re-entrant loop.
-          - Manually adjusting any threshold → _on_cull_threshold_changed checks _suppress;
-            if not suppressed, sets _current_skill_key="custom" and refreshes card state.
+        Skill ↔ threshold coordination: a preset fills the Advanced page's
+        quota bar / V1 sliders under _suppress; a manual threshold edit
+        switches the level to "custom". The burst toggle drives the
+        burst-speed row on Advanced. These handlers read Advanced widgets
+        directly, so both pages must be built in the same pass (see __init__).
 
-        Every control's changed signal persists its field immediately; the
-        "Done" button and ESC/close are now equivalent (see SettingsCenter.done()'s
-        safety-net flush). _save_culling() stays as a one-shot bulk-flush helper
-        (used by tests and as a defensive fallback).
-
-        返回 / Returns:
-            QWidget: 精选设置页 / Culling settings page widget.
+        Return:
+        QWidget: the common page
         """
         from advanced_config import get_advanced_config
 
         cfg = get_advanced_config()
+        t = self.i18n.t
 
         def fill(lay: QVBoxLayout) -> None:
-            """按原顺序拼装精选页各小节。/ Assemble the culling sections in original order."""
+            """按 选片 / 识鸟 / 整理与提示 顺序拼装。/ Culling, Bird ID, Organizing."""
+            lay.addWidget(self._group_title(t("settings.sec_culling")))
             self._sec_skill(lay, cfg)
-            self._sec_rating(lay, cfg)
             self._sec_detect_basic(lay, cfg)
-            self._sec_detect_extra(lay, cfg)
-            self._build_format_filter_section(lay, cfg)
 
-            # 原页面的弹性空白在「高级选项」之前(把折叠区推到底部),因此由本页自己
-            # 加,_scroll_page 不再在末尾追加。
-            # The original page put its stretch before the Advanced disclosure
-            # (pushing it to the bottom), so this page adds it itself and asks
-            # _scroll_page not to append another one.
-            lay.addStretch(1)
+            lay.addWidget(self._divider())
+            lay.addWidget(self._group_title(t("settings.sec_birdid")))
+            self._sec_birdid_basic(lay, cfg)
 
-            self._culling_advanced_disclosure(lay, cfg)
+            lay.addWidget(self._divider())
+            lay.addWidget(self._group_title(t("settings.sec_organize")))
+            self._sec_output_basic(lay, cfg)
 
-        return self._scroll_page(fill, stretch=False)
+        return self._scroll_page(fill)
 
-    def _culling_advanced_disclosure(self, lay: QVBoxLayout, cfg) -> None:
+    def _build_advanced_page(self) -> QWidget:
         """
-        旧精选页底部的「高级选项」折叠区:分隔线 + 折叠按钮 + 默认收起的内容区,
-        内容区里放 _sec_ai_confidence。仅供旧精选页使用(新页面结构由后续任务决定)。
+        构建「高级」页:按原模块分成五个可折叠小节(spec 第 4 节 ②),只有「评星」
+        默认展开,其余收起。
 
-        AI 置信度是"多数用户不需要天天碰"的设置,折叠收起(V1/V2 切换已提到
-        上方阈值区,不再放这里)。
+        - 评星:评星算法与配额/V1 滑块、AI 置信度、连拍速度与无鸟补救扫描、
+          处理的文件格式
+        - 识鸟:识别置信度、数据源、自定义罕见指数
+        - 输出与元数据:写入方式(含专有 RAW 子选项)、写入哪些字段、连拍子文件夹、
+          0 星/无鸟详情数值
+        - 外部应用:应用列表、关闭主窗口时
+        - 存储:保留预览图片、清理预览缓存
+
+        返回:
+        QWidget: 高级页
+
+        Build the "Advanced" page: five collapsible sections grouped by the
+        original modules (spec §4 ②) — Rating (expanded by default), Bird ID,
+        Output & metadata, External apps and Storage (collapsed).
+
+        Return:
+        QWidget: the advanced page
+        """
+        from advanced_config import get_advanced_config
+
+        cfg = get_advanced_config()
+        t = self.i18n.t
+
+        def fill(lay: QVBoxLayout) -> None:
+            """按 评星/识鸟/输出与元数据/外部应用/存储 顺序拼装。/ Assemble in order."""
+            rating = self._collapsible(lay, t("settings.sec_rating"), True)
+            self._sec_rating(rating, cfg)
+            self._sec_ai_confidence(rating, cfg)
+            self._sec_detect_extra(rating, cfg)
+            self._build_format_filter_section(rating, cfg)
+
+            birdid = self._collapsible(lay, t("settings.sec_birdid"), False)
+            self._sec_birdid_extra(birdid, cfg)
+
+            output = self._collapsible(lay, t("settings.sec_output"), False)
+            self._sec_output_metadata(output, cfg)
+
+            apps = self._collapsible(lay, t("settings.sec_apps"), False)
+            self._sec_apps(apps, cfg)
+
+            storage = self._collapsible(lay, t("settings.sec_storage"), False)
+            self._sec_storage(storage, cfg)
+
+        return self._scroll_page(fill)
+
+    def _collapsible(self, lay: QVBoxLayout, title: str, expanded: bool) -> QVBoxLayout:
+        """
+        在 lay 里加一个可折叠小节:扁平的标题按钮(▸ 收起 / ▾ 展开)+ 内容区,
+        返回内容区的布局,调用方把小节控件加进去即可。
+
+        按钮样式沿用原精选页底部「高级选项」折叠按钮的扁平 QSS。按钮设为
+        checkable,勾选态即展开态,并带 collapsibleHeader 属性便于测试定位。
+        收起只是隐藏内容区,控件仍在,done() 的兜底保存照常读得到。
 
         参数:
-        lay (QVBoxLayout): 目标布局
-        cfg: AdvancedConfig 实例
+        lay (QVBoxLayout): 页面内容布局
+        title (str): 已本地化的小节标题
+        expanded (bool): 初始是否展开
 
-        The legacy culling page's bottom "Advanced" disclosure: divider, toggle
-        button and a collapsed content area holding _sec_ai_confidence. AI
-        confidence is a setting most users never touch day to day, so it stays
-        collapsed (the V1/V2 toggle lives up in the threshold section).
+        返回:
+        QVBoxLayout: 小节内容区的布局
+
+        Add a collapsible section to ``lay``: a flat header button (▸ collapsed /
+        ▾ expanded) plus a content area, and return the content layout for the
+        caller to fill. The button reuses the flat QSS of the former culling
+        page's "Advanced" disclosure; it is checkable (checked = expanded) and
+        tagged with the ``collapsibleHeader`` property. Collapsing only hides the
+        content, so the widgets stay alive for done()'s flush.
 
         Parameters:
-        lay (QVBoxLayout): target layout
-        cfg: AdvancedConfig instance
-        """
-        lay.addWidget(self._divider())
+        lay (QVBoxLayout): the page body layout
+        title (str): localized section title
+        expanded (bool): whether the section starts expanded
 
-        self._advanced_expanded = False
-        self._advanced_toggle_btn = QPushButton()
-        self._advanced_toggle_btn.setFlat(True)
-        self._advanced_toggle_btn.setCursor(Qt.PointingHandCursor)
-        self._advanced_toggle_btn.setStyleSheet(f"""
+        Return:
+        QVBoxLayout: the section's content layout
+        """
+        btn = QPushButton()
+        btn.setFlat(True)
+        btn.setCheckable(True)
+        btn.setChecked(expanded)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setProperty("collapsibleHeader", True)
+        btn.setStyleSheet(f"""
             QPushButton {{
                 color: {COLORS['text_tertiary']};
                 font-size: 12px;
@@ -396,16 +462,22 @@ class SettingsCenter(QDialog):
             }}
             QPushButton:hover {{ color: {COLORS['text_secondary']}; }}
         """)
-        self._advanced_toggle_btn.clicked.connect(self._toggle_culling_advanced)
-        lay.addWidget(self._advanced_toggle_btn)
+        lay.addWidget(btn)
 
-        self._advanced_content = QWidget()
-        self._advanced_content.setVisible(False)
-        adv_lay = QVBoxLayout(self._advanced_content)
-        adv_lay.setContentsMargins(0, 8, 0, 0)
-        adv_lay.setSpacing(12)
-        self._sec_ai_confidence(adv_lay, cfg)
-        lay.addWidget(self._advanced_content)
+        content = QWidget()
+        content_lay = QVBoxLayout(content)
+        content_lay.setContentsMargins(0, 4, 0, 8)
+        content_lay.setSpacing(16)
+        lay.addWidget(content)
+
+        def _apply(checked: bool) -> None:
+            """同步箭头与内容区可见性。/ Sync the arrow and content visibility."""
+            btn.setText(f"{'▾' if checked else '▸'}  {title}")
+            content.setVisible(checked)
+
+        btn.toggled.connect(_apply)
+        _apply(expanded)
+        return content_lay
 
     # ── 通用页面骨架 / Shared page scaffolding ──────────────────────────────
 
@@ -422,7 +494,7 @@ class SettingsCenter(QDialog):
 
         参数:
         fill (Callable[[QVBoxLayout], None]): 往内容布局里添加小节的回调
-        stretch (bool): 是否在末尾追加弹性空白;精选页自己在中间加了,传 False
+        stretch (bool): 是否在末尾追加弹性空白;需要自己安排空白的页传 False
 
         返回:
         QWidget: 外层页面 widget,可直接放进 QStackedWidget
@@ -432,7 +504,7 @@ class SettingsCenter(QDialog):
         light-gray #ececec behind the dark theme) around a body widget named
         _PAGE_BODY_OBJECT_NAME with 24/20 margins and 16 spacing. ``fill`` adds
         the sections to the body layout; a trailing addStretch(1) is appended
-        unless ``stretch`` is False (the culling page places its own stretch).
+        unless ``stretch`` is False (for a page that places its own stretch).
 
         Parameters:
         fill (Callable[[QVBoxLayout], None]): callback that adds the sections
@@ -486,6 +558,33 @@ class SettingsCenter(QDialog):
         label = QLabel(text)
         label.setStyleSheet(
             f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
+        )
+        return label
+
+    def _group_title(self, text: str) -> QLabel:
+        """
+        常用页的分组标题(选片 / 识鸟 / 整理与提示):比小节标题大一号,用强调色,
+        让分组层级与组内的小节标题(如「摄影水平」「分类目录布局」)区分开。
+
+        参数:
+        text (str): 已本地化的分组标题
+
+        返回:
+        QLabel: 分组标题标签
+
+        Group heading on the common page (Culling / Bird ID / Organizing): one
+        size larger than a section title and in the accent color, so the group
+        level reads apart from the section titles inside it.
+
+        Parameters:
+        text (str): the localized group heading
+
+        Return:
+        QLabel: the heading label
+        """
+        label = QLabel(text)
+        label.setStyleSheet(
+            f"color:{COLORS['accent']};font-size:14px;font-weight:700;"
         )
         return label
 
@@ -807,59 +906,6 @@ class SettingsCenter(QDialog):
         ai_row.addWidget(self._cull_ai, 1)
         ai_row.addWidget(self._cull_ai_value_label)
         lay.addLayout(ai_row)
-
-    # ── 识鸟页 / Bird-ID page ─────────────────────────────────────────────────
-
-    def _build_birdid_page(self) -> QWidget:
-        """
-        构建识鸟(BirdID)设置页。
-
-        包含：自动识鸟开关、识别置信度滑块(30-95)、数据源单选(eBird/GBIF)、
-        国家下拉菜单(含"更多国家"完整列表入口,与识鸟面板 dock 能力对等)、
-        地区下拉菜单(随国家变化动态填充)、鸟名显示格式下拉。
-
-        初值来自 advanced_config 的 birdid_* / name_format 字段；每个控件的
-        changed 信号即时持久化(见 _on_birdid_field_changed);_save_birdid()
-        仍保留为一次性批量落盘的辅助方法(供测试与偶发的兜底调用)。
-
-        Build the Bird-ID settings page.
-
-        Contains: auto-identify toggle, confidence slider (30-95), data-source
-        radio buttons (eBird / GBIF), country dropdown (with a "more countries"
-        entry offering the full list — matching the Bird-ID dock's coverage),
-        region dropdown (dynamically populated on country change), and a bird
-        name display-format dropdown.
-
-        Initial values come from advanced_config's birdid_* / name_format
-        fields; every control persists immediately on change (see
-        _on_birdid_field_changed); _save_birdid() remains as an idempotent
-        one-shot bulk-flush helper (used by tests and as a defensive fallback).
-
-        返回 / Returns:
-            QWidget: 识鸟设置页 / Bird-ID settings page widget.
-        """
-
-        from advanced_config import get_advanced_config
-
-        cfg = get_advanced_config()
-
-        def fill(lay: QVBoxLayout) -> None:
-            """
-            按原顺序拼装识鸟页。基础/进阶两小节在原页面里是交错排列的,所以这里
-            直接按原顺序调用组成它们的片段,界面与拆分前一致。
-            The basic/extra sections interleave on the original page, so the
-            page calls their building blocks in the original order.
-            """
-            self._part_birdid_auto(lay, cfg)
-            self._part_birdid_confidence(lay, cfg)
-            self._part_birdid_source(lay, cfg)
-            self._part_birdid_region(lay, cfg)
-            lay.addWidget(self._divider())
-            self._part_birdid_name_format(lay, cfg)
-            lay.addWidget(self._divider())
-            self._part_birdid_custom_rarity(lay, cfg)
-
-        return self._scroll_page(fill)
 
     # ── 识鸟小节 / Bird-ID sections ──────────────────────────────────────────
 
@@ -1934,15 +1980,6 @@ class SettingsCenter(QDialog):
         cfg.set_format_filter_groups([g for g, cb in self._format_checks.items() if cb.isChecked()])
         cfg.save()
 
-    def _toggle_culling_advanced(self) -> None:
-        """展开/收起精选页底部「高级选项」区。/ Expand/collapse the Advanced disclosure."""
-        self._advanced_expanded = not self._advanced_expanded
-        self._advanced_content.setVisible(self._advanced_expanded)
-        svg = "arrow-down.svg" if self._advanced_expanded else "arrow-right.svg"
-        self._advanced_toggle_btn.setIcon(load_tinted_icon(svg, ICON_IDLE, 14))
-        self._advanced_toggle_btn.setIconSize(QSize(14, 14))
-        self._advanced_toggle_btn.setText(f"  {self.i18n.t('settings.culling_advanced_toggle')}")
-
     def _save_culling(self) -> None:
         """
         将精选页当前值批量写回 advanced_config 并保存。
@@ -2045,67 +2082,6 @@ class SettingsCenter(QDialog):
             self.i18n.t("settings.custom_rarity_section"),
             self.i18n.t(f"settings.custom_rarity_err_{reason}"),
         )
-
-    def _build_output_page(self) -> QWidget:
-        """
-        构建输出设置页，包含：分目录布局(含连拍子目录开关)、元数据写入方式
-        （XMP）、通用设置(预览管理/删除确认/清理缓存)。
-
-        初值来自 advanced_config 的 folder_layout / burst_group_folders /
-        metadata_write_mode / keep_temp_files / completion_sound_enabled /
-        detail_metadata_for_rejected / delete_confirm 字段；每个控件的
-        changed 信号即时持久化(与设置中心统一即时保存模型一致)。
-
-        Build the Output settings page.
-
-        Contains: folder layout (with the burst-subfolder toggle), XMP
-        metadata write mode, and a General section (preview management /
-        delete confirmation / cache clearing). Initial values come from
-        advanced_config; every control persists immediately on change.
-
-        返回 / Returns:
-            QWidget: 输出设置页 / Output settings page widget.
-        """
-        from advanced_config import get_advanced_config
-
-        cfg = get_advanced_config()
-
-        def fill(lay: QVBoxLayout) -> None:
-            """
-            按原顺序拼装输出页。基础/元数据/存储三小节在原页面里交错排列(「通用」
-            区混着三类开关),所以这里直接按原顺序调用组成它们的片段。
-            The basic/metadata/storage sections interleave on the original page
-            (the "General" block mixes all three), so the page calls their
-            building blocks in the original order.
-            """
-            self._part_output_folder_layout(lay, cfg)
-            self._part_output_burst_folders(lay, cfg)
-
-            # ── 分隔线 / Divider ──────────────────────────────────────────────
-            lay.addWidget(self._divider())
-            self._part_output_xmp_mode(lay, cfg)
-
-            # ── 写入哪些字段（#153）/ Which fields to write (#153) ────────────
-            lay.addWidget(self._divider())
-            self._build_metadata_fields_section(lay, cfg)
-
-            # ── 分隔线 / Divider ──────────────────────────────────────────────
-            lay.addWidget(self._divider())
-
-            # ── 通用区 / General section ───────────────────────────────────────
-            # 原「预览管理」改名「通用」并入删除确认/清理缓存,避免把不相关设置
-            # 硬塞进"预览管理"这个过窄的标题下。
-            # Renamed from "Preview Management" to "General" and folded in delete
-            # confirmation / cache clearing, instead of cramming unrelated
-            # settings under an overly narrow heading.
-            lay.addWidget(self._section_title(self.i18n.t("advanced_settings.section_general")))
-            self._part_output_keep_preview(lay, cfg)
-            self._part_output_completion_sound(lay, cfg)
-            self._part_output_detail_metadata(lay, cfg)
-            self._part_output_delete_confirm(lay, cfg)
-            self._part_output_clear_cache(lay, cfg)
-
-        return self._scroll_page(fill)
 
     # ── 输出小节 / Output sections ───────────────────────────────────────────
 
@@ -2830,17 +2806,19 @@ class SettingsCenter(QDialog):
 
         StyledMessageBox.information(self, btn_title, t("advanced_settings.clear_cache_done"))
 
-    # ── 视频页 / Video page ───────────────────────────────────────────────────
+    # ── 实验室页 / Labs page ──────────────────────────────────────────────────
 
     def _build_labs_page(self) -> QWidget:
         """
-        构建「实验室」页:「更多功能」(生成报告 / 导出到 eBird)与「实验功能」(多目录选鸟)。
+        构建「实验室」页:「更多功能」(生成报告 / 导出到 eBird)与「实验功能」(多目录选鸟),
+        末尾是从原视频页整体搬来的视频小节(_sec_video,样式与显隐由后续任务调整)。
 
         三个开关默认全关,勾选变化立即写入 advanced_config 并落盘(与其他页的
         即时保存模型一致);done() 里的 _save_labs() 只做兜底。
 
-        Build the Labs page: "More features" (report / eBird export) and
-        "Experimental" (multi-folder culling). All three default to off; a
+        Build the Labs page: "More features" (report / eBird export),
+        "Experimental" (multi-folder culling) and, at the end, the video section
+        moved over from the former video page (_sec_video). All three toggles default to off; a
         toggle is written to advanced_config and saved immediately, with
         _save_labs() in done() as a safety net only.
 
@@ -2922,6 +2900,17 @@ class SettingsCenter(QDialog):
         self._lab_ebird_cb.toggled.connect(lambda _c: self._save_labs())
         self._lab_multi_cb.toggled.connect(lambda _c: self._save_labs())
 
+        # ── 视频 / Video ─────────────────────────────────────────────────────
+        # 原视频页已从导航移除(spec D2),小节原样搬到这里,保证视频设置始终可达,
+        # done() 的兜底保存(_video_auto_check)也照常生效。
+        # The former video page left the nav (spec D2); its section moves here
+        # unchanged so video settings stay reachable and done() still flushes them.
+        lay.addSpacing(6)
+        lay.addWidget(self._divider())
+        lay.addSpacing(6)
+        lay.addWidget(_title(t("video_opts.tab")))
+        self._sec_video(lay, cfg)
+
         lay.addStretch(1)
         scroll.setWidget(inner)
         page_lay = QVBoxLayout(page)
@@ -2943,36 +2932,7 @@ class SettingsCenter(QDialog):
         cfg.set_lab_multi_folder(self._lab_multi_cb.isChecked())
         cfg.save()
 
-    def _build_video_page(self) -> QWidget:
-        """
-        构建视频处理设置页。
-
-        包含：主流程视频总开关、识别模式下拉、抽帧上限 SpinBox、
-        YOLO 置信度阈值 SpinBox、鸟种识别/飞行检测开关。
-
-        控件范围与 advanced_config 默认值对齐:
-          video_max_frames       : 30-240（存储整数，默认 60）
-          video_yolo_threshold   : 滑块 30-90 对应浮点 0.30-0.90（默认 0.5 → 50）
-          video_min_segment_frames: 1-10（默认 2，不公开在 UI 中）
-
-        Build the Video processing settings page.
-
-        Contains: main-flow video master toggle, recognition mode dropdown,
-        max frames SpinBox, YOLO threshold SpinBox, and species/flight
-        detection toggles.
-
-        Widget ranges are aligned with advanced_config defaults/clamps:
-          video_max_frames      : 30-240 (integer, default 60)
-          video_yolo_threshold  : slider 30-90 maps to float 0.30-0.90
-                                  (default 0.5 → 50)
-
-        返回 / Returns:
-            QWidget: 视频设置页 / Video settings page widget.
-        """
-        from advanced_config import get_advanced_config
-
-        cfg = get_advanced_config()
-        return self._scroll_page(lambda lay: self._sec_video(lay, cfg))
+    # ── 视频小节 / Video section ─────────────────────────────────────────────
 
     def _sec_video(self, lay: QVBoxLayout, cfg) -> None:
         """
@@ -3143,41 +3103,7 @@ class SettingsCenter(QDialog):
 
         cfg.save()
 
-    # ── 外部应用页 / External apps page ──────────────────────────────────────
-
-    def _build_apps_page(self) -> QWidget:
-        """
-        构建外部应用设置页，允许用户添加/删除右键菜单中的外部编辑器。
-
-        应用列表通过 get_external_apps() 读取，通过 set_external_apps() 写回。
-        添加应用时：macOS 优先使用 osascript 原生选择器，失败则 fallback 到
-        Qt 文件对话框；Windows 使用 Qt 文件对话框；其他平台同 Qt 对话框。
-
-        Build the External Apps settings page.
-
-        Allows users to add/remove external editors from the right-click menu.
-        The app list is read via get_external_apps() and written back via
-        set_external_apps(). On macOS, osascript native picker is tried first,
-        with Qt file dialog as fallback. On Windows, Qt dialog is used directly.
-
-        返回 / Returns:
-            QWidget: 外部应用设置页 / External apps settings page widget.
-        """
-        from advanced_config import get_advanced_config
-
-        cfg = get_advanced_config()
-
-        # 本页沿用原来的非滚动布局(列表随窗口拉伸、间距 12),不走 _scroll_page,
-        # 以保证界面与拆分前一致。
-        # This page keeps its original non-scrolling layout (the list stretches
-        # with the window, spacing 12) rather than _scroll_page, so it looks
-        # exactly as before.
-        page = QWidget()
-        lay = QVBoxLayout(page)
-        lay.setContentsMargins(24, 20, 24, 20)
-        lay.setSpacing(12)
-        self._sec_apps(lay, cfg)
-        return page
+    # ── 外部应用小节 / External apps section ──────────────────────────────────
 
     def _sec_apps(self, lay: QVBoxLayout, cfg) -> None:
         """
@@ -3758,8 +3684,14 @@ class SettingsCenter(QDialog):
             old.deleteLater()
         for key in PAGE_ORDER:
             self._stack.addWidget(self._build_page(key))
+        # 导航行可能没变(currentRowChanged 不触发),所以再显式设一次 stack;
+        # 旧页键同样经 _LEGACY_PAGE_KEY 映射。
+        # The nav row may be unchanged (no currentRowChanged), so set the stack
+        # explicitly as well; legacy keys are mapped the same way.
         self.show_page(show_key)
-        self._stack.setCurrentIndex(PAGE_ORDER.index(show_key))
+        key = _LEGACY_PAGE_KEY.get(show_key, show_key)
+        if key in PAGE_ORDER:
+            self._stack.setCurrentIndex(PAGE_ORDER.index(key))
 
     def _on_telemetry_changed(self, _state: int) -> None:
         """
@@ -3915,65 +3847,6 @@ class SettingsCenter(QDialog):
 
     # ── 外部接口 / Public API ─────────────────────────────────────────────────
 
-    def _build_language_picker(self) -> QWidget:
-        """
-        构建左栏底部的界面语言选择：「跟随系统」+ 各语言（用该语言自己的文字书写）。
-
-        选择即保存到 advanced_config.language（None = 跟随系统），并用目标语言提示
-        重启生效；界面文字不会立刻切换（各窗口构造时已取好文字）。
-
-        返回:
-        QWidget: 标签 + 下拉框
-
-        Build the UI-language picker at the bottom of the left column. Choosing
-        saves advanced_config.language immediately (None = follow system) and
-        shows a restart notice in the target language.
-        """
-        from advanced_config import get_advanced_config
-        from tools.i18n import LANGUAGE_NATIVE_NAMES, SUPPORTED_LANGUAGES
-
-        box = QWidget()
-        lay = QVBoxLayout(box)
-        lay.setContentsMargins(10, 0, 10, 0)
-        lay.setSpacing(4)
-
-        label = QLabel(self.i18n.t("settings.language_label"))
-        label.setStyleSheet(f"color:{COLORS['text_muted']};font-size:11px;")
-        lay.addWidget(label)
-
-        self._lang_combo = QComboBox()
-        self._lang_combo.addItem(self.i18n.t("settings.language_auto"), None)
-        for code in SUPPORTED_LANGUAGES:
-            self._lang_combo.addItem(LANGUAGE_NATIVE_NAMES[code], code)
-        current = get_advanced_config().language
-        idx = self._lang_combo.findData(current) if current else 0
-        self._lang_combo.setCurrentIndex(max(idx, 0))
-        style_combo_popup(self._lang_combo)
-        self._lang_combo.currentIndexChanged.connect(self._on_language_changed)
-        lay.addWidget(self._lang_combo)
-        return box
-
-    def _on_language_changed(self, index: int) -> None:
-        """
-        界面语言下拉变化：保存配置并用目标语言提示重启生效。
-
-        参数:
-        index (int): 下拉框当前项序号
-
-        Language picker changed: persist and show the restart notice.
-        """
-        from advanced_config import get_advanced_config
-        from tools.i18n import language_changed_notice
-
-        lang = self._lang_combo.itemData(index)
-        cfg = get_advanced_config()
-        if cfg.language == lang:
-            return
-        cfg.set_language(lang)
-        if cfg.save():
-            title, msg = language_changed_notice(lang)
-            StyledMessageBox.information(self, title, msg)
-
     def show_page(self, key: str) -> None:
         """
         切换到指定 key 对应的页。
@@ -3985,9 +3858,16 @@ class SettingsCenter(QDialog):
         Called externally (header chip, bird-ID panel, etc.) to jump to a
         specific settings page.
 
+        旧页键(culling/birdid/output/video/apps)先经 _LEGACY_PAGE_KEY 映射到新页;
+        未知的 key 忽略,停在当前页。
+        Legacy keys are first translated through _LEGACY_PAGE_KEY; unknown keys
+        are ignored and the current page stays.
+
         参数 / Parameters:
-            key (str): 目标页 key,必须是 PAGE_ORDER 中的值 / Target page key from PAGE_ORDER.
+            key (str): 目标页 key(PAGE_ORDER 中的值或旧页键)/
+                Target page key (a PAGE_ORDER value or a legacy key).
         """
+        key = _LEGACY_PAGE_KEY.get(key, key)
         if key in PAGE_ORDER:
             self._nav.setCurrentRow(PAGE_ORDER.index(key))
 

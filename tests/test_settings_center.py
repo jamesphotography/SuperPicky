@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-SettingsCenter 骨架测试 — Task 2 TDD
+SettingsCenter 测试:导航(2026-11 起为 常用/高级/实验室/关于 四页)、页面切换、
+旧页键映射、各小节控件读写与跨页联动。
 
-测试左侧导航 QListWidget 6 项 + 右侧 QStackedWidget 页切换。
-
-SettingsCenter skeleton tests — Task 2 TDD
-
-Tests the left-side QListWidget with 6 items + right-side QStackedWidget page switching.
+SettingsCenter tests: navigation (four pages since 2026-11: common /
+advanced / labs / about), page switching, legacy page-key mapping, section
+widget read/write and cross-page coordination.
 """
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -16,21 +15,23 @@ from tools.i18n import get_i18n
 _app = QApplication.instance() or QApplication([])
 
 
-def test_nav_has_six_pages_and_switch():
+def test_nav_has_four_pages_and_switch():
     """
-    验证导航列表有 6 个分页，且 show_page 能正确切换 stack。
+    验证导航列表为 常用/高级/实验室/关于 四页,且 show_page 能正确切换 stack。
 
-    Verify the nav list has 6 pages and show_page correctly switches the stack.
+    2026-11 设置中心整合(spec D1):原 精选/识鸟/输出/视频/外部应用 五页拆成小节,
+    重新拼装进「常用」「高级」两页,视频移入实验室。
+
+    Verify the nav lists the four pages Common / Advanced / Labs / About and
+    show_page switches the stack (settings consolidation, spec D1).
     """
     from ui.settings_center import SettingsCenter, PAGE_ORDER
     w = SettingsCenter(get_i18n())
-    # 4.6: "video" 页恢复——ExtremeSimple 当初摘掉了全部三个视频入口，导致
-    # 主流程视频处理只剩配置能开(老用户升级后仍在跑，新用户永远开不了)，
-    # 且「参数设置可开启」的日志指向一个不存在的入口。首页开关维持剥离状态。
-    # 4.6: the "video" page is back — stripping every entry point left the
-    # main-flow video processing reachable only by a pre-existing config value.
-    assert PAGE_ORDER == ["culling", "birdid", "output", "video", "apps", "labs", "about"]
-    assert w._nav.count() == 7
+    assert PAGE_ORDER == ["common", "advanced", "labs", "about"]
+    assert w._nav.count() == 4
+    assert w._stack.count() == 4
+    # 默认停在「常用」/ Opens on "common" by default
+    assert w._stack.currentIndex() == PAGE_ORDER.index("common")
     w.show_page("about")
     assert w._stack.currentIndex() == PAGE_ORDER.index("about")
     w.close()
@@ -834,8 +835,10 @@ def test_video_toggle_reachable_and_persists(monkeypatch):
         monkeypatch.setattr(_ac_mod, "get_advanced_config", lambda: cfg)
 
         w = SettingsCenter(get_i18n())
+        # 视频页已并入实验室,旧页键 "video" 映射到 labs
+        # The video page now lives in Labs; the legacy "video" key maps there.
         w.show_page("video")
-        assert w._stack.currentIndex() == PAGE_ORDER_FOR_TEST().index("video")
+        assert w._stack.currentIndex() == PAGE_ORDER_FOR_TEST().index("labs")
 
         w._video_auto_check.setChecked(True)
         w._save_video()
@@ -852,3 +855,249 @@ def PAGE_ORDER_FOR_TEST():
     """取当前 PAGE_ORDER（局部导入，避免与文件顶部的导入风格冲突）。"""
     from ui.settings_center import PAGE_ORDER
     return PAGE_ORDER
+
+
+# ── 2026-11 四页整合 / Four-page consolidation ───────────────────────────────
+
+# 旧页键 → 新页键(与 ui.settings_center._LEGACY_PAGE_KEY 对照)
+# Legacy page key → new page key (mirrors ui.settings_center._LEGACY_PAGE_KEY)
+_EXPECTED_LEGACY = {
+    "culling": "common",
+    "birdid": "common",
+    "output": "common",
+    "video": "labs",
+    "apps": "advanced",
+}
+
+# 搬家后必须仍然存在、且只建一份的关键控件
+# Key widgets that must still exist, built exactly once, after the move
+_KEY_WIDGETS = (
+    "_cull_flight", "_cull_burst", "_cull_burst_fps", "_cull_rescue", "_cull_ai",
+    "_bid_auto", "_bid_conf", "_bid_country", "_folder_layout_combo", "_raw_embed",
+    "_keep_temp_files", "_completion_sound", "_delete_confirm", "_apps_list",
+    "_close_action_combo",
+)
+
+
+def _page_of(w, widget) -> int:
+    """
+    返回控件所在设置页在 stack 中的序号,不在任何页里返回 -1。
+
+    参数:
+    w: SettingsCenter 实例
+    widget: 要定位的控件
+
+    返回:
+    int: 页序号或 -1
+
+    Return the stack index of the page containing ``widget`` (-1 if none).
+    """
+    for i in range(w._stack.count()):
+        page = w._stack.widget(i)
+        if widget is page or page.isAncestorOf(widget):
+            return i
+    return -1
+
+
+def test_legacy_page_keys_land_on_new_pages():
+    """
+    还在用旧页键(culling/birdid/output/video/apps)的调用方,打开后必须落到正确
+    的新页,不能停在第一页不动;构造参数 start_page 与 _rebuild_pages 同样适用。
+
+    Callers still using a legacy page key must land on the mapped new page —
+    via show_page, the start_page constructor argument and _rebuild_pages.
+    """
+    from ui.settings_center import SettingsCenter, PAGE_ORDER, _LEGACY_PAGE_KEY
+
+    assert _LEGACY_PAGE_KEY == _EXPECTED_LEGACY
+    w = SettingsCenter(get_i18n(), start_page="about")
+    for old, new in _EXPECTED_LEGACY.items():
+        w.show_page("about")
+        w.show_page(old)
+        assert w._stack.currentIndex() == PAGE_ORDER.index(new), old
+    w._rebuild_pages("apps")
+    assert w._stack.currentIndex() == PAGE_ORDER.index("advanced")
+    w.close()
+
+    w2 = SettingsCenter(get_i18n(), start_page="video")
+    assert w2._stack.currentIndex() == PAGE_ORDER.index("labs")
+    w2.close()
+
+
+def test_key_widgets_exist_once_on_expected_pages(monkeypatch):
+    """
+    搬家后关键控件都在,且每个小节只建一次(建两次会留下一份没人读写的孤儿控件,
+    兜底保存只认最后那份)。同时核对控件落在规定的页上。
+
+    After the move every key widget exists, each section is built exactly once
+    (a second build would leave an orphan copy), and widgets sit on the
+    pages the spec assigns.
+    """
+    from ui.settings_center import SettingsCenter, PAGE_ORDER
+
+    sections = ("_sec_skill", "_sec_rating", "_sec_detect_basic", "_sec_detect_extra",
+                "_sec_ai_confidence", "_build_format_filter_section",
+                "_sec_birdid_basic", "_sec_birdid_extra", "_sec_output_basic",
+                "_sec_output_metadata", "_sec_storage", "_sec_video", "_sec_apps")
+    calls = {name: 0 for name in sections}
+    for name in sections:
+        orig = getattr(SettingsCenter, name)
+
+        def _counting(self, *a, _orig=orig, _name=name, **k):
+            calls[_name] += 1
+            return _orig(self, *a, **k)
+
+        monkeypatch.setattr(SettingsCenter, name, _counting)
+
+    w = SettingsCenter(get_i18n())
+    assert calls == {name: 1 for name in sections}, calls
+    for attr in _KEY_WIDGETS:
+        assert hasattr(w, attr), attr
+        assert _page_of(w, getattr(w, attr)) >= 0, f"{attr} 不在任何页上 / on no page"
+
+    common, advanced, labs = (PAGE_ORDER.index(k) for k in ("common", "advanced", "labs"))
+    for attr in ("_cull_flight", "_cull_burst", "_bid_auto", "_bid_country",
+                 "_bid_name_format", "_folder_layout_combo", "_completion_sound",
+                 "_delete_confirm"):
+        assert _page_of(w, getattr(w, attr)) == common, attr
+    for attr in ("_cull_quota", "_cull_ai", "_cull_burst_fps", "_cull_rescue", "_bid_conf",
+                 "_raw_embed", "_keep_temp_files", "_apps_list", "_close_action_combo"):
+        assert _page_of(w, getattr(w, attr)) == advanced, attr
+    for attr in ("_lab_multi_cb", "_video_auto_check"):
+        assert _page_of(w, getattr(w, attr)) == labs, attr
+    w.close()
+
+
+def test_burst_toggle_on_common_drives_fps_on_advanced():
+    """
+    跨页联动:常用页取消「连拍检测」后,高级页「连拍速度」整行置灰;重新勾选恢复。
+
+    Cross-page link: unchecking burst on Common disables the burst-speed row
+    on Advanced; re-checking enables it again.
+    """
+    from ui.settings_center import SettingsCenter
+
+    w = SettingsCenter(get_i18n())
+    w._cull_burst.setChecked(True)
+    assert all(x.isEnabled() for x in w._burst_fps_row_widgets)
+    w._cull_burst.setChecked(False)
+    assert w._burst_fps_row_widgets
+    assert not any(x.isEnabled() for x in w._burst_fps_row_widgets)
+    w._cull_burst.setChecked(True)
+    assert all(x.isEnabled() for x in w._burst_fps_row_widgets)
+    w.close()
+
+
+def test_skill_preset_on_common_drives_rating_on_advanced_then_done():
+    """
+    常用页的档位卡片联动高级页的配额条(V2)或锐度/美学滑块(V1),随后 done()
+    兜底保存不报错。_on_skill_preset_selected 与 _save_birdid 都直接读其他页的
+    控件,只有四页在同一轮里全部建好时才安全——本测试锁住这一前提。
+
+    A skill preset on Common updates the quota bar (V2) / V1 sliders on
+    Advanced, and done() then flushes without error. Both handlers read
+    widgets on other pages, which is only safe because all pages are built
+    in one pass; this pins that.
+    """
+    from advanced_config import get_advanced_config
+    from core.rating_quota import get_quota3_for_skill
+    from core.skill_presets import get_skill_level_thresholds
+    from ui.settings_center import SettingsCenter
+
+    cfg = get_advanced_config()
+    w = SettingsCenter(get_i18n())
+    w._on_skill_preset_selected("master")
+    assert w._current_skill_key == "master"
+    assert w._cull_quota.quota3() == int(get_quota3_for_skill("master", cfg))
+    sharp, _nima = get_skill_level_thresholds("master")
+    assert w._cull_sharp.value() == int(sharp)
+    w._bid_conf.setValue(77)          # 识鸟进阶控件触发 _save_birdid / triggers _save_birdid
+    w.done(0)
+    assert cfg.skill_level == "master"
+    assert cfg.birdid_confidence == 77
+
+
+def test_restore_defaults_rebuilds_four_pages(monkeypatch):
+    """
+    「恢复默认」后 _rebuild_pages 重建的是四个新页,关闭时兜底保存不会把旧值写回。
+
+    After Restore Defaults the four new pages are rebuilt, so the close-time
+    flush cannot write the old values back.
+    """
+    from advanced_config import AdvancedConfig, get_advanced_config
+    from ui.settings_center import SettingsCenter, PAGE_ORDER
+
+    cfg = get_advanced_config()
+    default_sound = AdvancedConfig.DEFAULT_CONFIG["completion_sound_enabled"]
+    w = SettingsCenter(get_i18n())
+    w._completion_sound.setChecked(not default_sound)
+    assert cfg.completion_sound_enabled is (not default_sound)
+
+    cfg.restore_defaults()
+    w._rebuild_pages("about")
+    _app.processEvents()
+    assert w._stack.currentIndex() == PAGE_ORDER.index("about")
+    assert w._nav.count() == 4
+    assert w._stack.count() == 4
+    assert w._completion_sound.isChecked() is default_sound
+    w.done(0)
+    assert cfg.completion_sound_enabled is default_sound
+    with open(cfg.config_file, encoding="utf-8") as f:
+        import json
+        assert json.load(f)["completion_sound_enabled"] is default_sound
+
+
+def test_language_picker_removed_from_settings_center():
+    """
+    界面语言只留在菜单栏「设置 → 语言」(spec D4),设置中心不再有语言下拉。
+
+    The UI language lives only in the menu bar (spec D4); the Settings Center
+    no longer has a language combo.
+    """
+    from ui.settings_center import SettingsCenter
+
+    w = SettingsCenter(get_i18n())
+    assert not hasattr(w, "_lang_combo")
+    assert not hasattr(SettingsCenter, "_build_language_picker")
+    assert not hasattr(SettingsCenter, "_on_language_changed")
+    w.close()
+
+
+def test_common_headings_and_advanced_collapsibles():
+    """
+    常用页有「选片 / 识鸟 / 整理与提示」三个小节标题;高级页是五个可折叠小节,
+    只有「评星」默认展开,点标题可展开/收起。
+
+    Common has the Culling / Bird ID / Organizing headings; Advanced has five
+    collapsible sections, only Rating expanded by default, toggled by click.
+    """
+    from PySide6.QtWidgets import QLabel, QPushButton
+    from ui.settings_center import SettingsCenter, PAGE_ORDER
+
+    i18n = get_i18n()
+    w = SettingsCenter(i18n)
+    common = w._stack.widget(PAGE_ORDER.index("common"))
+    labels = [lb.text() for lb in common.findChildren(QLabel)]
+    for key in ("settings.sec_culling", "settings.sec_birdid", "settings.sec_organize"):
+        assert i18n.t(key) in labels, key
+
+    titles = [i18n.t(k) for k in ("settings.sec_rating", "settings.sec_birdid",
+                                  "settings.sec_output", "settings.sec_apps",
+                                  "settings.sec_storage")]
+    advanced = w._stack.widget(PAGE_ORDER.index("advanced"))
+    buttons = [b for b in advanced.findChildren(QPushButton)
+               if b.property("collapsibleHeader")]
+    assert [b.text().split(" ", 1)[1].strip() for b in buttons] == titles
+    assert [b.isChecked() for b in buttons] == [True, False, False, False, False]
+    assert buttons[0].text().startswith("▾") and buttons[1].text().startswith("▸")
+
+    # 收起的小节内容不可见,点开后可见 / collapsed content hidden until expanded
+    w.show()
+    w.show_page("advanced")
+    _app.processEvents()
+    assert not w._apps_list.isVisible()
+    buttons[3].click()
+    _app.processEvents()
+    assert w._apps_list.isVisible()
+    assert buttons[3].text().startswith("▾")
+    w.close()

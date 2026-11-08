@@ -1233,7 +1233,7 @@ class SuperPickyMainWindow(QMainWindow):
         # Ctrl+, 在 macOS 显示为 ⌘,（打开设置的标准快捷键），Windows 为 Ctrl+,
         # Ctrl+, renders as Cmd+, on macOS (the standard open-settings key).
         settings_action.setShortcut(QKeySequence("Ctrl+,"))
-        settings_action.triggered.connect(lambda: self._open_settings_center("culling"))
+        settings_action.triggered.connect(lambda: self._open_settings_center("common"))
         settings_menu.addAction(settings_action)
 
         repair_action = QAction(self.i18n.t("menu.environment_repair"), self)
@@ -1891,7 +1891,7 @@ class SuperPickyMainWindow(QMainWindow):
             border-radius: 4px;
         """)
         self.skill_level_label.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.skill_level_label.mousePressEvent = lambda _ev: self._open_settings_center("culling")
+        self.skill_level_label.mousePressEvent = lambda _ev: self._open_settings_center("common")
         header_layout.addSpacing(8)
         header_layout.addWidget(self.skill_level_label)
 
@@ -3136,7 +3136,7 @@ class SuperPickyMainWindow(QMainWindow):
                 buttons=buttons,
             ).exec()
             if reply == START_CONFIRM_CHANGE_COUNTRY:
-                self._open_settings_center("birdid")
+                self._open_settings_center("common")
                 continue
             return reply == StyledMessageBox.Yes
 
@@ -3186,9 +3186,9 @@ class SuperPickyMainWindow(QMainWindow):
                 no_text=self.i18n.t("labels.no")
             )
             if reply == StyledMessageBox.Yes:
-                # 用户选择现在配置国家：打开设置中心 birdid 页
-                # User chose to configure now: open Settings Center on birdid page
-                self._open_settings_center("birdid")
+                # 用户选择现在配置国家：打开设置中心常用页（国家/地区在此）
+                # User chose to configure now: open the common page (country/region live there)
+                self._open_settings_center("common")
                 return  # 等用户配置后再开始 / Wait for user to configure
 
         if not self._confirm_start():
@@ -3564,7 +3564,7 @@ class SuperPickyMainWindow(QMainWindow):
                 no_text=self.i18n.t("labels.no")
             )
             if reply == StyledMessageBox.Yes:
-                self._open_settings_center("birdid")
+                self._open_settings_center("common")
                 return
 
         # 3. 开始确认、首次视频提示：各一次 / start confirmation and video prompt: once each
@@ -4764,7 +4764,7 @@ class SuperPickyMainWindow(QMainWindow):
             title, msg = language_changed_notice(lang_code)
             StyledMessageBox.information(self, title, msg)
 
-    def _open_settings_center(self, start_page: str = "culling") -> None:
+    def _open_settings_center(self, start_page: str = "common") -> None:
         """打开设置中心弹窗，关闭后刷新依赖值（技能 chip、识鸟面板状态）。
 
         Task 7: 统一设置入口。所有参数、水平、识鸟等配置都在设置中心内完成。
@@ -4776,14 +4776,18 @@ class SuperPickyMainWindow(QMainWindow):
         After close: refresh skill chip + call birdid_dock.reload_from_config (Task 8).
 
         Parameters:
-            start_page (str): 设置中心初始显示页 key / Initial page key ("culling"/"about"/etc.)
+            start_page (str): 设置中心初始显示页 key（"common"/"advanced"/"labs"/"about"；
+                旧页键由设置中心映射）/ Initial page key (legacy keys are mapped by
+                the Settings Center)
         """
         from ui.settings_center import SettingsCenter
         dlg = SettingsCenter(self.i18n, parent=self, start_page=start_page)
         dlg.exec()
 
-        # 设置中心里也能改界面语言：同步菜单栏语言子菜单的勾选（跟随系统时都不勾）
-        # The Settings Center can change the language too: sync the menu checks.
+        # 同步菜单栏语言子菜单的勾选（跟随系统时都不勾）。设置中心已不再提供语言
+        # 选择（spec D4），这里保留为无害的兜底同步。
+        # Sync the menu-bar language checks. The Settings Center no longer offers a
+        # language picker (spec D4); this stays as a harmless safety sync.
         for code, action in getattr(self, "lang_actions", {}).items():
             action.setChecked(code == self.config.language)
 
