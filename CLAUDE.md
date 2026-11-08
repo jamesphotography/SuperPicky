@@ -42,8 +42,8 @@ All user settings are managed by the unified Settings Center. Read these convent
 
 - **单一事实源 / SSOT**：`advanced_config`（`advanced_config.json`）是所有设置的唯一存储。新增设置项 = 在 `DEFAULT_CONFIG` 加字段 + 加 `@property`/`set_*`；**setter 的 clamp 范围必须与 UI 控件范围一致**。**禁止**再引入独立 json 或控件本地状态。
   `advanced_config` is the only store. Add a setting via DEFAULT_CONFIG + property/setter; the setter's clamp range MUST match the UI widget range. Never add separate json files or widget-local state.
-- **设置中心 / Settings Center**：`ui/settings_center.py` 的 `SettingsCenter`（左侧分类导航 + 右侧 6 页：精选/识鸟/输出/视频/外部应用/关于）。页面与导航项都由 `PAGE_ORDER` 这一个列表驱动，增删页面改它即可。主窗口经 `_open_settings_center(start_page)` 打开；关闭后调用 `_refresh_skill_chip()` + `_refresh_param_panel()` 刷新首页。
-  Both the nav items and the stacked pages come from the single `PAGE_ORDER` list.
+- **设置中心 / Settings Center**：`ui/settings_center.py` 的 `SettingsCenter`（左侧分类导航 + 右侧 7 页：精选/识鸟/输出/视频/外部应用/实验室/关于）。页面与导航项都由 `PAGE_ORDER` 这一个列表驱动，增删页面改它即可。主窗口经 `_open_settings_center(start_page)` 打开；关闭后调用 `_refresh_skill_chip()` + `_refresh_param_panel()` 刷新首页。
+  `SettingsCenter` has a left nav and 7 pages on the right: Culling / Bird ID / Output / Video / External apps / Labs / About. Both the nav items and the stacked pages come from the single `PAGE_ORDER` list.
 - **下架 UI 入口时必须同时处理已有配置 / Removing a UI entry point must account for existing config**：4.5.0 的 ExtremeSimple 把 `"video"` 从 `PAGE_ORDER` 摘掉以下架视频功能，但主流程的 `video_auto_process_in_main` 守卫和全部视频代码都保留着，而该字段存在 `advanced_config.json` 里、升级不会重置——结果升级前开过的老用户照常在用，没开过的人却永远打不开，同一版本上行为不一致；「参数设置可开启」的日志还指向一个已不存在的入口。4.6 已把该页加回。**摘 UI 入口前先想清楚：残留的配置值会让功能对一部分用户继续生效。**
   Stripping a UI entry point while leaving the feature's config guard intact splits users by their pre-upgrade config value; 4.6 restored the video page.
 - **恢复默认设置 / Restore defaults**：关于页「恢复默认设置…」调用 `AdvancedConfig.restore_defaults()`（先备份为 `advanced_config.json.bak-<时间>`，再按 `DEFAULT_CONFIG` 深拷贝恢复，写盘失败内存也还原），随后 `SettingsCenter._rebuild_pages()` 原地重建各页——`done()` 关闭时会把控件值兜底写回配置，不重建会把旧值写回去。**新增运行状态 / 一次性标记 / 迁移标记 / 个人选择类字段时，必须加进 `AdvancedConfig.PRESERVE_ON_RESET`**，否则恢复默认会重跑初始化（Windows 可能重下 CUDA 运行库）、重新导入旧识鸟设置或重弹一次性提示。
