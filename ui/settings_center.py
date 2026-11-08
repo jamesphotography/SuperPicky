@@ -19,7 +19,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-from typing import Any, cast
+from typing import Any, Callable, cast
 
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QStandardItem
@@ -336,27 +336,115 @@ class SettingsCenter(QDialog):
             QWidget: 精选设置页 / Culling settings page widget.
         """
         from advanced_config import get_advanced_config
-        from ui.skill_level_dialog import SkillLevelCard
 
         cfg = get_advanced_config()
 
-        # 协同守卫初始化 / Guard init
-        self._suppress: bool = False
-        self._current_skill_key: str = cfg.skill_level
+        def fill(lay: QVBoxLayout) -> None:
+            """按原顺序拼装精选页各小节。/ Assemble the culling sections in original order."""
+            self._sec_skill(lay, cfg)
+            self._sec_rating(lay, cfg)
+            self._sec_detect_basic(lay, cfg)
+            self._sec_detect_extra(lay, cfg)
+            self._build_format_filter_section(lay, cfg)
 
-        # ── 容器 + 滚动区 / Container + scroll area ───────────────────────────
+            # 原页面的弹性空白在「高级选项」之前(把折叠区推到底部),因此由本页自己
+            # 加,_scroll_page 不再在末尾追加。
+            # The original page put its stretch before the Advanced disclosure
+            # (pushing it to the bottom), so this page adds it itself and asks
+            # _scroll_page not to append another one.
+            lay.addStretch(1)
+
+            self._culling_advanced_disclosure(lay, cfg)
+
+        return self._scroll_page(fill, stretch=False)
+
+    def _culling_advanced_disclosure(self, lay: QVBoxLayout, cfg) -> None:
+        """
+        旧精选页底部的「高级选项」折叠区:分隔线 + 折叠按钮 + 默认收起的内容区,
+        内容区里放 _sec_ai_confidence。仅供旧精选页使用(新页面结构由后续任务决定)。
+
+        AI 置信度是"多数用户不需要天天碰"的设置,折叠收起(V1/V2 切换已提到
+        上方阈值区,不再放这里)。
+
+        参数:
+        lay (QVBoxLayout): 目标布局
+        cfg: AdvancedConfig 实例
+
+        The legacy culling page's bottom "Advanced" disclosure: divider, toggle
+        button and a collapsed content area holding _sec_ai_confidence. AI
+        confidence is a setting most users never touch day to day, so it stays
+        collapsed (the V1/V2 toggle lives up in the threshold section).
+
+        Parameters:
+        lay (QVBoxLayout): target layout
+        cfg: AdvancedConfig instance
+        """
+        lay.addWidget(self._divider())
+
+        self._advanced_expanded = False
+        self._advanced_toggle_btn = QPushButton()
+        self._advanced_toggle_btn.setFlat(True)
+        self._advanced_toggle_btn.setCursor(Qt.PointingHandCursor)
+        self._advanced_toggle_btn.setStyleSheet(f"""
+            QPushButton {{
+                color: {COLORS['text_tertiary']};
+                font-size: 12px;
+                background: transparent;
+                border: none;
+                text-align: left;
+                padding: 4px 0px;
+            }}
+            QPushButton:hover {{ color: {COLORS['text_secondary']}; }}
+        """)
+        self._advanced_toggle_btn.clicked.connect(self._toggle_culling_advanced)
+        lay.addWidget(self._advanced_toggle_btn)
+
+        self._advanced_content = QWidget()
+        self._advanced_content.setVisible(False)
+        adv_lay = QVBoxLayout(self._advanced_content)
+        adv_lay.setContentsMargins(0, 8, 0, 0)
+        adv_lay.setSpacing(12)
+        self._sec_ai_confidence(adv_lay, cfg)
+        lay.addWidget(self._advanced_content)
+
+    # ── 通用页面骨架 / Shared page scaffolding ──────────────────────────────
+
+    def _scroll_page(self, fill: Callable[[QVBoxLayout], None], *,
+                     stretch: bool = True) -> QWidget:
+        """
+        统一的可滚动设置页包装:QScrollArea(无边框、viewport 透明)+ 内容容器
+        (objectName=_PAGE_BODY_OBJECT_NAME,边距 24/20,间距 16),由 fill 往内容
+        布局里加控件,末尾默认追加 addStretch(1)。取代各页重复的包装代码。
+
+        macOS 原生 QStyle 下 QScrollArea 的 viewport 不会继承祖先 QDialog 的 QSS
+        背景色,系统外观为浅色时会露出原生浅灰 #ececec(与深色主题不符);显式设
+        transparent 让 QDialog 的深色背景透出来(同 birdid_dock.py 已验证的写法)。
+
+        参数:
+        fill (Callable[[QVBoxLayout], None]): 往内容布局里添加小节的回调
+        stretch (bool): 是否在末尾追加弹性空白;精选页自己在中间加了,传 False
+
+        返回:
+        QWidget: 外层页面 widget,可直接放进 QStackedWidget
+
+        Shared scrollable settings-page wrapper: a frameless QScrollArea with a
+        transparent viewport (on macOS the native style otherwise paints the
+        light-gray #ececec behind the dark theme) around a body widget named
+        _PAGE_BODY_OBJECT_NAME with 24/20 margins and 16 spacing. ``fill`` adds
+        the sections to the body layout; a trailing addStretch(1) is appended
+        unless ``stretch`` is False (the culling page places its own stretch).
+
+        Parameters:
+        fill (Callable[[QVBoxLayout], None]): callback that adds the sections
+        stretch (bool): whether to append a trailing stretch
+
+        Return:
+        QWidget: the page widget, ready for the QStackedWidget
+        """
         page = QWidget()
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.NoFrame)
-        # macOS 原生 QStyle 下 QScrollArea 的 viewport 不会继承祖先 QDialog 的
-        # QSS 背景色，系统外观为浅色时会露出原生浅灰 #ececec（与深色主题不符）。
-        # 显式设 transparent 让 QDialog 的深色背景透出来（同 birdid_dock.py 已验证的写法）。
-        # On macOS the native QStyle paints a QScrollArea's viewport without
-        # inheriting the ancestor QDialog's QSS background, so it falls back to
-        # the native light gray #ececec when the system appearance is Light —
-        # clashing with the dark theme. Setting transparent lets the QDialog's
-        # dark background show through (same fix already proven in birdid_dock.py).
         scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
 
         inner = QWidget()
@@ -366,12 +454,87 @@ class SettingsCenter(QDialog):
         lay.setContentsMargins(24, 20, 24, 20)
         lay.setSpacing(16)
 
-        # ── 技能等级区 / Skill-level section ─────────────────────────────────
-        skill_title = QLabel(self.i18n.t("settings.culling_skill_section"))
-        skill_title.setStyleSheet(
+        fill(lay)
+        if stretch:
+            lay.addStretch(1)
+
+        scroll.setWidget(inner)
+        page_lay = QVBoxLayout(page)
+        page_lay.setContentsMargins(0, 0, 0, 0)
+        page_lay.addWidget(scroll)
+        return page
+
+    def _section_title(self, text: str) -> QLabel:
+        """
+        小节标题标签(13px 加粗、主文字色),各小节共用。
+
+        参数:
+        text (str): 已本地化的标题文字
+
+        返回:
+        QLabel: 标题标签
+
+        Section heading label (13px semibold, primary text color) shared by
+        every section.
+
+        Parameters:
+        text (str): the localized heading text
+
+        Return:
+        QLabel: the heading label
+        """
+        label = QLabel(text)
+        label.setStyleSheet(
             f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
         )
-        lay.addWidget(skill_title)
+        return label
+
+    # ── 精选小节 / Culling sections ──────────────────────────────────────────
+
+    def _init_culling_guards(self, cfg) -> None:
+        """
+        初始化技能档 ↔ 阈值协同所需的守卫状态(_suppress / _current_skill_key)。
+        摄影水平与评星两个小节都会用到,任一小节先建都要能用,故两者都调用;
+        同一次建页读的是同一份 cfg,重复调用结果一致。
+
+        参数:
+        cfg: AdvancedConfig 实例
+
+        Initialize the skill ↔ threshold coordination guards. Both the skill
+        and rating sections need them and either may be built first, so both
+        call this; repeated calls within one build read the same cfg and agree.
+
+        Parameters:
+        cfg: AdvancedConfig instance
+        """
+        self._suppress = False
+        self._current_skill_key = cfg.skill_level
+
+    def _sec_skill(self, lay: QVBoxLayout, cfg) -> None:
+        """
+        「摄影水平」小节:标题 + 新手/进阶/大师/自定义 四张档位卡片。
+
+        点卡片 → _on_skill_preset_selected 持久化档位,并联动评星小节的配额条或
+        V1 滑块(回调执行时才读那些控件,与两小节放在哪一页无关)。
+
+        参数:
+        lay (QVBoxLayout): 目标布局
+        cfg: AdvancedConfig 实例
+
+        "Photography level" section: heading + beginner/intermediate/master/
+        custom cards. Clicking a card persists the level and drives the rating
+        section's quota bar or V1 sliders (read only when the callback runs, so
+        the two sections may live on different pages).
+
+        Parameters:
+        lay (QVBoxLayout): target layout
+        cfg: AdvancedConfig instance
+        """
+        from ui.skill_level_dialog import SkillLevelCard
+
+        self._init_culling_guards(cfg)
+
+        lay.addWidget(self._section_title(self.i18n.t("settings.culling_skill_section")))
 
         cards_row = QHBoxLayout()
         cards_row.setSpacing(8)
@@ -393,6 +556,28 @@ class SettingsCenter(QDialog):
         # 刷新初始选中态 / Refresh initial selection
         self._select_skill_radio(self._current_skill_key)
 
+    def _sec_rating(self, lay: QVBoxLayout, cfg) -> None:
+        """
+        「评星」小节:阈值标题、旧版 V1 回退开关(及说明)、V2 星级配额分配条、
+        V1 锐度/美学两滑块,并按当前算法切换两套控件的可见性。
+
+        V4.6(rating-v2):rating_algorithm 默认 v2,决定显示配额条(V2)还是
+        锐度/美学两滑块(V1);两套控件都常驻构建,只切显示。
+
+        参数:
+        lay (QVBoxLayout): 目标布局
+        cfg: AdvancedConfig 实例
+
+        "Rating" section: threshold heading, legacy-V1 toggle (with hint), the
+        V2 quota bar and the V1 sharpness/aesthetics sliders; visibility of the
+        two control sets follows the current algorithm (both stay built).
+
+        Parameters:
+        lay (QVBoxLayout): target layout
+        cfg: AdvancedConfig instance
+        """
+        self._init_culling_guards(cfg)
+
         # V4.6(rating-v2): rating_algorithm 默认 v2，决定下方阈值区显示星级配额
         # 分配条(V2) 还是 锐度/美学两个旧滑块(V1)；V1/V2 切换开关显眼放在阈值
         # 标题正下方(见下),方便用户随时回滚旧版评星。
@@ -403,11 +588,7 @@ class SettingsCenter(QDialog):
         self._rating_v2 = cfg.rating_algorithm == "v2"
 
         # ── 阈值区 / Threshold section ────────────────────────────────────────
-        thresh_title = QLabel(self.i18n.t("settings.culling_threshold_section"))
-        thresh_title.setStyleSheet(
-            f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
-        )
-        lay.addWidget(thresh_title)
+        lay.addWidget(self._section_title(self.i18n.t("settings.culling_threshold_section")))
 
         # V1/V2 评星算法切换(从折叠的「高级选项」提到此显眼处):勾选=回滚旧版
         # 绝对阈值 V1,直接决定下方显示「星级配额分配条」(V2) 还是「锐度/美学」
@@ -431,13 +612,6 @@ class SettingsCenter(QDialog):
         )
         lay.addWidget(algo_hint)
 
-        # V4.6(rating-v2/T4): v2 用单一「3星配额」滑块取代锐度/美学两个阈值滑块
-        # (星级=批内相对排序,阈值不再决定星级);v1 回滚开关下保留原两滑块。
-        # 范围 5-50 与 set_custom_quota3 的 clamp 一致(SSOT 约定)。
-        # V4.6 (rating-v2/T4): under v2 a single "3-star quota" slider replaces
-        # the sharpness/aesthetics threshold sliders (stars are batch-relative);
-        # the v1 rollback switch keeps the legacy sliders. Range 5-50 matches
-        # the set_custom_quota3 clamp (SSOT convention).
         # V4.6(rating-v2)+三段配额:v2 用「星级配额分配条」QuotaBar 取代单一 3星
         # 配额滑块——一条 3★/2★/1★ 三段条,拖分隔点即改配额(三段和恒 100%,
         # 1★ 为算术余量)。约束(3★∈[5,50]/2★∈[5,60]/1★≥5)与 set_custom_quota3/2
@@ -512,12 +686,28 @@ class SettingsCenter(QDialog):
         # 按当前算法应用滑块行可见性 / Apply slider-row visibility per algorithm
         self._apply_algo_visibility()
 
+    def _sec_detect_basic(self, lay: QVBoxLayout, cfg) -> None:
+        """
+        「检测」小节(基础):标题 + 飞鸟检测、连拍检测两个开关。
+
+        连拍开关会同步「连拍速度」行(在 _sec_detect_extra 里)的启用状态;
+        回调经 _set_burst_fps_enabled 访问那一行,该行没建时安全跳过。
+
+        参数:
+        lay (QVBoxLayout): 目标布局
+        cfg: AdvancedConfig 实例
+
+        Basic "Detection" section: heading + flight and burst toggles. The
+        burst toggle drives the burst-speed row's enabled state (built by
+        _sec_detect_extra) via _set_burst_fps_enabled, which is a no-op when
+        that row does not exist.
+
+        Parameters:
+        lay (QVBoxLayout): target layout
+        cfg: AdvancedConfig instance
+        """
         # ── 检测开关区 / Detection section ───────────────────────────────────
-        detect_title = QLabel(self.i18n.t("settings.culling_detect_section"))
-        detect_title.setStyleSheet(
-            f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
-        )
-        lay.addWidget(detect_title)
+        lay.addWidget(self._section_title(self.i18n.t("settings.culling_detect_section")))
 
         # 飞鸟检测 / Flight detection
         self._cull_flight = QCheckBox(self.i18n.t("settings.culling_flight_label"))
@@ -533,6 +723,26 @@ class SettingsCenter(QDialog):
         self._cull_burst.stateChanged.connect(self._on_burst_check_changed)
         lay.addWidget(self._cull_burst)
 
+    def _sec_detect_extra(self, lay: QVBoxLayout, cfg) -> None:
+        """
+        「检测」小节(进阶):连拍速度(缩进)+ 无鸟补救扫描开关。
+
+        连拍速度行的初始启用状态取自 cfg.burst_check(而不是连拍开关控件),
+        因此与 _sec_detect_basic 谁先建、放在哪一页都无关。
+
+        参数:
+        lay (QVBoxLayout): 目标布局
+        cfg: AdvancedConfig 实例
+
+        Extra "Detection" section: the indented burst-speed row and the
+        no-bird rescue-scan toggle. The burst-speed row's initial enabled
+        state comes from cfg.burst_check (not the toggle widget), so build
+        order and page placement relative to _sec_detect_basic do not matter.
+
+        Parameters:
+        lay (QVBoxLayout): target layout
+        cfg: AdvancedConfig instance
+        """
         # 连拍速度(缩进,随连拍开关禁用/启用):关闭连拍检测时这个数字无意义,
         # 置灰比"独立一行、开关关了也能编辑"更清楚地表达依赖关系。
         # Burst speed (indented, enabled state follows the burst toggle): the
@@ -562,42 +772,21 @@ class SettingsCenter(QDialog):
         self._cull_rescue.stateChanged.connect(self._on_rescue_changed)
         lay.addWidget(self._cull_rescue)
 
-        self._build_format_filter_section(lay, cfg)
+    def _sec_ai_confidence(self, lay: QVBoxLayout, cfg) -> None:
+        """
+        「AI 置信度」小节:30-70 滑块(显示 ×100 整数,对应 min_confidence 0.3..0.7)。
 
-        lay.addStretch(1)
+        参数:
+        lay (QVBoxLayout): 目标布局
+        cfg: AdvancedConfig 实例
 
-        # ── 高级选项(折叠,默认收起) / Advanced (collapsed by default) ────────
-        # AI 置信度是"多数用户不需要天天碰"的设置,折叠收起(V1/V2 切换已提到
-        # 上方阈值区,不再放这里)。
-        # AI confidence is a setting most users never touch day to day, so it
-        # stays collapsed here (the V1/V2 toggle was promoted up to the
-        # threshold section and no longer lives here).
-        lay.addWidget(self._divider())
+        "AI confidence" section: a 30-70 slider (×100 integer, maps to
+        min_confidence 0.3..0.7).
 
-        self._advanced_expanded = False
-        self._advanced_toggle_btn = QPushButton()
-        self._advanced_toggle_btn.setFlat(True)
-        self._advanced_toggle_btn.setCursor(Qt.PointingHandCursor)
-        self._advanced_toggle_btn.setStyleSheet(f"""
-            QPushButton {{
-                color: {COLORS['text_tertiary']};
-                font-size: 12px;
-                background: transparent;
-                border: none;
-                text-align: left;
-                padding: 4px 0px;
-            }}
-            QPushButton:hover {{ color: {COLORS['text_secondary']}; }}
-        """)
-        self._advanced_toggle_btn.clicked.connect(self._toggle_culling_advanced)
-        lay.addWidget(self._advanced_toggle_btn)
-
-        self._advanced_content = QWidget()
-        self._advanced_content.setVisible(False)
-        adv_lay = QVBoxLayout(self._advanced_content)
-        adv_lay.setContentsMargins(0, 8, 0, 0)
-        adv_lay.setSpacing(12)
-
+        Parameters:
+        lay (QVBoxLayout): target layout
+        cfg: AdvancedConfig instance
+        """
         # AI 置信度滑块 (30-70, 显示 ×100 整数; 对应 min_confidence 0.3..0.7)
         # AI confidence slider (30-70 integer; maps to min_confidence 0.3..0.7)
         ai_row = QHBoxLayout()
@@ -617,15 +806,7 @@ class SettingsCenter(QDialog):
         ai_row.addWidget(ai_label)
         ai_row.addWidget(self._cull_ai, 1)
         ai_row.addWidget(self._cull_ai_value_label)
-        adv_lay.addLayout(ai_row)
-
-        lay.addWidget(self._advanced_content)
-
-        scroll.setWidget(inner)
-        page_lay = QVBoxLayout(page)
-        page_lay.setContentsMargins(0, 0, 0, 0)
-        page_lay.addWidget(scroll)
-        return page
+        lay.addLayout(ai_row)
 
     # ── 识鸟页 / Bird-ID page ─────────────────────────────────────────────────
 
@@ -659,39 +840,90 @@ class SettingsCenter(QDialog):
         """
 
         from advanced_config import get_advanced_config
-        from core.region_data import load_regions_data
 
         cfg = get_advanced_config()
-        regions_data = load_regions_data()
 
-        # ── 容器 + 滚动区 / Container + scroll area ───────────────────────────
-        page = QWidget()
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QScrollArea.NoFrame)
-        # macOS 原生 QStyle 下 QScrollArea 的 viewport 不会继承祖先 QDialog 的
-        # QSS 背景色，系统外观为浅色时会露出原生浅灰 #ececec（与深色主题不符）。
-        # 显式设 transparent 让 QDialog 的深色背景透出来（同 birdid_dock.py 已验证的写法）。
-        # On macOS the native QStyle paints a QScrollArea's viewport without
-        # inheriting the ancestor QDialog's QSS background, so it falls back to
-        # the native light gray #ececec when the system appearance is Light —
-        # clashing with the dark theme. Setting transparent lets the QDialog's
-        # dark background show through (same fix already proven in birdid_dock.py).
-        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        def fill(lay: QVBoxLayout) -> None:
+            """
+            按原顺序拼装识鸟页。基础/进阶两小节在原页面里是交错排列的,所以这里
+            直接按原顺序调用组成它们的片段,界面与拆分前一致。
+            The basic/extra sections interleave on the original page, so the
+            page calls their building blocks in the original order.
+            """
+            self._part_birdid_auto(lay, cfg)
+            self._part_birdid_confidence(lay, cfg)
+            self._part_birdid_source(lay, cfg)
+            self._part_birdid_region(lay, cfg)
+            lay.addWidget(self._divider())
+            self._part_birdid_name_format(lay, cfg)
+            lay.addWidget(self._divider())
+            self._part_birdid_custom_rarity(lay, cfg)
 
-        inner = QWidget()
-        inner.setObjectName(_PAGE_BODY_OBJECT_NAME)
-        inner.setStyleSheet(_PAGE_BODY_QSS)
-        lay = QVBoxLayout(inner)
-        lay.setContentsMargins(24, 20, 24, 20)
-        lay.setSpacing(16)
+        return self._scroll_page(fill)
 
+    # ── 识鸟小节 / Bird-ID sections ──────────────────────────────────────────
+
+    def _sec_birdid_basic(self, lay: QVBoxLayout, cfg) -> None:
+        """
+        识鸟基础小节:自动识鸟开关、国家/地区(含「编辑…」)、鸟名显示格式。
+
+        参数:
+        lay (QVBoxLayout): 目标布局
+        cfg: AdvancedConfig 实例
+
+        Basic Bird-ID section: auto-identify toggle, country/region (with the
+        shortlist "Edit…" button) and the bird-name display format.
+
+        Parameters:
+        lay (QVBoxLayout): target layout
+        cfg: AdvancedConfig instance
+        """
+        self._part_birdid_auto(lay, cfg)
+        self._part_birdid_region(lay, cfg)
+        lay.addWidget(self._divider())
+        self._part_birdid_name_format(lay, cfg)
+
+    def _sec_birdid_extra(self, lay: QVBoxLayout, cfg) -> None:
+        """
+        识鸟进阶小节:识别置信度、数据源(eBird / 全球)、自定义罕见指数。
+
+        数据源单选与国家/地区同属 _save_birdid 一次写回(set_birdid_region),
+        该方法在用户改动时才读取各控件,与两小节放在哪一页无关。
+
+        参数:
+        lay (QVBoxLayout): 目标布局
+        cfg: AdvancedConfig 实例
+
+        Extra Bird-ID section: confidence, data source (eBird / global) and the
+        custom rarity index. The data source is persisted together with the
+        country/region by _save_birdid, which reads the widgets only when the
+        user changes something, so page placement does not matter.
+
+        Parameters:
+        lay (QVBoxLayout): target layout
+        cfg: AdvancedConfig instance
+        """
+        self._part_birdid_confidence(lay, cfg)
+        self._part_birdid_source(lay, cfg)
+        lay.addWidget(self._divider())
+        self._part_birdid_custom_rarity(lay, cfg)
+
+    def _part_birdid_auto(self, lay: QVBoxLayout, cfg) -> None:
+        """
+        片段:「自动识鸟」标题 + 开关。
+
+        参数:
+        lay (QVBoxLayout): 目标布局
+        cfg: AdvancedConfig 实例
+
+        Block: "Auto identify" heading + toggle.
+
+        Parameters:
+        lay (QVBoxLayout): target layout
+        cfg: AdvancedConfig instance
+        """
         # ── 自动识鸟开关 / Auto-identify toggle ──────────────────────────────
-        auto_title = QLabel(self.i18n.t("settings.birdid_section_auto"))
-        auto_title.setStyleSheet(
-            f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
-        )
-        lay.addWidget(auto_title)
+        lay.addWidget(self._section_title(self.i18n.t("settings.birdid_section_auto")))
 
         self._bid_auto = QCheckBox(self.i18n.t("settings.birdid_auto_label"))
         self._bid_auto.setChecked(cfg.birdid_auto_identify)
@@ -703,12 +935,23 @@ class SettingsCenter(QDialog):
         # 只留一个入口。/ The write-keywords toggle moved to the Output page's
         # field list (#153): one setting, one place.
 
+    def _part_birdid_confidence(self, lay: QVBoxLayout, cfg) -> None:
+        """
+        片段:「识别置信度」标题 + 30-95 滑块(与 set_birdid_confidence clamp 一致)。
+
+        参数:
+        lay (QVBoxLayout): 目标布局
+        cfg: AdvancedConfig 实例
+
+        Block: "Confidence" heading + 30-95 slider (matches the
+        set_birdid_confidence clamp).
+
+        Parameters:
+        lay (QVBoxLayout): target layout
+        cfg: AdvancedConfig instance
+        """
         # ── 置信度滑块 / Confidence slider (range 30-95, mirrors set_birdid_confidence clamp) ──
-        conf_title = QLabel(self.i18n.t("settings.birdid_section_conf"))
-        conf_title.setStyleSheet(
-            f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
-        )
-        lay.addWidget(conf_title)
+        lay.addWidget(self._section_title(self.i18n.t("settings.birdid_section_conf")))
 
         conf_row = QHBoxLayout()
         conf_label = QLabel(self.i18n.t("settings.birdid_conf_label"))
@@ -738,12 +981,22 @@ class SettingsCenter(QDialog):
         conf_row.addWidget(self._bid_conf_label)
         lay.addLayout(conf_row)
 
+    def _part_birdid_source(self, lay: QVBoxLayout, cfg) -> None:
+        """
+        片段:「数据源」标题 + eBird / GBIF 互斥单选。
+
+        参数:
+        lay (QVBoxLayout): 目标布局
+        cfg: AdvancedConfig 实例
+
+        Block: "Data source" heading + mutually exclusive eBird / GBIF radios.
+
+        Parameters:
+        lay (QVBoxLayout): target layout
+        cfg: AdvancedConfig instance
+        """
         # ── 数据源单选 / Data-source radio buttons (eBird / GBIF) ────────────
-        source_title = QLabel(self.i18n.t("settings.birdid_section_source"))
-        source_title.setStyleSheet(
-            f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
-        )
-        lay.addWidget(source_title)
+        lay.addWidget(self._section_title(self.i18n.t("settings.birdid_section_source")))
 
         source_row = QHBoxLayout()
         self._bid_ebird = QRadioButton(self.i18n.t("settings.birdid_source_ebird"))
@@ -767,12 +1020,29 @@ class SettingsCenter(QDialog):
         source_row.addStretch(1)
         lay.addLayout(source_row)
 
+    def _part_birdid_region(self, lay: QVBoxLayout, cfg) -> None:
+        """
+        片段:「地区」标题 + 国家下拉(含「编辑…」常用国家)+ 生效条件提示 +
+        省州下拉,并恢复已保存的国家/地区(恢复期间 _bid_applying 屏蔽写盘)。
+
+        参数:
+        lay (QVBoxLayout): 目标布局
+        cfg: AdvancedConfig 实例
+
+        Block: "Region" heading + country combo (with the shortlist "Edit…"
+        button) + scope hint + state/province combo, then restores the saved
+        country/region (_bid_applying suppresses writes meanwhile).
+
+        Parameters:
+        lay (QVBoxLayout): target layout
+        cfg: AdvancedConfig instance
+        """
+        from core.region_data import load_regions_data
+
+        regions_data = load_regions_data()
+
         # ── 地区选择 / Region selection ──────────────────────────────────────
-        region_title = QLabel(self.i18n.t("settings.birdid_section_region"))
-        region_title.setStyleSheet(
-            f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
-        )
-        lay.addWidget(region_title)
+        lay.addWidget(self._section_title(self.i18n.t("settings.birdid_section_region")))
 
         # 构建国家列表 (OrderedDict: 显示名 → 代码)
         # Build country list (OrderedDict: display name → code)
@@ -859,8 +1129,21 @@ class SettingsCenter(QDialog):
         self._restore_birdid_country(cfg)
         self._bid_applying = False
 
-        lay.addWidget(self._divider())
+    def _part_birdid_name_format(self, lay: QVBoxLayout, cfg) -> None:
+        """
+        片段:「英文命名标准」标题 + 「鸟名显示格式」下拉 + 提示。
 
+        参数:
+        lay (QVBoxLayout): 目标布局
+        cfg: AdvancedConfig 实例
+
+        Block: "English naming standard" heading + "Bird name format" combo +
+        hint.
+
+        Parameters:
+        lay (QVBoxLayout): target layout
+        cfg: AdvancedConfig instance
+        """
         # ── 鸟名显示格式 / Bird name display format ──────────────────────────
         # V4.x: name_format 此前只有 setter/属性,任何界面都改不了
         # (advanced_settings_dialog.py 被合并进设置中心时漏掉了这一项 UI)。
@@ -868,11 +1151,7 @@ class SettingsCenter(QDialog):
         # V4.x: name_format previously had a setter/property but no UI at all
         # (dropped when advanced_settings_dialog.py was folded into this
         # Settings Center). Restored here, reusing its existing i18n keys.
-        fmt_title = QLabel(self.i18n.t("advanced_settings.name_format"))
-        fmt_title.setStyleSheet(
-            f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
-        )
-        lay.addWidget(fmt_title)
+        lay.addWidget(self._section_title(self.i18n.t("advanced_settings.name_format")))
 
         fmt_row = QHBoxLayout()
         fmt_label = QLabel(self.i18n.t("settings.birdid_section_name_format"))
@@ -902,18 +1181,27 @@ class SettingsCenter(QDialog):
         )
         lay.addWidget(fmt_hint)
 
+    def _part_birdid_custom_rarity(self, lay: QVBoxLayout, cfg) -> None:
+        """
+        片段:「自定义罕见指数」标题 + 状态行 + 导入按钮 + 说明。
+
+        参数:
+        lay (QVBoxLayout): 目标布局
+        cfg: AdvancedConfig 实例(本片段不读配置,为统一签名保留)
+
+        Block: "Custom rarity index" heading + status line + import button +
+        hint.
+
+        Parameters:
+        lay (QVBoxLayout): target layout
+        cfg: AdvancedConfig instance (unused; kept for a uniform signature)
+        """
         # ── 自定义罕见指数（可选外部数据）/ Custom rarity index (optional) ───
         # 应用只提供接口，不附带也不预设任何数据源：用户自备一份 0-10 的鸟种
         # 罕见度数据即可并排展示。导入入口让用户不必知道配置目录在哪。
         # The app ships no dataset — just this interface; the import entry
         # spares users from hunting down the config directory.
-        lay.addWidget(self._divider())
-
-        dn_title = QLabel(self.i18n.t("settings.custom_rarity_section"))
-        dn_title.setStyleSheet(
-            f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
-        )
-        lay.addWidget(dn_title)
+        lay.addWidget(self._section_title(self.i18n.t("settings.custom_rarity_section")))
 
         self._custom_rarity_status = QLabel("")
         self._custom_rarity_status.setWordWrap(True)
@@ -937,14 +1225,6 @@ class SettingsCenter(QDialog):
         lay.addWidget(dn_hint)
 
         self._refresh_custom_rarity_status()
-
-        lay.addStretch(1)
-
-        scroll.setWidget(inner)
-        page_lay = QVBoxLayout(page)
-        page_lay.setContentsMargins(0, 0, 0, 0)
-        page_lay.addWidget(scroll)
-        return page
 
     def _populate_bid_regions(self, country_code: str | None) -> None:
         """
@@ -1395,7 +1675,10 @@ class SettingsCenter(QDialog):
         参数 / Parameters:
             level_key (str): 当前选中的档位 key / Currently selected level key.
         """
-        for key, card in self._skill_cards.items():
+        # 摄影水平小节可能与评星小节不在同一页/尚未构建,没有卡片时安全跳过。
+        # The skill section may live on another page or not be built yet;
+        # skip safely when there are no cards.
+        for key, card in getattr(self, "_skill_cards", {}).items():
             card.set_selected(key == level_key)
 
     def _on_skill_preset_selected(self, level_key: str) -> None:
@@ -1537,8 +1820,13 @@ class SettingsCenter(QDialog):
 
     def _set_burst_fps_enabled(self, enabled: bool) -> None:
         """按连拍检测开关状态启用/禁用连拍速度行控件。
-        Enable/disable the burst-speed row widgets per the burst toggle."""
-        for w in self._burst_fps_row_widgets:
+        Enable/disable the burst-speed row widgets per the burst toggle.
+
+        连拍速度行在 _sec_detect_extra 中构建,可能与连拍开关不在同一页;
+        该行尚未构建时安全跳过。
+        The burst-speed row is built by _sec_detect_extra, possibly on another
+        page; skip safely when it has not been built yet."""
+        for w in getattr(self, "_burst_fps_row_widgets", ()):
             w.setEnabled(enabled)
 
     def _on_burst_fps_changed(self, value: int) -> None:
@@ -1782,34 +2070,125 @@ class SettingsCenter(QDialog):
 
         cfg = get_advanced_config()
 
-        # ── 容器 + 滚动区 / Container + scroll area ───────────────────────────
-        page = QWidget()
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QScrollArea.NoFrame)
-        # macOS 原生 QStyle 下 QScrollArea 的 viewport 不会继承祖先 QDialog 的
-        # QSS 背景色，系统外观为浅色时会露出原生浅灰 #ececec（与深色主题不符）。
-        # 显式设 transparent 让 QDialog 的深色背景透出来（同 birdid_dock.py 已验证的写法）。
-        # On macOS the native QStyle paints a QScrollArea's viewport without
-        # inheriting the ancestor QDialog's QSS background, so it falls back to
-        # the native light gray #ececec when the system appearance is Light —
-        # clashing with the dark theme. Setting transparent lets the QDialog's
-        # dark background show through (same fix already proven in birdid_dock.py).
-        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        def fill(lay: QVBoxLayout) -> None:
+            """
+            按原顺序拼装输出页。基础/元数据/存储三小节在原页面里交错排列(「通用」
+            区混着三类开关),所以这里直接按原顺序调用组成它们的片段。
+            The basic/metadata/storage sections interleave on the original page
+            (the "General" block mixes all three), so the page calls their
+            building blocks in the original order.
+            """
+            self._part_output_folder_layout(lay, cfg)
+            self._part_output_burst_folders(lay, cfg)
 
-        inner = QWidget()
-        inner.setObjectName(_PAGE_BODY_OBJECT_NAME)
-        inner.setStyleSheet(_PAGE_BODY_QSS)
-        lay = QVBoxLayout(inner)
-        lay.setContentsMargins(24, 20, 24, 20)
-        lay.setSpacing(16)
+            # ── 分隔线 / Divider ──────────────────────────────────────────────
+            lay.addWidget(self._divider())
+            self._part_output_xmp_mode(lay, cfg)
 
+            # ── 写入哪些字段（#153）/ Which fields to write (#153) ────────────
+            lay.addWidget(self._divider())
+            self._build_metadata_fields_section(lay, cfg)
+
+            # ── 分隔线 / Divider ──────────────────────────────────────────────
+            lay.addWidget(self._divider())
+
+            # ── 通用区 / General section ───────────────────────────────────────
+            # 原「预览管理」改名「通用」并入删除确认/清理缓存,避免把不相关设置
+            # 硬塞进"预览管理"这个过窄的标题下。
+            # Renamed from "Preview Management" to "General" and folded in delete
+            # confirmation / cache clearing, instead of cramming unrelated
+            # settings under an overly narrow heading.
+            lay.addWidget(self._section_title(self.i18n.t("advanced_settings.section_general")))
+            self._part_output_keep_preview(lay, cfg)
+            self._part_output_completion_sound(lay, cfg)
+            self._part_output_detail_metadata(lay, cfg)
+            self._part_output_delete_confirm(lay, cfg)
+            self._part_output_clear_cache(lay, cfg)
+
+        return self._scroll_page(fill)
+
+    # ── 输出小节 / Output sections ───────────────────────────────────────────
+
+    def _sec_output_basic(self, lay: QVBoxLayout, cfg) -> None:
+        """
+        输出基础小节:分类目录布局、完成提示音、删除前确认。
+
+        参数:
+        lay (QVBoxLayout): 目标布局
+        cfg: AdvancedConfig 实例
+
+        Basic output section: folder layout, completion sound and delete
+        confirmation.
+
+        Parameters:
+        lay (QVBoxLayout): target layout
+        cfg: AdvancedConfig instance
+        """
+        self._part_output_folder_layout(lay, cfg)
+        self._part_output_completion_sound(lay, cfg)
+        self._part_output_delete_confirm(lay, cfg)
+
+    def _sec_output_metadata(self, lay: QVBoxLayout, cfg) -> None:
+        """
+        输出与元数据小节:写入方式(含专有 RAW 写本体子选项)、写入哪些字段、
+        连拍归入独立子文件夹、为 0 星与无鸟照片补充详情数值。
+
+        「写入哪些字段」在「不写入」时整区置灰,构建时要读 _xmp_none,所以写入
+        方式片段必须先建——两者在本小节内部顺序固定,与页面摆放无关。
+
+        参数:
+        lay (QVBoxLayout): 目标布局
+        cfg: AdvancedConfig 实例
+
+        Output & metadata section: write mode (with the proprietary-RAW
+        sub-option), which fields to write, burst subfolders and detail values
+        for 0★/no-bird photos. The field list reads _xmp_none at build time, so
+        the write-mode block is built first inside this section.
+
+        Parameters:
+        lay (QVBoxLayout): target layout
+        cfg: AdvancedConfig instance
+        """
+        self._part_output_xmp_mode(lay, cfg)
+        lay.addWidget(self._divider())
+        self._build_metadata_fields_section(lay, cfg)
+        self._part_output_burst_folders(lay, cfg)
+        self._part_output_detail_metadata(lay, cfg)
+
+    def _sec_storage(self, lay: QVBoxLayout, cfg) -> None:
+        """
+        存储小节:保留预览图片、清理所有预览缓存。
+
+        参数:
+        lay (QVBoxLayout): 目标布局
+        cfg: AdvancedConfig 实例
+
+        Storage section: keep preview images and clear all preview caches.
+
+        Parameters:
+        lay (QVBoxLayout): target layout
+        cfg: AdvancedConfig instance
+        """
+        self._part_output_keep_preview(lay, cfg)
+        self._part_output_clear_cache(lay, cfg)
+
+    def _part_output_folder_layout(self, lay: QVBoxLayout, cfg) -> None:
+        """
+        片段:「分类目录布局」标题 + 下拉(星级优先/鸟种优先/平铺)+ 提示。
+
+        参数:
+        lay (QVBoxLayout): 目标布局
+        cfg: AdvancedConfig 实例
+
+        Block: "Folder layout" heading + combo (rating-first / species-first /
+        flat) + hint.
+
+        Parameters:
+        lay (QVBoxLayout): target layout
+        cfg: AdvancedConfig instance
+        """
         # ── 分目录布局 / Folder layout ────────────────────────────────────────
-        fl_title = QLabel(self.i18n.t("advanced_settings.folder_layout"))
-        fl_title.setStyleSheet(
-            f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
-        )
-        lay.addWidget(fl_title)
+        lay.addWidget(self._section_title(self.i18n.t("advanced_settings.folder_layout")))
 
         fl_row = QHBoxLayout()
         fl_label = QLabel(self.i18n.t("advanced_settings.folder_layout_label"))
@@ -1847,6 +2226,20 @@ class SettingsCenter(QDialog):
         )
         lay.addWidget(fl_hint)
 
+    def _part_output_burst_folders(self, lay: QVBoxLayout, cfg) -> None:
+        """
+        片段:「连拍归入独立子文件夹」开关。
+
+        参数:
+        lay (QVBoxLayout): 目标布局
+        cfg: AdvancedConfig 实例
+
+        Block: the "burst subfolders" toggle.
+
+        Parameters:
+        lay (QVBoxLayout): target layout
+        cfg: AdvancedConfig instance
+        """
         # 连拍子目录开关(Paul P1，从精选页挪到这里——它是"目录怎么组织"的一部分，
         # 不是检测行为):关=连拍照片按星级/鸟种常规归档。
         # Burst-subfolder toggle (Paul P1; moved here from the culling page —
@@ -1858,15 +2251,24 @@ class SettingsCenter(QDialog):
         self._cull_burst_folders.stateChanged.connect(self._on_burst_folders_changed)
         lay.addWidget(self._cull_burst_folders)
 
-        # ── 分隔线 / Divider ──────────────────────────────────────────────────
-        lay.addWidget(self._divider())
+    def _part_output_xmp_mode(self, lay: QVBoxLayout, cfg) -> None:
+        """
+        片段:「元数据写入方式」标题 + 写入文件/边车/不写入三选一,以及「写入
+        文件」下缩进的「专有 RAW 也写入文件本体」子选项。
 
+        参数:
+        lay (QVBoxLayout): 目标布局
+        cfg: AdvancedConfig 实例
+
+        Block: "Metadata write mode" heading + embedded / sidecar / none radios,
+        with the indented proprietary-RAW sub-option under "Write to file".
+
+        Parameters:
+        lay (QVBoxLayout): target layout
+        cfg: AdvancedConfig instance
+        """
         # ── XMP 写入方式区标题 / XMP write mode section title ─────────────────
-        xmp_title = QLabel(self.i18n.t("advanced_settings.xmp_write_mode"))
-        xmp_title.setStyleSheet(
-            f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
-        )
-        lay.addWidget(xmp_title)
+        lay.addWidget(self._section_title(self.i18n.t("advanced_settings.xmp_write_mode")))
 
         # XMP 写入方式单选组 / XMP write mode radio group
         self._xmp_button_group = QButtonGroup(self)
@@ -1962,25 +2364,20 @@ class SettingsCenter(QDialog):
         self._xmp_embedded.toggled.connect(self._raw_embed.setEnabled)
         self._raw_embed.setEnabled(self._xmp_embedded.isChecked())
 
-        # ── 写入哪些字段（#153）/ Which fields to write (#153) ────────────────
-        lay.addWidget(self._divider())
-        self._build_metadata_fields_section(lay, cfg)
+    def _part_output_keep_preview(self, lay: QVBoxLayout, cfg) -> None:
+        """
+        片段:「保留预览图片」开关 + 提示。
 
-        # ── 分隔线 / Divider ──────────────────────────────────────────────────
-        lay.addWidget(self._divider())
+        参数:
+        lay (QVBoxLayout): 目标布局
+        cfg: AdvancedConfig 实例
 
-        # ── 通用区 / General section ───────────────────────────────────────────
-        # 原「预览管理」改名「通用」并入删除确认/清理缓存,避免把不相关设置
-        # 硬塞进"预览管理"这个过窄的标题下。
-        # Renamed from "Preview Management" to "General" and folded in delete
-        # confirmation / cache clearing, instead of cramming unrelated
-        # settings under an overly narrow heading.
-        general_title = QLabel(self.i18n.t("advanced_settings.section_general"))
-        general_title.setStyleSheet(
-            f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
-        )
-        lay.addWidget(general_title)
+        Block: "Keep preview images" toggle + hint.
 
+        Parameters:
+        lay (QVBoxLayout): target layout
+        cfg: AdvancedConfig instance
+        """
         # 保留预览图 / Keep preview files
         self._keep_temp_files = QCheckBox(self.i18n.t("advanced_settings.keep_preview"))
         self._keep_temp_files.setChecked(cfg.keep_temp_files)
@@ -1994,6 +2391,20 @@ class SettingsCenter(QDialog):
         )
         lay.addWidget(keep_hint)
 
+    def _part_output_completion_sound(self, lay: QVBoxLayout, cfg) -> None:
+        """
+        片段:「完成提示音」开关 + 提示。
+
+        参数:
+        lay (QVBoxLayout): 目标布局
+        cfg: AdvancedConfig 实例
+
+        Block: "Completion sound" toggle + hint.
+
+        Parameters:
+        lay (QVBoxLayout): target layout
+        cfg: AdvancedConfig instance
+        """
         # 完成提示音 / Completion sound
         self._completion_sound = QCheckBox(
             self.i18n.t("advanced_settings.completion_sound")
@@ -2009,6 +2420,20 @@ class SettingsCenter(QDialog):
         )
         lay.addWidget(sound_hint)
 
+    def _part_output_detail_metadata(self, lay: QVBoxLayout, cfg) -> None:
+        """
+        片段:「为 0 星和无鸟照片补充详情面板数值」开关 + 提示。
+
+        参数:
+        lay (QVBoxLayout): 目标布局
+        cfg: AdvancedConfig 实例
+
+        Block: "Detail values for 0★ / no-bird photos" toggle + hint.
+
+        Parameters:
+        lay (QVBoxLayout): target layout
+        cfg: AdvancedConfig instance
+        """
         # 拒绝照片详情元数据 / Detail metadata for rejected photos
         self._detail_meta_for_rejected = QCheckBox(
             self.i18n.t("advanced_settings.detail_metadata_for_rejected")
@@ -2025,6 +2450,20 @@ class SettingsCenter(QDialog):
         )
         lay.addWidget(detail_hint)
 
+    def _part_output_delete_confirm(self, lay: QVBoxLayout, cfg) -> None:
+        """
+        片段:「删除照片前确认」开关 + 提示。
+
+        参数:
+        lay (QVBoxLayout): 目标布局
+        cfg: AdvancedConfig 实例
+
+        Block: "Confirm before deleting" toggle + hint.
+
+        Parameters:
+        lay (QVBoxLayout): target layout
+        cfg: AdvancedConfig instance
+        """
         # 删除确认弹窗(此前误勾"不再确认"后无处恢复,补上开关入口)
         # Delete-confirmation dialog (previously had no way back once
         # dismissed via "don't ask again"; this restores the toggle)
@@ -2041,6 +2480,21 @@ class SettingsCenter(QDialog):
         )
         lay.addWidget(delete_confirm_hint)
 
+    def _part_output_clear_cache(self, lay: QVBoxLayout, cfg) -> None:
+        """
+        片段:「清理所有预览缓存」按钮 + 提示(目标是主窗口当前目录)。
+
+        参数:
+        lay (QVBoxLayout): 目标布局
+        cfg: AdvancedConfig 实例(本片段不读配置,为统一签名保留)
+
+        Block: "Clear all preview caches" button + hint (targets the main
+        window's current directory).
+
+        Parameters:
+        lay (QVBoxLayout): target layout
+        cfg: AdvancedConfig instance (unused; kept for a uniform signature)
+        """
         # 清理所有预览缓存(接入 parent().directory_path 当前目录)
         # Clear all preview caches (targets the current directory via
         # parent().directory_path)
@@ -2059,14 +2513,6 @@ class SettingsCenter(QDialog):
             f"color:{COLORS['text_muted']};font-size:11px;"
         )
         lay.addWidget(clear_cache_hint)
-
-        lay.addStretch(1)
-
-        scroll.setWidget(inner)
-        page_lay = QVBoxLayout(page)
-        page_lay.setContentsMargins(0, 0, 0, 0)
-        page_lay.addWidget(scroll)
-        return page
 
     def _save_output(self) -> None:
         """
@@ -2526,29 +2972,26 @@ class SettingsCenter(QDialog):
         from advanced_config import get_advanced_config
 
         cfg = get_advanced_config()
+        return self._scroll_page(lambda lay: self._sec_video(lay, cfg))
+
+    def _sec_video(self, lay: QVBoxLayout, cfg) -> None:
+        """
+        视频小节:主流程视频总开关 + 识别模式、抽帧上限、YOLO 置信度、
+        鸟种识别/飞行检测开关(这些字段没有 property,直接读 cfg.config)。
+
+        参数:
+        lay (QVBoxLayout): 目标布局
+        cfg: AdvancedConfig 实例
+
+        Video section: the main-flow video master toggle plus recognition mode,
+        max frames, YOLO threshold and species/flight toggles (these fields have
+        no properties, so cfg.config is read directly).
+
+        Parameters:
+        lay (QVBoxLayout): target layout
+        cfg: AdvancedConfig instance
+        """
         raw = cfg.config  # 直接访问 dict，这些字段无 property / Direct dict access
-
-        # ── 容器 + 滚动区 / Container + scroll area ───────────────────────────
-        page = QWidget()
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QScrollArea.NoFrame)
-        # macOS 原生 QStyle 下 QScrollArea 的 viewport 不会继承祖先 QDialog 的
-        # QSS 背景色，系统外观为浅色时会露出原生浅灰 #ececec（与深色主题不符）。
-        # 显式设 transparent 让 QDialog 的深色背景透出来（同 birdid_dock.py 已验证的写法）。
-        # On macOS the native QStyle paints a QScrollArea's viewport without
-        # inheriting the ancestor QDialog's QSS background, so it falls back to
-        # the native light gray #ececec when the system appearance is Light —
-        # clashing with the dark theme. Setting transparent lets the QDialog's
-        # dark background show through (same fix already proven in birdid_dock.py).
-        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
-
-        inner = QWidget()
-        inner.setObjectName(_PAGE_BODY_OBJECT_NAME)
-        inner.setStyleSheet(_PAGE_BODY_QSS)
-        lay = QVBoxLayout(inner)
-        lay.setContentsMargins(24, 20, 24, 20)
-        lay.setSpacing(16)
 
         # ── 总开关区 / Master toggle section ─────────────────────────────────
         self._video_auto_check = QCheckBox(self.i18n.t("video_opts.enable_checkbox"))
@@ -2558,10 +3001,7 @@ class SettingsCenter(QDialog):
         lay.addWidget(self._video_auto_check)
 
         # ── 分隔线 / Divider ──────────────────────────────────────────────────
-        sep1 = QFrame()
-        sep1.setFixedHeight(1)
-        sep1.setStyleSheet(f"background-color:{COLORS['border_subtle']};")
-        lay.addWidget(sep1)
+        lay.addWidget(self._divider())
 
         # ── 识别模式 / Recognition mode ───────────────────────────────────────
         mode_row = QHBoxLayout()
@@ -2589,10 +3029,7 @@ class SettingsCenter(QDialog):
         lay.addLayout(mode_row)
 
         # ── 分隔线 / Divider ──────────────────────────────────────────────────
-        sep2 = QFrame()
-        sep2.setFixedHeight(1)
-        sep2.setStyleSheet(f"background-color:{COLORS['border_subtle']};")
-        lay.addWidget(sep2)
+        lay.addWidget(self._divider())
 
         # ── 抽帧上限 / Max frames ─────────────────────────────────────────────
         # 范围 30-240，与注释中 "范围 30-240，默认 60" 完全对齐
@@ -2624,10 +3061,7 @@ class SettingsCenter(QDialog):
         lay.addWidget(frames_hint)
 
         # ── 分隔线 / Divider ──────────────────────────────────────────────────
-        sep3 = QFrame()
-        sep3.setFixedHeight(1)
-        sep3.setStyleSheet(f"background-color:{COLORS['border_subtle']};")
-        lay.addWidget(sep3)
+        lay.addWidget(self._divider())
 
         # ── YOLO 置信度阈值 / YOLO confidence threshold ───────────────────────
         # 存储浮点 0.30-0.90，滑块以整数 30-90 表示（×100 转换）
@@ -2663,17 +3097,10 @@ class SettingsCenter(QDialog):
         lay.addWidget(yolo_hint)
 
         # ── 分隔线 / Divider ──────────────────────────────────────────────────
-        sep4 = QFrame()
-        sep4.setFixedHeight(1)
-        sep4.setStyleSheet(f"background-color:{COLORS['border_subtle']};")
-        lay.addWidget(sep4)
+        lay.addWidget(self._divider())
 
         # ── 识别开关区 / Detection toggles section ────────────────────────────
-        toggles_title = QLabel(self.i18n.t("settings.culling_detect_section"))
-        toggles_title.setStyleSheet(
-            f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
-        )
-        lay.addWidget(toggles_title)
+        lay.addWidget(self._section_title(self.i18n.t("settings.culling_detect_section")))
 
         # 鸟种识别开关 / Species ID toggle
         self._video_species_id = QCheckBox(self.i18n.t("video_opts.birdid_checkbox"))
@@ -2688,14 +3115,6 @@ class SettingsCenter(QDialog):
         self._video_flight.setStyleSheet(self._checkbox_qss())
         self._video_flight.setToolTip(self.i18n.t("video_opts.flight_tooltip"))
         lay.addWidget(self._video_flight)
-
-        lay.addStretch(1)
-
-        scroll.setWidget(inner)
-        page_lay = QVBoxLayout(page)
-        page_lay.setContentsMargins(0, 0, 0, 0)
-        page_lay.addWidget(scroll)
-        return page
 
     def _save_video(self) -> None:
         """
@@ -2747,12 +3166,38 @@ class SettingsCenter(QDialog):
         from advanced_config import get_advanced_config
 
         cfg = get_advanced_config()
-        self._apps_data: list[dict] = list(cfg.get_external_apps())
 
+        # 本页沿用原来的非滚动布局(列表随窗口拉伸、间距 12),不走 _scroll_page,
+        # 以保证界面与拆分前一致。
+        # This page keeps its original non-scrolling layout (the list stretches
+        # with the window, spacing 12) rather than _scroll_page, so it looks
+        # exactly as before.
         page = QWidget()
         lay = QVBoxLayout(page)
         lay.setContentsMargins(24, 20, 24, 20)
         lay.setSpacing(12)
+        self._sec_apps(lay, cfg)
+        return page
+
+    def _sec_apps(self, lay: QVBoxLayout, cfg) -> None:
+        """
+        外部应用小节:说明、应用列表(添加/删除)、「关闭主窗口时」下拉(#123)。
+
+        应用列表读 get_external_apps(),增删后经 set_external_apps() 写回。
+
+        参数:
+        lay (QVBoxLayout): 目标布局
+        cfg: AdvancedConfig 实例
+
+        External-apps section: hint, the app list (add / remove) and the
+        "When closing the main window" combo (#123). The list is read via
+        get_external_apps() and written back via set_external_apps().
+
+        Parameters:
+        lay (QVBoxLayout): target layout
+        cfg: AdvancedConfig instance
+        """
+        self._apps_data: list[dict] = list(cfg.get_external_apps())
 
         # 说明文字 / Description text
         hint = QLabel(self.i18n.t("advanced_settings.apps_hint"))
@@ -2810,11 +3255,7 @@ class SettingsCenter(QDialog):
         # 放在本页是因为「留在托盘」的主要用途是让 Lightroom 插件保持可用。
         # Lives here because staying in the tray mainly serves the Lightroom plugin.
         lay.addSpacing(8)
-        ca_title = QLabel(self.i18n.t("advanced_settings.close_action"))
-        ca_title.setStyleSheet(
-            f"color:{COLORS['text_primary']};font-size:13px;font-weight:600;"
-        )
-        lay.addWidget(ca_title)
+        lay.addWidget(self._section_title(self.i18n.t("advanced_settings.close_action")))
 
         self._close_action_combo = QComboBox()
         for value in CLOSE_ACTIONS:
@@ -2834,8 +3275,6 @@ class SettingsCenter(QDialog):
         ca_hint.setWordWrap(True)
         ca_hint.setStyleSheet(f"color:{COLORS['text_muted']};font-size:11px;")
         lay.addWidget(ca_hint)
-
-        return page
 
     def _on_close_action_changed(self, _index: int) -> None:
         """
