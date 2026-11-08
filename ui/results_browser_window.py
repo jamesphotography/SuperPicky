@@ -376,6 +376,47 @@ def _open_photos_with_app(parent, photos: list, app: dict, directory: str = "") 
     return True
 
 
+# 批量改星级超过这么多张时先确认（用户 2026-11-08 拍板：超过 5 张就提示）
+# Confirm a batch rating change above this many photos (decided 2026-11-08)
+BATCH_RATING_CONFIRM_THRESHOLD = 5
+
+
+def _batch_rating_changes(targets: list, key: Optional[int] = None,
+                          stars: Optional[int] = None) -> list:
+    """
+    算出一次批量改星级里每张照片的新星级，跳过不变的。
+
+    两种来源：按键（数字直设 / Up、Down 各张 ±1，规则同 _rating_key_action），
+    或直接给定星级 stars（右键菜单）。
+
+    参数 / Parameters:
+        targets (list): 勾选的照片 / checked photos
+        key (Optional[int]): Qt 键码（数字或 Up/Down）/ Qt key code
+        stars (Optional[int]): 直接设定的星级 0-5 / explicit rating
+
+    返回 / Returns:
+        list: [(photo, new_rating)]，只含星级真的会变的照片
+
+    Compute each photo's new rating for a batch change, skipping no-ops.
+    Either a key (digit sets, Up/Down step each photo, as in
+    _rating_key_action) or an explicit star value (context menu).
+    """
+    changes = []
+    for photo in targets:
+        cur = photo.get("rating")
+        if key is not None:
+            new = _rating_key_action(key, cur)
+        else:
+            try:
+                cur_i = int(cur) if cur is not None else None
+            except (TypeError, ValueError):
+                cur_i = None
+            new = stars if stars is not None and stars != cur_i else None
+        if new is not None:
+            changes.append((photo, new))
+    return changes
+
+
 def _rating_key_action(key: int, current_rating) -> Optional[int]:
     """
     键盘打星决策(Paul 反馈 P0-3):数字键 0-5 直接设星;Up/Down 星级 ±1,
@@ -1551,6 +1592,26 @@ def _build_context_menu(parent_widget, photo: dict, directory: str):
         merge_action.triggered.connect(_merge_species)
         menu.addAction(merge_action)
 
+    # 设置星级：范围规则与「修改鸟种」「删除」相同；多张时文案写明张数，超过 5 张
+    # 先确认（见 ResultsBrowserWindow._apply_batch_rating）。
+    # Set Rating: same scope rule as Edit Species / Delete; confirms above 5.
+    rating_handler = getattr(parent_widget, "_set_rating_from_menu", None)
+    if callable(rating_handler):
+        _rating_targets = _species_edit_targets(parent_widget, photo)
+        _rating_label = (
+            _i18n.t('browser.ctx_set_rating_batch').format(count=len(_rating_targets))
+            if len(_rating_targets) > 1 else _i18n.t('browser.ctx_set_rating')
+        )
+        rating_menu = menu.addMenu(_rating_label)
+        for _stars in range(5, -1, -1):
+            _act = QAction(f"{_stars}★", parent_widget)
+
+            def _set_rating(_checked=False, _p=photo, _n=_stars):
+                rating_handler(_p, _n)
+
+            _act.triggered.connect(_set_rating)
+            rating_menu.addAction(_act)
+
     # 用户配置的外部应用列表（设置 → 外部应用）。前 9 个显示 Ctrl/Cmd+N 快捷键提示，
     # 浏览器窗口的 keyPressEvent 负责真正响应快捷键（#128）。
     # External apps from settings; the first nine show their Ctrl/Cmd+N hint,
@@ -2264,7 +2325,7 @@ class ResultsBrowserWindow(QMainWindow):
         self._detail_panel = DetailPanel(self.i18n, self)
         self._detail_panel.prev_requested.connect(self._prev_photo)
         self._detail_panel.next_requested.connect(self._next_photo)
-        self._detail_panel.rating_change_requested.connect(self._on_rating_changed)
+        self._detail_panel.rating_change_requested.connect(self._on_panel_rating_requested)
         self._detail_panel.species_edit_requested.connect(self._on_species_edit_requested)
         self._detail_panel.crop_advice_requested.connect(self._on_crop_advice_requested)
         outer_h.addWidget(self._detail_panel, 0)
@@ -3707,6 +3768,101 @@ class ResultsBrowserWindow(QMainWindow):
                     kwargs={"caption": new_caption},
                     daemon=True,
                 ).start()
+
+    def _apply_batch_rating(self, photo: dict, key: Optional[int] = None,
+                            stars: Optional[int] = None,
+                            photo_rating: Optional[int] = None) -> bool:
+        """
+        批量改星级：photo 在勾选集里（且不在全屏）时，把这次改动套用到整个勾选集。
+
+        范围规则与「修改鸟种」「删除」相同（_species_edit_targets）。星级真的会变的
+        照片超过 BATCH_RATING_CONFIRM_THRESHOLD 张时先确认一次；每张照片仍走单张的
+        _on_rating_changed（写 DB、题注首行、三份缓存、移动文件、写元数据），所以
+        结果与逐张改完全一致。
+
+        参数 / Parameters:
+            photo (dict): 当前 / 右键点中的照片
+            key (Optional[int]): 按键（数字或 Up/Down）
+            stars (Optional[int]): 直接设定的星级（右键菜单）
+            photo_rating (Optional[int]): photo 本身已定好的新星级（详情面板 ▲/▼：面板先
+                就地改了这张的星级再发信号，再按 key 推一次会多升 / 降一星）
+
+        返回 / Returns:
+            bool: True 表示按批量处理了（含用户取消、无变化）；False 表示不是批量，
+                  调用方按单张处理
+
+        Batch rating: when photo belongs to the checked selection (and not in
+        fullscreen), apply the change to the whole selection. Confirms once
+        above BATCH_RATING_CONFIRM_THRESHOLD changed photos; each photo goes
+        through the single-photo _on_rating_changed, so results match editing
+        them one by one. Returns False when this is not a batch.
+        """
+        targets = _species_edit_targets(self, photo)
+        if len(targets) <= 1:
+            return False
+        changes = _batch_rating_changes(targets, key=key, stars=stars)
+        if photo_rating is not None:
+            # photo 这张用调用方给定的新星级，替换按 key 推出来的值
+            # Use the caller's rating for photo itself instead of the key-derived one
+            ident = _photo_identity(photo)
+            changes = [(t, r) for t, r in changes if _photo_identity(t) != ident]
+            own = next((t for t in targets if _photo_identity(t) == ident), photo)
+            changes.insert(0, (own, photo_rating))
+        if not changes:
+            return True
+        if len(changes) > BATCH_RATING_CONFIRM_THRESHOLD:
+            from ui.custom_dialogs import StyledMessageBox
+            if key == Qt.Key_Up:
+                body = self.i18n.t("browser.batch_rating_confirm_up").format(count=len(changes))
+            elif key == Qt.Key_Down:
+                body = self.i18n.t("browser.batch_rating_confirm_down").format(count=len(changes))
+            else:
+                value = stars if key is None else changes[0][1]
+                body = self.i18n.t("browser.batch_rating_confirm_set").format(
+                    count=len(changes), stars=value)
+            if StyledMessageBox.question(
+                    self, self.i18n.t("browser.batch_rating_confirm_title"), body
+            ) != StyledMessageBox.Yes:
+                return True
+        for target, new_rating in changes:
+            self._on_rating_changed(target, new_rating)
+        # 详情面板显示的那张也在里面：按缓存里的新星级重画
+        # The panel's photo was part of the batch; redraw it from the caches
+        shown = getattr(self._detail_panel, "_current_photo", None)
+        if shown:
+            self._detail_panel.show_photo(shown)
+        return True
+
+    def _on_panel_rating_requested(self, photo: dict, new_rating: int) -> None:
+        """
+        详情面板 ▲/▼：勾选了多张且这张在其中时，按同一方向批量升/降一星（规则同
+        Up/Down 键）；否则照旧只改这一张。
+
+        Detail panel ▲/▼: batch the same direction across the checked
+        selection (Up/Down key rules); otherwise change just this photo.
+        """
+        step = getattr(self._detail_panel, "last_rating_step", 0)
+        key = Qt.Key_Up if step > 0 else Qt.Key_Down if step < 0 else None
+        if key is not None and self._apply_batch_rating(
+                photo, key=key, photo_rating=new_rating):
+            return
+        self._on_rating_changed(photo, new_rating)
+
+    def _set_rating_from_menu(self, photo: dict, stars: int) -> None:
+        """
+        右键菜单「设置星级」：勾选集里就批量设，否则只设这一张。
+
+        Context menu "Set Rating": the checked selection, or just this photo.
+        """
+        if self._apply_batch_rating(photo, stars=stars):
+            return
+        changes = _batch_rating_changes([photo], stars=stars)
+        if changes:
+            self._on_rating_changed(photo, stars)
+            if self._stack.currentIndex() == _PAGE_FULLSCREEN:
+                self._fullscreen.update_rating_display(photo)
+            else:
+                self._detail_panel.show_photo(photo)
 
     def _get_photo_file_path(self, photo_or_filename) -> "str | None":
         """根据 photo 或 filename 查找照片绝对路径。"""
@@ -5502,7 +5658,11 @@ class ResultsBrowserWindow(QMainWindow):
             # Keyboard rating: Up/Down now step the rating; digits set it.
             photo = (getattr(self._fullscreen, "_current_photo", None) if in_fullscreen
                      else getattr(self._detail_panel, "_current_photo", None))
-            if photo:
+            if photo and not in_fullscreen and self._apply_batch_rating(photo, key=key):
+                # 勾选了多张：整个勾选集一起改（见 _apply_batch_rating）
+                # Several photos checked: the whole selection changes
+                pass
+            elif photo:
                 new_rating = _rating_key_action(key, photo.get("rating"))
                 if new_rating is not None:
                     self._on_rating_changed(photo, new_rating)
