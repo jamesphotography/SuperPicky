@@ -2853,14 +2853,14 @@ class SettingsCenter(QDialog):
     def _build_labs_page(self) -> QWidget:
         """
         构建「实验室」页:「更多功能」(生成报告 / 导出到 eBird)与「实验功能」(多目录选鸟),
-        末尾是从原视频页整体搬来的视频小节(_sec_video,样式与显隐由后续任务调整)。
+        末尾是视频处理(_sec_video):开关同款样式,子选项随开关显隐。
 
         三个开关默认全关,勾选变化立即写入 advanced_config 并落盘(与其他页的
         即时保存模型一致);done() 里的 _save_labs() 只做兜底。
 
         Build the Labs page: "More features" (report / eBird export),
         "Experimental" (multi-folder culling) and, at the end, the video section
-        moved over from the former video page (_sec_video). All three toggles default to off; a
+        video processing (_sec_video: same toggle look, sub-options follow the switch). All default to off; a
         toggle is written to advanced_config and saved immediately, with
         _save_labs() in done() as a safety net only.
 
@@ -2943,14 +2943,10 @@ class SettingsCenter(QDialog):
         self._lab_multi_cb.toggled.connect(lambda _c: self._save_labs())
 
         # ── 视频 / Video ─────────────────────────────────────────────────────
-        # 原视频页已从导航移除(spec D2),小节原样搬到这里,保证视频设置始终可达,
-        # done() 的兜底保存(_video_auto_check)也照常生效。
-        # The former video page left the nav (spec D2); its section moves here
-        # unchanged so video settings stay reachable and done() still flushes them.
-        lay.addSpacing(6)
-        lay.addWidget(self._divider())
-        lay.addSpacing(6)
-        lay.addWidget(_title(t("video_opts.tab")))
+        # 视频是实验功能列表的最后一项(不另设标题),读写原字段
+        # video_auto_process_in_main;done() 的兜底保存(_video_auto_check)照常生效。
+        # Video is the last item of the experimental list (no separate heading); it
+        # keeps using video_auto_process_in_main and done() still flushes it.
         self._sec_video(lay, cfg)
 
         lay.addStretch(1)
@@ -2996,14 +2992,27 @@ class SettingsCenter(QDialog):
         raw = cfg.config  # 直接访问 dict，这些字段无 property / Direct dict access
 
         # ── 总开关区 / Master toggle section ─────────────────────────────────
+        # 与实验室页其它开关同款外观:开关 + 灰色说明行。
+        # Same look as the other Labs toggles: checkbox + muted hint line.
         self._video_auto_check = QCheckBox(self.i18n.t("video_opts.enable_checkbox"))
         self._video_auto_check.setChecked(bool(raw.get("video_auto_process_in_main", False)))
         self._video_auto_check.setStyleSheet(self._checkbox_qss())
         self._video_auto_check.setToolTip(self.i18n.t("video_opts.enable_tooltip"))
         lay.addWidget(self._video_auto_check)
+        desc = QLabel(self.i18n.t("settings.labs_video_desc"))
+        desc.setWordWrap(True)
+        desc.setStyleSheet(
+            f"color:{COLORS['text_muted']};font-size:11px;margin-left:24px;")
+        lay.addWidget(desc)
 
-        # ── 分隔线 / Divider ──────────────────────────────────────────────────
-        lay.addWidget(self._divider())
+        # 子选项全部放进一个容器,显隐跟随总开关;隐藏的控件保留各自的值,
+        # done() 仍会 _save_video(控件都在)。
+        # All sub-options live in one container whose visibility follows the master
+        # switch; hidden widgets keep their values and done() still saves them.
+        self._video_opts_box = QWidget()
+        vl = QVBoxLayout(self._video_opts_box)
+        vl.setContentsMargins(24, 0, 0, 0)
+        vl.setSpacing(6)
 
         # ── 识别模式 / Recognition mode ───────────────────────────────────────
         mode_row = QHBoxLayout()
@@ -3031,7 +3040,7 @@ class SettingsCenter(QDialog):
         lay.addLayout(mode_row)
 
         # ── 分隔线 / Divider ──────────────────────────────────────────────────
-        lay.addWidget(self._divider())
+        vl.addWidget(self._divider())
 
         # ── 抽帧上限 / Max frames ─────────────────────────────────────────────
         # 范围 30-240，与注释中 "范围 30-240，默认 60" 完全对齐
@@ -3053,17 +3062,17 @@ class SettingsCenter(QDialog):
         frames_row.addWidget(frames_label)
         frames_row.addWidget(self._video_max_frames)
         frames_row.addStretch(1)
-        lay.addLayout(frames_row)
+        vl.addLayout(frames_row)
 
         frames_hint = QLabel(self.i18n.t("video_opts.max_frames_tooltip"))
         frames_hint.setStyleSheet(
             f"color:{COLORS['text_muted']};font-size:11px;margin-left:160px;"
         )
         frames_hint.setWordWrap(True)
-        lay.addWidget(frames_hint)
+        vl.addWidget(frames_hint)
 
         # ── 分隔线 / Divider ──────────────────────────────────────────────────
-        lay.addWidget(self._divider())
+        vl.addWidget(self._divider())
 
         # ── YOLO 置信度阈值 / YOLO confidence threshold ───────────────────────
         # 存储浮点 0.30-0.90，滑块以整数 30-90 表示（×100 转换）
@@ -3089,34 +3098,54 @@ class SettingsCenter(QDialog):
         yolo_row.addWidget(yolo_label)
         yolo_row.addWidget(self._yolo_threshold_spin)
         yolo_row.addStretch(1)
-        lay.addLayout(yolo_row)
+        vl.addLayout(yolo_row)
 
         yolo_hint = QLabel(self.i18n.t("video_opts.yolo_conf_tooltip"))
         yolo_hint.setStyleSheet(
             f"color:{COLORS['text_muted']};font-size:11px;margin-left:160px;"
         )
         yolo_hint.setWordWrap(True)
-        lay.addWidget(yolo_hint)
+        vl.addWidget(yolo_hint)
 
         # ── 分隔线 / Divider ──────────────────────────────────────────────────
-        lay.addWidget(self._divider())
+        vl.addWidget(self._divider())
 
         # ── 识别开关区 / Detection toggles section ────────────────────────────
-        lay.addWidget(self._section_title(self.i18n.t("settings.culling_detect_section")))
+        vl.addWidget(self._section_title(self.i18n.t("settings.culling_detect_section")))
 
         # 鸟种识别开关 / Species ID toggle
         self._video_species_id = QCheckBox(self.i18n.t("video_opts.birdid_checkbox"))
         self._video_species_id.setChecked(bool(raw.get("video_enable_species_id", True)))
         self._video_species_id.setStyleSheet(self._checkbox_qss())
         self._video_species_id.setToolTip(self.i18n.t("video_opts.birdid_tooltip"))
-        lay.addWidget(self._video_species_id)
+        vl.addWidget(self._video_species_id)
 
         # 飞行检测开关 / Flight detection toggle
         self._video_flight = QCheckBox(self.i18n.t("video_opts.flight_checkbox"))
         self._video_flight.setChecked(bool(raw.get("video_enable_flight", True)))
         self._video_flight.setStyleSheet(self._checkbox_qss())
         self._video_flight.setToolTip(self.i18n.t("video_opts.flight_tooltip"))
-        lay.addWidget(self._video_flight)
+        vl.addWidget(self._video_flight)
+
+        lay.addWidget(self._video_opts_box)
+        self._video_opts_box.setVisible(self._video_auto_check.isChecked())
+        self._video_auto_check.toggled.connect(self._on_video_toggled)
+
+    def _on_video_toggled(self, checked: bool) -> None:
+        """
+        视频总开关变化:显示/隐藏子选项并即时保存(隐藏不清空值)。
+
+        参数:
+        checked (bool): 开关当前状态
+
+        Video master switch changed: show/hide the sub-options and save at once
+        (hiding never resets values).
+
+        Parameters:
+        checked (bool): current switch state
+        """
+        self._video_opts_box.setVisible(checked)
+        self._save_video()
 
     def _save_video(self) -> None:
         """

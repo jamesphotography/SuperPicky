@@ -95,7 +95,6 @@ def stubbed(monkeypatch) -> List[Tuple[str, str]]:
     monkeypatch.setattr(cls, "_require_initialization_for_processing", lambda self: True)
     monkeypatch.setattr(cls, "_is_removable_source", lambda self: False)
     monkeypatch.setattr(cls, "_confirm_start", lambda self: True)
-    monkeypatch.setattr(cls, "_maybe_prompt_video_first_run", lambda self: None)
     return warnings
 
 

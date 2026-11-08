@@ -3194,10 +3194,6 @@ class SuperPickyMainWindow(QMainWindow):
         if not self._confirm_start():
             return
 
-        # V4.3 Phase 4: 视频首次提示 — 检测到视频且用户从未被提示过时弹一次
-        # V4.3 Phase 4: First-run prompt — show once when videos are found
-        self._maybe_prompt_video_first_run()
-
         resume_processing = False
         try:
             from tools.resume_state import ResumeStateManager
@@ -3567,10 +3563,9 @@ class SuperPickyMainWindow(QMainWindow):
                 self._open_settings_center("common")
                 return
 
-        # 3. 开始确认、首次视频提示：各一次 / start confirmation and video prompt: once each
+        # 3. 开始确认：一次 / start confirmation: once
         if not self._confirm_start():
             return
-        self._maybe_prompt_video_first_run(existing)
 
         # 4. 预检：上次没处理完的接着处理；已处理过的默认跳过，可勾选全部重新处理。
         #    状态用 queue_state：批次模式处理过的父目录（结果只在子目录、扫不到照片）也算已处理
@@ -4679,58 +4674,6 @@ class SuperPickyMainWindow(QMainWindow):
         )
         self._check_report_csv()
         self._apply_pending_lab_switch()
-
-    @Slot()
-    def _maybe_prompt_video_first_run(self, directories: Optional[List[str]] = None):
-        """
-        V4.3 Phase 4: 首次发现视频时弹一次性提示
-
-        触发条件：当前目录扫描到至少 1 个视频文件 + 用户从未被提示过
-        提示内容：告知主流程会自动处理视频；用户可关闭
-        副作用：写 advanced_config 标记已提示，下次不再弹
-
-        参数:
-        directories (Optional[List[str]]): 要检查的目录；不传时为 [directory_path]
-            （单目录调用方不变）。多目录队列传入全部目录，视频数合计，只弹一次。
-
-        First-run prompt when videos are detected; one-time only.
-
-        Parameters:
-        directories (Optional[List[str]]): folders to check; defaults to
-            [directory_path]. The folder queue passes all folders (one prompt).
-        """
-        try:
-            from advanced_config import get_advanced_config
-            cfg = get_advanced_config()
-        except Exception:
-            return
-        if cfg.config.get("video_first_run_prompted"):
-            return
-        # 检测是否有视频 / Check if any video exists
-        try:
-            from core.recursive_scanner import scan_directories
-            total_videos = 0
-            for _dir in (directories if directories is not None else [self.directory_path]):
-                results = scan_directories(_dir)
-                total_videos += sum(item.video_count for item in results)
-        except Exception:
-            return
-        if total_videos == 0:
-            return
-
-        # 弹一次性提示 / Show one-time dialog
-        msg = self.i18n.t("dialogs.video_first_tip_body", count=total_videos)
-        reply = StyledMessageBox.question(
-            self, self.i18n.t("dialogs.video_first_tip_title"), msg,
-            yes_text=self.i18n.t("dialogs.enable_btn"), no_text=self.i18n.t("dialogs.skip_btn")
-        )
-        # 不论用户怎么选，都标记已提示
-        # Mark as prompted regardless of choice
-        cfg.config["video_first_run_prompted"] = True
-        cfg.set_video_auto_process_in_main(reply == StyledMessageBox.Yes)
-        # 首页「视频」开关需同步反映这里的选择，否则会显示旧值直到设置中心刷新一次
-        # Keep the home-panel "Video" toggle in sync with this choice
-        self._refresh_param_panel()
 
     def _open_video_analyzer(self):
         """

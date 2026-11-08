@@ -240,16 +240,14 @@ class AdvancedConfig:
 
         # V4.3 Phase 4: 主流程视频集成 / Main-flow video integration
         # video_auto_process_in_main : 选鸟时是否自动分析视频（默认关——大多数用户不拍视频，
-        #                              首页快速面板「视频」开关 + 首次发现视频的一次性提示均可开启）
+        #                              设置中心「实验室」页开启；首页快速面板「视频」开关同步）
         # video_species_mode         : 默认识别模式 instant/fast/full（默认 instant 极速）
         # video_enable_species_id    : 是否启用鸟种识别（默认开）
         # video_enable_flight        : 是否启用飞行检测（默认开）
-        # video_first_run_prompted   : 首次发现视频弹一次性提示后标记（避免重复弹）
         "video_auto_process_in_main": False,
         "video_species_mode": "instant",
         "video_enable_species_id": True,
         "video_enable_flight": True,
-        "video_first_run_prompted": False,
 
         # V4.4: 识鸟设置统一进 advanced_config(原 birdid_dock_settings.json)
         "birdid_auto_identify": False,
@@ -375,7 +373,7 @@ class AdvancedConfig:
         # 个人选择 / personal choices
         "language", "telemetry_enabled",
         # 一次性标记与迁移标记 / one-time and migration flags
-        "is_first_run", "correction_consent_shown", "video_first_run_prompted",
+        "is_first_run", "correction_consent_shown",
         "birdid_dock_settings_migrated",
         # 安装初始化与运行库状态 / installation and runtime state
         "initialization_completed", "initialization_manifest_version",

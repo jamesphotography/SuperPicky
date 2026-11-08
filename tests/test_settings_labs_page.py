@@ -67,3 +67,65 @@ def test_labs_locale_keys_present():
             s = json.load(f)["settings"]
         for k in keys:
             assert s.get(k), f"{name} missing settings.{k}"
+
+
+# ── 视频处理移入实验室 / Video moved into Labs ──────────────────────────────
+
+import pytest
+
+
+@pytest.mark.parametrize("initial", [True, False])
+def test_labs_video_switch_reflects_config(initial):
+    """视频开关初值等于配置 / switch mirrors video_auto_process_in_main."""
+    from ui.settings_center import SettingsCenter
+    cfg = get_advanced_config()
+    cfg.config["video_auto_process_in_main"] = initial
+    w = SettingsCenter(get_i18n(), start_page="labs")
+    try:
+        assert w._video_auto_check.isChecked() is initial
+        assert w._video_opts_box.isHidden() is (not initial)
+    finally:
+        w.done(0)
+
+
+def test_labs_video_suboptions_follow_switch_and_keep_values():
+    """关闭隐藏子选项、值保留、勾选写配置 / hide on off, keep values, save on check."""
+    from ui.settings_center import SettingsCenter
+    cfg = get_advanced_config()
+    cfg.config["video_auto_process_in_main"] = False
+    w = SettingsCenter(get_i18n(), start_page="labs")
+    try:
+        assert w._video_opts_box.isHidden()
+        w._video_auto_check.setChecked(True)
+        assert not w._video_opts_box.isHidden()
+        assert cfg.config["video_auto_process_in_main"] is True
+        w._video_max_frames.setValue(120)
+        w._video_auto_check.setChecked(False)
+        assert w._video_opts_box.isHidden()
+        assert cfg.config["video_auto_process_in_main"] is False
+        w._video_auto_check.setChecked(True)
+        assert w._video_max_frames.value() == 120
+    finally:
+        w.done(0)
+
+
+def test_video_first_run_prompt_removed():
+    """首次视频提示已删除 / first-run video prompt is gone."""
+    from advanced_config import AdvancedConfig
+    from ui.main_window import SuperPickyMainWindow
+    assert "video_first_run_prompted" not in AdvancedConfig.DEFAULT_CONFIG
+    assert "video_first_run_prompted" not in AdvancedConfig.PRESERVE_ON_RESET
+    assert not hasattr(SuperPickyMainWindow, "_maybe_prompt_video_first_run")
+
+
+def test_video_locale_keys():
+    """新文案存在、旧提示文案已删 / new copy present, old prompt copy removed."""
+    import json
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent
+    for name in ("zh_CN", "zh_TW", "en_US"):
+        with open(root / "locales" / f"{name}.json", "r", encoding="utf-8") as f:
+            d = json.load(f)
+        assert d["settings"].get("labs_video_desc")
+        assert "video_first_tip_title" not in d["dialogs"]
+        assert "video_first_tip_body" not in d["dialogs"]

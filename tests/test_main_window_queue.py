@@ -83,7 +83,7 @@ def env(monkeypatch) -> Dict[str, list]:
     import tools.exiftool_manager as etm
 
     rec: Dict[str, list] = {k: [] for k in (
-        "confirm", "sound", "report", "open", "warnings", "questions", "video")}
+        "confirm", "sound", "report", "open", "warnings", "questions")}
 
     def _warning(parent, title, message, ok_text=None):
         rec["warnings"].append((title, message))
@@ -113,8 +113,6 @@ def env(monkeypatch) -> Dict[str, list]:
     monkeypatch.setattr(cls, "_is_removable_source", lambda self, path=None: False)
     monkeypatch.setattr(cls, "_confirm_start",
                         lambda self: rec["confirm"].append(1) or True)
-    monkeypatch.setattr(cls, "_maybe_prompt_video_first_run",
-                        lambda self, *a, **k: rec["video"].append(a))
     monkeypatch.setattr(cls, "_play_completion_sound", lambda self: rec["sound"].append(1))
     monkeypatch.setattr(cls, "_show_statistics_report",
                         lambda self, stats: rec["report"].append(stats))
@@ -555,7 +553,6 @@ def test_removable_and_confirm_once(tmp_path, env, monkeypatch):
         assert len(warns) == 1
         assert dirs[0] in warns[0][1] and dirs[2] in warns[0][1] and dirs[1] not in warns[0][1]
         assert len(env["confirm"]) == 1
-        assert len(env["video"]) == 1
         for _ in range(3):
             w._on_finished(_stats())
             _flush()
