@@ -14,6 +14,7 @@ from pathlib import Path
 import sys
 from typing import Dict, List, Optional
 from tools.i18n import t as _t
+from core.rating_quota import FOCUS_ARBITRATION_SHARPNESS as _V2_FOCUS_ARB_DEFAULT
 from config import get_app_config_dir, get_lazy_registry
 
 
@@ -145,6 +146,9 @@ class AdvancedConfig:
         # V4.6: No-bird rescue scan
         "rescue_scan_enabled": True,   # 判无鸟/低置信度时触发 1024px 重扫 + 识鸟守门
         "rescue_birdid_gate": 10,      # 弱候选的识鸟确认门槛 (0-100, top1 置信度百分比)
+        # V2 评星「脱焦判定」锐度线：EXIF 对焦判差但头部锐度达此线则升为合焦 (300-800, 步长 10)
+        # V2 focus-arbitration sharpness line (300-800, step 10); default from rating_quota
+        "v2_focus_arbitration_sharpness": _V2_FOCUS_ARB_DEFAULT,
 
         # V4.6: 匿名使用统计 (spec: docs/specs/2026-08-21-usage-analytics-design.md)
         # 默认开启、设置中心可关；上报内容为版本/系统/架构/语言与按日轮换的
@@ -570,6 +574,14 @@ class AdvancedConfig:
         return bool(self.config.get("correction_consent_shown", False))
 
     @property
+    def v2_focus_arbitration_sharpness(self) -> float:
+        """
+        V2 脱焦判定锐度线 (300-800)。
+        V2 focus-arbitration sharpness line (300-800).
+        """
+        return float(self.config.get("v2_focus_arbitration_sharpness", _V2_FOCUS_ARB_DEFAULT))
+
+    @property
     def rescue_scan_enabled(self) -> bool:
         """无鸟补救扫描开关 / No-bird rescue scan toggle."""
         return self.config.get("rescue_scan_enabled", True)
@@ -622,6 +634,21 @@ class AdvancedConfig:
         """设置纠错样本提交首次说明已展示，并持久化。"""
         self.config["correction_consent_shown"] = bool(value)
         self.save()
+
+    def set_v2_focus_arbitration_sharpness(self, value: float) -> None:
+        """
+        设置 V2 脱焦判定锐度线，钳制到 300-800（与 UI 控件范围一致）。
+
+        参数:
+        value (float): 锐度线
+
+        Set the V2 focus-arbitration sharpness line, clamped to 300-800
+        (matches the UI widget range).
+
+        Parameters:
+        value (float): sharpness line
+        """
+        self.config["v2_focus_arbitration_sharpness"] = max(300.0, min(800.0, float(value)))
 
     def set_rescue_scan_enabled(self, value: bool) -> None:
         """设置无鸟补救扫描开关 / Toggle the no-bird rescue scan."""
