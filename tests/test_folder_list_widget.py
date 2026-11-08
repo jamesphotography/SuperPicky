@@ -276,3 +276,45 @@ def test_drop_ignored_while_editing_disabled(widget, tmp_path):
     entered, _ = _drop(widget, [_photo_dir(tmp_path, "a")])
     assert not entered
     assert widget.folders() == []
+
+
+def _flush(rounds: int = 4) -> None:
+    """布局与滚动范围要跨几轮事件循环才更新完 / Layout settles over a few event rounds."""
+    for _ in range(rounds):
+        QApplication.processEvents()
+
+
+def test_many_folders_scroll_instead_of_growing(widget, tmp_path):
+    """
+    拖入 12 个目录：列表高度封顶在 3 行，出现滚动条，并滚到最后加入的那行。
+    Dropping 12 folders: height caps at 3 rows, the list scrolls, and the
+    last-added row is scrolled into view.
+    """
+    from ui.folder_list_widget import MAX_VISIBLE_ROWS
+
+    widget.resize(500, 400)
+    widget.show()
+    _drop(widget, [_photo_dir(tmp_path, f"d{i:02d}") for i in range(2)])
+    _flush()
+    h3 = widget._scroll.height()
+    assert not widget.is_scrollable()
+
+    _drop(widget, [_photo_dir(tmp_path, f"d{i:02d}") for i in range(2, 12)])
+    _flush()
+    assert len(widget.folders()) == 12
+    assert widget.is_scrollable()
+    h_cap = widget._scroll.height()
+    assert h_cap > h3
+    _drop(widget, [_photo_dir(tmp_path, "d12")])
+    _flush()
+    assert widget._scroll.height() == h_cap          # 不再增长 / stops growing
+    bar = widget._scroll.verticalScrollBar()
+    assert bar.maximum() > 0 and bar.value() == bar.maximum()
+    assert MAX_VISIBLE_ROWS == 3
+    widget.close()
+
+
+def test_empty_list_hides_rows_area(widget):
+    """没有目录时行区域隐藏、高度为 0。"""
+    assert widget._scroll.height() == 0
+    assert not widget._scroll.isVisibleTo(widget)

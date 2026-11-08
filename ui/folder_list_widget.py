@@ -11,7 +11,8 @@ from typing import Dict, List, Optional, Tuple
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QFontMetrics
 from PySide6.QtWidgets import (
-    QFileDialog, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
+    QFileDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea, QSizePolicy,
+    QVBoxLayout, QWidget,
 )
 
 from core import folder_queue
@@ -112,6 +113,16 @@ class ElidedLabel(QLabel):
         return h
 
 
+# 列表最多同时显示几行，再多就出滚动条，不再把主窗口往下撑。主窗口这一块只留得出
+# 约 3 行的高度（cocoa 实测 5 行会让「添加目录」按钮压在第 4、5 行上），所以取 3。
+# Rows shown at once; beyond this the list scrolls instead of growing the
+# window. The main window only has room for about 3 rows (5 rows made the add
+# button overlap rows 4-5 in a real cocoa window), hence 3.
+MAX_VISIBLE_ROWS = 3
+_ROW_HEIGHT = 28        # 行高：24px ✕ 按钮 + 上下各 2px 边距 / 24px button + 2px margins
+_ROW_SPACING = 4
+
+
 class FolderListWidget(QWidget):
     """
     目录列表：每行「📁 路径 · N 张」+ ✕；下方「＋ 添加目录…」与合计。
@@ -135,14 +146,32 @@ class FolderListWidget(QWidget):
         # 最近一次列表变化的来源："add" / "remove" / "set"（主窗口据此区分「移除」与「选择」）
         # Source of the last list change: "add" / "remove" / "set"
         self._last_change = "set"
+        # 是否已挂上「滚到底」的一次性连接 / whether the one-shot scroll-to-bottom is armed
+        self._scroll_pending = False
         self.setAcceptDrops(True)
 
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.setSpacing(6)
-        self._rows_box = QVBoxLayout()
-        self._rows_box.setSpacing(4)
-        self._layout.addLayout(self._rows_box)
+        # 各行放进滚动区域：超过 MAX_VISIBLE_ROWS 行时出现竖向滚动条，高度不再增长。
+        # Rows live in a scroll area: past MAX_VISIBLE_ROWS a vertical scrollbar
+        # appears and the height stops growing.
+        self._rows_host = QWidget()
+        self._rows_host.setObjectName("folderRowsHost")
+        self._rows_host.setStyleSheet("QWidget#folderRowsHost { background: transparent; }")
+        self._rows_box = QVBoxLayout(self._rows_host)
+        self._rows_box.setContentsMargins(0, 0, 0, 0)
+        self._rows_box.setSpacing(_ROW_SPACING)
+        self._scroll = QScrollArea()
+        self._scroll.setObjectName("folderRowsScroll")
+        self._scroll.setWidget(self._rows_host)
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.NoFrame)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._scroll.setStyleSheet(
+            "QScrollArea#folderRowsScroll { background: transparent; border: none; }")
+        self._scroll.viewport().setAutoFillBackground(False)
+        self._layout.addWidget(self._scroll)
 
         footer = QHBoxLayout()
         self._add_btn = QPushButton(self.i18n.t("labels.add_folder"))
@@ -330,11 +359,51 @@ class FolderListWidget(QWidget):
             h.addWidget(lbl, 1)
             h.addWidget(btn, 0)
             row.setStyleSheet(f"background-color: {COLORS['bg_card']}; border-radius: 6px;")
+            row.setFixedHeight(_ROW_HEIGHT)
             self._rows_box.addWidget(row)
             self._remove_btns.append(btn)
+        self._rows_box.addStretch(1)
+        self._fit_scroll_height()
+        if (self._last_change == "add" and self.is_scrollable()
+                and not self._scroll_pending):
+            # 新加的在最后一行，等滚动范围更新后滚到底让它可见
+            # The new folder is last; scroll it into view once the range updates
+            self._scroll_pending = True
+            self._scroll.verticalScrollBar().rangeChanged.connect(
+                self._scroll_to_bottom_once)
         total = sum(self._counts.get(p) or 0 for p in self._folders)
         self._total_label.setText(
             self.i18n.t("labels.folder_total", count=len(self._folders), photos=total))
+
+    def _fit_scroll_height(self) -> None:
+        """
+        滚动区域高度 = min(行数, MAX_VISIBLE_ROWS) 行；没有目录时为 0。
+        Scroll-area height = min(rows, MAX_VISIBLE_ROWS) rows; 0 when empty.
+        """
+        shown = min(len(self._folders), MAX_VISIBLE_ROWS)
+        height = shown * _ROW_HEIGHT + max(0, shown - 1) * _ROW_SPACING
+        self._scroll.setFixedHeight(height)
+        self._scroll.setVisible(shown > 0)
+
+    def _scroll_to_bottom_once(self, _min: int, maximum: int) -> None:
+        """
+        行布局更新、滚动范围变化后滚到底一次，然后断开（只为刚加入的那一行）。
+        Scroll to the bottom once the range updates, then disconnect.
+        """
+        bar = self._scroll.verticalScrollBar()
+        try:
+            bar.rangeChanged.disconnect(self._scroll_to_bottom_once)
+        except (RuntimeError, TypeError):
+            pass
+        self._scroll_pending = False
+        bar.setValue(maximum)
+
+    def is_scrollable(self) -> bool:
+        """
+        行数超过可见上限、需要滚动时为 True（供测试与界面检查）。
+        True when there are more rows than fit and the list scrolls.
+        """
+        return len(self._folders) > MAX_VISIBLE_ROWS
 
     # ---- 拖放 / Drag & drop ----
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
