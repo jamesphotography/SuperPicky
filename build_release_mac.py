@@ -47,6 +47,9 @@ LICENSE_FILE = ROOT_DIR / "LICENSE"
 # 回退到旧的「.app 拖拽进 Applications」DMG。
 BUNDLE_ID = "com.jamesphotography.superpicky"
 PACKAGING_MAC_DIR = ROOT_DIR / "packaging" / "mac"
+# notarytool submit 的子进程硬超时（秒）：比 --wait 的 30 分钟多留 10 分钟上传时间
+# Hard subprocess timeout for notarytool submit: --wait's 30 minutes plus 10 for the upload
+NOTARY_SUBMIT_HARD_TIMEOUT = 40 * 60
 
 logger = logging.getLogger(__name__)
 
@@ -256,6 +259,65 @@ def run_command(
         raise RuntimeError(f"{label or '命令执行'}失败，返回码: {result.returncode}")
 
     return result
+
+
+def run_command_with_retry(
+    command: Sequence[str],
+    *,
+    label: str,
+    attempts: int = 3,
+    delay: float = 20.0,
+    timeout: float | None = None,
+    before_retry=None,
+) -> subprocess.CompletedProcess[str]:
+    """
+    带重试地运行外部命令，用于 CI 上会偶发失败的步骤。
+
+    GitHub macOS runner 上有两类与代码无关的偶发失败，曾让 RC3/RC4 的 Mac 包各重跑
+    两次才成功：
+    - `hdiutil create` 报 "Resource busy"（磁盘镜像被系统进程短暂占用）；
+    - `stapler staple` 连 Apple CloudKit 时 "The network connection was lost"（错误 68）。
+    失败（非零返回码）或超时（TimeoutExpired）都会等待 delay 秒后重试，用完 attempts
+    次仍失败才抛出最后一次的异常。
+
+    参数:
+    command (Sequence[str]): 要执行的命令
+    label (str): 日志与异常里使用的步骤名
+    attempts (int): 最多尝试次数（≥1）
+    delay (float): 两次尝试之间等待的秒数
+    timeout (float | None): 单次执行的硬超时（秒），None 表示不限
+    before_retry (Callable[[], None] | None): 每次重试前调用的清理函数（如删除半成品 DMG）
+
+    返回:
+    subprocess.CompletedProcess[str]: 成功那一次的执行结果
+
+    异常:
+    RuntimeError / subprocess.TimeoutExpired: 全部尝试都失败时，抛出最后一次的异常
+
+    Run an external command with retries, for CI steps that fail intermittently
+    for reasons unrelated to our code (hdiutil "Resource busy", stapler losing
+    its connection to Apple). A non-zero exit or a TimeoutExpired triggers a
+    retry after `delay` seconds; the last exception is re-raised once
+    `attempts` are exhausted. `before_retry` runs before each retry, e.g. to
+    delete a half-written DMG.
+    """
+
+    attempts = max(1, int(attempts))
+    for attempt in range(1, attempts + 1):
+        try:
+            return run_command(
+                command,
+                label=f"{label}（第 {attempt}/{attempts} 次）",
+                timeout=timeout,
+            )
+        except (RuntimeError, subprocess.TimeoutExpired) as exc:
+            if attempt >= attempts:
+                raise
+            log_verbose("[警告] %s 第 %d/%d 次失败，%s 秒后重试: %s", label, attempt, attempts, delay, exc)
+            if before_retry is not None:
+                before_retry()
+            time.sleep(delay)
+    raise AssertionError("unreachable")  # 循环内必定 return 或 raise / loop always returns or raises
 
 
 def remove_path(path: Path) -> None:
@@ -682,7 +744,9 @@ def create_dmg(config: BuildConfig, paths: BuildPaths) -> None:
 
     paths.dmg_path.parent.mkdir(parents=True, exist_ok=True)
     remove_path(paths.dmg_path)
-    run_command(
+    # hdiutil 在 CI 上偶发 "Resource busy"，重试前删掉半成品 DMG
+    # hdiutil intermittently reports "Resource busy" on CI; drop the partial DMG before retrying
+    run_command_with_retry(
         [
             "hdiutil",
             "create",
@@ -696,6 +760,8 @@ def create_dmg(config: BuildConfig, paths: BuildPaths) -> None:
             str(paths.dmg_path),
         ],
         label="生成 DMG",
+        timeout=1800,
+        before_retry=lambda: remove_path(paths.dmg_path),
     )
 
     remove_path(staging_dir)
@@ -905,7 +971,9 @@ def create_pkg_dmg(config: BuildConfig, paths: BuildPaths, pkg_path: Path) -> No
 
     paths.dmg_path.parent.mkdir(parents=True, exist_ok=True)
     remove_path(paths.dmg_path)
-    run_command(
+    # RC3/RC4 都在这里遇到 "hdiutil: create failed - Resource busy"，重试前删掉半成品 DMG
+    # RC3 and RC4 both hit "Resource busy" here; drop the partial DMG before retrying
+    run_command_with_retry(
         [
             "hdiutil",
             "create",
@@ -919,6 +987,8 @@ def create_pkg_dmg(config: BuildConfig, paths: BuildPaths, pkg_path: Path) -> No
             str(paths.dmg_path),
         ],
         label="生成 PKG-in-DMG",
+        timeout=1800,
+        before_retry=lambda: remove_path(paths.dmg_path),
     )
     remove_path(staging_dir)
     log_verbose("[成功] 已生成 PKG-in-DMG: %s", paths.dmg_path)
@@ -1260,9 +1330,14 @@ def notarize_dmg(dmg_path: Path, config: BuildConfig) -> None:
     result = None
     for attempt in range(1, max_attempts + 1):
         try:
+            # --timeout 30m 只管 --wait 的等待，管不住上传阶段挂起（RC3 曾卡近 6 小时被 job 超时
+            # 取消）；这里再加 40 分钟的子进程硬超时，超时后进入下面的重试。
+            # --timeout 30m only bounds --wait, not a stalled upload (RC3 hung ~6h until the job
+            # was cancelled); a 40-minute hard subprocess timeout feeds the retry below.
             result = run_command(
                 submit_command, capture_output=True,
                 label=f"Apple 公证（第 {attempt}/{max_attempts} 次）",
+                timeout=NOTARY_SUBMIT_HARD_TIMEOUT,
             )
             break
         except Exception as exc:  # noqa: BLE001 — 提交层失败统一重试
@@ -1304,8 +1379,16 @@ def notarize_dmg(dmg_path: Path, config: BuildConfig) -> None:
                 logger.error(log_result.stderr.strip())
         raise RuntimeError("Apple 公证失败")
 
-    run_command(["xcrun", "stapler", "staple", str(dmg_path)], label="装订公证票据")
-    run_command(["xcrun", "stapler", "validate", str(dmg_path)], label="验证公证票据")
+    # stapler 需要连 Apple CloudKit 取票据，RC4 曾因 "network connection was lost"（错误 68）失败
+    # stapler fetches the ticket from Apple CloudKit; RC4 failed once with error 68 (connection lost)
+    run_command_with_retry(
+        ["xcrun", "stapler", "staple", str(dmg_path)],
+        label="装订公证票据", delay=30, timeout=300,
+    )
+    run_command_with_retry(
+        ["xcrun", "stapler", "validate", str(dmg_path)],
+        label="验证公证票据", delay=30, timeout=300,
+    )
     log_verbose("[成功] DMG 公证与装订完成")
 
 
