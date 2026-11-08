@@ -420,6 +420,8 @@
     "video_skipped_disabled": "⏭ Found {count} videos, but video processing is off (turn it on in Settings → Video)",
     "resume_check_failed": "⚠️ Resume check failed: {error}",
     "recent_group_missing": "⚠️ Folder not found, skipped: {directory}",
+    "folder_list_rejected": "⚠️ Not added to the folder list: {reason}",
+    "reset_group_start_failed": "❌ Failed to reset folder {path}: {error}",
     "open_folder_failed": "  ⚠️ Could not open the folder: {error}",
     "server_stop_failed": "⚠️ Failed to stop the Bird ID API server: {error}",
     "server_stop_error": "❌ Error while stopping the Bird ID API server: {error}",

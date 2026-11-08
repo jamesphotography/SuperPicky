@@ -743,3 +743,91 @@ def test_reset_partial_failure_logs_warning(tmp_path, env, monkeypatch):
     finally:
         w._queue = None
         w.close()
+
+
+def test_queue_of_batch_parents_ends_has_results(tmp_path, env, monkeypatch):
+    """
+    队列处理两个父目录（批次模式，结果在子目录里）：结束后按钮为 has_results，可查看结果。
+    After a queue of batch-mode parents, the buttons show has_results.
+    """
+    a = _photo_dir(tmp_path / "pa", "day1")
+    b = _photo_dir(tmp_path / "pb", "day1")
+    pa = os.path.normpath(str(tmp_path / "pa"))
+    pb = os.path.normpath(str(tmp_path / "pb"))
+    w = _window()
+    try:
+        r = _Recorder()
+        r.install(w, monkeypatch)
+        _multi(w, [pa, pb])
+        w._start_queue()
+        _mark_processed(a)
+        w._on_finished(_stats())
+        _flush()
+        _mark_processed(b)
+        w._on_finished(_stats())
+        _flush()
+        assert w._queue is None
+        assert w.view_results_btn.isVisibleTo(w)
+        # 列表改动后同样认得 / also after a list change
+        w._folder_list.set_folders([pa, pb])
+        assert w.view_results_btn.isVisibleTo(w)
+    finally:
+        w.close()
+
+
+def test_all_folders_failed_shows_error_status(tmp_path, env, monkeypatch):
+    """所有目录都出错：状态显示「错误」而不是绿色「完成」。"""
+    dirs = [_photo_dir(tmp_path, n) for n in ("a", "b")]
+    w = _window()
+    try:
+        r = _Recorder()
+        r.install(w, monkeypatch)
+        _multi(w, dirs)
+        w._start_queue()
+        w._on_error("e1")
+        _flush()
+        w._on_error("e2")
+        _flush()
+        assert w._queue is None
+        assert w.status_label.text() == w.i18n.t("labels.error")
+        assert w.progress_info_label.text() != w.i18n.t("labels.complete")
+        assert env["sound"] == []
+    finally:
+        w.close()
+
+
+def test_some_done_still_complete(tmp_path, env, monkeypatch):
+    """有目录完成：仍显示「完成」。"""
+    dirs = [_photo_dir(tmp_path, n) for n in ("a", "b")]
+    w = _window()
+    try:
+        r = _Recorder()
+        r.install(w, monkeypatch)
+        _multi(w, dirs)
+        w._start_queue()
+        w._on_finished(_stats())
+        _flush()
+        w._on_error("e2")
+        _flush()
+        assert w.status_label.text() == w.i18n.t("labels.complete")
+    finally:
+        w.close()
+
+
+def test_start_queue_reuses_cached_counts(tmp_path, env, monkeypatch):
+    """开始队列时总进度分母用列表已缓存的张数，不再逐个目录重新数。"""
+    import ui.folder_list_widget as flw
+    a = _photo_dir(tmp_path, "a", photos=1)
+    b = _photo_dir(tmp_path, "b", photos=3)
+    w = _window()
+    try:
+        r = _Recorder()
+        r.install(w, monkeypatch)
+        _multi(w, [a, b])
+        counted: List[str] = []
+        monkeypatch.setattr(flw, "count_photos", lambda p: counted.append(p) or 0)
+        w._start_queue()
+        assert counted == []
+        assert w._queue_total == 4
+    finally:
+        w.close()

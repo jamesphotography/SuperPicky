@@ -413,3 +413,32 @@ def test_quit_during_group_reset_asks(tmp_path, env, monkeypatch):
     finally:
         w._reset_queue = None
         w.close()
+
+
+def test_reset_start_failure_logged_via_i18n(tmp_path, env, monkeypatch):
+    """
+    整组重置时某个目录的重置启动就抛异常：日志用 i18n 文案（不再是写死的英文 "Reset"），
+    继续下一个目录。
+    A reset that fails to start logs the localized message and moves on.
+    """
+    dirs = [_photo_dir(tmp_path, n) for n in ("a", "b")]
+    w = _window()
+    try:
+        calls: List[str] = []
+
+        def _reset(skip_exif_reset: bool = False, skip_confirm: bool = False) -> None:
+            calls.append(w.directory_path)
+            if w.directory_path == dirs[0]:
+                raise OSError("坏了")
+
+        monkeypatch.setattr(w, "_do_reset_directory", _reset)
+        _multi(w, dirs)
+        w._reset_directory()
+        assert calls == dirs
+        text = w.log_text.toPlainText()
+        expected = w.i18n.t("logs.reset_group_start_failed", path=dirs[0], error="坏了")
+        import re
+        assert re.sub(r"^[^\w/]+", "", expected) in text
+        assert "Reset " + dirs[0] not in text
+    finally:
+        w.close()

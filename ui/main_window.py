@@ -876,6 +876,13 @@ class SuperPickyMainWindow(QMainWindow):
         # Whether the folder list is currently shown; a switch-off during processing is deferred
         self._lab_multi_active = False
         self._lab_multi_pending_off = False
+        # 处理中打开开关同样挂起：立即切到列表会把正在处理的目录的按钮恢复成可「重置」
+        # A switch-on during processing is deferred too: showing the list at once
+        # would re-enable Reset for the folder being processed
+        self._lab_multi_pending_on = False
+        # 单目录处理（开关开启、列表 1 个目录）启动时锁住了列表编辑，结束槽据此解锁
+        # Set when a single-folder run locked the folder list; terminal slots unlock
+        self._single_run_locked = False
         self.current_progress = 0
         self.total_files = 0
         self._main_window_placement_saved = False
@@ -1270,7 +1277,10 @@ class SuperPickyMainWindow(QMainWindow):
         if not hasattr(self, '_recent_menu'):
             return
         self._recent_menu.clear()
-        multi_on = bool(self.config.lab_multi_folder)
+        # 以界面上实际显示的是否为目录列表为准（开关在处理中改动会挂起到处理结束）
+        # Follow whether the folder list is actually shown (switch changes made
+        # during processing are deferred until it ends)
+        multi_on = bool(self._lab_multi_active)
         # 多目录开启时，目录组列在单目录条目之前；关闭时不显示目录组
         # With multi-folder on, directory groups come before single entries; hidden when off
         if multi_on:
@@ -1296,7 +1306,8 @@ class SuperPickyMainWindow(QMainWindow):
                 action = QAction(label, self)
                 if available and multi_on:
                     # 多目录开启时点单个目录：替换整个列表 / replaces the whole list
-                    action.triggered.connect(lambda checked=False, path=d: self._folder_list.set_folders([path]))
+                    action.triggered.connect(
+                        lambda checked=False, path=d: self._set_folder_list_logged([path]))
                 elif available:
                     action.triggered.connect(lambda checked=False, path=d: self._handle_directory_selection(path))
                 else:
@@ -1353,9 +1364,33 @@ class SuperPickyMainWindow(QMainWindow):
         Parameters:
         group (List[str]): the directory group
         """
-        missing = self._folder_list.set_folders(group)
+        self._set_folder_list_logged(group)
+
+    def _set_folder_list_logged(self, paths: List[str]) -> None:
+        """
+        用 set_folders 替换目录列表，并把没放进去的目录逐个写 warning 日志：
+        不存在的（如外接盘未连接）用 logs.recent_group_missing；重叠/危险/无照片的用
+        logs.folder_list_rejected（原因取添加时同一份提示文字）。不弹窗、不中断。
+        用于恢复最近目录组、点单个最近目录（多目录开启时）和打开开关时放入当前目录。
+
+        参数:
+        paths (List[str]): 要放入列表的目录
+
+        Replace the folder list via set_folders and log one warning per folder
+        that did not make it in: missing ones (e.g. an unplugged drive) and
+        rejected ones (overlap / dangerous / no photos, with the same reason
+        text as when adding). No dialogs, no interruption. Used for recent
+        groups, single recent entries (multi-folder on) and the switch-on seed.
+
+        Parameters:
+        paths (List[str]): folders to put in the list
+        """
+        missing = self._folder_list.set_folders(paths)
         for d in missing:
             self._log(self.i18n.t("logs.recent_group_missing", directory=d), "warning")
+        for d, code in self._folder_list.rejected():
+            reason = self.i18n.t(f"labels.folder_reject_{code}", directory=d).replace("\n", " ")
+            self._log(self.i18n.t("logs.folder_list_rejected", reason=reason), "warning")
 
     def _clear_recent_directories(self):
         """清空最近目录历史。"""
@@ -2150,33 +2185,90 @@ class SuperPickyMainWindow(QMainWindow):
 
         - 开启：显示列表；若已选目录且列表为空，把它放进列表作为第一项。
         - 关闭：显示输入框；列表有多个目录时只保留第一个，并对它走一遍
-          _handle_directory_selection（界面回到单目录）。处理中（工作线程存活或
-          队列在跑）不切换，只记下挂起，由 _apply_pending_lab_switch 在处理结束后应用。
+          _handle_directory_selection（界面回到单目录）。
+        - 处理中（工作线程存活、队列或整组重置在跑）两个方向都不切换，只记下挂起，由
+          _apply_pending_lab_switch 在处理结束后应用。开启也必须挂起：放入列表会经
+          _on_folders_changed 刷新按钮，把正在处理的目录的「重置」重新启用、「停止」
+          变回「开始」，用户就能在文件还在移动时重置它。
 
         Toggle the directory bar per lab_multi_folder: list when on, single input
         when off. Switching on seeds the list with the selected folder; switching
-        off keeps only the first folder and re-selects it. While processing, the
-        switch-off is deferred until _apply_pending_lab_switch runs.
+        off keeps only the first folder and re-selects it. While processing,
+        both directions are deferred until _apply_pending_lab_switch runs: an
+        immediate switch-on would refresh the buttons through
+        _on_folders_changed, re-enabling Reset (and turning Stop back into
+        Start) for the folder whose files are still being moved.
         """
         if self.config.lab_multi_folder:
             self._lab_multi_pending_off = False
-            self._lab_multi_active = True
-            self.dir_input.setVisible(False)
-            self._browse_btn.setVisible(False)
-            self._folder_list.setVisible(True)
-            if self.directory_path and not self._folder_list.folders():
-                self._folder_list.set_folders([self.directory_path])
-            self._refresh_recent_menu()
+            if not self._lab_multi_active and self._is_lab_processing():
+                self._lab_multi_pending_on = True
+                self._schedule_pending_lab_poll()
+                return
+            self._switch_to_multi_folder()
             return
 
+        self._lab_multi_pending_on = False
         if not self._lab_multi_active:
             # 本来就是单目录界面，无需切换 / already single-folder
             self._lab_multi_pending_off = False
             return
         if self._is_lab_processing():
             self._lab_multi_pending_off = True
+            self._schedule_pending_lab_poll()
             return
         self._switch_to_single_folder()
+
+    def _schedule_pending_lab_poll(self) -> None:
+        """
+        只有单个工作线程在跑（无队列、无整组重置）时，每秒复查一次挂起的开关切换。
+        工作线程发出 finished 后还要停防休眠才退出：若用户恰在结束槽执行之后、线程退出
+        之前切换开关，就再没有结束槽来应用它，靠这个复查兜底。队列与整组重置结束时
+        自己会调用 _apply_pending_lab_switch，不需要复查。
+
+        While only a single worker runs (no queue / group reset), re-check a
+        deferred switch change every second. The worker exits slightly after
+        emitting `finished`; a switch flipped in that gap would otherwise wait
+        for the next run. Queue and group-reset ends apply it themselves.
+        """
+        if self._queue is None and self._reset_queue is None:
+            QTimer.singleShot(1000, self._poll_pending_lab_switch)
+
+    def _poll_pending_lab_switch(self) -> None:
+        """
+        复查挂起的开关切换：仍在处理则继续等；处理已结束就应用（见 _schedule_pending_lab_poll）。
+
+        Re-check a deferred switch change: keep waiting while processing,
+        apply it once processing has ended.
+        """
+        if not (self._lab_multi_pending_on or self._lab_multi_pending_off):
+            return
+        if self._is_lab_processing():
+            self._schedule_pending_lab_poll()
+            return
+        self._apply_pending_lab_switch()
+        if not self._lab_multi_active and self.directory_path:
+            # 收回单目录后按单目录刷新状态条（不自动打开浏览器）
+            # Refresh as single-folder after collapsing (no browser auto-open)
+            self._check_report_csv(auto_open=False)
+
+    def _switch_to_multi_folder(self) -> None:
+        """
+        显示目录列表、隐藏单目录输入框；已选目录且列表为空时把它放进列表作为第一项
+        （放不进去时写 warning 日志，见 _set_folder_list_logged）。可重复调用。
+
+        Show the folder list instead of the single-folder bar; seed it with the
+        selected folder when empty (logging a warning if it cannot be added).
+        Idempotent.
+        """
+        self._lab_multi_pending_on = False
+        self._lab_multi_active = True
+        self.dir_input.setVisible(False)
+        self._browse_btn.setVisible(False)
+        self._folder_list.setVisible(True)
+        if self.directory_path and not self._folder_list.folders():
+            self._set_folder_list_logged([self.directory_path])
+        self._refresh_recent_menu()
 
     def _switch_to_single_folder(self, refresh_state: bool = True) -> None:
         """
@@ -2228,14 +2320,22 @@ class SuperPickyMainWindow(QMainWindow):
         注意：这些槽经排队连接执行时工作线程可能还没真正退出（is_alive 仍为 True），
         所以这里不再检查工作线程，只要求队列与整组重置都已结束（_queue、_reset_queue 为 None）。
 
-        Apply a deferred multi-folder switch-off once processing ends. Called from
-        _on_finished / _on_cancelled / _on_error (and when the folder queue or a
-        group reset ends). The worker thread may still be alive while these queued
-        slots run, so only the queue and the group reset (_queue / _reset_queue
-        is None) are checked here.
+        Apply a deferred multi-folder switch-off (or switch-on) once processing
+        ends. Called from _on_finished / _on_cancelled / _on_error (and when the
+        folder queue or a group reset ends). The worker thread may still be
+        alive while these queued slots run, so only the queue and the group
+        reset (_queue / _reset_queue is None) are checked here.
         """
-        if (not self._lab_multi_pending_off or self._queue is not None
-                or self._reset_queue is not None):
+        if self._queue is not None or self._reset_queue is not None:
+            return
+        if self._lab_multi_pending_on:
+            # 处理中打开的开关：现在才切到列表（期间又关掉则放弃）
+            # A switch-on made during processing: show the list now (dropped if switched off since)
+            self._lab_multi_pending_on = False
+            if self.config.lab_multi_folder and not self._lab_multi_active:
+                self._switch_to_multi_folder()
+            return
+        if not self._lab_multi_pending_off:
             return
         if self.config.lab_multi_folder:
             # 处理期间又把开关打开了：放弃挂起 / switched back on meanwhile
@@ -2247,15 +2347,20 @@ class SuperPickyMainWindow(QMainWindow):
 
     def _on_folders_changed(self, folders: List[str]) -> None:
         """
-        目录列表变化：1 个目录时完全等同单目录选择；≥2 个时 directory_path 取第一个，
-        状态条显示「已选 N 个目录」，任一目录有 report.db 时按钮为 has_results，否则 ready。
+        目录列表变化：1 个目录时完全等同单目录选择（但「移除」到只剩 1 个不算选择，
+        只刷新状态，不重放日志、不自动打开浏览器）；≥2 个时 directory_path 取第一个，
+        状态条显示「已选 N 个目录」，任一目录有结果（自己的 report.db 或批次模式子目录里的，
+        见 folder_has_results）时按钮为 has_results，否则 ready。
 
         参数:
         folders (List[str]): 列表当前的目录
 
-        Folder list changed: one folder behaves exactly like a single selection;
-        two or more set directory_path to the first, show "N folders selected" and
-        set the buttons to has_results if any folder has a report.db, else ready.
+        Folder list changed: one folder behaves exactly like a single selection
+        (except that removing down to one is not a selection: state is only
+        refreshed, no console replay or browser auto-open); two or more set
+        directory_path to the first, show "N folders selected" and set the
+        buttons to has_results if any folder has results (own report.db or
+        batch-mode sub-folders, see folder_has_results), else ready.
 
         Parameters:
         folders (List[str]): current folders in the list
@@ -2275,13 +2380,22 @@ class SuperPickyMainWindow(QMainWindow):
                 # 不重放日志、不自动弹浏览器（用户只是移除了别的目录）
                 # Shrunk to the current folder: restore single-folder banner/buttons only
                 self._check_report_csv(auto_open=False)
+            elif self._folder_list.last_change() == "remove":
+                # 移除不等于选择：只把 directory_path / 输入框指向剩下的目录并刷新状态，
+                # 不重放日志、不写最近目录、不自动打开浏览器；断点续传在点「开始」时再问
+                # Removing is not choosing: point directory_path at the remaining
+                # folder and refresh state only (resume is asked on Start)
+                self.directory_path = first
+                self.dir_input.setText(first)
+                self._resume_prompt_handled = False
+                self._check_report_csv(auto_open=False)
             else:
                 self._handle_directory_selection(first)
             return
+        from core.folder_queue import folder_has_results
         self.directory_path = os.path.normpath(folders[0])
         self.dir_input.setText(self.directory_path)
-        has_results = any(
-            os.path.exists(os.path.join(d, ".superpicky", "report.db")) for d in folders)
+        has_results = any(folder_has_results(d) for d in folders)
         self._update_status_banner("multi_selected", len(folders))
         self._update_action_buttons("has_results" if has_results else "ready")
 
@@ -2890,6 +3004,7 @@ class SuperPickyMainWindow(QMainWindow):
             self._queue.stop()
             self._queue_finish()
             return
+        self._unlock_single_run()
         self._update_status(self.i18n.t("labels.stopped"), COLORS['warning'])
         self._check_report_csv()
         self._apply_pending_lab_switch()
@@ -3272,6 +3387,16 @@ class SuperPickyMainWindow(QMainWindow):
         self._update_action_buttons("processing")
         self._update_status_banner("processing")
 
+        # 实验室多目录列表显示时（开关开启、列表 1 个目录的单目录处理），处理中锁住列表、
+        # 最近目录菜单，防止中途改掉正在处理的目录；队列自己会锁。开关关闭时什么都不做，
+        # 单目录界面与 dev 完全一致（dev 处理中从不禁用输入框/浏览按钮）。
+        # With the Labs folder list shown (single run of a one-folder list), lock
+        # the list and recent menu during the run; the queue locks on its own.
+        # With the switch off this is a no-op, keeping the single-folder UI as on dev.
+        if self._queue is None and self._lab_multi_active:
+            self._set_queue_editing(False)
+            self._single_run_locked = True
+
         # 启动工作线程
         self.worker = WorkerThread(
             directory,
@@ -3306,6 +3431,21 @@ class SuperPickyMainWindow(QMainWindow):
             self._recent_menu.menuAction().setEnabled(on)
         self._browse_btn.setEnabled(on)
         self.dir_input.setEnabled(on)
+
+    def _unlock_single_run(self) -> None:
+        """
+        单目录处理结束（_on_finished / _on_cancelled / _on_error 的单目录分支）时，
+        解开 _launch_worker 锁住的目录选择入口；队列或整组重置在跑时不动（它们自己解锁）。
+        必须在 _apply_pending_lab_switch 之前调用，收回单目录时输入框才是可用的。
+
+        Unlock the folder selection locked by _launch_worker when a single run
+        ends; leaves it alone while a queue or group reset runs. Call before
+        _apply_pending_lab_switch so the restored single-folder bar is enabled.
+        """
+        if not self._single_run_locked or self._queue is not None or self._reset_queue is not None:
+            return
+        self._single_run_locked = False
+        self._set_queue_editing(True)
 
     def _start_queue(self) -> None:
         """
@@ -3430,11 +3570,17 @@ class SuperPickyMainWindow(QMainWindow):
         self._queue_pending_launch = None
         self._queue_current = None
         self._resume_prompt_handled = False
-        # 总进度的分母：各待处理目录的照片数（「重新处理」的目录在重置后按实际扫描修正）
-        # Overall progress denominator: photos of each runnable folder (a reprocess
-        # folder is corrected from its post-reset scan)
-        self._queue_counts = {p: count_photos(p) for p, action in self._queue.plan
-                              if action != "skip"}
+        # 总进度的分母：各待处理目录的照片数，优先用列表加入时缓存的张数，读不出才重新数
+        # （每个目录启动前的预扫描还会按实际张数修正，「重新处理」的目录在重置后修正）
+        # Overall progress denominator: photos of each runnable folder, reusing
+        # the list's cached counts and counting only when absent (each launch
+        # corrects it from the real pre-scan; reprocess folders after the reset)
+        self._queue_counts = {}
+        for p, action in self._queue.plan:
+            if action == "skip":
+                continue
+            cached = self._folder_list.cached_count(p)
+            self._queue_counts[p] = cached if cached is not None else count_photos(p)
         self._queue_total = sum(self._queue_counts.values())
         self._queue_done_photos = 0
 
@@ -3633,7 +3779,7 @@ class SuperPickyMainWindow(QMainWindow):
         Restore the UI after the folder queue or a group reset: re-enable folder
         selection; directory_path back to the first listed folder; banner
         "N folders selected"; buttons has_results / ready depending on whether
-        any folder still has a report.db. With fewer than 2 folders fall back to
+        any folder still has results (folder_has_results). With fewer than 2 folders fall back to
         the single-folder _check_report_csv(auto_open=False) (the list is locked
         while running, so this branch is not normally reached).
         """
@@ -3642,8 +3788,10 @@ class SuperPickyMainWindow(QMainWindow):
         if folders:
             self.directory_path = os.path.normpath(folders[0])
             self.dir_input.setText(self.directory_path)
-        has_results = any(
-            os.path.exists(os.path.join(d, ".superpicky", "report.db")) for d in folders)
+        # 有结果 = 自己的 report.db 或批次模式子目录里的（父目录的结果在子目录）
+        # Has results = own report.db or batch-mode sub-folders
+        from core.folder_queue import folder_has_results
+        has_results = any(folder_has_results(d) for d in folders)
         if len(folders) >= 2:
             self._update_status_banner("multi_selected", len(folders))
             self._update_action_buttons("has_results" if has_results else "ready")
@@ -3700,10 +3848,20 @@ class SuperPickyMainWindow(QMainWindow):
                       + "\n".join(f"  {o.path}: {o.error}" for o in errors), "error")
 
         # 恢复界面 / Restore the UI
+        # 没有一个目录完成且有出错：显示「错误」，不能是绿色「完成」；有完成但也有出错：
+        # 「完成」用警告色。全部按选择跳过（无出错）仍是「完成」。
+        # No folder done and some errored -> "Error", never a green "Complete";
+        # done plus errors -> "Complete" in the warning colour.
+        any_done = any(o.status == "done" for o in outcomes)
+        any_error = any(o.status == "error" for o in outcomes)
         if stopped:
             self._update_status(self.i18n.t("labels.stopped"), COLORS['warning'])
+        elif any_error and not any_done:
+            self._update_status(self.i18n.t("labels.error"), COLORS['error'])
+            self.progress_info_label.setText(self.i18n.t("labels.error"))
         else:
-            self._update_status(self.i18n.t("labels.complete"), COLORS['success'])
+            self._update_status(self.i18n.t("labels.complete"),
+                                COLORS['warning'] if any_error else COLORS['success'])
             self.progress_bar.setValue(100)
             self.progress_percent_label.setText("100%")
             self.progress_info_label.setText(self.i18n.t("labels.complete"))
@@ -3771,6 +3929,7 @@ class SuperPickyMainWindow(QMainWindow):
             # 不在工作线程信号的槽里重入推进 / never advance re-entrantly from the slot
             QTimer.singleShot(0, self._queue_advance)
             return
+        self._unlock_single_run()
         self.progress_bar.setValue(100)
         self.progress_percent_label.setText("100%")
         self.progress_info_label.setText(self.i18n.t("labels.complete"))
@@ -3832,6 +3991,7 @@ class SuperPickyMainWindow(QMainWindow):
             self._queue_folder_ended("error", error=str(error_msg))
             QTimer.singleShot(0, self._queue_advance)
             return
+        self._unlock_single_run()
         self._log(f"Error: {error_msg}", "error")
         self._update_status(self.i18n.t("errors.error_title"), COLORS['error'])
         self._check_report_csv()  # 恢复按钮状态 + 状态条
@@ -3933,7 +4093,7 @@ class SuperPickyMainWindow(QMainWindow):
             except Exception as e:
                 # 启动重置本身失败（极少见）：记失败并继续下一个
                 # Starting the reset itself failed (rare): record and continue
-                self._log(f"❌ Reset {path}: {e}", "error")
+                self._log(self.i18n.t("logs.reset_group_start_failed", path=path, error=e), "error")
                 self._reset_group_failed.append((path, str(e)))
                 self._reset_group_current = None
                 continue

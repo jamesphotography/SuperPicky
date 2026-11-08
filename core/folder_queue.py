@@ -61,15 +61,17 @@ def folders_overlap(a: str, b: str, pathmod=os.path) -> bool:
 def validate_new_folder(existing: List[str], new: str) -> Optional[str]:
     """
     校验准备加入列表的目录。顺序：不存在 -> 重复 -> 重叠 -> 危险 -> 无照片。
-    扫描不到照片、但已处理过（有 report.db）或有续跑进度的目录仍可加入。
+    扫描不到照片、但已处理过（有 report.db）、有续跑进度，或是批次模式处理过的父目录
+    （report.db 只在子目录里，见 folder_has_results）仍可加入。
 
     参数: existing 已在列表中的目录；new 新目录。
     返回: None 表示可加入，否则为 REJECT_* 之一。
 
     Validate a folder before adding. Order: missing, duplicate, overlap,
     dangerous, no photos. A folder with no scannable photos is still accepted
-    when it is processed (report.db) or resumable. Returns None if acceptable,
-    else a REJECT_* code.
+    when it is processed (report.db), resumable, or a batch-mode parent whose
+    results live in sub-folders (folder_has_results). Returns None if
+    acceptable, else a REJECT_* code.
     """
     if not os.path.isdir(new):
         return REJECT_MISSING
@@ -86,9 +88,13 @@ def validate_new_folder(existing: List[str], new: str) -> Optional[str]:
         # 已处理（有 report.db）或有续跑进度的目录照片多在星级/鸟种目录里，扫描会
         # 排除这些目录而得 0 张；它们仍须能加入列表，否则「已处理默认跳过 / 全部
         # 重新处理」以及放回列表看结果都走不到。
+        # 批次模式处理过的父目录：report.db 只写在各子目录里，classify_folder 只看自己
+        # 的 report.db 会判成 fresh，所以还要看 folder_has_results。
         # Processed / resumable folders keep photos in excluded rating/species
-        # folders, so the scan finds none; they must still be addable.
-        if classify_folder(new) != STATE_FRESH:
+        # folders, so the scan finds none; they must still be addable. A
+        # batch-mode parent has report.db only in its sub-folders, which
+        # classify_folder does not see, hence folder_has_results as well.
+        if classify_folder(new) != STATE_FRESH or folder_has_results(new):
             return None
         return REJECT_NO_PHOTOS
     return None

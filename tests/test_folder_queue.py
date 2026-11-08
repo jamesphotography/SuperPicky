@@ -137,3 +137,30 @@ def test_processed_folders_includes_parent_with_processed_subfolders(tmp_path, m
     assert sorted(fq.result_dirs(str(parent))) == sorted(
         [str(parent / "day1"), str(parent / "day2")])
     assert fq.result_dirs(str(tmp_path / "missing")) == []
+
+
+def _batch_parent(root, name="parent"):
+    """
+    批次模式处理过的父目录：两个子批次各有 report.db，照片都在被扫描排除的星级目录里，
+    父目录自己没有 report.db。
+    A batch-mode processed parent: two sub-batches with report.db each, photos in
+    excluded rating folders, no report.db of its own.
+    """
+    parent = root / name
+    for day in ("day1", "day2"):
+        (parent / day / ".superpicky").mkdir(parents=True)
+        (parent / day / ".superpicky" / "report.db").write_bytes(b"")
+        (parent / day / "3星_优选").mkdir()
+        (parent / day / "3星_优选" / "a.jpg").write_bytes(b"x")
+    return parent
+
+
+def test_validate_accepts_batch_parent_with_processed_subfolders(tmp_path, monkeypatch):
+    """
+    父目录在批次模式下处理过（report.db 只在子目录里）：扫不到照片也可加入，不能判成 no_photos。
+    A batch-processed parent (report.db only in sub-folders) is accepted, not no_photos.
+    """
+    monkeypatch.setattr(fq, "is_dangerous_root", lambda p: (False, ""))
+    parent = _batch_parent(tmp_path)
+    assert fq.classify_folder(str(parent)) == fq.STATE_FRESH
+    assert fq.validate_new_folder([], str(parent)) is None

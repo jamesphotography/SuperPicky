@@ -6,7 +6,7 @@ Multi-folder list widget: shows folders to process (with photo counts),
 add/remove, drag & drop and a total summary.
 """
 import os
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QFontMetrics
@@ -38,26 +38,38 @@ def count_photos(path: str) -> int:
 
 def folder_row_count(path: str) -> Optional[int]:
     """
-    列表行显示的照片数：先按扫描计数；扫描为 0 但目录已处理过（或有续跑进度）时，
-    照片都在被扫描排除的星级/鸟种目录里，改用 report.db 的只读计数
+    列表行显示的照片数：先按扫描计数；扫描为 0 但目录有结果（自己的 report.db，或批次
+    模式父目录在各子目录里的 report.db，见 folder_queue.result_dirs）或有续跑进度时，
+    照片都在被扫描排除的星级/鸟种目录里，改用各 report.db 的只读计数之和
     （summarize_directories，不经 ReportDB、不触发 schema 升级）。
 
     参数: path (str) 目录。
-    返回: Optional[int] 照片数；已处理但 report.db 读不出时为 None（行内显示「已处理」）。
+    返回: Optional[int] 照片数；有结果但任一 report.db 读不出时为 None（行内显示「已处理」）。
 
     Photo count shown in a row: the scan count; when that is 0 but the folder
-    is processed/resumable, a read-only report.db count (no schema
-    migration). Returns None when processed but unreadable (row shows
-    "processed").
+    has results (own report.db, or a batch-mode parent's sub-batch report.dbs,
+    see folder_queue.result_dirs) or is resumable, the sum of read-only
+    report.db counts (no schema migration). Returns None when any of them is
+    unreadable (row shows "processed").
     """
     n = count_photos(path)
-    if n or folder_queue.classify_folder(path) == folder_queue.STATE_FRESH:
+    if n:
         return n
+    dirs = folder_queue.result_dirs(path)
+    if not dirs:
+        if folder_queue.classify_folder(path) == folder_queue.STATE_FRESH:
+            return n
+        # 只有续跑进度、还没有 report.db：沿用原来对自身的只读计数（通常读不出 → None）
+        # Resume state only: keep the previous read-only count of the folder itself
+        dirs = [path]
     try:
         from tools.merged_report_db import summarize_directories
-        return summarize_directories([path])[0]["photos"]
+        counts = [row["photos"] for row in summarize_directories(dirs)]
     except Exception:
         return None
+    if any(c is None for c in counts):
+        return None
+    return sum(counts)
 
 
 class ElidedLabel(QLabel):
@@ -115,6 +127,12 @@ class FolderListWidget(QWidget):
         self._counts: Dict[str, Optional[int]] = {}
         self._editable = True
         self._remove_btns: List[QPushButton] = []
+        # 最近一次 set_folders 因「不存在」以外的原因跳过的 (路径, REJECT_*)
+        # (path, REJECT_*) skipped by the last set_folders for reasons other than missing
+        self._rejected: List[Tuple[str, str]] = []
+        # 最近一次列表变化的来源："add" / "remove" / "set"（主窗口据此区分「移除」与「选择」）
+        # Source of the last list change: "add" / "remove" / "set"
+        self._last_change = "set"
         self.setAcceptDrops(True)
 
         self._layout = QVBoxLayout(self)
@@ -149,6 +167,45 @@ class FolderListWidget(QWidget):
         """返回各行 ✕ 按钮（行顺序）/ Per-row remove buttons in row order."""
         return list(self._remove_btns)
 
+    def cached_count(self, path: str) -> Optional[int]:
+        """
+        返回加入时算好的该目录照片数（与行内显示同一个数），不重新扫描。
+
+        参数:
+        path (str): 列表中的目录（归一化后的路径）
+
+        返回:
+        Optional[int]: 照片数；不在列表中或读不出张数时为 None
+
+        The photo count computed when the folder was added (the number shown in
+        its row), without rescanning. None when absent or unreadable.
+        """
+        return self._counts.get(path)
+
+    def rejected(self) -> List[Tuple[str, str]]:
+        """
+        最近一次 set_folders 因「不存在」以外的原因（重叠/危险/无照片）跳过的目录。
+        重复项不算（整组里同一目录出现两次，留下一个即可，没有丢东西）。
+
+        返回:
+        List[Tuple[str, str]]: (原始路径, REJECT_* 代码) 列表
+
+        Folders the last set_folders skipped for reasons other than "missing"
+        (overlap / dangerous / no photos). Duplicates are not listed.
+        """
+        return list(self._rejected)
+
+    def last_change(self) -> str:
+        """
+        最近一次列表变化的来源："add"（try_add）、"remove"（✕ 移除）、"set"（set_folders）。
+
+        返回:
+        str: "add" / "remove" / "set"
+
+        Source of the last list change: "add", "remove" or "set".
+        """
+        return self._last_change
+
     def set_enabled_editing(self, on: bool) -> None:
         """处理中禁用添加与移除 / Disable add/remove while processing."""
         self._editable = bool(on)
@@ -179,22 +236,27 @@ class FolderListWidget(QWidget):
         norm = normalize_folder(path)
         self._folders.append(norm)
         self._counts[norm] = folder_row_count(norm)
+        self._last_change = "add"
         self._rebuild()
         self.foldersChanged.emit(self.folders())
         return None
 
     def set_folders(self, paths: List[str]) -> List[str]:
         """
-        静默设置目录列表（用于恢复最近目录）：不弹窗；不存在的返回，
-        重复/重叠/危险/无照片的静默跳过。仅发出一次 foldersChanged。
+        不弹窗地设置目录列表（用于恢复最近目录）：不存在的目录作为返回值；重叠/危险/
+        无照片的跳过并记入 rejected()，由调用方写日志；重复项静默去掉。
+        仅发出一次 foldersChanged。
 
         参数: paths 目录列表。返回: 因不存在而被跳过的目录。
 
-        Silently replace the list (e.g. restoring recents): no dialogs; missing
-        folders are returned, other invalid ones skipped silently. Emits once.
+        Replace the list without dialogs (e.g. restoring recents): missing
+        folders are returned; overlapping / dangerous / photo-less ones are
+        skipped and listed by rejected() for the caller to log; duplicates are
+        dropped silently. Emits once.
         """
         self._folders = []
         self._counts = {}
+        self._rejected = []
         missing: List[str] = []
         for p in paths:
             code = folder_queue.validate_new_folder(self._folders, p)
@@ -204,6 +266,9 @@ class FolderListWidget(QWidget):
                 norm = normalize_folder(p)
                 self._folders.append(norm)
                 self._counts[norm] = folder_row_count(norm)
+            elif code != folder_queue.REJECT_DUPLICATE:
+                self._rejected.append((p, code))
+        self._last_change = "set"
         self._rebuild()
         self.foldersChanged.emit(self.folders())
         return missing
@@ -221,6 +286,7 @@ class FolderListWidget(QWidget):
         if path in self._folders:
             self._folders.remove(path)
             self._counts.pop(path, None)
+            self._last_change = "remove"
             self._rebuild()
             self.foldersChanged.emit(self.folders())
 

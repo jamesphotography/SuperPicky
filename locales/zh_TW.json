@@ -420,6 +420,8 @@
     "video_skipped_disabled": "⏭ 偵測到 {count} 個影片，但影片處理未開啟（可在「設定 → 影片」中開啟）",
     "resume_check_failed": "⚠️ 恢復狀態檢查失敗: {error}",
     "recent_group_missing": "⚠️ 資料夾不存在，已略過：{directory}",
+    "folder_list_rejected": "⚠️ 未加入資料夾清單：{reason}",
+    "reset_group_start_failed": "❌ 重設資料夾失敗：{path}：{error}",
     "open_folder_failed": "  ⚠️ 開啟資料夾失敗: {error}",
     "server_stop_failed": "⚠️ 識鳥 API 服務停止失敗: {error}",
     "server_stop_error": "❌ 停止識鳥 API 服務時出錯: {error}",

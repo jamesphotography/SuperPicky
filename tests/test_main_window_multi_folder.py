@@ -309,3 +309,277 @@ def test_group_label_truncated():
     names = SuperPickyMainWindow._group_names_text(long_dirs, "、")
     assert len(names) <= 61
     assert names.endswith("…")
+
+
+class _AliveWorker:
+    """存活的假工作线程 / A fake worker that is alive."""
+
+    def is_alive(self) -> bool:
+        return True
+
+
+class _StartedWorker:
+    """
+    假 WorkerThread：start() 不真跑，is_alive() 恒 True（模拟处理中）。
+    Fake WorkerThread: start() is a no-op and it reports alive.
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        self.args = args
+
+    def start(self) -> None:
+        """不真跑 / no-op."""
+
+    def is_alive(self) -> bool:
+        return True
+
+
+def _quiet_finish(w, monkeypatch) -> None:
+    """把 _on_finished 的副作用（报告/提示音/识鸟面板/打开结果）打桩 / Stub finish side effects."""
+    import ui.main_window as mw
+    monkeypatch.setattr(w, "_show_statistics_report", lambda stats: None)
+    monkeypatch.setattr(w, "_play_completion_sound", lambda: None)
+    monkeypatch.setattr(w, "_apply_current_results", lambda d, st: None)
+    monkeypatch.setattr(w, "_auto_open_results", lambda path=None: None)
+    monkeypatch.setattr(w, "_open_finder_results", lambda path=None: None)
+
+
+def test_switch_on_deferred_while_worker_alive(tmp_path, monkeypatch):
+    """
+    单目录处理中打开多目录开关：先挂起——列表不出现、不放入目录，「重置」保持禁用、
+    开始按钮仍是「停止」；处理结束的槽里才切到列表并放入当前目录。
+    Switching on mid-run is deferred: Reset stays disabled, Start stays "Stop",
+    the list is not seeded until the run ends.
+    """
+    a = _photo_dir(tmp_path, "a")
+    w = _window()
+    try:
+        _quiet_finish(w, monkeypatch)
+        w._handle_directory_selection(a)
+        w.worker = _AliveWorker()
+        w._update_action_buttons("processing")
+        _set_lab(w, True)
+        assert w._folder_list.isHidden()
+        assert w._folder_list.folders() == []
+        assert not w.reset_btn.isEnabled()
+        assert w.start_btn.text() == w.i18n.t("labels.stop_processing")
+        assert w.directory_path == a
+        w._on_finished({"total": 1})
+        assert not w._folder_list.isHidden()
+        assert w.dir_input.isHidden()
+        assert w._folder_list.folders() == [a]
+        assert w.directory_path == a
+    finally:
+        w.worker = None
+        w.close()
+
+
+def test_switch_on_then_off_while_running_cancels_pending(tmp_path, monkeypatch):
+    """处理中开了又关：两次都挂起/取消，结束后仍是单目录界面。"""
+    a = _photo_dir(tmp_path, "a")
+    w = _window()
+    try:
+        _quiet_finish(w, monkeypatch)
+        w._handle_directory_selection(a)
+        w.worker = _AliveWorker()
+        _set_lab(w, True)
+        _set_lab(w, False)
+        w._on_finished({"total": 1})
+        assert w._folder_list.isHidden()
+        assert not w.dir_input.isHidden()
+        assert w.directory_path == a
+    finally:
+        w.worker = None
+        w.close()
+
+
+@pytest.mark.parametrize("slot", ["finished", "cancelled", "error"])
+def test_single_run_with_lab_on_locks_list(tmp_path, monkeypatch, slot):
+    """
+    开关开启、列表只有 1 个目录时单目录处理：处理中列表/最近目录不可编辑，结束后恢复。
+    Lab on with one folder: list editing and the recent menu are locked during
+    the run and unlocked in each terminal slot.
+    """
+    import ui.main_window as mw
+    a = _photo_dir(tmp_path, "a")
+    monkeypatch.setattr(mw, "WorkerThread", _StartedWorker)
+    w = _window()
+    try:
+        _quiet_finish(w, monkeypatch)
+        _set_lab(w, True)
+        w._folder_list.set_folders([a])
+        w._launch_worker(a, False, None)
+        assert w._folder_list._editable is False
+        assert not w._recent_menu.isEnabled()
+        assert not w._folder_list.add_button().isEnabled()
+        {"finished": lambda: w._on_finished({"total": 1}),
+         "cancelled": lambda: w._on_cancelled({}),
+         "error": lambda: w._on_error("boom")}[slot]()
+        assert w._folder_list._editable is True
+        assert w._recent_menu.isEnabled()
+        assert w._folder_list.add_button().isEnabled()
+    finally:
+        w.worker = None
+        w.close()
+
+
+def test_single_run_with_lab_off_leaves_inputs_as_dev(tmp_path, monkeypatch):
+    """开关关闭时单目录处理：输入框、浏览按钮、最近目录菜单都不禁用（与 dev 相同）。"""
+    import ui.main_window as mw
+    a = _photo_dir(tmp_path, "a")
+    monkeypatch.setattr(mw, "WorkerThread", _StartedWorker)
+    w = _window()
+    try:
+        w.directory_path = a
+        w._launch_worker(a, False, None)
+        assert w.dir_input.isEnabled()
+        assert w._browse_btn.isEnabled()
+        assert w._recent_menu.isEnabled()
+    finally:
+        w.worker = None
+        w.close()
+
+
+def _batch_parent(root: Path, name: str = "parent") -> str:
+    """
+    批次模式处理过的父目录：两个子批次各有 report.db，照片在星级目录里，父目录自己没有 report.db。
+    A batch-mode processed parent (report.db only in two sub-batches).
+    """
+    parent = root / name
+    for day in ("day1", "day2"):
+        (parent / day / ".superpicky").mkdir(parents=True)
+        (parent / day / ".superpicky" / "report.db").write_bytes(b"")
+        (parent / day / "3星_优选").mkdir()
+        (parent / day / "3星_优选" / "a.jpg").write_bytes(b"x")
+    return os.path.normpath(str(parent))
+
+
+def test_recent_group_with_batch_parent_restores_without_loss(tmp_path):
+    """最近目录组里有批次模式父目录：整组放回，不丢；按钮为 has_results（可查看结果）。"""
+    a = _photo_dir(tmp_path, "a")
+    parent = _batch_parent(tmp_path)
+    w = _window()
+    try:
+        _set_lab(w, True)
+        w._restore_recent_group([a, parent])
+        assert w._folder_list.folders() == [a, parent]
+        assert w.view_results_btn.isVisibleTo(w)
+    finally:
+        w.close()
+
+
+def test_recent_group_rejected_folder_logged(tmp_path, monkeypatch):
+    """目录组里被拒（无照片）的目录不再悄悄丢掉：写一条 warning 日志。"""
+    a = _photo_dir(tmp_path, "a")
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    empty = os.path.normpath(str(empty))
+    w = _window()
+    try:
+        _set_lab(w, True)
+        logs = []
+        monkeypatch.setattr(w, "_log", lambda m, tag=None: logs.append((m, tag)))
+        w._restore_recent_group([a, empty])
+        assert w._folder_list.folders() == [a]
+        assert any(tag == "warning" and empty in m for m, tag in logs)
+    finally:
+        w.close()
+
+
+def test_single_recent_rejected_logged(tmp_path, monkeypatch):
+    """开关开启时点一个已不能加入的单个最近目录：写 warning 日志，而不是悄悄清空。"""
+    a = _photo_dir(tmp_path, "a")
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    empty = os.path.normpath(str(empty))
+    w = _window()
+    try:
+        _set_lab(w, True)
+        w._folder_list.set_folders([a])
+        w.config.add_recent_directory(empty)
+        w._refresh_recent_menu()
+        logs = []
+        monkeypatch.setattr(w, "_log", lambda m, tag=None: logs.append((m, tag)))
+        action = next(x for x in w._recent_menu.actions() if x.text() == empty)
+        action.trigger()
+        assert any(tag == "warning" and empty in m for m, tag in logs)
+    finally:
+        w.close()
+
+
+def test_switch_on_seed_rejected_logged(tmp_path, monkeypatch):
+    """打开开关时当前目录放不进列表（无照片）：写 warning 日志。"""
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    empty = os.path.normpath(str(empty))
+    w = _window()
+    try:
+        w.directory_path = empty
+        logs = []
+        monkeypatch.setattr(w, "_log", lambda m, tag=None: logs.append((m, tag)))
+        _set_lab(w, True)
+        assert any(tag == "warning" and empty in m for m, tag in logs)
+    finally:
+        w.close()
+
+
+def test_remove_to_one_is_not_a_selection(tmp_path, monkeypatch):
+    """
+    从 2 个移除到 1 个（剩下的不是当前目录）：只刷新状态，不当作「选择目录」——
+    不重放日志、不自动打开浏览器；directory_path 与输入框指向剩下的目录。
+    Removing down to one folder is not choosing it: no console replay, no auto-open.
+    """
+    import ui.main_window as mw
+    a = _photo_dir(tmp_path, "a")
+    b = _photo_dir(tmp_path, "b")
+    os.makedirs(os.path.join(b, ".superpicky"))
+    Path(b, ".superpicky", "report.db").write_bytes(b"")
+    w = _window()
+    try:
+        w.config.set_keep_temp_files(True)
+        _set_lab(w, True)
+        w._folder_list.set_folders([a, b])
+        assert w.directory_path == a
+        selections = []
+        monkeypatch.setattr(w, "_handle_directory_selection", lambda d: selections.append(d))
+        scheduled = []
+        monkeypatch.setattr(mw.QTimer, "singleShot",
+                            staticmethod(lambda ms, cb: scheduled.append((ms, cb))))
+        w._folder_list.remove_buttons()[0].click()
+        assert selections == []
+        assert not [cb for _ms, cb in scheduled
+                    if getattr(cb, "__name__", "") == "_auto_open_results"]
+        assert w.directory_path == b
+        assert w.dir_input.text() == b
+        assert w.view_results_btn.isVisibleTo(w)
+    finally:
+        w.close()
+
+
+def test_switch_on_after_finished_slot_applies_when_worker_exits(tmp_path, monkeypatch):
+    """
+    结束槽已执行、线程还没退出时打开开关：线程退出后由复查兜底应用，不必等下一次处理。
+    A switch-on flipped after the finished slot but before the thread exits is
+    applied by the poll once the thread is gone.
+    """
+    import ui.main_window as mw
+    a = _photo_dir(tmp_path, "a")
+    w = _window()
+    try:
+        scheduled = []
+        monkeypatch.setattr(mw.QTimer, "singleShot",
+                            staticmethod(lambda ms, cb: scheduled.append(cb)))
+        w._handle_directory_selection(a)
+        worker = _AliveWorker()
+        w.worker = worker
+        _set_lab(w, True)
+        assert w._folder_list.isHidden()
+        polls = [cb for cb in scheduled if getattr(cb, "__name__", "") == "_poll_pending_lab_switch"]
+        assert polls
+        w.worker = None  # 线程退出 / the thread exits
+        polls[-1]()
+        assert not w._folder_list.isHidden()
+        assert w._folder_list.folders() == [a]
+    finally:
+        w.worker = None
+        w.close()

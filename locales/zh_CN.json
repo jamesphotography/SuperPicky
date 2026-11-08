@@ -420,6 +420,8 @@
     "video_skipped_disabled": "⏭ 检测到 {count} 个视频，但视频处理未开启（可在「设置 → 视频」中开启）",
     "resume_check_failed": "⚠️ 恢复状态检查失败: {error}",
     "recent_group_missing": "⚠️ 目录不存在，已跳过：{directory}",
+    "folder_list_rejected": "⚠️ 未加入目录列表：{reason}",
+    "reset_group_start_failed": "❌ 重置目录失败：{path}：{error}",
     "open_folder_failed": "  ⚠️ 打开目录失败: {error}",
     "server_stop_failed": "⚠️ 识鸟 API 服务停止失败: {error}",
     "server_stop_error": "❌ 停止识鸟 API 服务时出错: {error}",

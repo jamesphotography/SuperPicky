@@ -160,3 +160,59 @@ def test_processed_folder_unreadable_db_shows_label(widget, tmp_path):
     assert widget.try_add(p) is None
     lbl = widget.findChildren(ElidedLabel)[0]
     assert widget.i18n.t("labels.folder_processed") in lbl.full_text()
+
+
+def _batch_parent(root, name, rows=(2, 3)):
+    """
+    批次模式处理过的父目录：每个子批次一个 report.db（各含 rows[i] 行），父目录自己没有。
+    A batch-mode parent: one report.db per sub-batch (rows[i] rows each), none of its own.
+    """
+    import sqlite3
+    parent = root / name
+    for i, n in enumerate(rows):
+        day = parent / f"day{i + 1}"
+        (day / "3星_优选").mkdir(parents=True)
+        (day / "3星_优选" / "a.jpg").write_bytes(b"x")
+        (day / ".superpicky").mkdir()
+        con = sqlite3.connect(str(day / ".superpicky" / "report.db"))
+        con.execute("CREATE TABLE photos (filename TEXT, bird_species_cn TEXT)")
+        con.executemany("INSERT INTO photos VALUES (?, NULL)", [(f"p{k}",) for k in range(n)])
+        con.commit()
+        con.close()
+    return str(parent)
+
+
+def test_batch_parent_added_with_summed_count(widget, tmp_path):
+    """批次模式父目录可加入，行内张数 = 各子批次 report.db 张数之和。"""
+    from ui.folder_list_widget import ElidedLabel
+    p = _batch_parent(tmp_path, "parent", rows=(2, 3))
+    assert widget.try_add(p) is None
+    assert widget.dialog_calls == []
+    lbl = widget.findChildren(ElidedLabel)[0]
+    assert widget.i18n.t("labels.folder_photos", n=5) in lbl.full_text()
+    assert widget.cached_count(os.path.normpath(p)) == 5
+
+
+def test_set_folders_reports_rejected(widget, tmp_path):
+    """set_folders 把「不存在」以外被拒的目录记下（rejected()），不再悄悄丢掉。"""
+    a = _photo_dir(tmp_path, "a")
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    missing = widget.set_folders([a, str(empty), str(tmp_path / "gone")])
+    assert missing == [str(tmp_path / "gone")]
+    assert widget.folders() == [os.path.normpath(a)]
+    assert widget.rejected() == [(str(empty), folder_queue.REJECT_NO_PHOTOS)]
+    widget.set_folders([a])
+    assert widget.rejected() == []
+
+
+def test_last_change_kind(widget, tmp_path):
+    """last_change() 区分添加 / 移除 / 整体设置，主窗口据此判断「移除不等于选择」。"""
+    a = _photo_dir(tmp_path, "a")
+    b = _photo_dir(tmp_path, "b")
+    widget.set_folders([a])
+    assert widget.last_change() == "set"
+    widget.try_add(b)
+    assert widget.last_change() == "add"
+    widget.remove_buttons()[0].click()
+    assert widget.last_change() == "remove"
