@@ -195,6 +195,10 @@
     "exif_reset_count": "EXIF已重置: {count}",
     "ready_for_analysis": "可以開始新的分析了",
     "reset_failed_log": "重置失敗",
+    "reset_group_confirm": "⚠️  將重置以下 {count} 個資料夾：\n{folders}\n\n重置將清除所有EXIF標記和臨時檔案，並把照片移回各資料夾原位，是否繼續？\n\n（只想重置其中一個資料夾，請先把其他資料夾移出清單）",
+    "reset_group_done": "已重置 {count} 個資料夾",
+    "reset_group_failed": "以下資料夾未能完整重置，請檢查：\n{folders}",
+    "reset_group_partial_reason": "有 {failed} 個檔案沒能移回原位",
     "dir_unavailable": "資料夾不可用，請確認行動硬碟已連線。",
     "queue_removable_message": "以下資料夾位於儲存卡或可移動磁碟上：\n{folders}\n\n直接在卡上處理有風險：處理會移動上千個檔案，儲存卡讀寫較慢、檔案系統脆弱，一旦中途中斷或拔卡，可能導致照片丟失。\n\n強烈建議先把照片複製到電腦硬碟，再選擇硬碟上的資料夾進行處理。\n\n仍要直接在卡上繼續嗎？",
     "queue_summary_title": "📋 多資料夾處理摘要",
@@ -461,7 +465,8 @@
     "queue_folder_start": "[{i}/{n}] {path}",
     "queue_folder_error": "❌ 資料夾處理發生錯誤，跳到下一個資料夾：{path}\n   {error}",
     "queue_folder_missing": "資料夾不存在（外接磁碟沒有連接？）",
-    "queue_reset_partial": "⚠️ {path}：有 {failed} 個檔案沒能移回原位，處理仍會繼續，請事後檢查該資料夾"
+    "queue_reset_partial": "⚠️ {path}：有 {failed} 個檔案沒能移回原位，處理仍會繼續，請事後檢查該資料夾",
+    "reset_group_partial": "⚠️ {path}：有 {failed} 個檔案沒能移回原位，請事後檢查該資料夾"
   },
   "server": {
     "server_already_running": "✅ 伺服器已在埠 {port} 執行",

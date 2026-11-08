@@ -195,6 +195,10 @@
     "exif_reset_count": "EXIF reset: {count}",
     "ready_for_analysis": "Ready for new analysis",
     "reset_failed_log": "Reset failed",
+    "reset_group_confirm": "⚠️  The following {count} folders will be reset:\n{folders}\n\nReset will clear all EXIF tags and temporary files and move the photos back into each folder. Continue?\n\n(To reset just one folder, remove the others from the list first.)",
+    "reset_group_done": "{count} folder(s) reset",
+    "reset_group_failed": "These folders were not fully reset, please check them:\n{folders}",
+    "reset_group_partial_reason": "{failed} file(s) could not be moved back",
     "dir_unavailable": "Folder unavailable. Please make sure the external drive is connected.",
     "queue_removable_message": "These folders are on a memory card or removable drive:\n{folders}\n\nProcessing directly on a card is risky: it moves thousands of files, and cards are slow with fragile file systems — an interruption or removing the card mid-way can lose photos.\n\nStrongly recommended: copy the photos to your computer's hard drive first, then process from the hard drive.\n\nContinue on the card anyway?",
     "queue_summary_title": "📋 Multi-folder summary",
@@ -461,7 +465,8 @@
     "queue_folder_start": "[{i}/{n}] {path}",
     "queue_folder_error": "❌ Folder failed, moving on to the next one: {path}\n   {error}",
     "queue_folder_missing": "Folder not found (external drive not connected?)",
-    "queue_reset_partial": "⚠️ {path}: {failed} file(s) could not be moved back; processing continues — please check this folder afterwards"
+    "queue_reset_partial": "⚠️ {path}: {failed} file(s) could not be moved back; processing continues — please check this folder afterwards",
+    "reset_group_partial": "⚠️ {path}: {failed} file(s) could not be moved back — please check this folder afterwards"
   },
   "server": {
     "server_already_running": "✅ Server already running on port {port}",

@@ -856,6 +856,20 @@ class SuperPickyMainWindow(QMainWindow):
         self._queue_counts: Dict[str, int] = {}
         self._queue_total = 0
         self._queue_done_photos = 0
+        # 多目录整组重置（见 _reset_group）：_reset_queue 为剩下待重置的目录，
+        # 不为 None 即表示整组重置进行中（最后一个目录重置期间为空列表）
+        # Multi-folder group reset (see _reset_group): _reset_queue holds the
+        # folders still to reset; not None means a group reset is running
+        # (an empty list while the last folder is being reset)
+        self._reset_queue: Optional[List[str]] = None
+        # _reset_group_total: 本组目录数 / folders in the group
+        # _reset_group_done: 完整重置成功的目录数 / folders reset cleanly
+        # _reset_group_failed: (目录, 原因) / (folder, reason) for failures
+        # _reset_group_current: 正在重置的目录 / folder being reset
+        self._reset_group_total = 0
+        self._reset_group_done = 0
+        self._reset_group_failed: List[Tuple[str, str]] = []
+        self._reset_group_current: Optional[str] = None
         # _prescan(warn=False) 的阻断原因 / blocking reason from _prescan(warn=False)
         self._prescan_error = ""
         # 主界面当前是否显示多目录列表；关开关遇到处理中时记下挂起，处理结束后再收起
@@ -1653,6 +1667,10 @@ class SuperPickyMainWindow(QMainWindow):
         if self._queue is not None:
             self._queue_stop_requested = True
             self._queue.stop()
+        if self._reset_queue is not None:
+            # 整组重置：后面的目录不再开始（正在重置的那个随进程结束）
+            # Group reset: no further folders start (the running one ends with the process)
+            self._reset_queue.clear()
         if self.worker and self.worker.is_alive():
             self.worker.request_stop()
             self.worker._stop_caffeinate()  # V3.8.1: 确保终止 caffeinate 进程
@@ -2081,17 +2099,19 @@ class SuperPickyMainWindow(QMainWindow):
 
     def _is_lab_processing(self) -> bool:
         """
-        是否正在处理（工作线程存活，或多目录队列在跑）。
+        是否正在处理（工作线程存活、多目录队列在跑，或多目录整组重置在跑）。
 
         返回:
         bool: 处理中为 True
 
-        Whether processing is under way (worker alive or the folder queue running).
+        Whether processing is under way (worker alive, the folder queue running,
+        or a multi-folder group reset running).
 
         Return:
         bool: True while processing
         """
-        return (self.worker is not None and self.worker.is_alive()) or self._queue is not None
+        return ((self.worker is not None and self.worker.is_alive())
+                or self._queue is not None or self._reset_queue is not None)
 
     def _is_multi_mode(self) -> bool:
         """
@@ -2206,14 +2226,16 @@ class SuperPickyMainWindow(QMainWindow):
         _on_error（以及多目录队列结束时）调用。
 
         注意：这些槽经排队连接执行时工作线程可能还没真正退出（is_alive 仍为 True），
-        所以这里不再检查工作线程，只要求队列已结束（_queue 为 None）。
+        所以这里不再检查工作线程，只要求队列与整组重置都已结束（_queue、_reset_queue 为 None）。
 
         Apply a deferred multi-folder switch-off once processing ends. Called from
-        _on_finished / _on_cancelled / _on_error (and when the folder queue ends).
-        The worker thread may still be alive while these queued slots run, so only
-        the queue (_queue is None) is checked here.
+        _on_finished / _on_cancelled / _on_error (and when the folder queue or a
+        group reset ends). The worker thread may still be alive while these queued
+        slots run, so only the queue and the group reset (_queue / _reset_queue
+        is None) are checked here.
         """
-        if not self._lab_multi_pending_off or self._queue is not None:
+        if (not self._lab_multi_pending_off or self._queue is not None
+                or self._reset_queue is not None):
             return
         if self.config.lab_multi_folder:
             # 处理期间又把开关打开了：放弃挂起 / switched back on meanwhile
@@ -3578,6 +3600,33 @@ class SuperPickyMainWindow(QMainWindow):
         self.progress_bar.setValue(pct)
         self.progress_percent_label.setText(f"{pct}%")
 
+    def _restore_multi_folder_ui(self) -> None:
+        """
+        多目录队列或整组重置结束后恢复界面：恢复目录选择入口；directory_path 回到
+        列表第一个目录；状态条显示「已选 N 个目录」，按钮按是否还有目录留有结果
+        （.superpicky/report.db）给 has_results / ready。列表不足 2 个时退回单目录的
+        _check_report_csv(auto_open=False)（运行中列表被锁，正常走不到这一支）。
+
+        Restore the UI after the folder queue or a group reset: re-enable folder
+        selection; directory_path back to the first listed folder; banner
+        "N folders selected"; buttons has_results / ready depending on whether
+        any folder still has a report.db. With fewer than 2 folders fall back to
+        the single-folder _check_report_csv(auto_open=False) (the list is locked
+        while running, so this branch is not normally reached).
+        """
+        self._set_queue_editing(True)
+        folders = self._folder_list.folders()
+        if folders:
+            self.directory_path = os.path.normpath(folders[0])
+            self.dir_input.setText(self.directory_path)
+        has_results = any(
+            os.path.exists(os.path.join(d, ".superpicky", "report.db")) for d in folders)
+        if len(folders) >= 2:
+            self._update_status_banner("multi_selected", len(folders))
+            self._update_action_buttons("has_results" if has_results else "ready")
+        else:
+            self._check_report_csv(auto_open=False)
+
     def _queue_finish(self) -> None:
         """
         队列收尾（只做一次）：控制台写汇总（每个目录一行：状态、张数、星级分布，并列出
@@ -3628,11 +3677,6 @@ class SuperPickyMainWindow(QMainWindow):
                       + "\n".join(f"  {o.path}: {o.error}" for o in errors), "error")
 
         # 恢复界面 / Restore the UI
-        self._set_queue_editing(True)
-        folders = self._folder_list.folders()
-        if folders:
-            self.directory_path = os.path.normpath(folders[0])
-            self.dir_input.setText(self.directory_path)
         if stopped:
             self._update_status(self.i18n.t("labels.stopped"), COLORS['warning'])
         else:
@@ -3640,13 +3684,7 @@ class SuperPickyMainWindow(QMainWindow):
             self.progress_bar.setValue(100)
             self.progress_percent_label.setText("100%")
             self.progress_info_label.setText(self.i18n.t("labels.complete"))
-        has_results = any(
-            os.path.exists(os.path.join(d, ".superpicky", "report.db")) for d in folders)
-        if len(folders) >= 2:
-            self._update_status_banner("multi_selected", len(folders))
-            self._update_action_buttons("has_results" if has_results else "ready")
-        else:
-            self._check_report_csv(auto_open=False)
+        self._restore_multi_folder_ui()
 
         if not stopped:
             done = [o for o in outcomes if o.status == "done"]
@@ -3786,9 +3824,175 @@ class SuperPickyMainWindow(QMainWindow):
     
     @Slot()
     def _reset_directory(self):
-        """完整重置目录（移动文件 + 重置EXIF）"""
+        """
+        完整重置目录（移动文件 + 重置EXIF）。多目录模式下作用于整个列表（_reset_group）。
+
+        Full reset (move files back + reset EXIF). In multi-folder mode it acts
+        on the whole list (_reset_group).
+        """
+        if self._is_multi_mode():
+            self._reset_group()
+            return
         self._do_reset_directory(skip_exif_reset=False, skip_confirm=False)
-    
+
+    def _reset_group(self) -> None:
+        """
+        多目录整组重置：一次确认（正文列出全部目录），然后按列表顺序逐个设置
+        directory_path 并调用与单目录相同的
+        _do_reset_directory(skip_exif_reset=False, skip_confirm=True)；
+        下一个由 _on_reset_complete / _on_reset_error 在上一个结束后经
+        QTimer.singleShot(0, …) 推进。每个目录的完成提示都抑制，最后由
+        _reset_group_finish 只弹一次汇总。想只重置一个目录，需先把其他目录移出列表。
+
+        Multi-folder group reset: one confirmation listing every folder, then
+        for each folder in order set directory_path and call the same
+        _do_reset_directory(skip_exif_reset=False, skip_confirm=True) as a
+        single-folder reset. _on_reset_complete / _on_reset_error advance to the
+        next one via QTimer.singleShot(0, …). Per-folder messages are suppressed;
+        _reset_group_finish shows a single summary. To reset only one folder the
+        user removes the others from the list first.
+        """
+        if self._is_lab_processing():
+            return  # 已有处理或重置在进行 / something is already running
+        folders = [os.path.normpath(p) for p in self._multi_folders()]
+        if not folders:
+            return
+        reply = StyledMessageBox.question(
+            self,
+            self.i18n.t("messages.reset_confirm_title"),
+            self.i18n.t("messages.reset_group_confirm", count=len(folders),
+                        folders="\n".join(folders)),
+            yes_text=self.i18n.t("labels.yes"),
+            no_text=self.i18n.t("labels.no")
+        )
+        if reply != StyledMessageBox.Yes:
+            return
+
+        self._reset_queue = list(folders)
+        self._reset_group_total = len(folders)
+        self._reset_group_done = 0
+        self._reset_group_failed = []
+        self._reset_group_current = None
+        # 日志只在开始时清一次，各目录重置时不再清（见 _do_reset_directory）
+        # Clear the log once here; per-folder resets keep it (see _do_reset_directory)
+        self.log_text.clear()
+        self._set_queue_editing(False)
+        self.reset_btn.setEnabled(False)
+        self.start_btn.setEnabled(False)
+        self._reset_group_advance()
+
+    def _reset_group_advance(self) -> None:
+        """
+        取下一个目录并开始重置；不存在的目录（外接盘没连）写日志、记为失败并跳过；
+        没有下一个时调用 _reset_group_finish()。
+
+        Start resetting the next folder; a missing folder (drive unplugged) is
+        logged, recorded as failed and skipped; with none left call
+        _reset_group_finish().
+        """
+        if self._reset_queue is None:
+            return
+        while self._reset_queue:
+            path = self._reset_queue.pop(0)
+            index = self._reset_group_total - len(self._reset_queue)
+            self._log("\n" + self.i18n.t("logs.queue_folder_start", i=index,
+                                         n=self._reset_group_total, path=path))
+            if not os.path.isdir(path):
+                reason = self.i18n.t("logs.queue_folder_missing")
+                self._log(f"❌ {path}: {reason}", "error")
+                self._reset_group_failed.append((path, reason))
+                continue
+            self._reset_group_current = path
+            self.directory_path = path
+            self.dir_input.setText(path)
+            try:
+                self._do_reset_directory(skip_exif_reset=False, skip_confirm=True)
+            except Exception as e:
+                # 启动重置本身失败（极少见）：记失败并继续下一个
+                # Starting the reset itself failed (rare): record and continue
+                self._log(f"❌ Reset {path}: {e}", "error")
+                self._reset_group_failed.append((path, str(e)))
+                self._reset_group_current = None
+                continue
+            return
+        self._reset_group_finish()
+
+    def _reset_group_folder_done(self, success: bool, reason: str = "") -> None:
+        """
+        当前目录重置结束（由 _on_reset_complete / _on_reset_error 调用）：记成功或失败，
+        再经 QTimer.singleShot(0, …) 推进到下一个（不在信号槽里重入）。
+
+        参数:
+        success (bool): 该目录是否完整重置成功
+        reason (str): 失败原因（success 为 False 时使用）
+
+        Record the current folder's result (called from _on_reset_complete /
+        _on_reset_error) and advance via QTimer.singleShot(0, …) so the next
+        reset does not start re-entrantly inside the slot.
+
+        Parameters:
+        success (bool): whether the folder was reset cleanly
+        reason (str): failure reason, used when success is False
+        """
+        path = self._reset_group_current or self.directory_path
+        self._reset_group_current = None
+        if success:
+            self._reset_group_done += 1
+        else:
+            self._reset_group_failed.append((path, reason))
+        QTimer.singleShot(0, self._reset_group_advance)
+
+    def _reset_group_finish(self) -> None:
+        """
+        整组重置收尾（只做一次）：恢复编辑入口、directory_path 回到第一个目录、状态条
+        「已选 N 个目录」、按钮按是否仍有结果设置（不走 _check_report_csv）；弹一次
+        汇总提示（成功目录数 + 失败目录列表）；最后应用挂起的实验室开关变化。
+
+        Finish the group reset once: restore editing, directory_path back to
+        the first folder, "N folders selected" banner and buttons (no
+        _check_report_csv); show one summary (count + failed folders); then
+        apply a deferred Labs switch change.
+        """
+        if self._reset_queue is None:
+            return
+        done = self._reset_group_done
+        failed = list(self._reset_group_failed)
+        # 先置空：_apply_pending_lab_switch / _is_lab_processing 以此判断已结束
+        # Clear first: _apply_pending_lab_switch / _is_lab_processing rely on it
+        self._reset_queue = None
+        self._reset_group_current = None
+        self._reset_group_failed = []
+
+        if failed:
+            self._update_status(self.i18n.t("labels.error") if done == 0
+                                else self.i18n.t("labels.ready"),
+                                COLORS['error'] if done == 0 else COLORS['warning'])
+        else:
+            self._update_status(self.i18n.t("labels.ready"), COLORS['accent'])
+        self._restore_multi_folder_ui()
+
+        msg_parts = [self.i18n.t("messages.reset_group_done", count=done)]
+        if failed:
+            lines = "\n".join(f"{p}: {r}" if r else p for p, r in failed)
+            msg_parts.append(self.i18n.t("messages.reset_group_failed", folders=lines))
+        else:
+            msg_parts.append(self.i18n.t("messages.ready_for_analysis"))
+        self._log("\n" + self.i18n.t("messages.reset_group_done", count=done))
+        if failed:
+            self._log(self.i18n.t("messages.reset_group_failed", folders=lines), "error")
+        self._show_message(
+            self.i18n.t("messages.reset_complete_title"),
+            "\n\n".join(msg_parts),
+            "warning" if failed else "info"
+        )
+
+        # 重置期间关掉的多目录开关，在此应用；收回单目录后按单目录刷新状态条
+        # Apply a switch-off deferred during the reset; then refresh as single-folder
+        was_active = self._lab_multi_active
+        self._apply_pending_lab_switch()
+        if was_active and not self._lab_multi_active and self.directory_path:
+            self._check_report_csv(auto_open=False)
+
     def _do_reset_directory(self, skip_exif_reset=False, skip_confirm=False):
         """执行目录重置
         
@@ -3835,9 +4039,9 @@ class SuperPickyMainWindow(QMainWindow):
             except Exception as e:
                 print(f"⚠️  Results browser release failed: {e}")
 
-        # 多目录队列中（「重新处理」）不清日志，前面目录的日志保留
-        # Inside the folder queue (reprocess) keep earlier folders' logs
-        if self._queue is None:
+        # 多目录队列中（「重新处理」）或整组重置中不清日志，前面目录的日志保留
+        # Inside the folder queue (reprocess) or a group reset keep earlier folders' logs
+        if self._queue is None and self._reset_queue is None:
             self.log_text.clear()
         self.reset_btn.setEnabled(False)
         self.start_btn.setEnabled(False)
@@ -4114,8 +4318,13 @@ class SuperPickyMainWindow(QMainWindow):
         重置完成。多目录队列为「重新处理」而重置时，不弹提示、不走
         _check_report_csv，直接扫描并启动该目录（见 _queue_reset_done）。
 
+        多目录整组重置中（_reset_queue 不为 None）同样不弹提示、不走 _check_report_csv，
+        只记该目录结果并推进到下一个（见 _reset_group_folder_done）。
+
         Reset finished. When the folder queue reset a folder for reprocessing,
         skip the message box and _check_report_csv and launch it directly.
+        During a group reset (_reset_queue not None) likewise skip both and
+        just record the folder and advance (see _reset_group_folder_done).
         """
         if self._queue is not None and self._queue_pending_launch:
             # 部分文件没能移回原位：记一行警告，处理照常继续（与单目录一样不中止）
@@ -4126,6 +4335,24 @@ class SuperPickyMainWindow(QMainWindow):
                                       path=self._queue_pending_launch, failed=failed), "warning")
             self._queue_reset_done(bool(success), "" if success else
                                    self.i18n.t("messages.reset_failed_log"))
+            return
+        if self._reset_queue is not None:
+            # 多目录整组重置：不弹单个目录的提示、不走 _check_report_csv，记结果后推进
+            # Group reset: no per-folder message or _check_report_csv; record and advance
+            failed = (restore_stats or {}).get('failed', 0)
+            if not success:
+                self._log(self.i18n.t("messages.reset_failed_log"), "error")
+                self._reset_group_folder_done(False, self.i18n.t("messages.reset_failed_log"))
+            elif failed:
+                # 有文件没能移回原位：该目录列为失败，提醒用户检查
+                # Some files were not moved back: list the folder as failed
+                path = self._reset_group_current or self.directory_path
+                self._log(self.i18n.t("logs.reset_group_partial", path=path, failed=failed),
+                          "warning")
+                self._reset_group_folder_done(
+                    False, self.i18n.t("messages.reset_group_partial_reason", failed=failed))
+            else:
+                self._reset_group_folder_done(True)
             return
         if success:
             self._update_status(self.i18n.t("labels.ready"), COLORS['accent'])
@@ -4168,6 +4395,12 @@ class SuperPickyMainWindow(QMainWindow):
         """
         if self._queue is not None and self._queue_pending_launch:
             self._queue_reset_done(False, str(error_msg))
+            return
+        if self._reset_queue is not None:
+            # 多目录整组重置：不弹出错框，记该目录失败并继续下一个
+            # Group reset: no error box; record the folder as failed and continue
+            self._log(f"Error: {error_msg}", "error")
+            self._reset_group_folder_done(False, str(error_msg))
             return
         self._log(f"Error: {error_msg}", "error")
         self._update_status("Error", COLORS['error'])
