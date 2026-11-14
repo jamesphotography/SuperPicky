@@ -63,7 +63,7 @@ def _stub_species_dialog(monkeypatch, cn: str, en: str, latin: str) -> None:
 
     class _Stub:
         def __init__(self, parent=None, session_species=None,
-                     exclude_species=None, photo_path=None):
+                     exclude_species=None, photo_path=None, burst_source=None):
             self.selected_cn, self.selected_en, self.selected_latin = cn, en, latin
 
         def exec(self):

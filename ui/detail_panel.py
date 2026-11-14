@@ -590,12 +590,27 @@ class DetailPanel(QWidget):
         self._val_species_en.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self._val_species_en.setVisible(False)
 
+        # 连拍统一说明（#162）：鸟种是从同组另一帧统一来的时，在鸟名下注明来源帧；
+        # 置信度也是那一帧的。否则用户点「重新识别这张」看到不同候选，会以为识别自相矛盾。
+        # Burst-unification note (#162): names the frame this species (and its
+        # confidence) came from, so a differing re-identification makes sense.
+        # 不自动换行：文案自带换行（前缀 / 文件名各一行）。自动换行时 QFormLayout 按
+        # 另一个宽度算高度，中文界面（多一行英文名）最后一行会被下一行盖住。
+        # No auto-wrap: the string carries its own line break. With word wrap the
+        # form layout sized the row for another width and clipped the last line.
+        self._val_species_burst = QLabel("")
+        self._val_species_burst.setWordWrap(False)
+        self._val_species_burst.setStyleSheet(
+            f"color: {COLORS['text_muted']}; font-size: 11px; background: transparent;")
+        self._val_species_burst.setVisible(False)
+
         species_row = QWidget()
         species_col = QVBoxLayout(species_row)
         species_col.setContentsMargins(0, 0, 0, 0)
         species_col.setSpacing(0)
         species_col.addWidget(species_line)
         species_col.addWidget(self._val_species_en)
+        species_col.addWidget(self._val_species_burst)
 
         rows = [
             # 鸟类信息 5 行连续（鸟种 → 全球罕见度 → 鸟种颜值 → IUCN → 国家保护）
@@ -738,6 +753,8 @@ class DetailPanel(QWidget):
             val.setText("—")
         self._val_species_en.setText("")
         self._val_species_en.setVisible(False)
+        self._val_species_burst.setText("")
+        self._val_species_burst.setVisible(False)
         self._rating_label.setText("—")
         # 展开/收起状态保留用户的选择，不随清空重置
         # Keep the user's expand/collapse choice across photos
@@ -1215,6 +1232,17 @@ class DetailPanel(QWidget):
                    and bool(species_en) and species != species_en)
         self._val_species_en.setText(species_en if show_en else "")
         self._val_species_en.setVisible(show_en)
+
+        # 连拍统一来源（#162）：同样无条件刷新，避免残留上一张的说明
+        # Burst-unification source (#162); always refreshed so no stale note lingers
+        burst_source = (p.get("burst_species_source") or "").strip()
+        has_species = bool((p.get("bird_species_cn") or p.get("bird_species_en") or "").strip())
+        show_burst = bool(burst_source) and has_species
+        self._val_species_burst.setText(
+            self.i18n.t("browser.species_burst_unified", source=burst_source) if show_burst else "")
+        self._val_species_burst.setToolTip(
+            self.i18n.t("browser.species_burst_unified_tip", source=burst_source) if show_burst else "")
+        self._val_species_burst.setVisible(show_burst)
 
         # 拼音跟着鸟种一起刷新，且**必须无条件 setText**：这个标签是复用的，
         # 只在查到时赋值的话，切到一张查不到拼音的照片时会留着上一只鸟的拼音，

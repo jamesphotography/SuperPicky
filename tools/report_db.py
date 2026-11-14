@@ -115,6 +115,16 @@ PHOTO_COLUMNS = [
     ("alt_species_en",   "TEXT", None),
     ("alt_confidence",   "REAL", None),
 
+    # 连拍统一鸟种的来源帧（#162）：这张照片的鸟种是「同一连拍组里置信度最高的那一帧」
+    # 统一过来的，此列记下那一帧的文件名（如 "_T3A2826.CR3"）；birdid_confidence 也是
+    # 那一帧的。照片自己的识别结论、手动改鸟种、整种合并、标记无鸟都会把它清空。
+    # 由 _reconcile_photo_columns 自动给旧库补列，无需逐版本迁移。
+    # Burst-unified species source (#162): the file name of the burst frame whose
+    # species (and birdid_confidence) this photo inherited. Cleared whenever the
+    # species is set any other way. Old databases get the column via
+    # _reconcile_photo_columns, no versioned migration needed.
+    ("burst_species_source", "TEXT", None),
+
     # 已停用：4.6.4 RC 期间识鸟对比模式（BirdTrace 识别、OSEA 验证）存的验证模型第一名。
     # OSEA 已删除、不再写入也不再读取；列保留不删，免得为旧库做迁移。
     # Retired: the check model's top-1 from the 4.6.4 RC Bird-ID compare mode (BirdTrace

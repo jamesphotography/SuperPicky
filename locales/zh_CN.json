@@ -1646,6 +1646,8 @@
     "log_retry": "重试初始化..."
   },
   "browser": {
+    "species_burst_unified": "连拍统一自\n{source}",
+    "species_burst_unified_tip": "同一连拍组按置信度最高的一帧（{source}）统一鸟种，这里的置信度也是那一帧的。对这张单独重新识别，结果可能不同。",
     "title": "选鸟结果浏览器",
     "no_db": "未找到报告数据库",
     "no_db_hint": "请先运行 SuperPicky 对照片目录进行处理。",
@@ -1992,6 +1994,7 @@
     "tb_auto": "自动修图"
   },
   "bird_species_edit": {
+    "burst_unified_note": "这张的鸟种是从同一连拍组里置信度最高的 {source} 统一过来的。「重新识别这张」只看这一张，候选可能与之不同。",
     "title": "修改鸟种",
     "hint": "搜索并选择正确的鸟种，确认后将自动更新目录和数据库。",
     "hint_flat": "搜索并选择正确的鸟种，确认后将更新数据库和照片元数据，不移动文件。",

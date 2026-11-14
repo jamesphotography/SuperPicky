@@ -1646,6 +1646,8 @@
     "log_retry": "重試初始化..."
   },
   "browser": {
+    "species_burst_unified": "連拍統一自\n{source}",
+    "species_burst_unified_tip": "同一連拍組依置信度最高的一張（{source}）統一鳥種，這裡的置信度也是那一張的。對這張單獨重新辨識，結果可能不同。",
     "title": "選鳥結果瀏覽器",
     "no_db": "未找到報告資料庫",
     "no_db_hint": "請先執行 SuperPicky 對照片資料夾進行處理。",
@@ -1992,6 +1994,7 @@
     "tb_auto": "自動修圖"
   },
   "bird_species_edit": {
+    "burst_unified_note": "這張的鳥種是從同一連拍組裡置信度最高的 {source} 統一過來的。「重新辨識這張」只看這一張，候選可能與之不同。",
     "title": "修改鳥種",
     "hint": "搜尋並選擇正確的鳥種，確認後將自動更新資料夾和資料庫。",
     "hint_flat": "搜尋並選擇正確的鳥種，確認後將更新資料庫和照片中繼資料，不移動檔案。",

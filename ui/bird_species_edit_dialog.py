@@ -114,7 +114,7 @@ class BirdSpeciesEditDialog(QDialog):
     _HEIGHT = 520
 
     def __init__(self, parent=None, session_species=None, exclude_species=None,
-                 photo_path: Optional[str] = None):
+                 photo_path: Optional[str] = None, burst_source: Optional[str] = None):
         """
         参数 / Args:
             parent:          父窗口
@@ -124,6 +124,11 @@ class BirdSpeciesEditDialog(QDialog):
                              （preloaded_crop），而这里会全图重跑 YOLO 并读对焦点
                              在多只鸟里挑，所以「框错了鸟」这类错误有机会被纠正。
                              不传则不显示该按钮（整种合并/多选批量没有单一照片）。
+            burst_source:    这张照片的鸟种若是连拍统一来的，传胜出帧的文件名（#162）。
+                             弹窗会在「重新识别这张」上方说明：当前鸟种来自那一帧，
+                             重新识别只看这一张，候选可能不同——否则用户会以为识别
+                             自相矛盾（Al 的加州鸥：整组随 36% 那帧统一，点开的
+                             却是另一帧，候选里自然没有加州鸥）。
             session_species: 本次拍到的鸟种 [(中文名, 张数)]，按张数降序。
                              搜索框还空着时先列出它们——改鸟种最常见的情形是
                              「认成了隔壁那种」，而那种当天多半也拍到了。
@@ -169,6 +174,11 @@ class BirdSpeciesEditDialog(QDialog):
         )
         self._identify_worker = None
         self.reidentify_button: Optional[QPushButton] = None
+        # 连拍统一来源帧（#162）；只对单张（有 photo_path）有意义
+        # Burst-unification source frame (#162); meaningful for a single photo only
+        self._burst_source: Optional[str] = (
+            (burst_source or "").strip() or None) if self._photo_path else None
+        self.burst_note: Optional[QLabel] = None
 
         self.setWindowTitle(self.i18n.t("bird_species_edit.title"))
         self.setFixedSize(self._WIDTH, self._HEIGHT)
@@ -273,6 +283,18 @@ class BirdSpeciesEditDialog(QDialog):
         # 重新识别按钮：紧贴搜索框下方，与「搜索」并列为两种产生候选的方式。
         # Sits under the search box: re-identification is simply another way to
         # produce candidates, alongside searching.
+        # 连拍统一说明（#162）：放在「重新识别这张」正上方，点之前就能看到
+        # Burst-unification note (#162), right above the re-identify button
+        if self._burst_source:
+            self.burst_note = QLabel(self.i18n.t(
+                "bird_species_edit.burst_unified_note", source=self._burst_source))
+            self.burst_note.setWordWrap(True)
+            self.burst_note.setStyleSheet(
+                f"color: {COLORS['text_secondary']}; font-size: 11px; "
+                f"background: transparent;"
+            )
+            root.addWidget(self.burst_note)
+
         if self._photo_path:
             self.reidentify_button = QPushButton(
                 self.i18n.t("bird_species_edit.reidentify"))

@@ -419,6 +419,8 @@ def _species_update_fields(
     update = {
         "bird_species_cn": new_bird_cn or None,
         "bird_species_en": new_bird_en or None,
+        # 用户指定的鸟种不再是连拍统一来的（#162）/ no longer burst-unified (#162)
+        "burst_species_source": None,
     }
     if species_extras:
         update.update(species_extras)
@@ -445,6 +447,7 @@ def _apply_species_to_photo(
     """
     photo["bird_species_cn"] = new_bird_cn
     photo["bird_species_en"] = new_bird_en
+    photo["burst_species_source"] = None      # #162
     if species_extras:
         photo.update(species_extras)
 

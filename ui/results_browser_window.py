@@ -1166,6 +1166,7 @@ def _run_mark_no_bird(
             "alt_species_cn": None,
             "alt_species_en": None,
             "alt_confidence": None,
+            "burst_species_source": None,     # #162
             "rating": -1,
             "caption": new_caption,
         })
@@ -1176,6 +1177,7 @@ def _run_mark_no_bird(
     photo["alt_species_cn"] = ""
     photo["alt_species_en"] = ""
     photo["alt_confidence"] = None
+    photo["burst_species_source"] = None
     photo["has_bird"] = 0
     photo["rating"] = -1
     photo["caption"] = new_caption
@@ -3920,7 +3922,8 @@ class ResultsBrowserWindow(QMainWindow):
         dialog = BirdSpeciesEditDialog(
             parent=self, session_species=self._session_species(),
             exclude_species=[photo.get("bird_species_cn") or ""],
-            photo_path=photo.get("current_path") or photo.get("original_path"))
+            photo_path=photo.get("current_path") or photo.get("original_path"),
+            burst_source=photo.get("burst_species_source"))
         if dialog.exec() != QDialog.Accepted:
             return
 
@@ -3970,7 +3973,8 @@ class ResultsBrowserWindow(QMainWindow):
         # _raw_filtered_photos on every burst toggle.
         _patch_cached_photos(
             photo,
-            {"bird_species_cn": new_cn, "bird_species_en": new_en, **extras},
+            {"bird_species_cn": new_cn, "bird_species_en": new_en,
+             "burst_species_source": None, **extras},
             self._filtered_photos, self._all_photos, self._raw_filtered_photos,
         )
 
@@ -3984,6 +3988,8 @@ class ResultsBrowserWindow(QMainWindow):
                 "bird_species_cn": new_cn or None,
                 "bird_species_en": new_en or None,
                 "has_bird": 1,
+                # 手动指定后不再是连拍统一来的（#162）/ no longer burst-unified (#162)
+                "burst_species_source": None,
                 **extras,
             })
             # has_bird 同样要进两份缓存：报告的鸟种名录按它过滤

@@ -175,6 +175,39 @@ def build_path_update_data(yolo_item: Dict[str, Any], dir_path: str) -> Dict[str
     return data
 
 
+def confirmed_species_db_fields(cn_name: str, en_name: str, confidence: float,
+                                burst_source: Optional[str]) -> Dict[str, Any]:
+    """
+    达到识鸟阈值、鸟种已确认时写进 report.db 的基础字段。
+
+    参数:
+    cn_name (str): 中文鸟名
+    en_name (str): 英文鸟名
+    confidence (float): 识别置信度（%）；连拍统一时是胜出帧的
+    burst_source (Optional[str]): 连拍统一时胜出帧的文件名，否则 None
+
+    返回:
+    Dict[str, Any]: 交给 report_db.update_photo 的字段
+
+    burst_species_source 记连拍统一的来源帧（#162），不是统一来的写 None，以清掉
+    重处理残留；同时清掉待确定候选（重处理时可能残留）。
+
+    The base report.db fields for a confirmed species. burst_species_source
+    records the burst frame the species was unified from (#162), None
+    otherwise so a re-run clears stale values; any stale unconfirmed
+    candidate is cleared too.
+    """
+    return {
+        'bird_species_cn': cn_name,
+        'bird_species_en': en_name,
+        'birdid_confidence': confidence,
+        'burst_species_source': burst_source or None,
+        'alt_species_cn': None,
+        'alt_species_en': None,
+        'alt_confidence': None,
+    }
+
+
 @dataclass
 class ProcessingSettings:
     """处理参数配置"""
@@ -1794,16 +1827,8 @@ class PhotoProcessor:
                 # 写入数据库，供结果浏览器筛选面板和详情面板使用
                 if self.report_db and (cn_name or en_name):
                     try:
-                        db_updates = {
-                            'bird_species_cn': cn_name,
-                            'bird_species_en': en_name,
-                            'birdid_confidence': birdid_confidence,
-                            # 已确认鸟种时清掉待确定候选（重处理时可能残留）
-                            # Clear any stale unconfirmed candidate once confirmed
-                            'alt_species_cn': None,
-                            'alt_species_en': None,
-                            'alt_confidence': None,
-                        }
+                        db_updates = confirmed_species_db_fields(
+                            cn_name, en_name, birdid_confidence, burst_source)
                         # V4.2.7: IUCN + GBIF 独立写入 report.db 列，供 detail_panel 单独展示
                         # V4.2.7: Persist IUCN + GBIF metrics in dedicated columns.
                         if iucn_category:
@@ -1884,6 +1909,9 @@ class PhotoProcessor:
                                 'alt_species_cn': cn_name if show_candidate else None,
                                 'alt_species_en': en_name if show_candidate else None,
                                 'alt_confidence': birdid_confidence if show_candidate else None,
+                                # 低置信度不会是连拍统一结果（统一只取过阈值的帧）（#162）
+                                # Never burst-unified below threshold (#162)
+                                'burst_species_source': None,
                             })
                         except Exception as _e:
                             self._log(self.i18n.t("logs.candidate_db_write_failed", file=file_prefix, error=_e), "warning")

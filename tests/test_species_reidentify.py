@@ -235,7 +235,7 @@ def test_single_photo_edit_passes_the_photo_path(tmp_path, monkeypatch):
 
     class _Stub:
         def __init__(self, parent=None, session_species=None,
-                     exclude_species=None, photo_path=None):
+                     exclude_species=None, photo_path=None, burst_source=None):
             captured["photo_path"] = photo_path
             self.selected_cn = self.selected_en = self.selected_latin = ""
 
@@ -267,7 +267,7 @@ def test_whole_species_merge_does_not_offer_re_identification(tmp_path, monkeypa
 
     class _Stub:
         def __init__(self, parent=None, session_species=None,
-                     exclude_species=None, photo_path=None):
+                     exclude_species=None, photo_path=None, burst_source=None):
             captured["photo_path"] = photo_path
 
         def exec(self):
