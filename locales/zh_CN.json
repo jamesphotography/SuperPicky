@@ -406,6 +406,7 @@
     "exif_batch_timeout": "  ⚠️ 写入评分：ExifTool {seconds:.0f} 秒无响应，这一批 {count} 张没有写入",
     "exif_write_aborted": "❌ 写入评分连续 {times} 次超时，剩下的 {count} 张已跳过。评分已保存在 SuperPicky 里、结果浏览器中照常可见，但没有写进这些照片文件。常见原因是杀毒软件在扫描照片文件夹，或照片被其他程序占用——请把照片文件夹加入杀毒软件的排除列表，或关闭占用的程序，再重新选片。",
     "exif_write_summary": "📝 评分写入完成：{done} 张，用时 {seconds:.0f} 秒，失败 {failed} 张",
+    "raw_embed_fallback_summary": "⚠️ {count} 张 RAW 未能安全写入文件本体，已改写为 .xmp 边车：{names}（原因：{reasons}）",
     "cache_path_save_failed": "  ⚠️  保存临时路径失败 {prefix}: {e}",
     "cache_paths_saved": "  ✅ 已保存 {count} 个临时预览路径到数据库",
     "cleaning_expired": "🗑️  清理 {days} 天前的过期缓存...",

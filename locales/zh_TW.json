@@ -406,6 +406,7 @@
     "exif_batch_timeout": "  ⚠️ 寫入評分：ExifTool {seconds:.0f} 秒無回應，這一批 {count} 張沒有寫入",
     "exif_write_aborted": "❌ 寫入評分連續 {times} 次逾時，剩下的 {count} 張已略過。評分已保存在 SuperPicky 裡、結果瀏覽器中照常可見，但沒有寫進這些照片檔案。常見原因是防毒軟體在掃描照片資料夾，或照片被其他程式佔用——請把照片資料夾加入防毒軟體的排除清單，或關閉佔用的程式，再重新選片。",
     "exif_write_summary": "📝 評分寫入完成：{done} 張，用時 {seconds:.0f} 秒，失敗 {failed} 張",
+    "raw_embed_fallback_summary": "⚠️ {count} 張 RAW 未能安全寫入檔案本體，已改寫為 .xmp 邊車：{names}（原因：{reasons}）",
     "cache_path_save_failed": "  ⚠️  儲存臨時路徑失敗 {prefix}: {e}",
     "cache_paths_saved": "  ✅ 已儲存 {count} 個臨時預覽路徑到資料庫",
     "cleaning_expired": "🗑️  清理 {days} 天前的過期快取...",

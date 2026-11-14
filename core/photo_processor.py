@@ -1379,6 +1379,9 @@ class PhotoProcessor:
                 )
         
         exiftool_mgr = get_exiftool_manager()
+        # 清掉上一次（或浏览器里单张改星级）残留的「写本体回退边车」记录，汇总只算本轮（#165）
+        # Drop fallback records from earlier runs / browser edits so the summary covers this run only (#165)
+        exiftool_mgr.drain_raw_embed_fallbacks()
         metadata_batch: List[Dict] = []
         metadata_batch_size = 64
         env_exif_batch = os.getenv("SUPERPICKY_EXIF_BATCH_SIZE", "").strip()
@@ -3802,6 +3805,19 @@ class PhotoProcessor:
             self._log(self.i18n.t("logs.exif_write_summary", done=exif_guard.photos_done,
                                   seconds=time.time() - exif_write_start,
                                   failed=min(exif_guard.failed, exif_guard.photos_total)))
+        # 勾了「同时写入专有 RAW 本体」但校验没通过、改写了边车的照片：原先完全静默，
+        # 用户只会在文件夹里看到莫名其妙的 .xmp（#165）。按文件去重后列出前几个。
+        # RAW body writes that failed verification and went to a sidecar were silent
+        # before — users only found unexplained .xmp files (#165). List a few, deduped.
+        raw_fallbacks = exiftool_mgr.drain_raw_embed_fallbacks()
+        if raw_fallbacks:
+            fallback_names = sorted({os.path.basename(path) for path, _ in raw_fallbacks})
+            fallback_reasons = sorted({reason for _, reason in raw_fallbacks})
+            self._log(self.i18n.t("logs.raw_embed_fallback_summary",
+                                  count=len(fallback_names),
+                                  names=", ".join(fallback_names[:5])
+                                  + (" …" if len(fallback_names) > 5 else ""),
+                                  reasons="; ".join(fallback_reasons)), "warning")
         
         # SQLite 数据库会在 _update_csv_keypoint_data 中自动提交
         # 无需手动 flush
