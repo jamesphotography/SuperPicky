@@ -142,12 +142,26 @@ class TestSetMetadataTargetFollowsTheSetting(unittest.TestCase):
         这是用户真正要的东西：元数据进了 NEF，尼康的软件才看得见。
         """
         manager, calls = self._manager("embedded", raw_embed=True)
+        # #165 起写本体一律经 _verified_raw_inplace（复制 → 写副本 → 校验 → 替换）；
+        # 这里替身只把写入交给「副本」并报告成功，校验本身由
+        # test_raw_embed_integrity_check.py 覆盖。
+        # Since #165 body writes go through _verified_raw_inplace; the stand-in
+        # just runs the write on a "copy" — the check itself is covered in
+        # test_raw_embed_integrity_check.py.
+        verified = []
+
+        def fake_verified(path, write_copy):
+            verified.append(path)
+            return None if write_copy(path + ".copy") else "write failed"
+
+        manager._verified_raw_inplace = fake_verified
 
         ok = manager.set_metadata(self.nef, {"Title": "家燕"})
 
         self.assertTrue(ok)
+        self.assertEqual(verified, [os.path.abspath(self.nef)], "没有经过校验写本体")
         self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0][-1], os.path.abspath(self.nef),
+        self.assertEqual(calls[0][-1], os.path.abspath(self.nef) + ".copy",
                          "仍然写向 .xmp 边车，设置没有生效")
 
     def test_sidecar_mode_still_targets_the_sidecar(self):

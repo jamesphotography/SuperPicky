@@ -289,5 +289,145 @@ class TestAutoWritePath(unittest.TestCase):
         self.assertEqual(self.sidecar_writes, [])
 
 
+class TestOtherBodyWritePaths(unittest.TestCase):
+    """
+    set_metadata（标题/题注/关键字/改鸟种）与重置也必须走同一套校验（#165 后续）。
+
+    此前 set_metadata 在开关打开时直写 RAW 本体、没有任何校验；重置只清边车，
+    而 #165 修好之后星级真的落进了本体，只清边车会留下旧星级。
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="sp_rawpaths_")
+        self.nef = os.path.join(self.dir, "DSC_0002.NEF")
+        self.data = b"H" * 64 + b"RAWDATA" * 200
+        _write(self.nef, self.data)
+        self.sidecar = os.path.splitext(self.nef)[0] + ".xmp"
+
+    def _manager(self, tamper: bool = False, probe: dict = None):
+        """
+        替身：exiftool 写入 = 在文件头插入一段「元数据」（数据块后挪）；tamper=True 时
+        顺带改坏 RAW 数据。记录每次写入的目标路径。
+        """
+        import threading
+        manager = object.__new__(ExifToolManager)
+        manager._raw_embed_fallbacks = []
+        manager._raw_embed_fallback_lock = threading.Lock()
+        manager._get_metadata_write_mode = lambda: "embedded"
+        manager._raw_embed_enabled = lambda: True
+        manager._cleanup_sidecar_tmp = lambda path: None
+        manager._filter_reset_args = lambda args: list(args)
+        manager.read_metadata = lambda path, extra_args=None: (
+            probe if probe is not None else {"SourceFile": path, "Rating": 4})
+        manager._reset_xmp_sidecar = lambda path: True
+        self.targets = []
+
+        def mutate(path):
+            self.targets.append(path)
+            if path.endswith(".xmp"):
+                _write(path, b"<x:xmpmeta/>")
+                return
+            with open(path, "rb") as handle:
+                body = handle.read()
+            body = b"META" * 30 + body
+            if tamper:
+                body = body[:-1] + b"!"
+            _write(path, body)
+
+        def fake_send(args, timeout=30.0):
+            mutate(args[-1])
+            return True
+
+        class _Proc:
+            @staticmethod
+            def send_command(args, timeout=30.0):
+                mutate(args[-1])
+                return b"    1 image files updated\n"
+
+        def fake_layout(path):
+            with open(path, "rb") as handle:
+                body = handle.read()
+            start = body.index(b"RAWDATA")
+            return {"StripOffsets": start, "StripByteCounts": len(body) - start,
+                    "ImageWidth": 6000, "ImageHeight": 4000}
+
+        manager._send_to_process = fake_send
+        manager._write_proc = _Proc()
+        manager._read_raw_layout_tags = fake_layout
+        return manager
+
+    def _body(self) -> bytes:
+        with open(self.nef, "rb") as handle:
+            return handle.read()
+
+    def test_set_metadata_writes_the_body_through_a_verified_copy(self):
+        """写的是同目录临时副本，校验通过后才替换原文件；不产生边车。"""
+        manager = self._manager()
+
+        self.assertTrue(manager.set_metadata(self.nef, {"Title": "环嘴鸥"}))
+
+        self.assertNotEqual(self.targets[0], self.nef, "直接写了原文件，没有经过副本校验")
+        self.assertTrue(self._body().startswith(b"META"))
+        self.assertFalse(os.path.exists(self.sidecar))
+
+    def test_set_metadata_falls_back_to_sidecar_when_copy_is_damaged(self):
+        """副本被写坏 → 原文件保持原样，标题改写进边车，并记录回退。"""
+        manager = self._manager(tamper=True)
+
+        self.assertTrue(manager.set_metadata(self.nef, {"Title": "环嘴鸥"}))
+
+        self.assertEqual(self._body(), self.data)
+        self.assertEqual(self.targets[-1], self.sidecar)
+        self.assertEqual(len(manager.drain_raw_embed_fallbacks()), 1)
+
+    def test_set_metadata_keeps_an_existing_sidecar_in_step(self):
+        """已有边车时同步更新（Lightroom 优先读边车）。"""
+        _write(self.sidecar, b"<old/>")
+        manager = self._manager()
+
+        manager.set_metadata(self.nef, {"Title": "环嘴鸥"})
+
+        self.assertEqual(self.targets[-1], self.sidecar)
+        self.assertTrue(self._body().startswith(b"META"))
+
+    def test_reset_clears_the_body_too(self):
+        """开关打开时重置要清本体（经副本校验），不能只清边车。"""
+        manager = self._manager()
+
+        self.assertTrue(manager.reset_metadata(self.nef))
+
+        self.assertNotEqual(self.targets[0], self.nef)
+        self.assertTrue(self._body().startswith(b"META"), "本体没有被清理")
+
+    def test_batch_reset_clears_the_body_too(self):
+        """批量重置同理。"""
+        manager = self._manager()
+
+        stats = manager.batch_reset_metadata([self.nef], log_callback=lambda msg: None)
+
+        self.assertEqual(stats, {"success": 1, "failed": 0})
+        self.assertTrue(self._body().startswith(b"META"))
+
+    def test_reset_skips_bodies_with_only_the_camera_rating(self):
+        """
+        本体只有相机原厂写的 Rating=0（Nikon/Canon 实测都有）→ 不复制、不改动原文件。
+        """
+        manager = self._manager(probe={"SourceFile": self.nef, "Rating": 0})
+
+        self.assertTrue(manager.reset_metadata(self.nef))
+
+        self.assertEqual(self.targets, [])
+        self.assertEqual(self._body(), self.data)
+
+    def test_reset_reports_failure_when_body_cannot_be_verified(self):
+        """清本体的副本被写坏 → 原文件不动，重置报失败（星级仍在本体里，不能报成功）。"""
+        manager = self._manager(tamper=True)
+
+        self.assertFalse(manager.reset_metadata(self.nef))
+
+        self.assertEqual(self._body(), self.data)
+        self.assertIn("reset:", manager.drain_raw_embed_fallbacks()[0][1])
+
+
 if __name__ == "__main__":
     unittest.main()
