@@ -1,3 +1,56 @@
+# SuperPicky 4.6.5 RC5
+
+**What's new since RC4:**
+
+- **Starting a folder that was already culled asks first.** Previously pressing Start again
+  re-rated every photo and overwrote your manual star and species changes. Now you get Cancel,
+  View Results, or Reset & Re-cull, and Reset & Re-cull asks a second time. (#161)
+- **Labs: Incremental culling.** With Settings > Labs > Incremental culling on, Start on a folder
+  with new files processes only the new ones and leaves earlier photos (and your edits) alone; new
+  photos are rated against the earlier ones. Stars of earlier photos are not recalculated. (#161)
+- **"Also write into proprietary RAW files" now really does.** The safety check compared file
+  positions that ExifTool normally moves, so CR2, NEF and RAF always fell back to an .xmp sidecar,
+  and CR3 did so at random. It now compares the image data itself. Titles, keywords, species changes
+  and Reset also go through the check, and any fallback is listed in the log. If you had this on,
+  NEF/CR2/RAF files will now be written for the first time. (#165)
+- **Portrait photos stay upright in full screen.** They used to flip to landscape a moment after
+  opening. (#164)
+- **Burst-unified species are labelled.** When a photo's species came from the best frame of its
+  burst, the detail panel says "Unified from burst: <file>" and Change Bird Species explains why
+  re-identifying this photo can give different candidates. Takes effect for folders culled with
+  RC5. (#162)
+- **Re-identify several photos at once.** With two or more photos ticked, Change Bird Species
+  offers "Re-identify these N photos": each photo is identified on its own and listed for review,
+  and nothing changes until you click Apply. (#163)
+- **Results browser:** search by file name (e.g. `0103`, `*A02*`); file name and aperture in the
+  info panel; Left/Right arrows clear the ticks; the English Focus filter no longer overlaps. (#166)
+- This test build has no CUDA 13 installer; RTX 50 users can use the CPU or CUDA 11.8 build.
+
+---
+
+# SuperPicky 4.6.5 RC5（中文）
+
+**相比 RC4 的变化：**
+
+- **已选过片的目录再点开始会先问一下。** 以前再点开始会全部重新评星，覆盖手动改过的星级和鸟种。现在会
+  先让你选择取消、查看结果或「重置并重选」，「重置并重选」还会再确认一次。（#161）
+- **实验室：增量选片。** 在「设置 → 实验室」打开后，对有新文件的目录点开始只处理新文件，之前的照片和你的
+  修改都不动；新照片会参照之前的照片评星。之前照片的星级不会重算。（#161）
+- **「同时写入专有 RAW 本体」现在真的会写进去。** 原来的安全校验比的是数据在文件里的位置，而 ExifTool
+  写元数据时本来就会挪动它，于是 CR2、NEF、RAF 一直悄悄改写成 .xmp 边车，CR3 则随机出现。现在改为直接
+  比对图像数据本身；标题、关键字、改鸟种和重置也都经过同样的校验，改写边车时会在日志里列出。之前开过这个
+  开关的话，NEF/CR2/RAF 文件这次会第一次被真正写入。（#165）
+- **竖拍照片全屏不再变成横的。** 以前打开后过一会儿会变成横躺。（#164）
+- **标明连拍统一来的鸟种。** 照片的鸟种来自同组置信度最高的一帧时，详情面板会写「连拍统一自 文件名」，
+  改鸟种弹窗也会说明为什么重新识别这张的候选可能不同。用 RC5 选过的目录才有。（#162）
+- **可以一次重新识别多张照片。** 勾选两张以上时，改鸟种弹窗里有「重新识别这 N 张」：逐张识别、列出来
+  核对，点「应用修改」才会写入。（#163）
+- **结果浏览器：** 可按文件名搜索（如 `0103`、`*A02*`）；详情面板显示文件名和光圈；按左右方向键会清掉
+  勾选；英文界面的对焦筛选不再重叠。（#166）
+- 本测试版不提供 CUDA 13 安装包，RTX 50 显卡请用 CPU 版或 CUDA 11.8 版。
+
+---
+
 # SuperPicky 4.6.5 RC4
 
 **What's new since RC3:**
