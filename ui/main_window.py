@@ -932,6 +932,13 @@ class SuperPickyMainWindow(QMainWindow):
         self._really_quit = False  # 标记是否真正退出
         self._tray_hint_shown = False  # 首次隐藏到托盘时提示一次（每次会话）
         self._suppress_results_browser_once = False
+        # #161：「重置并重选」= 快速复原完成后自动重新开始全量选片（见 _on_reset_complete）
+        # #161: "Reset and re-cull" = quick restore, then automatically start a full cull
+        self._reprocess_after_reset = False
+        # 快速复原保留 report.db，复原后那一次开始必须跳过「已完成选片」拦截，否则死循环
+        # Quick restore keeps report.db, so the start right after it must skip the
+        # already-processed check, or the user would loop on that dialog forever.
+        self._skip_processed_check_once = False
         self._resume_prompt_handled = False
         self._initialization_dialog_open = False
         self._initialization_prompt_dismissed = False
@@ -3142,6 +3149,11 @@ class SuperPickyMainWindow(QMainWindow):
 
     def _start_processing(self):
         """开始处理"""
+        # 在任何提前 return 之前消费一次性标记，避免残留到下一次手动开始而静默重跑
+        # Consume the one-shot flag before any early return so it never leaks
+        # into a later manual start (which would silently re-cull).
+        force_full = bool(getattr(self, "_skip_processed_check_once", False))
+        self._skip_processed_check_once = False
         if not self._require_initialization_for_processing():
             return
 
@@ -3172,6 +3184,42 @@ class SuperPickyMainWindow(QMainWindow):
                 self.i18n.t("messages.hint"),
                 self.i18n.t("messages.processing")
             )
+            return
+
+        # #161：已有选片结果的目录直接点「开始」，原来会静默全量重跑，覆盖用户在结果浏览器
+        # 里做过的手动修改。现在先拦截，让用户选择 取消 / 查看结果 / 重置并重选。
+        # 有断点续跑文件时交给下面的续跑流程处理，不在这里拦。
+        # #161: pressing Start on an already-culled folder used to silently re-cull
+        # everything and overwrite manual edits made in the results browser. Ask
+        # first: cancel / view results / reset & re-cull. A pending resume is left
+        # to the resume flow below.
+        from tools.resume_state import ResumeStateManager
+        try:
+            has_resume_file = ResumeStateManager(self.directory_path).exists()
+        except Exception:
+            has_resume_file = False
+        existing_count = (
+            None if (force_full or has_resume_file)
+            else self._count_existing_results(self.directory_path)
+        )
+        if existing_count:
+            from ui import custom_dialogs as _cd
+            dlg = _cd.DeleteConfirmDialog(
+                self,
+                title=self.i18n.t("dialogs.already_processed_title"),
+                message=self.i18n.t("dialogs.already_processed_msg", existing=existing_count),
+                buttons=[
+                    ("cancel", self.i18n.t("buttons.cancel"), "secondary"),
+                    ("view", self.i18n.t("dialogs.btn_view_results"), "secondary"),
+                    ("reprocess", self.i18n.t("dialogs.btn_reprocess_all"), "primary"),
+                ],
+                default_key="view",
+            )
+            dlg.exec()
+            if dlg.choice == "view":
+                self._open_results_smart()
+            elif dlg.choice == "reprocess":
+                self._confirm_reset_and_reprocess()
             return
 
         # V4.3: 识鸟仍是「自动检测 (GPS)」时先问要不要去选国家
@@ -3240,6 +3288,44 @@ class SuperPickyMainWindow(QMainWindow):
         scan_results = None if scan is _SCAN_FAILED else scan
 
         self._launch_worker(self.directory_path, resume_processing, scan_results)
+
+    @staticmethod
+    def _count_existing_results(directory: str) -> Optional[int]:
+        """
+        只读统计目录 report.db 里已有的选片记录数（#161 拦截用）。
+
+        用 SQLite 只读连接，绝不创建或修改 report.db；库不存在、不可读（如 0 字节占位
+        文件）或没有 photos 表时返回 None。
+
+        参数:
+        directory (str): 目录路径
+
+        返回:
+        Optional[int]: 记录数；无有效结果库时为 None
+
+        Read-only count of culling records in the folder's report.db (used by
+        the #161 guard). Never creates or modifies the database; returns None
+        when it is missing, unreadable (e.g. a 0-byte placeholder) or has no
+        photos table.
+
+        Parameters:
+        directory (str): the folder
+
+        Return:
+        Optional[int]: number of records, or None without a valid results DB
+        """
+        db_path = os.path.join(directory or "", ".superpicky", "report.db")
+        if not os.path.isfile(db_path):
+            return None
+        from core.processed_lookup import _with_read_connection
+        row = _with_read_connection(
+            db_path, lambda conn: conn.execute("SELECT COUNT(*) FROM photos").fetchone())
+        if row is None:
+            return None
+        try:
+            return int(row[0])
+        except (TypeError, ValueError, IndexError):
+            return None
 
     def _prescan(self, directory: str, warn: bool = True) -> Optional[object]:
         """
@@ -4053,6 +4139,40 @@ class SuperPickyMainWindow(QMainWindow):
         self._apply_pending_lab_switch()
 
     @Slot()
+    def _confirm_reset_and_reprocess(self) -> bool:
+        """
+        「重置并重选」前的二次确认（#161）。确认后快速复原目录，复原完成后由
+        _on_reset_complete 自动重新开始一次全量选片。
+
+        快速复原会把照片移回根目录、按新结果覆盖评分，用户在结果浏览器里手动改过的
+        星级、鸟种都会丢失——这正是 #161 投诉的数据损失，所以必须让用户明确确认。
+
+        返回:
+        bool: 用户确认并已开始复原为 True；取消为 False
+
+        Second confirmation before "reset and re-cull" (#161). On confirmation
+        the folder is quick-restored, and _on_reset_complete starts a full cull
+        automatically afterwards. Manual star / species edits made in the results
+        browser are lost, which is exactly the data loss #161 reported, so the
+        user must confirm explicitly.
+
+        Return:
+        bool: True when confirmed and the restore started; False when cancelled
+        """
+        reply = StyledMessageBox.question(
+            self,
+            self.i18n.t("dialogs.reprocess_confirm_title"),
+            self.i18n.t("dialogs.reprocess_confirm_msg"),
+            yes_text=self.i18n.t("dialogs.btn_reprocess_all"),
+            no_text=self.i18n.t("buttons.cancel"),
+        )
+        if reply != StyledMessageBox.Yes:
+            return False
+        self._reprocess_after_reset = True
+        self._suppress_results_browser_once = True
+        self._quick_restore_directory()
+        return True
+
     def _quick_restore_directory(self):
         """V4.0.4: 快速复原目录（只移动文件，不重置EXIF）
         
@@ -4614,10 +4734,20 @@ class SuperPickyMainWindow(QMainWindow):
         # 单目录重置：先清处理中标记、解锁列表，最后应用挂起的开关切换
         # Single reset: clear the flag and unlock first; apply a deferred switch last
         self._end_single_reset()
+        # #161「重置并重选」：复原完整成功才自动开始全量选片；有文件没移回时照常弹提示，
+        # 让用户先检查，不自动开始。
+        # #161 "reset and re-cull": auto-start the full cull only when every file
+        # was moved back; otherwise show the usual message and let the user check.
+        reprocess = bool(getattr(self, "_reprocess_after_reset", False))
+        self._reprocess_after_reset = False
+        auto_start = bool(
+            reprocess and success and not (restore_stats or {}).get('failed', 0)
+        )
         if success:
             self._update_status(self.i18n.t("labels.ready"), COLORS['accent'])
             self._log(self.i18n.t("messages.reset_complete_log"))
 
+        if success and not auto_start:
             msg_parts = [self.i18n.t("messages.reset_complete_msg") + "\n"]
 
             if restore_stats:
@@ -4637,7 +4767,7 @@ class SuperPickyMainWindow(QMainWindow):
                 "\n".join(msg_parts),
                 "info"
             )
-        else:
+        elif not success:
             self._update_status(self.i18n.t("labels.error"), COLORS['error'])
             self._log(self.i18n.t("messages.reset_failed_log"))
         if self._suppress_results_browser_once:
@@ -4647,6 +4777,11 @@ class SuperPickyMainWindow(QMainWindow):
         else:
             self._check_report_csv()
         self._apply_pending_lab_switch()
+        if auto_start and not self._is_multi_mode():
+            # 快速复原保留了 report.db，这次开始必须跳过「已完成选片」拦截并强制全量
+            # Quick restore kept report.db: skip the already-processed check and force full
+            self._skip_processed_check_once = True
+            QTimer.singleShot(0, self._start_processing)
 
     def _on_reset_error(self, error_msg):
         """
@@ -4665,6 +4800,7 @@ class SuperPickyMainWindow(QMainWindow):
         # 单目录重置：清标记、解锁；刷新状态后应用挂起的开关切换
         # Single reset: clear the flag and unlock; apply a deferred switch after refreshing
         self._end_single_reset()
+        self._reprocess_after_reset = False  # #161：复原出错不自动重选 / no auto re-cull
         self._log(f"Error: {error_msg}", "error")
         self._update_status("Error", COLORS['error'])
         self._show_message(

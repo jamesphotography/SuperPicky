@@ -147,7 +147,13 @@
     "queue_precheck_resume": "上次沒處理完（將接著處理）：\n{folders}",
     "queue_precheck_processed": "已處理過（將略過）：\n{folders}",
     "queue_reprocess_all": "全部重新處理（先復原上次的檔案搬移再重跑）",
-    "queue_start": "開始"
+    "queue_start": "開始",
+    "already_processed_title": "資料夾已完成選片",
+    "already_processed_msg": "該資料夾已有 {existing} 張照片的選片結果。\n\n如需重新選片，需要先重設資料夾；否則可直接檢視現有結果。",
+    "btn_view_results": "檢視結果",
+    "btn_reprocess_all": "重設並重選",
+    "reprocess_confirm_title": "確認重設並重選",
+    "reprocess_confirm_msg": "將把照片移回原資料夾並重新選片，現有選片結果會被新結果覆蓋。\n\n你在結果瀏覽器裡手動改過的星級、鳥種等修改都會遺失，且無法復原。\n\n確定要繼續嗎？"
   },
   "messages": {
     "initialization_required": "初始化尚未完成。請先完成首次資源準備後再開始處理。",

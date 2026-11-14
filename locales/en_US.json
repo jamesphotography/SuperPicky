@@ -147,7 +147,13 @@
     "queue_precheck_resume": "Unfinished last time (will continue):\n{folders}",
     "queue_precheck_processed": "Already processed (will be skipped):\n{folders}",
     "queue_reprocess_all": "Reprocess all (undo the previous file moves, then run again)",
-    "queue_start": "Start"
+    "queue_start": "Start",
+    "already_processed_title": "Folder Already Culled",
+    "already_processed_msg": "This folder already has culling results for {existing} photo(s).\n\nRe-culling requires resetting the folder first; otherwise view the existing results.",
+    "btn_view_results": "View Results",
+    "btn_reprocess_all": "Reset & Re-cull",
+    "reprocess_confirm_title": "Confirm Reset & Re-cull",
+    "reprocess_confirm_msg": "Photos will be moved back into the folder and culled again; the existing results will be replaced.\n\nAny manual changes you made in the results browser (star ratings, species, etc.) will be lost and cannot be undone.\n\nContinue?"
   },
   "messages": {
     "initialization_required": "Initialization is not finished yet. Complete first-run resource setup before processing.",

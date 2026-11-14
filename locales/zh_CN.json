@@ -147,7 +147,13 @@
     "queue_precheck_resume": "上次没处理完（将接着处理）：\n{folders}",
     "queue_precheck_processed": "已处理过（将跳过）：\n{folders}",
     "queue_reprocess_all": "全部重新处理（先撤销上次的文件移动再重跑）",
-    "queue_start": "开始"
+    "queue_start": "开始",
+    "already_processed_title": "目录已完成选片",
+    "already_processed_msg": "该目录已有 {existing} 张照片的选片结果。\n\n如需重新选片，需要先重置目录；否则可直接查看现有结果。",
+    "btn_view_results": "查看结果",
+    "btn_reprocess_all": "重置并重选",
+    "reprocess_confirm_title": "确认重置并重选",
+    "reprocess_confirm_msg": "将把照片移回原目录并重新选片，现有选片结果会被新结果覆盖。\n\n你在结果浏览器里手动改过的星级、鸟种等修改都会丢失，且无法撤销。\n\n确定继续吗？"
   },
   "messages": {
     "initialization_required": "初始化尚未完成。请先完成首次资源准备后再开始处理。",
