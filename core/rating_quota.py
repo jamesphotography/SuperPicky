@@ -21,7 +21,7 @@ an eye-visibility cap, and a per-burst 3-star cap.
 import bisect
 import math
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 # ---- 常量(与审定方案一致)/ constants per approved design ----
 MIN_CONFIDENCE = 0.50     # 置信度硬门槛 / confidence hard gate
@@ -228,26 +228,33 @@ def assign_ratings(
     burst_cap3: int = DEFAULT_BURST_CAP3,
     min_confidence: float = MIN_CONFIDENCE,
     species_floor: bool = True,
+    reference_photos: Optional[List[PhotoMetricsV2]] = None,
+    existing_floor_species: Optional[Set[str]] = None,
 ) -> Dict[str, RatingV2Result]:
     """
     对一批照片统一定星(V2 主入口)。
 
     参数:
-        photos: 全批照片指标列表
+        photos: 待定星照片指标列表
         quota3: 3★ 配额百分比(如 20 → Q 前 20%)
         quota2: 2★ 配额百分比(接在 3★ 之后)
         burst_cap3: 同一连拍组内 3★ 上限,0 表示不限制
         species_floor: 是否执行鸟种保底(见 apply_species_floor)
+        reference_photos: 增量模式下的历史参考池（仅参与分位与组内配额参照，不改写历史结果）
+        existing_floor_species: 历史库中已拥有 >=2★ 照片的鸟种集合（跳过二次保底）
 
     返回:
-        Dict[key, RatingV2Result]:每张照片的星级与原因
+        Dict[key, RatingV2Result]: 待定星照片的星级与原因
 
-    Assign stars for the whole batch (V2 entry point). Hard-gated photos get
+    Assign stars for the batch (V2 entry point). Hard-gated photos get
     final -1/0/1 immediately; the rest are ranked by Q and starred by quota,
     then the eye-visibility cap and the per-burst 3-star cap are applied.
+    Optional ``reference_photos`` and ``existing_floor_species`` supply read-only
+    historical context during incremental runs without modifying older entries.
     """
     results: Dict[str, RatingV2Result] = {}
     pool: List[PhotoMetricsV2] = []
+    target_keys: Set[str] = {p.key for p in photos}
 
     for p in photos:
         gated = gate_photo(p, min_confidence=min_confidence)
@@ -259,14 +266,27 @@ def assign_ratings(
     if not pool:
         # 全部被硬门槛淘汰时也要做鸟种保底 / the species floor still applies
         if species_floor:
-            apply_species_floor(photos, results)
+            apply_species_floor(
+                photos, results, existing_floor_species=existing_floor_species
+            )
         return results
 
-    pct_sharp = _percentile_fn([p.norm_sharpness for p in pool])
-    pct_topiq = _percentile_fn([(p.topiq if p.topiq is not None else 0.0) for p in pool])
+    ref_pool: List[PhotoMetricsV2] = []
+    if reference_photos:
+        for ref in reference_photos:
+            if ref.key in target_keys:
+                continue
+            if gate_photo(ref, min_confidence=min_confidence) is None:
+                ref_pool.append(ref)
+
+    ranking_pool = pool + ref_pool
+    pct_sharp = _percentile_fn([p.norm_sharpness for p in ranking_pool])
+    pct_topiq = _percentile_fn(
+        [(p.topiq if p.topiq is not None else 0.0) for p in ranking_pool]
+    )
 
     scored = sorted(
-        ((compute_q(p, pct_sharp, pct_topiq), p) for p in pool),
+        ((compute_q(p, pct_sharp, pct_topiq), p) for p in ranking_pool),
         key=lambda x: -x[0])
 
     # V4.6: 按鸟种分组执行配额——排序仍用全局 Q(小样本鸟种的种内百分位
@@ -287,6 +307,8 @@ def assign_ratings(
         c3 = math.ceil(gn * quota3 / 100.0)
         c2 = math.ceil(gn * quota2 / 100.0)
         for gidx, (q, p) in enumerate(members):
+            if p.key not in target_keys:
+                continue
             if gidx < c3 and p.norm_sharpness >= QUOTA3_SHARP_FLOOR:
                 star = 3
                 reason_key = "rating_v2.top_quota"
@@ -328,7 +350,7 @@ def assign_ratings(
                     "quota3": quota3,
                     "quota2": quota2,
                     "sharp_floor3": QUOTA3_SHARP_FLOOR,
-                    "pool_size": len(pool),
+                    "pool_size": len(ranking_pool),
                 })
 
     # 连拍组内 3★ 封顶:每组只留 Q 最高的前 N 张,其余降 2★
@@ -336,7 +358,7 @@ def assign_ratings(
     if burst_cap3 > 0:
         burst_threes: Dict[int, List[str]] = {}
         for q, p in scored:
-            if p.burst_id is not None and results[p.key].rating == 3:
+            if p.key in results and p.burst_id is not None and results[p.key].rating == 3:
                 burst_threes.setdefault(p.burst_id, []).append(p.key)
         for keys in burst_threes.values():
             for key in keys[burst_cap3:]:  # scored 已按 Q 降序,故切片即淘汰尾部
@@ -345,7 +367,9 @@ def assign_ratings(
                 results[key].reason_args["burst_cap"] = burst_cap3
 
     if species_floor:
-        apply_species_floor(photos, results)
+        apply_species_floor(
+            photos, results, existing_floor_species=existing_floor_species
+        )
 
     return results
 
@@ -354,6 +378,7 @@ def apply_species_floor(
     photos: List[PhotoMetricsV2],
     results: Dict[str, RatingV2Result],
     floor: int = SPECIES_FLOOR_RATING,
+    existing_floor_species: Optional[Set[str]] = None,
 ) -> List[str]:
     """
     鸟种保底:每个已确认的鸟种在 floor 星及以上至少留一张,不够就把该种最好的
@@ -380,6 +405,7 @@ def apply_species_floor(
         photos (List[PhotoMetricsV2]): 全批照片(含被硬门槛淘汰的)/ all photos, gated included.
         results (Dict[str, RatingV2Result]): 定星结果,原地修改 / ratings, modified in place.
         floor (int): 保底星级 / floor rating.
+        existing_floor_species (Optional[Set[str]]): 历史库已达保底星级的鸟种集合 / species already >= floor in DB.
 
     返回 / Returns:
         List[str]: 被提级的照片键 / keys of raised photos.
@@ -398,7 +424,9 @@ def apply_species_floor(
                 p.confidence)
 
     raised: List[str] = []
-    for members in groups.values():
+    for species_key, members in groups.items():
+        if existing_floor_species and species_key in existing_floor_species:
+            continue
         if max(results[m.key].rating for m in members) >= floor:
             continue
         best = max(members, key=_best_key)

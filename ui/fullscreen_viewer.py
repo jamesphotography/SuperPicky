@@ -56,26 +56,37 @@ _HD_CACHE_MAX_EDGE = 3200
 _FULLRES_DWELL_MS = 250
 
 
-def _decode_capped(path: str, max_edge: int) -> QImage:
+def _decode_capped(path: str, max_edge: Optional[int]) -> QImage:
     """
-    解码图片,长边超过 max_edge 时用 QImageReader.setScaledSize 在解码期
-    降采样(JPEG 走 libjpeg DCT 缩放,更快且不分配全尺寸缓冲)。
+    解码图片并按 EXIF 方向转正;长边超过 max_edge 时用 QImageReader.setScaledSize
+    在解码期降采样(JPEG 走 libjpeg DCT 缩放,更快且不分配全尺寸缓冲)。
+    max_edge 为 None 时按全分辨率解码。
 
-    Decode an image, downscaling at decode time when its long edge
-    exceeds max_edge (libjpeg DCT scaling: faster, and the full-size
-    buffer is never allocated).
+    所有显示用解码都必须走这里(或同样 setAutoTransform(True) 的 QImageReader):
+    PySide6 的 QImage(path) / QPixmap(path) **不会**应用 EXIF 方向(6.12 实测
+    600×400 方向 6 的 JPEG 读出仍是 600×400)。#164:全屏停留后的全分辨率补解
+    曾直接用 QImage(path),竖拍照片先正常显示、0.25 秒后被换成横躺的全图。
+
+    Decode an image upright per its EXIF orientation, downscaling at decode
+    time when its long edge exceeds max_edge (libjpeg DCT scaling); None
+    decodes full resolution. Every display decode must come through here (or
+    a QImageReader with setAutoTransform(True)): PySide6's QImage(path) /
+    QPixmap(path) do NOT apply EXIF orientation (verified on 6.12). #164: the
+    full-res top-up used QImage(path), so portrait photos flipped to landscape
+    a quarter second after opening.
 
     参数 / Parameters:
         path (str): 图片路径 / image path.
-        max_edge (int): 允许的最大长边像素 / max long-edge pixels.
+        max_edge (Optional[int]): 允许的最大长边像素;None 不降采样 /
+            max long-edge pixels, None for full resolution.
 
     返回 / Returns:
         QImage: 解码结果,失败时为 isNull 的空图。
     """
     reader = QImageReader(path)
-    reader.setAutoTransform(True)   # 与 QImage(path) 一致的 EXIF 旋转行为
+    reader.setAutoTransform(True)   # 按 EXIF 方向转正(QImage(path) 不会)/ upright per EXIF
     src = reader.size()
-    if src.isValid() and max(src.width(), src.height()) > max_edge:
+    if max_edge and src.isValid() and max(src.width(), src.height()) > max_edge:
         scale = max_edge / max(src.width(), src.height())
         reader.setScaledSize(QSize(
             max(1, round(src.width() * scale)),
@@ -429,10 +440,10 @@ class _ImageLoader(QThread):
             if max(self._shown_size) <= _HD_CACHE_MAX_EDGE:
                 return                      # 显示图已是全分辨率 / already full-res
         if self._path and os.path.exists(self._path):
-            if self._max_edge:
-                img = _decode_capped(self._path, self._max_edge)
-            else:
-                img = QImage(self._path)
+            # 全分辨率(max_edge=None)也必须走 _decode_capped 以按 EXIF 转正(#164)
+            # Full resolution (max_edge=None) also goes through _decode_capped
+            # so it is rotated upright (#164)
+            img = _decode_capped(self._path, self._max_edge)
             if not self._cancelled:
                 self.ready.emit(img)
         else:

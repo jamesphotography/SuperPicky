@@ -534,6 +534,9 @@ class DetailPanel(QWidget):
         self._val_lens.setWordWrap(False)
         self._val_lens.setMinimumHeight(28)
         self._val_shutter = _make_value_label()
+        # 光圈（#166）：report.db 一直存着（如 "5.6"），此前面板没有这一行
+        # Aperture (#166): always stored in report.db (e.g. "5.6"), never shown
+        self._val_aperture = _make_value_label()
         self._val_iso = _make_value_label()
         self._val_focal = _make_value_label()
         self._val_confidence = _make_value_label()
@@ -590,12 +593,27 @@ class DetailPanel(QWidget):
         self._val_species_en.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self._val_species_en.setVisible(False)
 
+        # 连拍统一说明（#162）：鸟种是从同组另一帧统一来的时，在鸟名下注明来源帧；
+        # 置信度也是那一帧的。否则用户点「重新识别这张」看到不同候选，会以为识别自相矛盾。
+        # Burst-unification note (#162): names the frame this species (and its
+        # confidence) came from, so a differing re-identification makes sense.
+        # 不自动换行：文案自带换行（前缀 / 文件名各一行）。自动换行时 QFormLayout 按
+        # 另一个宽度算高度，中文界面（多一行英文名）最后一行会被下一行盖住。
+        # No auto-wrap: the string carries its own line break. With word wrap the
+        # form layout sized the row for another width and clipped the last line.
+        self._val_species_burst = QLabel("")
+        self._val_species_burst.setWordWrap(False)
+        self._val_species_burst.setStyleSheet(
+            f"color: {COLORS['text_muted']}; font-size: 11px; background: transparent;")
+        self._val_species_burst.setVisible(False)
+
         species_row = QWidget()
         species_col = QVBoxLayout(species_row)
         species_col.setContentsMargins(0, 0, 0, 0)
         species_col.setSpacing(0)
         species_col.addWidget(species_line)
         species_col.addWidget(self._val_species_en)
+        species_col.addWidget(self._val_species_burst)
 
         rows = [
             # 鸟类信息 5 行连续（鸟种 → 全球罕见度 → 鸟种颜值 → IUCN → 国家保护）
@@ -610,9 +628,15 @@ class DetailPanel(QWidget):
             ("browser.meta_sharpness",  self._val_sharpness),
             ("browser.meta_aesthetic",  self._val_aesthetic),
             ("browser.meta_flying",     self._val_flying),
+            # 文件名（#166）：2026-06 改版时挪到全屏顶栏、从这里删掉了，可网格里有鸟种的
+            # 卡片只显示鸟名，于是网格模式下整个屏幕上都看不到文件名。放回 EXIF 区首行。
+            # Filename (#166): moved to the fullscreen top strip in 2026-06, but tiles
+            # with a species show only the name, so grid mode showed it nowhere.
+            ("browser.meta_filename",   self._val_filename),
             ("browser.meta_camera",     self._val_camera),
             ("browser.meta_lens",       self._val_lens),
             ("browser.meta_shutter",    self._val_shutter),
+            ("browser.meta_aperture",   self._val_aperture),
             ("browser.meta_iso",        self._val_iso),
             ("browser.meta_focal",      self._val_focal),
             ("browser.meta_confidence", self._val_confidence),
@@ -732,12 +756,14 @@ class DetailPanel(QWidget):
             self._val_iucn, self._val_china,
             self._val_caption,
             self._val_camera, self._val_lens, self._val_shutter,
-            self._val_iso, self._val_focal, self._val_confidence,
+            self._val_iso, self._val_focal, self._val_confidence, self._val_aperture,
             self._val_filesize, self._val_filename, self._val_datetime,
         ):
             val.setText("—")
         self._val_species_en.setText("")
         self._val_species_en.setVisible(False)
+        self._val_species_burst.setText("")
+        self._val_species_burst.setVisible(False)
         self._rating_label.setText("—")
         # 展开/收起状态保留用户的选择，不随清空重置
         # Keep the user's expand/collapse choice across photos
@@ -1066,6 +1092,27 @@ class DetailPanel(QWidget):
         self._img_label.set_pixmap(px)
 
     @staticmethod
+    def _format_aperture(val) -> str:
+        """
+        把库里的光圈值（如 "5.6"、"4"、"8.0"）格式化成 f/5.6、f/4、f/8。
+
+        参数:
+        val: report.db 的 aperture（文本或数字），可能为空
+
+        返回:
+        str: 「f/数值」；空或无法解析时原样返回或「—」
+
+        Format the stored aperture ("5.6", "4", "8.0") as f/5.6, f/4, f/8.
+        """
+        if val is None or str(val).strip() == "":
+            return "—"
+        text = str(val).strip()
+        try:
+            return f"f/{float(text):g}"
+        except ValueError:
+            return text if text.lower().startswith("f/") else f"f/{text}"
+
+    @staticmethod
     def _format_shutter(val) -> str:
         """将小数快门速度（如 '0.0008'）转为摄影惯用格式（如 '1/1250s'）。"""
         if not val:
@@ -1216,6 +1263,17 @@ class DetailPanel(QWidget):
         self._val_species_en.setText(species_en if show_en else "")
         self._val_species_en.setVisible(show_en)
 
+        # 连拍统一来源（#162）：同样无条件刷新，避免残留上一张的说明
+        # Burst-unification source (#162); always refreshed so no stale note lingers
+        burst_source = (p.get("burst_species_source") or "").strip()
+        has_species = bool((p.get("bird_species_cn") or p.get("bird_species_en") or "").strip())
+        show_burst = bool(burst_source) and has_species
+        self._val_species_burst.setText(
+            self.i18n.t("browser.species_burst_unified", source=burst_source) if show_burst else "")
+        self._val_species_burst.setToolTip(
+            self.i18n.t("browser.species_burst_unified_tip", source=burst_source) if show_burst else "")
+        self._val_species_burst.setVisible(show_burst)
+
         # 拼音跟着鸟种一起刷新，且**必须无条件 setText**：这个标签是复用的，
         # 只在查到时赋值的话，切到一张查不到拼音的照片时会留着上一只鸟的拼音，
         # 挂在一个完全不相干的鸟名旁边。
@@ -1272,6 +1330,9 @@ class DetailPanel(QWidget):
 
         # 快门
         self._val_shutter.setText(self._format_shutter(p.get("shutter_speed")))
+
+        # 光圈 / aperture
+        self._val_aperture.setText(self._format_aperture(p.get("aperture")))
 
         # ISO
         iso = p.get("iso")
