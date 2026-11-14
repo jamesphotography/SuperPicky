@@ -1217,6 +1217,31 @@ class ThumbnailGrid(QScrollArea):
         self._anchor_photo = self._photos[0] if self._photos else None
         self._emit_multi_selection()
 
+    def clear_multi_select_for_arrow(self, modifiers) -> bool:
+        """
+        方向键 ←/→ 翻图前清掉多选的勾（#166）：与资源管理器 / 访达一致，按方向键
+        移动就退出多选。此前勾一直留着，移开后 ↑/↓ 打星是改这一张还是整个勾选集
+        取决于「当前这张在不在勾选集里」，很容易改错。
+
+        只管不带修饰键的 ←/→：↑/↓ 是打星键，多选时要批量打星，绝不能清；
+        macOS 的方向键自带 KeypadModifier，判断时要忽略它。
+
+        参数:
+        modifiers: 按键时的 Qt.KeyboardModifiers
+
+        返回:
+        bool: 是否清掉了勾
+
+        Plain Left/Right clear the checked selection before moving, as in
+        Explorer/Finder (#166). Up/Down are rating keys and must keep batch
+        rating; macOS arrow keys carry KeypadModifier, which is ignored.
+        """
+        mods = modifiers & ~Qt.KeypadModifier
+        if mods != Qt.NoModifier or not self._multi_selected:
+            return False
+        self.clear_multi_select()
+        return True
+
     def clear_multi_select(self):
         """公共接口：清空多选状态（ESC 快捷键或取消对比时使用）。"""
         self._clear_multi_selection()
@@ -1507,8 +1532,10 @@ class ThumbnailGrid(QScrollArea):
     def keyPressEvent(self, event):
         key = event.key()
         if key == Qt.Key_Left:
+            self.clear_multi_select_for_arrow(event.modifiers())   # #166
             self._select_adjacent(-1)
         elif key == Qt.Key_Right:
+            self.clear_multi_select_for_arrow(event.modifiers())   # #166
             self._select_adjacent(1)
         elif key in (Qt.Key_Up, Qt.Key_Down):
             # 键盘打星(Paul P0-3):Up/Down 交给宿主窗口的打星分支处理。

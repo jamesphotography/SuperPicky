@@ -534,6 +534,9 @@ class DetailPanel(QWidget):
         self._val_lens.setWordWrap(False)
         self._val_lens.setMinimumHeight(28)
         self._val_shutter = _make_value_label()
+        # 光圈（#166）：report.db 一直存着（如 "5.6"），此前面板没有这一行
+        # Aperture (#166): always stored in report.db (e.g. "5.6"), never shown
+        self._val_aperture = _make_value_label()
         self._val_iso = _make_value_label()
         self._val_focal = _make_value_label()
         self._val_confidence = _make_value_label()
@@ -625,9 +628,15 @@ class DetailPanel(QWidget):
             ("browser.meta_sharpness",  self._val_sharpness),
             ("browser.meta_aesthetic",  self._val_aesthetic),
             ("browser.meta_flying",     self._val_flying),
+            # 文件名（#166）：2026-06 改版时挪到全屏顶栏、从这里删掉了，可网格里有鸟种的
+            # 卡片只显示鸟名，于是网格模式下整个屏幕上都看不到文件名。放回 EXIF 区首行。
+            # Filename (#166): moved to the fullscreen top strip in 2026-06, but tiles
+            # with a species show only the name, so grid mode showed it nowhere.
+            ("browser.meta_filename",   self._val_filename),
             ("browser.meta_camera",     self._val_camera),
             ("browser.meta_lens",       self._val_lens),
             ("browser.meta_shutter",    self._val_shutter),
+            ("browser.meta_aperture",   self._val_aperture),
             ("browser.meta_iso",        self._val_iso),
             ("browser.meta_focal",      self._val_focal),
             ("browser.meta_confidence", self._val_confidence),
@@ -747,7 +756,7 @@ class DetailPanel(QWidget):
             self._val_iucn, self._val_china,
             self._val_caption,
             self._val_camera, self._val_lens, self._val_shutter,
-            self._val_iso, self._val_focal, self._val_confidence,
+            self._val_iso, self._val_focal, self._val_confidence, self._val_aperture,
             self._val_filesize, self._val_filename, self._val_datetime,
         ):
             val.setText("—")
@@ -1083,6 +1092,27 @@ class DetailPanel(QWidget):
         self._img_label.set_pixmap(px)
 
     @staticmethod
+    def _format_aperture(val) -> str:
+        """
+        把库里的光圈值（如 "5.6"、"4"、"8.0"）格式化成 f/5.6、f/4、f/8。
+
+        参数:
+        val: report.db 的 aperture（文本或数字），可能为空
+
+        返回:
+        str: 「f/数值」；空或无法解析时原样返回或「—」
+
+        Format the stored aperture ("5.6", "4", "8.0") as f/5.6, f/4, f/8.
+        """
+        if val is None or str(val).strip() == "":
+            return "—"
+        text = str(val).strip()
+        try:
+            return f"f/{float(text):g}"
+        except ValueError:
+            return text if text.lower().startswith("f/") else f"f/{text}"
+
+    @staticmethod
     def _format_shutter(val) -> str:
         """将小数快门速度（如 '0.0008'）转为摄影惯用格式（如 '1/1250s'）。"""
         if not val:
@@ -1300,6 +1330,9 @@ class DetailPanel(QWidget):
 
         # 快门
         self._val_shutter.setText(self._format_shutter(p.get("shutter_speed")))
+
+        # 光圈 / aperture
+        self._val_aperture.setText(self._format_aperture(p.get("aperture")))
 
         # ISO
         iso = p.get("iso")

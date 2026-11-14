@@ -3349,6 +3349,10 @@ class ResultsBrowserWindow(QMainWindow):
 
         raw_photos = self._db.get_photos_by_filters(filters)
         resolved_photos = [self._resolve_photo_paths(p) for p in raw_photos]
+        # 文件名搜索（#166）：在其余筛选结果上再按文件名过滤，只影响显示
+        # Filename search (#166): narrow the filtered result by name; display only
+        from core.filename_search import filter_by_filename
+        resolved_photos = filter_by_filename(resolved_photos, filters.get("filename_pattern", ""))
         self._raw_filtered_photos = resolved_photos
 
         total = len(self._all_photos)
@@ -5711,11 +5715,19 @@ class ResultsBrowserWindow(QMainWindow):
             if in_fullscreen:
                 self._fullscreen_prev()
             else:
+                # 网格里键盘翻图先清多选的勾（#166）；面板上的「上一张」按钮不清，
+                # 对比页（index 2）靠勾选集工作，也不清
+                # Grid keyboard navigation clears the checks (#166); the panel buttons
+                # don't, nor does the compare page, which relies on the selection
+                if self._stack.currentIndex() == 0:
+                    self._thumb_grid.clear_multi_select_for_arrow(event.modifiers())
                 self._prev_photo()
         elif key == Qt.Key_Right:
             if in_fullscreen:
                 self._fullscreen_next()
             else:
+                if self._stack.currentIndex() == 0:
+                    self._thumb_grid.clear_multi_select_for_arrow(event.modifiers())
                 self._next_photo()
         elif key in _EXTERNAL_APP_KEYS and (event.modifiers() & Qt.ControlModifier):
             # 必须排在打星分支之前：打星分支不看修饰键，否则 Ctrl+1 会被当成打 1 星
