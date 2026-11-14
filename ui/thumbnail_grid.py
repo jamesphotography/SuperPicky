@@ -315,7 +315,7 @@ def _load_thumbnail_image(photo: dict, thumb_size: int) -> Optional[QImage]:
         # Decode-time downscaling: setScaledSize lets libjpeg decode at a
         # reduced resolution instead of full-res decode + scale.
         reader = QImageReader(path)
-        reader.setAutoTransform(True)   # 保持与 QImage(path) 一致的 EXIF 旋转行为
+        reader.setAutoTransform(True)   # 按 EXIF 方向转正(PySide6 的 QImage(path) 不会,#164)/ upright per EXIF
         src = reader.size()             # 仅读头部,不触发解码 / header only
         if src.isValid() and src.width() > 0 and src.height() > 0:
             scale = max(thumb_size / src.width(), thumb_size / src.height())

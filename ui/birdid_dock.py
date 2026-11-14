@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QDialog, QListWidget, QDialogButtonBox, QListWidgetItem, QLineEdit,
 )
 from PySide6.QtCore import Qt, Signal, QThread, QTimer, QSize
-from PySide6.QtGui import QPixmap, QDragEnterEvent, QDropEvent, QKeySequence, QShortcut
+from PySide6.QtGui import QPixmap, QImageReader, QDragEnterEvent, QDropEvent, QKeySequence, QShortcut
 
 from ui.styles import COLORS, FONTS
 from ui.combo_popup import style_combo_popup
@@ -1849,7 +1849,13 @@ class BirdIDDockWidget(QDockWidget):
                     pixmap = QPixmap(tmp.name)
                     os.unlink(tmp.name)
             else:
-                pixmap = QPixmap(file_path)
+                # 必须按 EXIF 方向转正:PySide6 的 QPixmap(path) 不应用 EXIF 方向,
+                # 竖拍 JPEG/HEIF 会横躺显示(#164 同类问题)。
+                # Rotate upright per EXIF: PySide6's QPixmap(path) ignores the
+                # orientation, so portrait JPEGs showed sideways (same as #164).
+                reader = QImageReader(file_path)
+                reader.setAutoTransform(True)
+                pixmap = QPixmap.fromImage(reader.read())
 
             if not pixmap.isNull():
                 self._current_pixmap = pixmap
