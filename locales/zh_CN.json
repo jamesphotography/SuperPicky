@@ -119,7 +119,9 @@
     "folder_reject_dangerous": "该目录是系统或根目录等危险位置，不能加入：\n{directory}",
     "folder_reject_no_photos": "该目录下没有找到照片：\n{directory}",
     "folder_reject_missing": "目录不存在：\n{directory}",
-    "folder_processed": "已处理"
+    "folder_processed": "已处理",
+    "status_incremental": "已处理 {total} 张  ·  新增 {new} 张待处理    ★★★ {n3}    ★★ {n2}    ★ {n1}",
+    "start_incremental": "增量选片 (+{count})"
   },
   "dialogs": {
     "file_organization_title": "文件整理",
@@ -148,12 +150,18 @@
     "queue_precheck_processed": "已处理过（将跳过）：\n{folders}",
     "queue_reprocess_all": "全部重新处理（先撤销上次的文件移动再重跑）",
     "queue_start": "开始",
+    "incremental_confirm_note": "增量选片模式：仅处理 {new} 个新增文件（已有 {existing} 张历史选片结果保持不变）",
     "already_processed_title": "目录已完成选片",
-    "already_processed_msg": "该目录已有 {existing} 张照片的选片结果。\n\n如需重新选片，需要先重置目录；否则可直接查看现有结果。",
+    "already_processed_msg": "该目录下 {existing} 张照片均已有选片结果，未检测到新的待处理文件。\n\n如需重新选片，请先重置目录；否则可直接查看现有结果。",
+    "already_processed_labs_hint_msg": "该目录下已有 {existing} 张选片结果，另检测到 {new} 个新增未处理文件。\n\n当前「设置 → 实验室 → 增量选片」处于关闭状态。你可以去实验室开启增量选片，或先重置目录再全部重选，也可以直接查看现有结果。",
+    "incremental_choice_title": "检测到新增未处理文件",
+    "incremental_choice_msg": "该目录已有 {existing} 张历史选片结果，又检测到 {new} 个未处理文件。\n\n请选择处理方式（增量选片会保留历史结果与手动调整，并合并连拍、鸟种保底与 2/3 星配额）：",
+    "btn_incremental_only": "增量选片 (+{new})",
     "btn_view_results": "查看结果",
     "btn_reprocess_all": "重置并重选",
     "reprocess_confirm_title": "确认重置并重选",
-    "reprocess_confirm_msg": "将把照片移回原目录并重新选片，现有选片结果会被新结果覆盖。\n\n你在结果浏览器里手动改过的星级、鸟种等修改都会丢失，且无法撤销。\n\n确定继续吗？"
+    "reprocess_confirm_msg": "将把照片移回原目录并重新选片，现有选片结果会被新结果覆盖。\n\n你在结果浏览器里手动改过的星级、鸟种等修改都会丢失，且无法撤销。\n\n确定继续吗？",
+    "queue_precheck_incremental": "已处理但有新增文件（将增量选片）：\n{folders}"
   },
   "messages": {
     "initialization_required": "初始化尚未完成。请先完成首次资源准备后再开始处理。",
@@ -470,7 +478,11 @@
     "queue_folder_error": "❌ 目录处理出错，跳到下一个目录：{path}\n   {error}",
     "queue_folder_missing": "目录不存在（外接盘没有连接？）",
     "queue_reset_partial": "⚠️ {path}：有 {failed} 个文件没能移回原位，处理仍会继续，请事后检查该目录",
-    "reset_group_partial": "⚠️ {path}：有 {failed} 个文件没能移回原位，请事后检查该目录"
+    "reset_group_partial": "⚠️ {path}：有 {failed} 个文件没能移回原位，请事后检查该目录",
+    "incremental_nothing_new": "增量选片：未发现待处理的新照片或视频",
+    "incremental_skipped_existing": "增量选片：保留 {skipped} 张已处理照片/视频，本次仅处理 {new} 个新文件",
+    "incremental_same_stem_conflict": "增量选片：发现 {count} 个与已处理照片同名的不同格式文件（如 {names}），已跳过以避免覆盖；如需重新选片请先重置目录",
+    "incremental_detected_banner": "检测到 {existing} 张已选照片外另有 {new} 个未处理文件；点击「增量选片」即可仅处理新增部分"
   },
   "server": {
     "server_already_running": "✅ 服务器已在端口 {port} 运行",
@@ -617,6 +629,8 @@
     "labs_exp_hint": "还在打磨，可能变化",
     "labs_multi_folder": "多目录选鸟",
     "labs_multi_folder_desc": "一次选入多个文件夹一起处理",
+    "labs_incremental_cull": "增量选片",
+    "labs_incremental_cull_desc": "往已选片目录新增照片后，支持仅选新增部分并与历史结果合并",
     "labs_video_desc": "选鸟时一并分析目录里的视频，按鸟种归类。仍不稳定。",
     "labs_badge": "实验",
     "culling_skill_section": "摄影水平",
@@ -945,7 +959,8 @@
     "tip_high_no_bird": "😅 无鸟照片占比过高...建议调整拍摄角度或使用更长焦镜头",
     "tip_no_excellent": "😢 本次没有优选照片...别灰心，拍鸟需要耐心和运气！",
     "tip_high_excellent": "🎉 优选照片占比超过50%！拍摄质量很高！",
-    "tip_slow_processing": "🐌 处理速度 {speed:.2f}秒/张"
+    "tip_slow_processing": "🐌 处理速度 {speed:.2f}秒/张",
+    "incremental_note": "本次为增量选片：新处理 {new} 张 · 目录累计 {cumulative} 张"
   },
   "errors": {
     "dir_not_exist": "目录不存在：\n{directory}",

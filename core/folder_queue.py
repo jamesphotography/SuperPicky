@@ -29,6 +29,7 @@ REJECT_MISSING = "missing"
 STATE_FRESH = "fresh"
 STATE_RESUME = "resume"
 STATE_PROCESSED = "processed"
+STATE_INCREMENTAL = "incremental"
 
 
 def normalize_folder(path: str) -> str:
@@ -223,13 +224,24 @@ def folder_has_results(path: str) -> bool:
 
 def classify_folder(path: str) -> str:
     """
-    分类目录状态：有续跑进度 -> resume；有 report.db -> processed；否则 fresh。
+    分类目录状态：有续跑进度 -> resume；有 report.db 且含未处理新片 -> incremental；
+    仅有 report.db -> processed；否则 fresh。
 
-    Classify a folder: resume state -> resume; report.db -> processed; else fresh.
+    Classify a folder: resume state -> resume; report.db + new unprocessed media ->
+    incremental; report.db only -> processed; else fresh.
     """
     if ResumeStateManager(path).exists():
         return STATE_RESUME
     if _report_db_exists(path):
+        try:
+            from advanced_config import get_advanced_config
+            if get_advanced_config().lab_incremental_cull:
+                from core.incremental_cull import inspect_directory_delta
+                delta = inspect_directory_delta(path)
+                if delta.has_valid_db and delta.has_new_work:
+                    return STATE_INCREMENTAL
+        except Exception:
+            pass
         return STATE_PROCESSED
     return STATE_FRESH
 
@@ -342,6 +354,8 @@ class FolderQueue:
             state = states[path] if path in states else queue_state(path)
             if state == STATE_RESUME:
                 action = "resume"
+            elif state == STATE_INCREMENTAL:
+                action = "reprocess" if reprocess_all else "incremental"
             elif state == STATE_PROCESSED:
                 action = "reprocess" if reprocess_all else "skip"
             else:

@@ -1186,6 +1186,49 @@ class ReportDB:
             self._safe_commit()
             return cursor.rowcount
 
+    def clear_cache_paths_for_prefixes(self, filenames: List[str]) -> int:
+        """
+        仅清空指定照片前缀的缓存路径字段（用于增量模式清理本次临时缓存，保留历史缓存路径）。
+
+        参数:
+            filenames (List[str]): 照片前缀列表（photos.filename 列）
+
+        返回:
+            int: 受影响的行数
+
+        Clear cache path columns only for the specified filename stems, preserving
+        cached paths belonging to earlier incremental batches.
+        """
+        if not filenames:
+            return 0
+        total = 0
+        chunk_size = 500
+        with self._lock:
+            for start in range(0, len(filenames), chunk_size):
+                chunk = filenames[start:start + chunk_size]
+                placeholders = ", ".join(["?"] * len(chunk))
+                cursor = self._conn.execute(
+                    f"UPDATE photos SET debug_crop_path = NULL, temp_jpeg_path = NULL, yolo_debug_path = NULL "
+                    f"WHERE filename IN ({placeholders})",
+                    chunk,
+                )
+                total += cursor.rowcount
+            self._safe_commit()
+        return total
+
+    def get_existing_prefixes(self) -> set:
+        """
+        获取数据库中所有已记录的照片前缀集合。
+
+        返回:
+            set: photos.filename 集合
+
+        Return the set of all photo filename stems currently stored in report.db.
+        """
+        with self._lock:
+            cursor = self._conn.execute("SELECT filename FROM photos")
+            return {row[0] for row in cursor.fetchall() if row[0]}
+
     # ==========================================================================
     #  元数据操作
     # ==========================================================================

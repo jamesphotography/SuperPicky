@@ -45,6 +45,14 @@ from core.flight_detector import FlightDetector, get_flight_detector, FlightResu
 from core.exposure_detector import ExposureDetector, get_exposure_detector, ExposureResult
 from core.focus_point_detector import get_focus_detector, verify_focus_in_bbox, arbitrate_focus_weights
 from core.burst_species import BirdIdOutcome, reconcile_burst_species
+from core.incremental_cull import (
+    HistoricalV2Context,
+    find_max_burst_id,
+    inspect_directory_delta,
+    load_historical_v2_context,
+    merge_incremental_manifest,
+    scan_root_photos,
+)
 from tools.species_display import UNCONFIRMED_SPECIES_MIN_CONFIDENCE
 
 from constants import RATING_FOLDER_NAMES, RAW_EXTENSIONS, JPG_EXTENSIONS, HEIF_EXTENSIONS, get_rating_folder_names
@@ -328,6 +336,8 @@ class PhotoProcessor:
         self.report_db = None  # 在 _run_ai_detection 中初始化
         self.resume_state = ResumeStateManager(dir_path)
         self._stop_requested = False
+        self._incremental_mode = False
+        self._historical_v2_ctx: Optional[HistoricalV2Context] = None
         
         # 性能日志开关（支持 settings 和环境变量）
         env_perf = os.getenv("SUPERPICKY_PERF_LOG", "").strip().lower() in {"1", "true", "yes", "on"}
@@ -654,7 +664,8 @@ class PhotoProcessor:
         self,
         organize_files: bool = True,
         cleanup_temp: bool = True,
-        resume: bool = False
+        resume: bool = False,
+        incremental: bool = False,
     ) -> ProcessingResult:
         """
         主处理流程
@@ -662,29 +673,56 @@ class PhotoProcessor:
         Args:
             organize_files: 是否移动文件到分类文件夹
             cleanup_temp: 是否清理临时JPG文件
+            resume: 是否从断点续跑
+            incremental: 是否增量选片（仅处理未入库的新照片，不覆写历史记录）
             
         Returns:
             ProcessingResult 包含统计数据和处理结果
         """
         start_time = time.time()
         self.stats['start_time'] = start_time
+        self.stats['incremental'] = bool(incremental)
+        self._incremental_mode = bool(incremental)
+        self._historical_v2_ctx = None
         exiftool_mgr = None
         exiftool_session_opened = False
         advanced_config = get_advanced_config()
         metadata_write_mode = str(advanced_config.get_metadata_write_mode()).strip().lower()
 
         try:
+            # 阶段1: 文件扫描
+            raw_dict, jpg_dict, files_tbr = self._scan_files(incremental=bool(incremental))
+
+            if self._incremental_mode and not raw_dict and not files_tbr:
+                self._log(self.i18n.t("logs.incremental_nothing_new"), "info")
+                self._progress(100)
+                end_time = time.time()
+                self.stats['end_time'] = end_time
+                self.stats['total_time'] = end_time - start_time
+                self.stats['avg_time'] = 0
+                return ProcessingResult(
+                    stats=self.stats.copy(),
+                    file_ratings=self.file_ratings.copy(),
+                    star_3_photos=self.star_3_photos.copy(),
+                    total_time=self.stats['total_time'],
+                    avg_time=0,
+                )
+
             if metadata_write_mode != "none":
                 exiftool_mgr = get_exiftool_manager()
                 exiftool_mgr.open_persistent_session("photo_processor.process")
                 exiftool_session_opened = True
-
-            # 阶段1: 文件扫描
-            raw_dict, jpg_dict, files_tbr = self._scan_files()
             
             # 阶段1.5: V4.0.4 早期连拍检测（只基于时间戳）
             if self.settings.detect_burst:
                 self.burst_map = self._detect_bursts_early(raw_dict)
+                if self._incremental_mode and self.burst_map:
+                    burst_offset = find_max_burst_id(self.dir_path)
+                    if burst_offset > 0:
+                        self.burst_map = {
+                            fp: (gid + burst_offset if gid > 0 else 0)
+                            for fp, gid in self.burst_map.items()
+                        }
             
             # 阶段2: RAW转换
             raw_files_to_convert = self._identify_raws_to_convert(raw_dict, jpg_dict, files_tbr)
@@ -699,10 +737,34 @@ class PhotoProcessor:
                 plan = self.resume_state.get_resume_plan(ordered_prefixes)
                 if plan:
                     prefix_to_file = {self._resume_prefix(item): item for item in files_tbr}
-                    files_tbr = [prefix_to_file[prefix] for prefix in plan["pending_prefixes"] if prefix in prefix_to_file]
-                    display_start = int(plan["next_index"])
-                    display_total = int(plan["total_files"])
-                    resume_started = True
+                    if not self._incremental_mode:
+                        # 常规续跑：保持原行为，只处理上次计划里没跑完的文件
+                        # Regular resume: unchanged, only the unfinished planned files
+                        files_tbr = [prefix_to_file[prefix] for prefix in plan["pending_prefixes"] if prefix in prefix_to_file]
+                        display_start = int(plan["next_index"])
+                        display_total = int(plan["total_files"])
+                        resume_started = True
+                    else:
+                        # 增量续跑（实验室）：_scan_files 已剔除入库文件，因此计划外的根目录文件
+                        # 都是中断后新加入的，一并纳入待处理
+                        # Incremental resume (Labs): _scan_files already dropped files in
+                        # report.db, so root files outside the plan were added after the
+                        # interruption; include them as pending too.
+                        pending_set = set(plan["pending_prefixes"])
+                        selected_prefixes = [p for p in plan["pending_prefixes"] if p in prefix_to_file]
+                        extra_new = [p for p in ordered_prefixes if p not in pending_set]
+                        for p in extra_new:
+                            if p not in selected_prefixes:
+                                selected_prefixes.append(p)
+                        files_tbr = [prefix_to_file[p] for p in selected_prefixes if p in prefix_to_file]
+                        if extra_new:
+                            display_start = 1
+                            display_total = len(files_tbr)
+                            resume_started = self.resume_state.start(selected_prefixes)
+                        else:
+                            display_start = int(plan["next_index"])
+                            display_total = int(plan["total_files"])
+                            resume_started = True
                 else:
                     resume_started = self.resume_state.start(ordered_prefixes)
             else:
@@ -807,122 +869,56 @@ class PhotoProcessor:
                 except Exception as e:
                     self._log(self.i18n.t("logs.exiftool_close_failed", error=e), "warning")
     
-    def _scan_files(self) -> Tuple[dict, dict, list]:
-        """扫描目录文件"""
+    def _scan_files(self, incremental: bool = False) -> Tuple[dict, dict, list]:
+        """扫描目录文件（支持增量模式下过滤已入库文件）"""
         scan_start = time.time()
-        
-        raw_dict = {}
-        jpg_dict = {}
-        heif_dict = {}               # HIF/HEIF 文件暂存
-        heif_processed_as_raw = set() # 被当作 RAW 处理的 HIF 前缀
-        files_tbr = []
-        # 同一主文件名可能有多种 RAW（如相机原片 X.CR3 与 Topaz 导出的 X.dng），
-        # 先全部收集，扫描完再按优先级选一个 / collect all, pick one after the scan
-        raw_candidates: Dict[str, List[str]] = {}
-        
-        for filename in os.listdir(self.dir_path):
-            if filename.startswith('.'):
-                continue
-                
-            # V4.0.5: 忽略临时文件（tmp_ 或 temp_ 开头）
-            if filename.lower().startswith(('tmp_', 'temp_')):
-                continue
-
-            # V3.9: 忽略 Windows 系统文件
-            if filename.lower() == 'desktop.ini' or filename.lower() == 'thumbs.db':
-                continue
-            
-            file_prefix, file_ext = os.path.splitext(filename)
-            if file_ext.lower() in RAW_EXTENSIONS:
-                raw_candidates.setdefault(file_prefix, []).append(file_ext)
-            elif file_ext.lower() in HEIF_EXTENSIONS:
-                # HEIF/HIF: 仅当同名前缀没有 RAW 时才加入（RAW 优先）
-                heif_dict[file_prefix] = file_ext
-            if file_ext.lower() in JPG_EXTENSIONS:
-                jpg_dict[file_prefix] = file_ext
-
-        # #126 格式筛选：None = 处理全部；否则只处理允许的扩展名。先筛再挑主文件——
-        # 设了「只处理 DNG」时同名的 CR3 被筛掉，DNG 才是这组的主文件。
-        # #126 format filter (None = everything). Filter before picking the
-        # main file, so "DNG only" makes the DNG the main file of its group.
         allowed_exts = get_advanced_config().get_allowed_extensions()
-        # 筛选前有 RAW / HEIF 的主文件名，用来判断 JPG 是否属于某张被筛掉的照片
-        # Stems that had a RAW/HEIF before filtering (to classify paired JPGs)
-        raw_candidates_all = set(raw_candidates)
-        heif_all = set(heif_dict)
+        scan = scan_root_photos(self.dir_path, allowed_exts=allowed_exts)
+        raw_dict = scan.raw_dict
+        jpg_dict = scan.jpg_dict
+        files_tbr = scan.files_tbr
 
-        def _allowed(ext: str) -> bool:
-            return allowed_exts is None or ext.lower() in allowed_exts
-
-        filtered_out: List[str] = []   # 按设置跳过的文件名 / skipped by the filter
-        for prefix in list(raw_candidates):
-            kept = [e for e in raw_candidates[prefix] if _allowed(e)]
-            filtered_out.extend(prefix + e for e in raw_candidates[prefix] if not _allowed(e))
-            if kept:
-                raw_candidates[prefix] = kept
-            else:
-                del raw_candidates[prefix]
-        for prefix in list(heif_dict):
-            if not _allowed(heif_dict[prefix]):
-                filtered_out.append(prefix + heif_dict.pop(prefix))
-        
-        # 同名多种 RAW 只处理一个：相机原生 RAW 优先于 DNG。此前以主文件名为键
-        # 直接覆盖，留哪个取决于 os.listdir 的顺序——常见结果是 Topaz 导出的 DNG
-        # 顶替了 CR3 原片：原片不评分、不整理，同名 XMP 还被 DNG 带进星级目录。
-        # 其余同名 RAW 原地不动，并在日志里列出。
-        # One photo per stem: camera-native RAW beats DNG. The old code let
-        # whichever file os.listdir returned last win, so a Topaz DNG often
-        # replaced the original CR3 (left unrated, its XMP carried off with
-        # the DNG). The other same-stem RAWs are left untouched and logged.
-        skipped_same_name = []
-        for prefix, exts in raw_candidates.items():
-            ordered = sorted(exts, key=lambda e: (e.lower() == '.dng', e.lower(), e))
-            raw_dict[prefix] = ordered[0]
-            skipped_same_name.extend(prefix + e for e in ordered[1:])
-        if skipped_same_name:
-            shown = ", ".join(sorted(skipped_same_name)[:10])
-            if len(skipped_same_name) > 10:
+        if scan.skipped_same_name:
+            shown = ", ".join(sorted(scan.skipped_same_name)[:10])
+            if len(scan.skipped_same_name) > 10:
                 shown += ", …"
             self._log(self.i18n.t(
-                "logs.same_name_raw_skipped", count=len(skipped_same_name), names=shown,
+                "logs.same_name_raw_skipped", count=len(scan.skipped_same_name), names=shown,
             ), "warning")
 
-        # 将 HIF 作为 RAW 处理（仅对同名前缀无 RAW 文件的）
-        for prefix, ext in heif_dict.items():
-            if prefix not in raw_dict:
-                raw_dict[prefix] = ext
-                heif_processed_as_raw.add(prefix)
-
-        # JPG：与 RAW / HEIF 同名的是那张照片的一部分，跟随主文件；主文件被筛掉
-        # 时这张 JPG 也不处理。没有同名 RAW / HEIF 的才是「单独的 JPEG」，按 jpeg
-        # 分组决定。
-        # JPG: a same-stem JPG belongs to its RAW/HEIF and follows it (dropped
-        # when the main file was filtered out); only a JPG without one is a
-        # standalone JPEG, governed by the jpeg group.
-        main_stems = set(raw_candidates_all) | set(heif_all)
-        for prefix in list(jpg_dict):
-            ext = jpg_dict[prefix]
-            if prefix in raw_dict:
-                keep = True
-            elif prefix in main_stems:
-                keep = False
-            else:
-                keep = _allowed(ext)
-            if keep:
-                files_tbr.append(prefix + ext)
-            else:
-                filtered_out.append(prefix + jpg_dict.pop(prefix))
-
-        if filtered_out:
+        if scan.filtered_out:
             # 筛选是长期设置，必须看得见：列出跳过的数量与格式
             # The filter persists across runs, so always say what it skipped
-            by_ext = Counter(os.path.splitext(n)[1].lower() for n in filtered_out)
+            by_ext = Counter(os.path.splitext(n)[1].lower() for n in scan.filtered_out)
             detail = ", ".join(f"{ext} ×{n}" for ext, n in sorted(by_ext.items()))
             self._log(self.i18n.t(
-                "logs.format_filter_skipped", count=len(filtered_out), detail=detail,
+                "logs.format_filter_skipped", count=len(scan.filtered_out), detail=detail,
             ), "warning")
             if not raw_dict and not files_tbr:
                 self._log(self.i18n.t("logs.format_filter_nothing_left"), "warning")
+
+        if incremental:
+            delta = inspect_directory_delta(self.dir_path, allowed_exts=allowed_exts)
+            if delta.skipped_existing_count > 0:
+                self.stats['skipped_existing'] = delta.skipped_existing_count
+                self._log(self.i18n.t(
+                    "logs.incremental_skipped_existing",
+                    skipped=delta.skipped_existing_count,
+                    new=delta.new_count,
+                ), "info")
+            if delta.conflict_same_stem:
+                self.stats['conflict_same_stem'] = list(delta.conflict_same_stem)
+                shown_conflicts = ", ".join(sorted(delta.conflict_same_stem)[:10])
+                if len(delta.conflict_same_stem) > 10:
+                    shown_conflicts += ", …"
+                self._log(self.i18n.t(
+                    "logs.incremental_same_stem_conflict",
+                    count=len(delta.conflict_same_stem),
+                    names=shown_conflicts,
+                ), "warning")
+            raw_dict = delta.new_raw_dict
+            jpg_dict = delta.new_jpg_dict
+            files_tbr = delta.new_files_tbr
 
         scan_time = (time.time() - scan_start) * 1000
         self._log(self.i18n.t("logs.scan_time", time=scan_time))
@@ -1325,6 +1321,16 @@ class PhotoProcessor:
         
         # 初始化 SQLite 报告数据库
         self.report_db = ReportDB(self.dir_path)
+        if getattr(self, "_incremental_mode", False) and getattr(self, "_historical_v2_ctx", None) is None:
+            # 在本批任何新行写入 report.db 前先加载只读历史上下文，并排除本批前缀防重
+            # Snapshot read-only historical V2 context before inserting current-batch rows.
+            current_prefixes = {
+                self._resume_prefix(item) for item in (files_tbr or []) if item
+            } | set((raw_dict or {}).keys())
+            self._historical_v2_ctx = load_historical_v2_context(
+                self.report_db,
+                exclude_prefixes=current_prefixes,
+            )
         
         # 获取关键点检测模型
         keypoint_detector = get_keypoint_detector()
@@ -3551,12 +3557,26 @@ class PhotoProcessor:
                     pend['metrics'].species_confirmed = not info.get('low_confidence')
             quota3 = get_quota3_for_skill(self.config.skill_level, self.config)
             quota2 = get_quota2_for_skill(self.config.skill_level, self.config)
+            ref_photos = None
+            existing_floor_species = None
+            if getattr(self, "_incremental_mode", False) and self.report_db is not None:
+                if getattr(self, "_historical_v2_ctx", None) is None:
+                    self._historical_v2_ctx = load_historical_v2_context(
+                        self.report_db,
+                        exclude_prefixes=set(v2_pending.keys()) | set(v2_gated.keys()),
+                    )
+                if self._historical_v2_ctx.reference_photos:
+                    ref_photos = self._historical_v2_ctx.reference_photos
+                if self._historical_v2_ctx.existing_floor_species:
+                    existing_floor_species = self._historical_v2_ctx.existing_floor_species
             v2_results = assign_ratings_v2(
                 [p['metrics'] for p in v2_pending.values()]
                 + [g['metrics'] for g in v2_gated.values()],
                 quota3=quota3,
                 quota2=quota2,
                 min_confidence=self.settings.ai_confidence / 100.0,
+                reference_photos=ref_photos,
+                existing_floor_species=existing_floor_species,
             )
             v2_changed = 0
             for prefix, pend in v2_pending.items():
@@ -4236,22 +4256,49 @@ class PhotoProcessor:
         
         self._log(self.i18n.t("logs.picked_calculation_start", count=len(self.star_3_photos)))
         top_percent = self.config.picked_top_percentage / 100.0
-        top_count = max(1, int(len(self.star_3_photos) * top_percent))
+
+        # 增量模式下把历史 3★ 照片并入参考池以保持 top% 门槛稳定，只对本轮新照片写 picked
+        picked_pool = list(self.star_3_photos)
+        if getattr(self, "_incremental_mode", False):
+            hist_ctx = getattr(self, "_historical_v2_ctx", None)
+            if hist_ctx is None and getattr(self, "report_db", None):
+                current_star3_prefixes = {
+                    os.path.splitext(os.path.basename(str(p.get('file') or '')))[0]
+                    for p in self.star_3_photos
+                    if p.get('file')
+                }
+                hist_ctx = load_historical_v2_context(
+                    self.report_db,
+                    exclude_prefixes=current_star3_prefixes,
+                )
+                self._historical_v2_ctx = hist_ctx
+            if hist_ctx and hist_ctx.existing_star_3_scores:
+                picked_pool.extend(
+                    {'file': None, 'nima': n_val, 'sharpness': s_val}
+                    for n_val, s_val in hist_ctx.existing_star_3_scores
+                )
+
+        top_count = max(1, int(len(picked_pool) * top_percent))
         
-        # 美学排序
-        sorted_by_nima = sorted(self.star_3_photos, key=lambda x: x['nima'], reverse=True)
-        nima_top_files = set([photo['file'] for photo in sorted_by_nima[:top_count]])
+        # 美学排序（用列表索引避免历史记录 file=None 在集合里折叠成 1 条）
+        sorted_by_nima = sorted(range(len(picked_pool)), key=lambda idx: picked_pool[idx]['nima'], reverse=True)
+        nima_top_indices = set(sorted_by_nima[:top_count])
         
         # 锐度排序
-        sorted_by_sharpness = sorted(self.star_3_photos, key=lambda x: x['sharpness'], reverse=True)
-        sharpness_top_files = set([photo['file'] for photo in sorted_by_sharpness[:top_count]])
+        sorted_by_sharpness = sorted(range(len(picked_pool)), key=lambda idx: picked_pool[idx]['sharpness'], reverse=True)
+        sharpness_top_indices = set(sorted_by_sharpness[:top_count])
         
-        # 交集
-        picked_files = nima_top_files & sharpness_top_files
+        # 交集后过滤掉历史参考项，仅留本次新照片
+        picked_indices = nima_top_indices & sharpness_top_indices
+        picked_files = {
+            picked_pool[idx]['file']
+            for idx in picked_indices
+            if picked_pool[idx]['file'] is not None
+        }
         
         if len(picked_files) > 0:
-            self._log(self.i18n.t("logs.picked_aesthetic_top", percent=self.config.picked_top_percentage, count=len(nima_top_files)))
-            self._log(self.i18n.t("logs.picked_sharpness_top", percent=self.config.picked_top_percentage, count=len(sharpness_top_files)))
+            self._log(self.i18n.t("logs.picked_aesthetic_top", percent=self.config.picked_top_percentage, count=len(nima_top_indices)))
+            self._log(self.i18n.t("logs.picked_sharpness_top", percent=self.config.picked_top_percentage, count=len(sharpness_top_indices)))
             self._log(self.i18n.t("logs.picked_intersection", count=len(picked_files)))
             
             # Debug: show picked file paths
@@ -4461,35 +4508,82 @@ class PhotoProcessor:
                 self._log(self.i18n.t("logs.db_current_path_failed", error=e), "warning")
 
         
-        # 生成manifest（V4.0: 增加鸟种分类信息和临时 JPEG 列表）
-        manifest = {
-            "version": "2.0",  # V4.0: 更新版本号
-            "created": datetime.now().isoformat(),
-            "app_version": "V4.0.5",
-            "original_dir": self.dir_path,
-            "folder_structure": get_rating_folder_names(),
-            "bird_species_dirs": True,  # V4.0: 标记使用了鸟种分目录
-            "files": files_to_move,
-            "temp_jpegs": list(self.temp_converted_jpegs),  # V4.0: 记录临时转换的 JPEG，Reset 时需删除
-            "stats": {"total_moved": moved_count}
-        }
-        
+        # 生成manifest（V4.0: 增加鸟种分类信息和临时 JPEG 列表；增量模式合并历史条目）
         manifest_path = os.path.join(self.dir_path, ".superpicky_manifest.json")
         try:
-            with open(manifest_path, 'w', encoding='utf-8') as f:
-                json.dump(manifest, f, ensure_ascii=False, indent=2)
+            if getattr(self, "_incremental_mode", False) and os.path.isfile(manifest_path):
+                merge_incremental_manifest(
+                    self.dir_path,
+                    files_to_move,
+                    list(self.temp_converted_jpegs),
+                    get_rating_folder_names(),
+                    moved_count,
+                )
+            else:
+                manifest = {
+                    "version": "2.0",  # V4.0: 更新版本号
+                    "created": datetime.now().isoformat(),
+                    "app_version": "V4.0.5",
+                    "original_dir": self.dir_path,
+                    "folder_structure": get_rating_folder_names(),
+                    "bird_species_dirs": True,  # V4.0: 标记使用了鸟种分目录
+                    "files": files_to_move,
+                    "temp_jpegs": list(self.temp_converted_jpegs),  # V4.0: 记录临时转换的 JPEG，Reset 时需删除
+                    "stats": {"total_moved": moved_count}
+                }
+                with open(manifest_path, 'w', encoding='utf-8') as f:
+                    json.dump(manifest, f, ensure_ascii=False, indent=2)
             # 移动张数已由上面的 logs.organizing_complete 按界面语言报告过，这里不再重复
             # （此前多打一行写死的英文 "Moved N photos"）/ already reported, localized
         except Exception as e:
             self._log(self.i18n.t("logs.manifest_save_failed", error=e), "warning")
     
     def _cleanup_temp_files(self, files_tbr, raw_dict):
-        """V4.0.6: Clean up entire cache directory (temp_preview + yolo_debug + crop_debug)"""
+        """V4.0.6: Clean up cache directory (or only current-batch caches in incremental mode)"""
         import shutil
         self._log(self.i18n.t("logs.cleaning_temp"))
         self._status("labels.stage_cleanup")
 
         cache_dir = os.path.join(self.dir_path, ".superpicky", "cache")
+        if getattr(self, "_incremental_mode", False):
+            prefixes = sorted(
+                {self._resume_prefix(item) for item in (files_tbr or []) if item}
+                | set((raw_dict or {}).keys())
+            )
+            removed = 0
+            for rel_path in list(self.temp_converted_jpegs):
+                abs_path = (
+                    rel_path if os.path.isabs(rel_path)
+                    else os.path.join(self.dir_path, rel_path)
+                )
+                if os.path.isfile(abs_path):
+                    try:
+                        os.remove(abs_path)
+                        removed += 1
+                    except Exception:
+                        pass
+            if os.path.exists(cache_dir) and prefixes:
+                for sub in ("temp_preview", "crop_debug", "yolo_debug"):
+                    sub_dir = os.path.join(cache_dir, sub)
+                    if not os.path.isdir(sub_dir):
+                        continue
+                    for pfx in prefixes:
+                        for ext in (".jpg", ".jpeg", ".png"):
+                            candidate = os.path.join(sub_dir, pfx + ext)
+                            if os.path.isfile(candidate):
+                                try:
+                                    os.remove(candidate)
+                                    removed += 1
+                                except Exception:
+                                    pass
+            if hasattr(self, 'report_db') and self.report_db and prefixes:
+                try:
+                    self.report_db.clear_cache_paths_for_prefixes(prefixes)
+                except Exception as e:
+                    self._log(self.i18n.t("logs.db_paths_clear_failed", error=e), "warning")
+            self._log(self.i18n.t("logs.temp_files_cleaned", count=len(self.temp_converted_jpegs)))
+            return
+
         if os.path.exists(cache_dir):
             try:
                 shutil.rmtree(cache_dir)

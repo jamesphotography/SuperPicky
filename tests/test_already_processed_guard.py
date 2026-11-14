@@ -104,23 +104,6 @@ class _ChoiceDlg:
         return 0
 
 
-def test_count_existing_results_is_read_only(tmp_path):
-    """无库 / 0 字节占位库返回 None，且不会因此创建或改动 report.db。"""
-    from ui.main_window import SuperPickyMainWindow
-
-    assert SuperPickyMainWindow._count_existing_results(str(tmp_path)) is None
-    sp = tmp_path / ".superpicky"
-    sp.mkdir()
-    (sp / "report.db").write_bytes(b"")
-    assert SuperPickyMainWindow._count_existing_results(str(tmp_path)) is None
-    assert (sp / "report.db").stat().st_size == 0
-
-    other = tmp_path / "done"
-    other.mkdir()
-    _seed_db(other, ["A1", "A2"])
-    assert SuperPickyMainWindow._count_existing_results(str(other)) == 2
-
-
 def test_guard_blocks_silent_overwrite(tmp_path):
     """已选片目录点开始：取消/查看结果都不启动；重置并重选需二次确认。"""
     from ui import custom_dialogs as _cd

@@ -119,7 +119,9 @@
     "folder_reject_dangerous": "此資料夾是系統或根目錄等危險位置，不能加入：\n{directory}",
     "folder_reject_no_photos": "此資料夾下找不到照片：\n{directory}",
     "folder_reject_missing": "資料夾不存在：\n{directory}",
-    "folder_processed": "已處理"
+    "folder_processed": "已處理",
+    "status_incremental": "已處理 {total} 張  ·  新增 {new} 張待處理    ★★★ {n3}    ★★ {n2}    ★ {n1}",
+    "start_incremental": "增量選片 (+{count})"
   },
   "dialogs": {
     "file_organization_title": "檔案整理",
@@ -148,12 +150,18 @@
     "queue_precheck_processed": "已處理過（將略過）：\n{folders}",
     "queue_reprocess_all": "全部重新處理（先復原上次的檔案搬移再重跑）",
     "queue_start": "開始",
+    "incremental_confirm_note": "增量選片模式：僅處理 {new} 個新增檔案（已有 {existing} 張歷史選片結果保持不變）",
     "already_processed_title": "資料夾已完成選片",
-    "already_processed_msg": "該資料夾已有 {existing} 張照片的選片結果。\n\n如需重新選片，需要先重設資料夾；否則可直接檢視現有結果。",
+    "already_processed_msg": "該資料夾下 {existing} 張照片均已有選片結果，未偵測到新的待處理檔案。\n\n如需重新選片，請先重設資料夾；否則可直接檢視現有結果。",
+    "already_processed_labs_hint_msg": "該資料夾下已有 {existing} 張選片結果，另偵測到 {new} 個新增未處理檔案。\n\n目前「設定 → 實驗室 → 增量選片」處於關閉狀態。你可以去實驗室開啟增量選片，或先重設資料夾再全部重選，也可以直接檢視現有結果。",
+    "incremental_choice_title": "偵測到新增未處理檔案",
+    "incremental_choice_msg": "該資料夾已有 {existing} 張歷史選片結果，又偵測到 {new} 個未處理檔案。\n\n請選擇處理方式（增量選片會保留歷史結果與手動調整，並合併連拍、鳥種保底與 2/3 星配額）：",
+    "btn_incremental_only": "增量選片 (+{new})",
     "btn_view_results": "檢視結果",
     "btn_reprocess_all": "重設並重選",
     "reprocess_confirm_title": "確認重設並重選",
-    "reprocess_confirm_msg": "將把照片移回原資料夾並重新選片，現有選片結果會被新結果覆蓋。\n\n你在結果瀏覽器裡手動改過的星級、鳥種等修改都會遺失，且無法復原。\n\n確定要繼續嗎？"
+    "reprocess_confirm_msg": "將把照片移回原資料夾並重新選片，現有選片結果會被新結果覆蓋。\n\n你在結果瀏覽器裡手動改過的星級、鳥種等修改都會遺失，且無法復原。\n\n確定要繼續嗎？",
+    "queue_precheck_incremental": "已處理但有新增檔案（將增量選片）：\n{folders}"
   },
   "messages": {
     "initialization_required": "初始化尚未完成。請先完成首次資源準備後再開始處理。",
@@ -470,7 +478,11 @@
     "queue_folder_error": "❌ 資料夾處理發生錯誤，跳到下一個資料夾：{path}\n   {error}",
     "queue_folder_missing": "資料夾不存在（外接磁碟沒有連接？）",
     "queue_reset_partial": "⚠️ {path}：有 {failed} 個檔案沒能移回原位，處理仍會繼續，請事後檢查該資料夾",
-    "reset_group_partial": "⚠️ {path}：有 {failed} 個檔案沒能移回原位，請事後檢查該資料夾"
+    "reset_group_partial": "⚠️ {path}：有 {failed} 個檔案沒能移回原位，請事後檢查該資料夾",
+    "incremental_nothing_new": "增量選片：未發現待處理的新照片或影片",
+    "incremental_skipped_existing": "增量選片：保留 {skipped} 張已處理照片/影片，本次僅處理 {new} 個新檔案",
+    "incremental_same_stem_conflict": "增量選片：發現 {count} 個與已處理照片同名的不同格式檔案（如 {names}），已略過以避免覆蓋；如需重新選片請先重設資料夾",
+    "incremental_detected_banner": "偵測到 {existing} 張已選照片外另有 {new} 個未處理檔案；點擊「增量選片」即可僅處理新增部分"
   },
   "server": {
     "server_already_running": "✅ 伺服器已在埠 {port} 執行",
@@ -617,6 +629,8 @@
     "labs_exp_hint": "還在打磨，可能會變動",
     "labs_multi_folder": "多資料夾選鳥",
     "labs_multi_folder_desc": "一次選入多個資料夾一起處理",
+    "labs_incremental_cull": "增量選片",
+    "labs_incremental_cull_desc": "往已選片資料夾新增照片後，支援僅選新增部分並與歷史結果合併",
     "labs_video_desc": "選鳥時一併分析資料夾裡的影片，依鳥種歸類。仍不穩定。",
     "labs_badge": "實驗",
     "culling_skill_section": "攝影水平",
@@ -945,7 +959,8 @@
     "tip_high_no_bird": "😅 無鳥照片佔比過高...建議調整拍攝角度或使用更長焦鏡頭",
     "tip_no_excellent": "😢 本次沒有優選照片...別灰心，拍鳥需要耐心和運氣！",
     "tip_high_excellent": "🎉 優選照片佔比超過50%！拍攝品質很高！",
-    "tip_slow_processing": "🐌 處理速度 {speed:.2f}秒/張"
+    "tip_slow_processing": "🐌 處理速度 {speed:.2f}秒/張",
+    "incremental_note": "本次為增量選片：新處理 {new} 張 · 資料夾累計 {cumulative} 張"
   },
   "errors": {
     "dir_not_exist": "資料夾不存在：\n{directory}",

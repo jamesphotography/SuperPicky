@@ -222,6 +222,7 @@ class AdvancedConfig:
         "lab_report_export": False,
         "lab_ebird_export": False,
         "lab_multi_folder": False,
+        "lab_incremental_cull": False,
 
         # 主窗口位置和最大化状态。普通几何与最大化状态分开存储，便于跨屏幕校验。
         # Main-window placement and maximized state. Normal geometry is stored
@@ -1092,6 +1093,11 @@ class AdvancedConfig:
         """实验室：多目录选鸟开关 / Labs: multi-folder culling switch."""
         return bool(self.config.get("lab_multi_folder", False))
 
+    @property
+    def lab_incremental_cull(self) -> bool:
+        """实验室：增量选片开关 / Labs: incremental culling switch."""
+        return bool(self.config.get("lab_incremental_cull", False))
+
     def set_lab_report_export(self, value: bool) -> None:
         self.config["lab_report_export"] = bool(value)
 
@@ -1100,6 +1106,9 @@ class AdvancedConfig:
 
     def set_lab_multi_folder(self, value: bool) -> None:
         self.config["lab_multi_folder"] = bool(value)
+
+    def set_lab_incremental_cull(self, value: bool) -> None:
+        self.config["lab_incremental_cull"] = bool(value)
 
     @property
     def close_action(self) -> str:

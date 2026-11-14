@@ -5,13 +5,23 @@ from advanced_config import AdvancedConfig, get_advanced_config
 
 def test_lab_flags_default_off():
     d = AdvancedConfig.DEFAULT_CONFIG
-    assert d["lab_report_export"] is False and d["lab_ebird_export"] is False and d["lab_multi_folder"] is False
+    assert (
+        d["lab_report_export"] is False
+        and d["lab_ebird_export"] is False
+        and d["lab_multi_folder"] is False
+        and d["lab_incremental_cull"] is False
+    )
 
 
 def test_lab_flags_not_preserved_groups_preserved():
     p = AdvancedConfig.PRESERVE_ON_RESET
     assert "recent_directory_groups" in p
-    assert not {"lab_report_export", "lab_ebird_export", "lab_multi_folder"} & p
+    assert not {
+        "lab_report_export",
+        "lab_ebird_export",
+        "lab_multi_folder",
+        "lab_incremental_cull",
+    } & p
 
 
 def test_group_dedup_by_set_and_newest_first():
@@ -34,9 +44,11 @@ def test_group_cap_10_and_single_ignored():
 def test_reset_turns_labs_off_keeps_groups():
     cfg = get_advanced_config()
     cfg.set_lab_multi_folder(True)
+    cfg.set_lab_incremental_cull(True)
     cfg.add_recent_directory_group(["/a", "/b"])
     cfg.reset_to_default()
     assert cfg.lab_multi_folder is False
+    assert cfg.lab_incremental_cull is False
     assert cfg.get_recent_directory_groups() == [["/a", "/b"]]
 
 

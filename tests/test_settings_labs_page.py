@@ -27,14 +27,18 @@ def test_labs_checkboxes_reflect_and_save():
     cfg = get_advanced_config()
     w = SettingsCenter(get_i18n(), start_page="labs")
     assert not w._lab_report_cb.isChecked()
+    assert not w._lab_incremental_cb.isChecked()
     w._lab_multi_cb.setChecked(True)
     assert cfg.lab_multi_folder is True
+    w._lab_incremental_cb.setChecked(True)
+    assert cfg.lab_incremental_cull is True
     w._lab_report_cb.setChecked(True)
     assert cfg.lab_report_export is True
     w._lab_ebird_cb.setChecked(True)
     assert cfg.lab_ebird_export is True
     w.done(0)
     assert cfg.lab_multi_folder is True
+    assert cfg.lab_incremental_cull is True
 
 
 def test_restore_defaults_rebuild_unchecks_labs(monkeypatch):
@@ -44,14 +48,22 @@ def test_restore_defaults_rebuild_unchecks_labs(monkeypatch):
     cfg = get_advanced_config()
     cfg.set_lab_report_export(True)
     cfg.set_lab_multi_folder(True)
+    cfg.set_lab_incremental_cull(True)
     cfg.save()
     monkeypatch.setattr(DeleteConfirmDialog, "exec", lambda self: (self.choose("reset"), 0)[1])
     monkeypatch.setattr(StyledMessageBox, "information", staticmethod(lambda *a, **k: None))
     w = SettingsCenter(get_i18n(), start_page="labs")
     w._on_reset_defaults()
-    assert not any(cb.isChecked() for cb in (w._lab_report_cb, w._lab_ebird_cb, w._lab_multi_cb))
+    assert not any(
+        cb.isChecked()
+        for cb in (w._lab_report_cb, w._lab_ebird_cb, w._lab_multi_cb, w._lab_incremental_cb)
+    )
     w.done(0)
-    assert cfg.lab_report_export is False and cfg.lab_multi_folder is False
+    assert (
+        cfg.lab_report_export is False
+        and cfg.lab_multi_folder is False
+        and cfg.lab_incremental_cull is False
+    )
 
 
 def test_labs_locale_keys_present():
@@ -61,7 +73,8 @@ def test_labs_locale_keys_present():
     root = Path(__file__).resolve().parent.parent
     keys = ["nav_labs", "labs_more_title", "labs_more_hint", "labs_report",
             "labs_report_desc", "labs_ebird", "labs_ebird_desc", "labs_exp_title",
-            "labs_exp_hint", "labs_multi_folder", "labs_multi_folder_desc", "labs_badge"]
+            "labs_exp_hint", "labs_multi_folder", "labs_multi_folder_desc",
+            "labs_incremental_cull", "labs_incremental_cull_desc", "labs_badge"]
     for name in ("zh_CN", "zh_TW", "en_US"):
         with open(root / "locales" / f"{name}.json", "r", encoding="utf-8") as f:
             s = json.load(f)["settings"]
