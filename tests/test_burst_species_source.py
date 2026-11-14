@@ -209,7 +209,8 @@ def test_single_photo_edit_passes_the_source_to_the_dialog(tmp_path, monkeypatch
 
     class _Stub:
         def __init__(self, parent=None, session_species=None,
-                     exclude_species=None, photo_path=None, burst_source=None):
+                     exclude_species=None, photo_path=None, burst_source=None,
+                     reidentify_count=0):
             captured["burst_source"] = burst_source
 
         def exec(self):

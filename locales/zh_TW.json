@@ -1994,6 +1994,7 @@
     "tb_auto": "自動修圖"
   },
   "bird_species_edit": {
+    "reidentify_selected": "重新辨識這 {count} 張",
     "burst_unified_note": "這張的鳥種是從同一連拍組裡置信度最高的 {source} 統一過來的。「重新辨識這張」只看這一張，候選可能與之不同。",
     "title": "修改鳥種",
     "hint": "搜尋並選擇正確的鳥種，確認後將自動更新資料夾和資料庫。",
@@ -2119,5 +2120,23 @@
     "working": "正在生成報告…",
     "write_failed": "報告寫入失敗：{error}",
     "menu_hint": "全部照片 → 一個 HTML 檔案"
+  },
+  "batch_reid": {
+    "title": "重新辨識所選照片",
+    "intro": "逐張重新辨識 {count} 張照片，每張只看它自己。辨識完先在這裡核對，按「套用修改」才會寫入；不想改的選「保持不變」。",
+    "col_file": "檔案",
+    "col_current": "目前鳥種",
+    "col_result": "辨識結果",
+    "pending": "等待辨識…",
+    "keep": "保持不變",
+    "row_failed": "辨識失敗：{error}",
+    "row_missing": "檔案不存在（可能已被移動或刪除）",
+    "row_none": "沒有辨識出鳥種（保持不變）",
+    "burst_note": "同一連拍組的照片會整組一起修改（包括沒有勾選的那幾張）。",
+    "conflict": "同一連拍組被選成了不同鳥種：{names}。連拍組只能整組改成同一種，請先把它們選成一致。",
+    "status_running": "正在辨識 {done}/{total}…",
+    "status_done": "辨識完成，{count} 張將修改",
+    "apply": "套用修改（{count} 張）",
+    "cancel": "取消"
   }
 }

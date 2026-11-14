@@ -1994,6 +1994,7 @@
     "tb_auto": "自动修图"
   },
   "bird_species_edit": {
+    "reidentify_selected": "重新识别这 {count} 张",
     "burst_unified_note": "这张的鸟种是从同一连拍组里置信度最高的 {source} 统一过来的。「重新识别这张」只看这一张，候选可能与之不同。",
     "title": "修改鸟种",
     "hint": "搜索并选择正确的鸟种，确认后将自动更新目录和数据库。",
@@ -2119,5 +2120,23 @@
     "working": "正在生成报告…",
     "write_failed": "报告写入失败：{error}",
     "menu_hint": "全部照片 → 一个 HTML 文件"
+  },
+  "batch_reid": {
+    "title": "重新识别所选照片",
+    "intro": "逐张重新识别 {count} 张照片，每张只看它自己。识别完先在这里核对，点「应用修改」才会写入；不想改的选「保持不变」。",
+    "col_file": "文件",
+    "col_current": "当前鸟种",
+    "col_result": "识别结果",
+    "pending": "等待识别…",
+    "keep": "保持不变",
+    "row_failed": "识别失败：{error}",
+    "row_missing": "文件不存在（可能已被移动或删除）",
+    "row_none": "没有识别出鸟种（保持不变）",
+    "burst_note": "同一连拍组的照片会整组一起修改（包括没有勾选的那几张）。",
+    "conflict": "同一连拍组被选成了不同鸟种：{names}。连拍组只能整组改成同一种，请先把它们选成一致。",
+    "status_running": "正在识别 {done}/{total}…",
+    "status_done": "识别完成，{count} 张将修改",
+    "apply": "应用修改（{count} 张）",
+    "cancel": "取消"
   }
 }

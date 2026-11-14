@@ -76,7 +76,8 @@ def _stub_species_dialog(monkeypatch, cn: str, en: str, latin: str):
 
     class _Stub:
         def __init__(self, parent=None, session_species=None,
-                     exclude_species=None, photo_path=None, burst_source=None):
+                     exclude_species=None, photo_path=None, burst_source=None,
+                     reidentify_count=0):
             self.session_species = list(session_species or [])
             self.exclude_species = list(exclude_species or [])
             self.photo_path = photo_path

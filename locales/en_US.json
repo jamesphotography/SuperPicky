@@ -1994,6 +1994,7 @@
     "tb_auto": "Auto-edit"
   },
   "bird_species_edit": {
+    "reidentify_selected": "Re-identify these {count} photos",
     "burst_unified_note": "This photo's species was copied from {source}, the most confident frame of its burst. Re-identify looks at this photo on its own, so its candidates can differ.",
     "title": "Change Bird Species",
     "hint": "Search and select the correct species. Files will be moved automatically after confirmation.",
@@ -2119,5 +2120,23 @@
     "working": "Generating report…",
     "write_failed": "Failed to write report: {error}",
     "menu_hint": "All photos → one HTML file"
+  },
+  "batch_reid": {
+    "title": "Re-identify selected photos",
+    "intro": "Re-identifies {count} photos one at a time, each on its own. Review the results here; nothing is written until you click Apply. Choose \"Keep current\" for any you don't want changed.",
+    "col_file": "File",
+    "col_current": "Current species",
+    "col_result": "Result",
+    "pending": "Waiting…",
+    "keep": "Keep current",
+    "row_failed": "Failed: {error}",
+    "row_missing": "file not found (moved or deleted?)",
+    "row_none": "No species found (kept)",
+    "burst_note": "Photos in a burst are changed together as a group, including any you didn't select.",
+    "conflict": "Photos from the same burst are set to different species: {names}. A burst can only be changed to one species, so please make them match.",
+    "status_running": "Identifying {done}/{total}…",
+    "status_done": "Done, {count} photo(s) will change",
+    "apply": "Apply ({count})",
+    "cancel": "Cancel"
   }
 }
