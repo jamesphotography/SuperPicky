@@ -2947,11 +2947,15 @@ class SettingsCenter(QDialog):
         self._lab_multi_cb = _toggle(
             t("settings.labs_multi_folder"), t("settings.labs_multi_folder_desc"),
             cfg.lab_multi_folder)
+        self._lab_incremental_cb = _toggle(
+            t("settings.labs_incremental_cull"), t("settings.labs_incremental_cull_desc"),
+            cfg.lab_incremental_cull)
 
         # 勾选变化即时保存 / immediate save on toggle
         self._lab_report_cb.toggled.connect(lambda _c: self._save_labs())
         self._lab_ebird_cb.toggled.connect(lambda _c: self._save_labs())
         self._lab_multi_cb.toggled.connect(lambda _c: self._save_labs())
+        self._lab_incremental_cb.toggled.connect(lambda _c: self._save_labs())
 
         # ── 视频 / Video ─────────────────────────────────────────────────────
         # 视频是实验功能列表的最后一项(不另设标题),读写原字段
@@ -2969,9 +2973,9 @@ class SettingsCenter(QDialog):
 
     def _save_labs(self) -> None:
         """
-        把实验室页三个开关写入 advanced_config 并落盘(幂等)。
+        把实验室页开关写入 advanced_config 并落盘(幂等)。
 
-        Write the three Labs toggles to advanced_config and save (idempotent).
+        Write the Labs toggles to advanced_config and save (idempotent).
         """
         from advanced_config import get_advanced_config
 
@@ -2979,6 +2983,7 @@ class SettingsCenter(QDialog):
         cfg.set_lab_report_export(self._lab_report_cb.isChecked())
         cfg.set_lab_ebird_export(self._lab_ebird_cb.isChecked())
         cfg.set_lab_multi_folder(self._lab_multi_cb.isChecked())
+        cfg.set_lab_incremental_cull(self._lab_incremental_cb.isChecked())
         cfg.save()
 
     # ── 视频小节 / Video section ─────────────────────────────────────────────

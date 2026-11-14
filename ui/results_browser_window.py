@@ -1166,6 +1166,7 @@ def _run_mark_no_bird(
             "alt_species_cn": None,
             "alt_species_en": None,
             "alt_confidence": None,
+            "burst_species_source": None,     # #162
             "rating": -1,
             "caption": new_caption,
         })
@@ -1176,6 +1177,7 @@ def _run_mark_no_bird(
     photo["alt_species_cn"] = ""
     photo["alt_species_en"] = ""
     photo["alt_confidence"] = None
+    photo["burst_species_source"] = None
     photo["has_bird"] = 0
     photo["rating"] = -1
     photo["caption"] = new_caption
@@ -3347,6 +3349,10 @@ class ResultsBrowserWindow(QMainWindow):
 
         raw_photos = self._db.get_photos_by_filters(filters)
         resolved_photos = [self._resolve_photo_paths(p) for p in raw_photos]
+        # 文件名搜索（#166）：在其余筛选结果上再按文件名过滤，只影响显示
+        # Filename search (#166): narrow the filtered result by name; display only
+        from core.filename_search import filter_by_filename
+        resolved_photos = filter_by_filename(resolved_photos, filters.get("filename_pattern", ""))
         self._raw_filtered_photos = resolved_photos
 
         total = len(self._all_photos)
@@ -3920,7 +3926,8 @@ class ResultsBrowserWindow(QMainWindow):
         dialog = BirdSpeciesEditDialog(
             parent=self, session_species=self._session_species(),
             exclude_species=[photo.get("bird_species_cn") or ""],
-            photo_path=photo.get("current_path") or photo.get("original_path"))
+            photo_path=photo.get("current_path") or photo.get("original_path"),
+            burst_source=photo.get("burst_species_source"))
         if dialog.exec() != QDialog.Accepted:
             return
 
@@ -3970,7 +3977,8 @@ class ResultsBrowserWindow(QMainWindow):
         # _raw_filtered_photos on every burst toggle.
         _patch_cached_photos(
             photo,
-            {"bird_species_cn": new_cn, "bird_species_en": new_en, **extras},
+            {"bird_species_cn": new_cn, "bird_species_en": new_en,
+             "burst_species_source": None, **extras},
             self._filtered_photos, self._all_photos, self._raw_filtered_photos,
         )
 
@@ -3984,6 +3992,8 @@ class ResultsBrowserWindow(QMainWindow):
                 "bird_species_cn": new_cn or None,
                 "bird_species_en": new_en or None,
                 "has_bird": 1,
+                # 手动指定后不再是连拍统一来的（#162）/ no longer burst-unified (#162)
+                "burst_species_source": None,
                 **extras,
             })
             # has_bird 同样要进两份缓存：报告的鸟种名录按它过滤
@@ -4310,8 +4320,13 @@ class ResultsBrowserWindow(QMainWindow):
         exclude = list(current) if len(current) == 1 else []
         dialog = BirdSpeciesEditDialog(
             parent=self, session_species=self._session_species(),
-            exclude_species=exclude)
+            exclude_species=exclude, reidentify_count=len(targets))
         if dialog.exec() != QDialog.Accepted:
+            return
+        # 「重新识别这 N 张」：逐张识别、核对后再写（#163）
+        # "Re-identify these N": per-photo identification, reviewed before writing (#163)
+        if getattr(dialog, "batch_reidentify", False):
+            self._batch_reidentify(targets)
             return
         # 「这不是鸟」：整个勾选集一起标掉（勾了一串鳄鱼的情形）。
         # Mark the whole checked selection as having no bird.
@@ -4356,6 +4371,37 @@ class ResultsBrowserWindow(QMainWindow):
             targets, new_cn, new_en, layout,
             getattr(dialog, "selected_latin", "") or "")
 
+    def _batch_reidentify(self, targets: list) -> None:
+        """
+        多选重新识别（#163）：逐张识别 → 用户在核对弹窗里确认每张的结果 → 按新鸟种分组执行。
+
+        核对弹窗本身就是确认步骤（每张改成什么一目了然），不再另弹确认框。纠错样本按每张
+        记录，与单张改鸟种一致；必须在鸟名被覆盖之前记。
+
+        Multi-photo re-identification (#163): identify each photo, let the user
+        review every result, then run the changes grouped by new species. The
+        review dialog is the confirmation step. Corrections are recorded per
+        photo before the names are overwritten.
+
+        参数 / Args:
+            targets: 勾选的照片列表（current_path 已是绝对路径）
+        """
+        from PySide6.QtWidgets import QDialog
+        from advanced_config import get_advanced_config
+        from ui.batch_reidentify_dialog import BatchReidentifyDialog
+
+        if not self._db or not targets:
+            return
+        cfg = get_advanced_config()
+        dialog = BatchReidentifyDialog(
+            targets, threshold=float(getattr(cfg, "birdid_confidence", 50)), parent=self)
+        if dialog.exec() != QDialog.Accepted or not dialog.plans:
+            return
+        for photos, new_cn, new_en, new_latin in dialog.plans:
+            for p in photos:
+                self._record_correction(p, new_cn, new_en, new_latin)
+        self._execute_species_plans(dialog.plans, cfg.folder_layout)
+
     def _execute_batch_species_change(self, targets: list, new_cn: str,
                                       new_en: str, layout: str,
                                       new_latin: str = "") -> None:
@@ -4383,25 +4429,37 @@ class ResultsBrowserWindow(QMainWindow):
                       Used to re-resolve the species-level attributes; an empty
                       name clears them rather than keeping the previous ones.
         """
+        self._execute_species_plans(
+            [(targets, new_cn, new_en, new_latin)], layout)
+
+    def _execute_species_plans(self, plans: list, layout: str) -> None:
+        """
+        按若干「目标鸟种 → 照片」分组执行改鸟种：共用一个进度框、一次刷新、一份结果报告。
+
+        单一鸟种的批量改（整种合并 / 多选改同一种）是只有一组的特例；多选重新识别
+        （#163）每张结果可能不同，按新鸟种分成多组一次执行，免得每组各弹一次报告。
+
+        参数 / Args:
+            plans: [(照片列表, 新中文名, 新英文名, 新学名)]
+            layout: 目录布局 / folder layout
+
+        Run species changes grouped by target species with one progress dialog,
+        one refresh and one result report. The single-species batch is the
+        one-group case; multi-photo re-identification (#163) yields several.
+        """
         from ui.custom_dialogs import StyledMessageBox
         from core.rating_mover import merge_bird_species
         from core.species_extras import lookup_species_extras
 
         i18n = self.i18n
-
-        # 鸟种级属性整批只查一次：全批改成同一个鸟种，这三个值完全相同。
-        # Resolved once; the whole batch becomes the same species.
-        extras = lookup_species_extras(new_latin)
-
-        # 合并库的照片分属不同批次目录，按 _base_dir 分组各调一次
-        # Photos of a merged library live under different batch dirs.
-        by_base: dict = {}
-        for p in targets:
-            by_base.setdefault(p.get("_base_dir") or self._directory, []).append(p)
+        plans = [pl for pl in plans if pl[0]]
+        if not plans:
+            return
+        total = sum(len(pl[0]) for pl in plans)
 
         progress = StyledProgressDialog(
             i18n.t('browser.merge_progress_title'), i18n.t('buttons.cancel'),
-            0, len(targets), self,
+            0, total, self,
         )
         progress.setWindowModality(Qt.WindowModal)
         progress.setMinimumDuration(0)
@@ -4421,45 +4479,59 @@ class ResultsBrowserWindow(QMainWindow):
         total_moved = 0
         total_db_only = 0
         all_failed: list = []
-        changed_files: list = []
         cancelled = False
 
-        for base_dir, group in by_base.items():
-            result = merge_bird_species(
-                base_dir, group, new_cn, new_en, layout,
-                self._db, _photo_db_key, _on_progress, changed_files, extras,
-            )
-            total_moved += result["moved"]
-            total_db_only += result["db_only"]
-            all_failed.extend(result["failed"])
-            state["offset"] += len(group)
-            if result["cancelled"]:
-                cancelled = True
+        for targets, new_cn, new_en, new_latin in plans:
+            if cancelled:
                 break
-            # has_bird 置回 1：与单张改鸟种一致——指名了鸟种就等于确认这是鸟，
-            # 也是「标记为无鸟」标错之后的批量撤销路径。core 只管鸟名与移动，
-            # has_bird 归 UI 层统一收口。
-            # Same as the single-photo path: naming a species confirms it is a
-            # bird, and this is the batch undo for a wrong "no bird" mark.
-            if self._db:
-                for p in group:
-                    # 与 has_bird 一同收口：core 只在真正执行了更新的分支里写
-                    # 鸟种级属性，移动失败或跳过的照片不会被写到；这里兜底，
-                    # 保证「鸟名换了但罕见度没换」的半截状态不会留在库里。
-                    # Backstop: core writes the extras only on the paths it
-                    # actually updated, leaving skipped photos half-changed.
-                    self._db.update_photo(
-                        _photo_db_key(p), {"has_bird": 1, **extras})
-                    p["has_bird"] = 1
-                    p.update(extras)
+            # 鸟种级属性每组只查一次：组内全改成同一个鸟种，这三个值完全相同。
+            # Resolved once per group; the whole group becomes the same species.
+            extras = lookup_species_extras(new_latin)
+            changed_files: list = []
+
+            # 合并库的照片分属不同批次目录，按 _base_dir 分组各调一次
+            # Photos of a merged library live under different batch dirs.
+            by_base: dict = {}
+            for p in targets:
+                by_base.setdefault(p.get("_base_dir") or self._directory, []).append(p)
+
+            for base_dir, group in by_base.items():
+                result = merge_bird_species(
+                    base_dir, group, new_cn, new_en, layout,
+                    self._db, _photo_db_key, _on_progress, changed_files, extras,
+                )
+                total_moved += result["moved"]
+                total_db_only += result["db_only"]
+                all_failed.extend(result["failed"])
+                state["offset"] += len(group)
+                if result["cancelled"]:
+                    cancelled = True
+                    break
+                # has_bird 置回 1：与单张改鸟种一致——指名了鸟种就等于确认这是鸟，
+                # 也是「标记为无鸟」标错之后的批量撤销路径。core 只管鸟名与移动，
+                # has_bird 归 UI 层统一收口。
+                # Same as the single-photo path: naming a species confirms it is a
+                # bird, and this is the batch undo for a wrong "no bird" mark.
+                if self._db:
+                    for p in group:
+                        # 与 has_bird 一同收口：core 只在真正执行了更新的分支里写
+                        # 鸟种级属性，移动失败或跳过的照片不会被写到；这里兜底，
+                        # 保证「鸟名换了但罕见度没换」的半截状态不会留在库里。
+                        # Backstop: core writes the extras only on the paths it
+                        # actually updated, leaving skipped photos half-changed.
+                        self._db.update_photo(
+                            _photo_db_key(p), {"has_bird": 1, **extras})
+                        p["has_bird"] = 1
+                        p.update(extras)
+
+            # 元数据：旧鸟名不逐张传——批量里每张的旧名各不相同，写入器会从各自
+            # 文件现有的 Title 推断出来再删对应的旧关键字。每组新鸟名不同，逐组写。
+            # Metadata: the writer infers each file's old species from its own
+            # Title; written per group since each group has its own new species.
+            if changed_files:
+                self._write_species_metadata_in_background(changed_files, new_cn, new_en)
 
         progress.close()
-
-        # 元数据：旧鸟名不逐张传——批量里每张的旧名各不相同，写入器会从各自
-        # 文件现有的 Title 推断出来再删对应的旧关键字。
-        # Metadata: the writer infers each file's old species from its own Title.
-        if changed_files:
-            self._write_species_metadata_in_background(changed_files, new_cn, new_en)
 
         # 刷新：重新读库并重放当前筛选（_apply_filters 会顺带刷新鸟种下拉）
         self._all_photos = self._db.get_all_photos()
@@ -5643,11 +5715,19 @@ class ResultsBrowserWindow(QMainWindow):
             if in_fullscreen:
                 self._fullscreen_prev()
             else:
+                # 网格里键盘翻图先清多选的勾（#166）；面板上的「上一张」按钮不清，
+                # 对比页（index 2）靠勾选集工作，也不清
+                # Grid keyboard navigation clears the checks (#166); the panel buttons
+                # don't, nor does the compare page, which relies on the selection
+                if self._stack.currentIndex() == 0:
+                    self._thumb_grid.clear_multi_select_for_arrow(event.modifiers())
                 self._prev_photo()
         elif key == Qt.Key_Right:
             if in_fullscreen:
                 self._fullscreen_next()
             else:
+                if self._stack.currentIndex() == 0:
+                    self._thumb_grid.clear_multi_select_for_arrow(event.modifiers())
                 self._next_photo()
         elif key in _EXTERNAL_APP_KEYS and (event.modifiers() & Qt.ControlModifier):
             # 必须排在打星分支之前：打星分支不看修饰键，否则 Ctrl+1 会被当成打 1 星

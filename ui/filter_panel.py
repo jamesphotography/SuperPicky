@@ -8,11 +8,14 @@ FilterPanel: 鸟种 / 评分 / 对焦状态 / 飞行状态 筛选
 飞行：多选 checkbox，默认全选
 """
 
+from typing import Optional
+
 from PySide6.QtWidgets import (
+    QLineEdit,
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
     QPushButton, QCheckBox, QComboBox, QScrollArea, QFrame, QSizePolicy
 )
-from PySide6.QtCore import Qt, Signal, QSize
+from PySide6.QtCore import Qt, Signal, QSize, QTimer, QEvent
 from PySide6.QtGui import QIcon
 
 from ui.styles import COLORS, FONTS
@@ -95,6 +98,45 @@ def _section_label(text: str) -> QLabel:
     return lbl
 
 
+# 筛选面板固定宽 236px，左右边距各 16px，内容可用宽度
+# Usable content width inside the fixed 236px panel (16px margins each side)
+_PANEL_CONTENT_WIDTH = 236 - 16 * 2
+
+
+def _grid_columns(widgets: list, spacing: int, available: Optional[int] = None) -> int:
+    """
+    多选框排几列：网格两列**平分**宽度，所以最宽的一项放得进半宽才用 2 列，否则 1 列。
+
+    可用宽度要扣掉竖向滚动条：筛选栏装在 QScrollArea 里，滚动条占的宽度随平台
+    不同（Windows 约 17px），按当前样式实取。
+
+    参数:
+    widgets (list): 按顺序排放的控件
+    spacing (int): 列间距（px）
+    available (Optional[int]): 可用宽度（px）；None 时按面板内容宽减滚动条计算
+
+    返回:
+    int: 1 或 2
+
+    Two equal columns only when the widest item fits in half the width (the
+    grid splits columns evenly); the scroll bar's platform-specific width is
+    subtracted from the panel's content width.
+    """
+    if available is None:
+        from PySide6.QtWidgets import QApplication, QStyle
+        style = QApplication.style()
+        scrollbar = style.pixelMetric(QStyle.PM_ScrollBarExtent) if style else 17
+        available = _PANEL_CONTENT_WIDTH - scrollbar
+    widths = []
+    for w in widgets:
+        w.ensurePolished()
+        widths.append(w.sizeHint().width())
+    if not widths:
+        return 2
+    half = (available - max(0, spacing)) / 2
+    return 2 if max(widths) <= half else 1
+
+
 class FilterPanel(QWidget):
     """
     左侧筛选面板。
@@ -158,6 +200,39 @@ class FilterPanel(QWidget):
         layout = QVBoxLayout(container)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(20)
+
+        # --- 文件名搜索（#166）：按编号/通配符找照片，只筛选显示 ---
+        # Filename search (#166): find photos by number or wildcard; display-only
+        layout.addWidget(_section_label(self.i18n.t("browser.section_filename")))
+        self.filename_search = QLineEdit()
+        self.filename_search.setPlaceholderText(self.i18n.t("browser.filename_search_placeholder"))
+        self.filename_search.setToolTip(self.i18n.t("browser.filename_search_tip"))
+        self.filename_search.setClearButtonEnabled(True)
+        self.filename_search.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {COLORS['bg_input']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 6px;
+                padding: 6px 10px;
+                color: {COLORS['text_primary']};
+                font-size: 13px;
+            }}
+            QLineEdit:focus {{ border-color: {COLORS['accent']}; }}
+        """)
+        # 打字时不必每个字符都重查一次：停 250ms 再筛
+        # Debounce typing: filter 250 ms after the last keystroke
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(250)
+        self._search_timer.timeout.connect(self._emit_filters)
+        self.filename_search.textChanged.connect(lambda _t: self._search_timer.start())
+        # Esc：先清空搜索词，再按一次才移开焦点；否则 Esc 会冒泡到浏览器窗口把它关掉
+        # Esc clears the text first (then drops focus); otherwise it would bubble
+        # up to the browser window, which closes on Esc
+        self.filename_search.installEventFilter(self)
+        layout.addWidget(self.filename_search)
+
+        layout.addWidget(self._divider())
 
         # --- 鸟种（置顶）---
         layout.addWidget(_section_label(self.i18n.t("browser.section_species")))
@@ -535,7 +610,8 @@ class FilterPanel(QWidget):
         # 默认勾选全部对焦状态，避免 burst 结果被默认 focus 再过滤一次
         _defaults = set(_DEFAULT_CHECKED_FOCUS)
 
-        for idx, (mode, statuses, color) in enumerate(_FOCUS_OPTIONS):
+        boxes = []
+        for mode, statuses, color in _FOCUS_OPTIONS:
             label = self.i18n.t(f"browser.focus_state_{mode.lower()}")
             cb = QCheckBox(label)
             cb.setChecked(mode in _defaults)
@@ -545,7 +621,17 @@ class FilterPanel(QWidget):
             )
             cb.stateChanged.connect(self._emit_filters)
             self._focus_checks[mode] = cb
-            grid.addWidget(cb, idx // 2, idx % 2)
+            boxes.append(cb)
+
+        # 列数按实际文字宽度定：上面估的「2 列最宽约 200px」在英文下不成立——
+        # 「Critical Focus」+「Good Focus」连同圆圈与间距超出 204px，两项挤在一起、
+        # 文字重叠（2026-11 截图）。两列放得下就两列（中文），放不下改单列。
+        # Columns follow the measured label widths: the "~200px for 2 columns"
+        # estimate above fails in English ("Critical Focus" + "Good Focus" overlap),
+        # so use two columns only when they actually fit, otherwise one.
+        columns = _grid_columns(boxes, spacing=grid.horizontalSpacing())
+        for idx, cb in enumerate(boxes):
+            grid.addWidget(cb, idx // columns, idx % columns)
 
         return w
 
@@ -567,6 +653,7 @@ class FilterPanel(QWidget):
         ]
 
         self._flight_cbs: dict = {}
+        boxes = []
         for value, label_text, row_idx, col_idx in options:
             cb = QCheckBox(label_text)
             cb.setChecked(True)
@@ -576,7 +663,13 @@ class FilterPanel(QWidget):
             )
             cb.stateChanged.connect(self._emit_filters)
             self._flight_cbs[value] = cb
-            grid.addWidget(cb, row_idx, col_idx)
+            boxes.append(cb)
+
+        # 同对焦：两列放不下（文案较长的语言）就改单列，避免重叠
+        # As for focus: fall back to one column when two would overlap
+        columns = _grid_columns(boxes, spacing=grid.horizontalSpacing())
+        for idx, cb in enumerate(boxes):
+            grid.addWidget(cb, idx // columns, idx % columns)
 
         return w
 
@@ -723,6 +816,10 @@ class FilterPanel(QWidget):
             species_key:      bird_species,
             "sort_by":        sort_by,
             "picked_only":    self._picked_only_cb.isChecked(),
+            # 文件名搜索（#166）：由浏览器在内存里过滤，不进 SQL
+            # Filename search (#166): applied in memory by the browser, not in SQL
+            "filename_pattern": self.filename_search.text().strip()
+                                if hasattr(self, "filename_search") else "",
         }
 
     # ------------------------------------------------------------------
@@ -751,6 +848,12 @@ class FilterPanel(QWidget):
             cb.blockSignals(True)
             cb.setChecked(True)
             cb.blockSignals(False)
+
+        # 文件名搜索 → 清空（#166）
+        self._search_timer.stop()
+        self.filename_search.blockSignals(True)
+        self.filename_search.clear()
+        self.filename_search.blockSignals(False)
 
         # 鸟种 → 全部
         self.species_combo.blockSignals(True)
@@ -824,6 +927,20 @@ class FilterPanel(QWidget):
             self._adv_config.save()
         self._refresh_sort_icons()
         self._emit_filters()
+
+    def eventFilter(self, obj, event):
+        """
+        搜索框的 Esc：有字先清空，没字移开焦点；两种情况都吞掉事件（#166）。
+        Esc in the search box clears the text, else drops focus; always consumed.
+        """
+        if (obj is getattr(self, "filename_search", None)
+                and event.type() == QEvent.KeyPress and event.key() == Qt.Key_Escape):
+            if self.filename_search.text():
+                self.filename_search.clear()
+            else:
+                self.filename_search.clearFocus()
+            return True
+        return super().eventFilter(obj, event)
 
     def _emit_filters(self, *_):
         self.filters_changed.emit(self.get_filters())

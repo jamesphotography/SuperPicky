@@ -100,6 +100,185 @@ def replace_keyword_in_list(
     return result if result != list(existing) else None
 
 
+# ---------------------------------------------------------------------------
+# 专有 RAW 写本体的完整性校验（#165）
+# Integrity check for writing metadata into proprietary RAW bodies (#165)
+#
+# 「同时写入专有 RAW 本体」走 auto 路径：复制 → 写副本 → 校验 → 原子替换。
+# 原校验要求数据块「偏移量」写入前后相等，并比较 exiftool 取整后的 FileSize
+# 文本（如 "20 MB"）。实测这两个判据都是错的：
+#   - exiftool 改写 CR2 / NEF / RAF 时会正常地整体挪动预览图与 RAW 数据，偏移量
+#     必变，于是这些格式 100% 静默回退成 .xmp 边车，开关从未生效；
+#   - CR3 没有那些偏移标签，只剩 FileSize 文本，文件大小跨过 MB 取整边界的少数
+#     照片被判「结构变了」→ 同一批里只有部分照片冒出 .xmp（#165 现象）。
+# 改为校验真正不能变的东西：每个数据块（RAW 图像数据、内嵌预览、缩略图、CR3 的
+# mdat）的长度与字节内容；图像宽高；以及索尼 ARW 没有长度可配对的两个偏移量。
+#
+# The auto path copies the RAW, writes the copy, verifies it and only then
+# atomically replaces the original. The old check demanded identical block
+# *offsets* plus an equal, human-rounded FileSize string ("20 MB"). exiftool
+# legitimately relocates preview and raw data in CR2 / NEF / RAF, so those
+# formats always fell back to a sidecar; CR3 has no such offsets, leaving only
+# the rounded size, so photos whose size crossed an MB boundary fell back at
+# random (#165). We now verify what must not change: the length and bytes of
+# every data block, the image dimensions, and the two Sony offsets that have
+# no length to pair with.
+# ---------------------------------------------------------------------------
+
+# 成对的（偏移量, 长度）标签：按偏移+长度读出字节做哈希。CR3 的 mdat 用
+# MediaDataOffset/MediaDataSize。
+# (offset, length) tag pairs whose bytes are hashed; CR3's mdat uses
+# MediaDataOffset/MediaDataSize.
+RAW_DATA_BLOCK_TAGS: Tuple[Tuple[str, str], ...] = (
+    ('StripOffsets', 'StripByteCounts'),
+    ('PreviewImageStart', 'PreviewImageLength'),
+    ('JpgFromRawStart', 'JpgFromRawLength'),
+    ('ThumbnailOffset', 'ThumbnailLength'),
+    ('MediaDataOffset', 'MediaDataSize'),
+)
+# 没有长度可配对、必须保持原值的偏移量（索尼 ARW 的加密/隐藏数据，沿用原设计的保守处理）。
+# Offsets without a length to pair with that must stay put (Sony ARW hidden /
+# SR2 data — kept as conservative as the original design).
+RAW_FIXED_OFFSET_TAGS: Tuple[str, ...] = ('HiddenDataOffset', 'SR2SubIFDOffset')
+RAW_DIMENSION_TAGS: Tuple[str, ...] = ('ImageWidth', 'ImageHeight')
+RAW_LAYOUT_TAGS: Tuple[str, ...] = tuple(
+    [t for pair in RAW_DATA_BLOCK_TAGS for t in pair]
+    + list(RAW_FIXED_OFFSET_TAGS) + list(RAW_DIMENSION_TAGS)
+)
+
+
+def _as_int_list(value: Any) -> Optional[List[int]]:
+    """
+    把 exiftool ``-n -json`` 输出的数值标签统一成整数列表。
+
+    参数:
+    value (Any): 单个数字、空格分隔的数字串（多条带时）或数字列表
+
+    返回:
+    Optional[List[int]]: 整数列表；无法解析时返回 None
+
+    Normalize a numeric tag from ``exiftool -n -json`` (a number, a
+    space-separated string for multi-strip images, or a list) to ints;
+    None when it cannot be parsed.
+    """
+    if value is None:
+        return None
+    items = value if isinstance(value, list) else str(value).split()
+    try:
+        return [int(float(v)) for v in items]
+    except (TypeError, ValueError):
+        return None
+
+
+def _hash_byte_ranges(file_path: str, ranges: List[Tuple[int, int]]) -> Optional[str]:
+    """
+    按（偏移, 长度）顺序读取文件字节并求 BLAKE2b 摘要。
+
+    参数:
+    file_path (str): 文件路径
+    ranges (List[Tuple[int, int]]): 要读取的字节区间
+
+    返回:
+    Optional[str]: 十六进制摘要；区间越界或读不全时返回 None（视为无法校验）
+
+    Hash the given (offset, length) byte ranges with BLAKE2b. Returns None when
+    a range falls outside the file or cannot be read in full.
+    """
+    import hashlib
+    try:
+        size = os.path.getsize(file_path)
+        h = hashlib.blake2b(digest_size=20)
+        with open(file_path, 'rb') as f:
+            for offset, length in ranges:
+                if offset < 0 or length < 0 or offset + length > size:
+                    return None
+                f.seek(offset)
+                remaining = length
+                while remaining > 0:
+                    chunk = f.read(min(remaining, 4 * 1024 * 1024))
+                    if not chunk:
+                        return None
+                    h.update(chunk)
+                    remaining -= len(chunk)
+        return h.hexdigest()
+    except OSError:
+        return None
+
+
+def raw_layout_fingerprint(file_path: str, tags: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    由 exiftool 读出的布局标签，计算一份与「数据块位置」无关的 RAW 指纹。
+
+    参数:
+    file_path (str): RAW 文件路径（读取数据块字节用）
+    tags (Dict[str, Any]): ``exiftool -n -json`` 读出的 RAW_LAYOUT_TAGS
+
+    返回:
+    Dict[str, Any]: {'blocks': {偏移标签: (长度元组, 摘要或 None)},
+                     'fixed': {标签: 值}, 'dims': {标签: 值}}。
+                     某块区间越界/读不全时摘要为 None，比较时按「无法确认」处理。
+
+    Build a position-independent fingerprint of a RAW: each data block's
+    lengths and byte digest (None when unreadable), the fixed Sony offsets and
+    the image dimensions.
+    """
+    blocks: Dict[str, Tuple[Tuple[int, ...], Optional[str]]] = {}
+    for off_tag, len_tag in RAW_DATA_BLOCK_TAGS:
+        offsets = _as_int_list(tags.get(off_tag))
+        lengths = _as_int_list(tags.get(len_tag))
+        if not offsets or not lengths:
+            continue
+        if len(offsets) != len(lengths):
+            blocks[off_tag] = (tuple(lengths), None)
+            continue
+        digest = _hash_byte_ranges(file_path, list(zip(offsets, lengths)))
+        blocks[off_tag] = (tuple(lengths), digest)
+    return {
+        'blocks': blocks,
+        'fixed': {t: tags.get(t) for t in RAW_FIXED_OFFSET_TAGS if tags.get(t) is not None},
+        'dims': {t: tags.get(t) for t in RAW_DIMENSION_TAGS if tags.get(t) is not None},
+    }
+
+
+def compare_raw_fingerprints(before: Optional[Dict[str, Any]],
+                             after: Optional[Dict[str, Any]]) -> Optional[str]:
+    """
+    比较写入前后的 RAW 指纹，判断写入是否只动了元数据。
+
+    参数:
+    before (Optional[Dict[str, Any]]): 原文件指纹
+    after (Optional[Dict[str, Any]]): 写入后副本的指纹
+
+    返回:
+    Optional[str]: None 表示安全（可以替换原文件）；否则是不安全的原因，供日志使用。
+                   一个数据块都没校验到也算不安全——宁可回退边车，也不在无法确认时改写原图。
+
+    Compare the fingerprints taken before and after the write. Returns None
+    when only metadata changed (safe to replace the original), otherwise a
+    short reason for the log. Verifying no data block at all is unsafe too:
+    when in doubt, fall back to the sidecar instead of rewriting the original.
+    """
+    if before is None or after is None:
+        return "layout unreadable"
+    b_blocks, a_blocks = before.get('blocks') or {}, after.get('blocks') or {}
+    if not b_blocks:
+        return "no data block to verify"
+    if set(b_blocks) != set(a_blocks):
+        return "data blocks differ: " + ",".join(sorted(set(b_blocks) ^ set(a_blocks)))
+    for tag in sorted(b_blocks):
+        b_len, b_digest = b_blocks[tag]
+        a_len, a_digest = a_blocks[tag]
+        if b_digest is None or a_digest is None:
+            return f"{tag} unreadable"
+        if b_len != a_len or b_digest != a_digest:
+            return f"{tag} content changed"
+    if (before.get('fixed') or {}) != (after.get('fixed') or {}):
+        return "fixed offsets moved"
+    if (before.get('dims') or {}) != (after.get('dims') or {}):
+        return "image size changed"
+    return None
+
+
 class _ExifToolProcess:
     """
     单个 exiftool -stay_open 常驻进程的封装（进程句柄 + stdout 读取线程 + 锁）。
@@ -381,7 +560,11 @@ class ExifToolManager:
         self._persistent_session_count = 0
         self._shutdown_lock = threading.Lock()
         self._is_shutdown = False
-        
+        # 写本体未通过校验而回退边车的记录（#165），由处理流程汇总时取走
+        # RAW body writes that fell back to a sidecar (#165), drained by the pipeline
+        self._raw_embed_fallbacks: List[Tuple[str, str]] = []
+        self._raw_embed_fallback_lock = threading.Lock()
+
         # 注册退出清理
         atexit.register(self.shutdown)
 
@@ -731,18 +914,75 @@ class ExifToolManager:
         except Exception:
             return False
 
-    def _read_arw_structure(self, file_path: str) -> Optional[Dict[str, Any]]:
-        """读取 ARW 关键结构标签，用于检测文件布局变化 (V4.0.6: 使用常驻进程)"""
-        tags = [
-            'PreviewImageStart',
-            'ThumbnailOffset',
-            'JpgFromRawStart',
-            'StripOffsets',
-            'HiddenDataOffset',
-            'SR2SubIFDOffset',
-            'FileSize'
-        ]
-        args = ['-json'] + [f'-{t}' for t in tags] + [file_path]
+    def _read_raw_fingerprint(self, file_path: str) -> Optional[Dict[str, Any]]:
+        """
+        读取 RAW 布局标签并计算位置无关的指纹（#165），供写本体前后比较。
+
+        参数:
+        file_path (str): RAW 文件路径
+
+        返回:
+        Optional[Dict[str, Any]]: raw_layout_fingerprint 的结果；读不到标签时返回 None
+
+        Read the RAW layout tags through the resident read process and build a
+        position-independent fingerprint (#165); None when the tags cannot be read.
+        """
+        tags = self._read_raw_layout_tags(file_path)
+        if tags is None:
+            return None
+        return raw_layout_fingerprint(file_path, tags)
+
+    def _record_raw_embed_fallback(self, file_path: str, reason: str) -> None:
+        """
+        记下一次「写本体未通过校验、改写边车」，供处理流程在汇总时告诉用户（#165）。
+
+        参数:
+        file_path (str): 回退的 RAW 文件
+        reason (str): 回退原因（英文短语，进日志）
+
+        Remember that a RAW body write was rejected and a sidecar written
+        instead, so the pipeline can report it in its summary (#165). Before
+        this the fallback was silent and counted as a plain success.
+        """
+        print(f"⚠️ [ExifTool] RAW in-place write fell back to .xmp sidecar "
+              f"({reason}): {os.path.basename(file_path)}")
+        with self._raw_embed_fallback_lock:
+            self._raw_embed_fallbacks.append((file_path, reason))
+
+    def drain_raw_embed_fallbacks(self) -> List[Tuple[str, str]]:
+        """
+        取出并清空已记录的「写本体回退边车」事件。
+
+        返回:
+        List[Tuple[str, str]]: (文件路径, 原因) 列表
+
+        Return and clear the recorded RAW-body-write fallbacks as
+        (file path, reason) pairs.
+        """
+        with self._raw_embed_fallback_lock:
+            events = list(self._raw_embed_fallbacks)
+            self._raw_embed_fallbacks.clear()
+        return events
+
+    def _read_raw_layout_tags(self, file_path: str) -> Optional[Dict[str, Any]]:
+        """
+        经 read 常驻进程以 ``-n -json`` 读取 RAW_LAYOUT_TAGS。
+
+        必须带 ``-n``：不带时 exiftool 输出人类可读值，原先比较的 FileSize 就是
+        「20 MB」这样的取整文本（#165 的随机回退正源于此）。
+
+        参数:
+        file_path (str): RAW 文件路径
+
+        返回:
+        Optional[Dict[str, Any]]: 标签 → 数值；读不到时返回 None
+
+        Read RAW_LAYOUT_TAGS as numbers (``-n``) via the resident read process.
+        Without ``-n`` exiftool prints human-readable values — the old FileSize
+        comparison saw rounded text like "20 MB", the cause of #165.
+        """
+        tags = list(RAW_LAYOUT_TAGS)
+        args = ['-json', '-n'] + [f'-{t}' for t in tags] + [file_path]
         try:
             output_bytes = self._send_command(args, timeout=10)
             if not output_bytes.strip():
@@ -772,7 +1012,7 @@ class ExifToolManager:
             info = data[0]
             return {t: info.get(t) for t in tags}
         except Exception as e:
-            # print(f"⚠️ _read_arw_structure failed: {e}")
+            print(f"⚠️ [ExifTool] RAW layout read failed: {e}")
             return None
 
     @staticmethod
@@ -1080,6 +1320,85 @@ class ExifToolManager:
             except OSError as e:
                 print(f"⚠️ Failed to clean sidecar temp file: {tmp_path} - {e}")
 
+    # 重置文件本体时清除的字段（与 batch_reset_metadata 的本体清单一致）
+    # Fields cleared from a file body on reset (same list as batch_reset_metadata)
+    _BODY_RESET_ARGS: Tuple[str, ...] = (
+        '-Rating=',
+        *PICK_FLAG_CLEAR_ARGS,
+        '-XMP:Label=',
+        '-XMP:City=',
+        '-XMP:State=',
+        '-XMP:Country=',
+        '-XMP:Description=',
+        '-XMP:Title=',
+        '-IPTC:City=',
+        '-IPTC:Country-PrimaryLocationName=',
+        '-IPTC:Province-State=',
+    )
+    # 判断本体里是否有 SuperPicky 写过的字段（没有就不必整份复制去清）
+    # Probe for SuperPicky fields in a body (skip the full-file copy when none)
+    _BODY_RESET_PROBE_TAGS: Tuple[str, ...] = (
+        '-XMP:Rating', '-XMP:Pick', '-XMP-xmpDM:Good', '-XMP:Label', '-XMP:City',
+        '-XMP:State', '-XMP:Country', '-XMP:Description', '-XMP:Title',
+        '-IPTC:City', '-IPTC:Province-State', '-IPTC:Country-PrimaryLocationName',
+    )
+
+    def _reset_raw_body(self, file_path: str) -> bool:
+        """
+        清除专有 RAW 本体里的评分相关字段（仅「同时写入专有 RAW 本体」打开时调用）。
+
+        #165 之前 NEF/CR2/RAF 从未真正写进本体，重置只清边车也就够了；修好之后星级
+        真的落进了本体，只清边车会让重新选片和 NX Studio 一直读到旧星级。与写入一样
+        走 _verified_raw_inplace，原文件只有在校验通过后才被替换。本体里没有任何
+        相关字段时直接跳过，避免为每张没写过的 RAW 整份复制一次。
+
+        参数:
+        file_path (str): 专有 RAW 路径
+
+        返回:
+        bool: 已清除或本来就没有为 True；校验未通过（字段仍留在本体）为 False
+
+        Clear the rating fields from a proprietary RAW body (only with the
+        "write into proprietary RAW" switch on). Before #165 such bodies were
+        never written, so clearing the sidecar was enough; now they are, and a
+        sidecar-only reset would leave stale stars for re-culls and NX Studio.
+        Goes through _verified_raw_inplace; skips files that carry none of
+        these fields so untouched RAWs are not copied for nothing.
+        """
+        clear_args = self._filter_reset_args(list(self._BODY_RESET_ARGS))
+        if not clear_args:
+            return True
+        try:
+            existing = self.read_metadata(file_path, extra_args=list(self._BODY_RESET_PROBE_TAGS)) or {}
+        except Exception:
+            existing = None
+        # 相机原厂就写 XMP:Rating=0（实测 Nikon Z6III / Canon CR2 / CR3），它不是
+        # SuperPicky 写的，等同「无评分」：只有它时不必复制整份 RAW 去清，也不该抹掉原厂标签。
+        # Cameras write XMP:Rating=0 themselves (seen on Nikon Z6III, Canon CR2/CR3);
+        # it means "unrated", so a body carrying only that needs no copy and keeps it.
+        if existing is not None and not any(
+                k != 'SourceFile' and not (k == 'Rating' and str(v).strip() in ('0', ''))
+                for k, v in existing.items()):
+            return True
+
+        def write_copy(tmp_path: str) -> bool:
+            output = self._write_proc.send_command(
+                clear_args + ['-overwrite_original_in_place', tmp_path], 30)
+            decoded = output.decode('utf-8', errors='replace')
+            # 「unchanged」也算成功：字段本来就不在，副本与原文件一致
+            # "unchanged" is fine too: nothing to clear, the copy equals the original
+            return ('1 image files updated' in decoded
+                    or '1 image files unchanged' in decoded)
+
+        try:
+            reason = self._verified_raw_inplace(file_path, write_copy)
+        except Exception as e:
+            reason = f"reset failed: {e}"
+        if reason is not None:
+            self._record_raw_embed_fallback(file_path, f"reset: {reason}")
+            return False
+        return True
+
     def _reset_xmp_sidecar(self, file_path: str) -> bool:
         """清理 XMP 侧车中的评分相关字段 (V4.0.6: 使用常驻进程)"""
         xmp_path = os.path.splitext(file_path)[0] + '.xmp'
@@ -1132,34 +1451,92 @@ class ExifToolManager:
         if mode == 'inplace':
             return self._write_metadata_subprocess(item, in_place=True)
 
-        # auto: 尝试 in-place 写入，若检测到结构变化则回退 sidecar
-        original_struct = self._read_arw_structure(file_path)
-        if original_struct is None:
+        # auto: 经校验写本体；任一步不通过都回退边车，原文件永远不会被写坏（#165）
+        # auto: verified body write; any failure falls back to the sidecar (#165)
+        def write_copy(tmp_path: str) -> bool:
+            tmp_item = dict(item)
+            tmp_item['file'] = tmp_path
+            return self._write_metadata_subprocess(tmp_item, in_place=True)
+
+        reason = self._verified_raw_inplace(file_path, write_copy)
+        if reason is not None:
+            self._record_raw_embed_fallback(file_path, reason)
             return self._write_metadata_xmp_sidecar(item)
+        # 已有的边车（旧版本或此前回退留下的）同步更新，只更新不新建：Lightroom 对专有
+        # RAW 优先读边车，不同步的话它会一直显示旧星级。
+        # Keep an existing sidecar (left by an older run or an earlier fallback)
+        # in step — update only, never create: Lightroom prefers the sidecar for
+        # proprietary RAW and would otherwise keep showing stale stars.
+        if os.path.exists(os.path.splitext(file_path)[0] + '.xmp'):
+            self._write_metadata_xmp_sidecar(item)
+        return True
+
+    def _verified_raw_inplace(self, file_path: str,
+                              write_copy: Callable[[str], bool]) -> Optional[str]:
+        """
+        经校验地改写专有 RAW 本体：复制 → 在副本上执行写入 → 比对数据块字节 → 原子替换。
+
+        这是所有「写 RAW 本体」路径（批量评星、浏览器改星级、set_metadata 写标题/题注/
+        关键字、重置）的唯一入口，保证原文件只有在「只动了元数据」被证实时才会被替换。
+
+        参数:
+        file_path (str): 原 RAW 文件路径
+        write_copy (Callable[[str], bool]): 对副本路径执行写入，成功返回 True
+
+        返回:
+        Optional[str]: None 表示已替换成功；否则是未替换的原因（原文件保持原样）
+
+        The single entry point for every write into a proprietary RAW body
+        (batch ratings, browser edits, set_metadata titles/captions/keywords,
+        resets): copy, write the copy, compare data-block bytes, then atomically
+        replace. Returns None on success, otherwise the reason the original was
+        left untouched.
+        """
+        original_fp = self._read_raw_fingerprint(file_path)
+        reason = compare_raw_fingerprints(original_fp, original_fp)
+        if reason is not None:
+            return reason
 
         # 在与原文件相同目录创建临时文件，确保 os.replace 是同目录 rename（保留 Birth Time）
+        # Temp copy in the same folder so os.replace is a same-directory rename
         tmp_fd, tmp_path = tempfile.mkstemp(suffix=Path(file_path).suffix, dir=os.path.dirname(file_path))
         os.close(tmp_fd)
         try:
             shutil.copy2(file_path, tmp_path)
-            tmp_item = dict(item)
-            tmp_item['file'] = tmp_path
-            ok = self._write_metadata_subprocess(tmp_item, in_place=True)
-            if not ok:
-                return self._write_metadata_xmp_sidecar(item)
-
-            new_struct = self._read_arw_structure(tmp_path)
-            if new_struct is None or new_struct != original_struct:
-                return self._write_metadata_xmp_sidecar(item)
-
+            if not write_copy(tmp_path):
+                return "write failed"
+            reason = compare_raw_fingerprints(original_fp, self._read_raw_fingerprint(tmp_path))
+            if reason is not None:
+                return reason
             os.replace(tmp_path, file_path)
-            return True
+            return None
+        except OSError as e:
+            return f"copy/replace failed: {e}"
         finally:
             if os.path.exists(tmp_path):
                 try:
                     os.remove(tmp_path)
                 except Exception:
                     pass
+
+    def _raw_body_writable(self, file_path: str) -> bool:
+        """
+        这个文件是否要（经校验地）写 RAW 本体：专有 RAW + 勾了「同时写入专有 RAW 本体」
+        + 主模式不是「写入边车」。
+
+        参数:
+        file_path (str): 文件路径
+
+        返回:
+        bool: True 表示走 _verified_raw_inplace
+
+        Whether this file's metadata goes into the RAW body (via
+        _verified_raw_inplace): a proprietary RAW, the opt-in switch on, and the
+        main mode not set to "sidecar".
+        """
+        return (self._is_sidecar_raw(file_path)
+                and self._raw_embed_enabled()
+                and self._get_metadata_write_mode() != "sidecar")
 
     def set_rating_and_pick(
         self,
@@ -1440,32 +1817,37 @@ class ExifToolManager:
             return True
 
         # 专有 RAW 默认只写 XMP 侧车；用户勾了「专有 RAW 也写入文件本体」才写本体
-        # （2026-09-23，给尼康这类不读边车的软件留的出口）。全局 sidecar 模式下
-        # 所有格式都走侧车。
-        # Proprietary RAW defaults to the sidecar and only writes into the body
-        # when the user opted in; global sidecar mode routes everything to one.
+        # （2026-09-23，给尼康这类不读边车的软件留的出口），且必须经
+        # _verified_raw_inplace 校验（#165：此前这里直写本体、没有任何校验）。
+        # 全局 sidecar 模式下所有格式都走侧车。
+        # Proprietary RAW defaults to the sidecar; with the opt-in it goes into
+        # the body, always through _verified_raw_inplace (#165: this path used to
+        # write the body unverified). Global sidecar mode routes everything to one.
+        raw_body = self._raw_body_writable(file_path)
         use_sidecar = global_mode == "sidecar" or (
-            self._is_sidecar_raw(file_path) and not self._raw_embed_enabled())
+            self._is_sidecar_raw(file_path) and not raw_body)
+        sidecar_path = os.path.splitext(file_path)[0] + '.xmp'
 
-        # 侧车只支持 XMP 组：IPTC 题注映射到 XMP:Description，无组前缀的标签补 XMP:
-        # Sidecars are XMP-only: map the IPTC caption tag to XMP:Description
-        # and add the XMP: group to bare tag names
-        sidecar_alias = {'caption-abstract': 'XMP:Description'}
-
-        target_path = os.path.splitext(file_path)[0] + '.xmp' if use_sidecar else file_path
-        if use_sidecar:
-            self._cleanup_sidecar_tmp(target_path)
-
-        args: List[str] = []
         temp_files: List[str] = []
-        writes_iptc = False
-        writes_list = False
-        try:
+
+        def build_args(for_sidecar: bool) -> List[str]:
+            """
+            按目标（边车 / 文件本体）拼出写入参数，不含目标路径；没有可写的值时返回空列表。
+            Build the write arguments for a sidecar or a file body (target path
+            not included); empty when there is nothing to write.
+            """
+            # 侧车只支持 XMP 组：IPTC 题注映射到 XMP:Description，无组前缀的标签补 XMP:
+            # Sidecars are XMP-only: map the IPTC caption tag to XMP:Description
+            # and add the XMP: group to bare tag names
+            sidecar_alias = {'caption-abstract': 'XMP:Description'}
+            args: List[str] = []
+            writes_iptc = False
+            writes_list = False
             for tag, value in tags.items():
                 if value is None:
                     continue
                 tag_name = str(tag).strip()
-                if use_sidecar:
+                if for_sidecar:
                     tag_name = sidecar_alias.get(tag_name.lower(), tag_name)
                     if ':' not in tag_name:
                         tag_name = f'XMP:{tag_name}'
@@ -1489,11 +1871,9 @@ class ExifToolManager:
                 args.append(f'-{tag_name}<={tmp_path}')
 
             if not args:
-                return False
-
+                return []
             if writes_list:
                 args = ['-sep', ';;'] + args
-
             # IPTC IIM 默认字符集是 Latin-1：写 IPTC 标签必须声明 UTF-8 并写入
             # CodedCharacterSet 标记，否则中文按 Latin-1 存储变 '?'，或存成
             # UTF-8 字节但被第三方软件（LR 等）按 Latin-1 误读（已实测验证）。
@@ -1505,11 +1885,43 @@ class ExifToolManager:
             # XMP is natively UTF-8 and unaffected.
             if writes_iptc:
                 args = ['-charset', 'iptc=utf8', '-CodedCharacterSet=UTF8'] + args
+            return args
 
-            # -overwrite_original_in_place 与其余写入路径一致（ExFAT 安全，保留 inode）
-            # Same flag as every other write path (ExFAT-safe, keeps the inode)
-            args.extend(['-overwrite_original_in_place', target_path])
-            return self._send_to_process(args, timeout=30)
+        def write_sidecar() -> bool:
+            """写（或新建）XMP 边车 / write (or create) the XMP sidecar."""
+            self._cleanup_sidecar_tmp(sidecar_path)
+            sidecar_args = build_args(True)
+            if not sidecar_args:
+                return False
+            return self._send_to_process(
+                sidecar_args + ['-overwrite_original_in_place', sidecar_path], timeout=30)
+
+        try:
+            if use_sidecar:
+                return write_sidecar()
+
+            body_args = build_args(False)
+            if not body_args:
+                return False
+
+            if not raw_body:
+                # JPEG / HEIF / DNG 等：直接写本体（与其余写入路径一致，ExFAT 安全、保留 inode）
+                # JPEG / HEIF / DNG: write the body directly (ExFAT-safe, keeps the inode)
+                return self._send_to_process(
+                    body_args + ['-overwrite_original_in_place', file_path], timeout=30)
+
+            reason = self._verified_raw_inplace(
+                file_path,
+                lambda tmp: self._send_to_process(
+                    body_args + ['-overwrite_original_in_place', tmp], timeout=30))
+            if reason is not None:
+                self._record_raw_embed_fallback(file_path, reason)
+                return write_sidecar()
+            # 已有边车同步更新（不新建），理由同 _write_metadata_arw
+            # Keep an existing sidecar in step (never create one), as in _write_metadata_arw
+            if os.path.exists(sidecar_path):
+                write_sidecar()
+            return True
         except Exception as e:
             print(f"❌ set_metadata error [{os.path.basename(file_path)}]: {e}")
             return False
@@ -1994,9 +2406,13 @@ class ExifToolManager:
             print(f"❌ File not found: {file_path}")
             return False
 
-        # 专有 RAW 强制只清 XMP 侧车，不修改 RAW 本体
+        # 专有 RAW 清 XMP 侧车；勾了「同时写入专有 RAW 本体」时本体也要清（#165）
+        # Proprietary RAW: clear the sidecar, and the body too when it is written (#165)
         if self._is_sidecar_raw(file_path):
-            return self._reset_xmp_sidecar(file_path)
+            ok = self._reset_xmp_sidecar(file_path)
+            if self._raw_body_writable(file_path):
+                ok = self._reset_raw_body(file_path) and ok
+            return ok
 
         # 删除Rating、Pick、City、Country和Province-State字段；#153 只清开着的字段
         # Clear rating/flag/location-borrowed fields; #153 enabled fields only
@@ -2075,11 +2491,15 @@ class ExifToolManager:
             # V4.0.3: 预先清理可能存在的残留 _exiftool_tmp 文件
             self.cleanup_temp_files(valid_files)
 
-            # 专有 RAW 强制只清理 XMP 侧车，不修改 RAW 本体
+            # 专有 RAW 清 XMP 侧车；勾了「同时写入专有 RAW 本体」时本体也要清（#165）
+            # Proprietary RAW: clear the sidecar, and the body too when it is written (#165)
             arw_files = [f for f in valid_files if self._is_sidecar_raw(f)]
             if arw_files:
                 for f in arw_files:
-                    if self._reset_xmp_sidecar(f):
+                    ok = self._reset_xmp_sidecar(f)
+                    if self._raw_body_writable(f):
+                        ok = self._reset_raw_body(f) and ok
+                    if ok:
                         stats['success'] += 1
                     else:
                         stats['failed'] += 1
@@ -2095,19 +2515,7 @@ class ExifToolManager:
             # Flags are listed once; all file paths follow; one -execute at the end.
             # #153 只清开着的字段；全部关掉时这批不用动，直接算成功
             # #153 clear enabled fields only; with all off, the batch is a no-op
-            batch_args = self._filter_reset_args([
-                '-Rating=',
-                *PICK_FLAG_CLEAR_ARGS,
-                '-XMP:Label=',
-                '-XMP:City=',
-                '-XMP:State=',
-                '-XMP:Country=',
-                '-XMP:Description=',
-                '-XMP:Title=',
-                '-IPTC:City=',
-                '-IPTC:Country-PrimaryLocationName=',
-                '-IPTC:Province-State=',
-            ])
+            batch_args = self._filter_reset_args(list(self._BODY_RESET_ARGS))
             if not batch_args:
                 stats['success'] += len(valid_files)
                 continue

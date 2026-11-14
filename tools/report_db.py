@@ -115,6 +115,16 @@ PHOTO_COLUMNS = [
     ("alt_species_en",   "TEXT", None),
     ("alt_confidence",   "REAL", None),
 
+    # 连拍统一鸟种的来源帧（#162）：这张照片的鸟种是「同一连拍组里置信度最高的那一帧」
+    # 统一过来的，此列记下那一帧的文件名（如 "_T3A2826.CR3"）；birdid_confidence 也是
+    # 那一帧的。照片自己的识别结论、手动改鸟种、整种合并、标记无鸟都会把它清空。
+    # 由 _reconcile_photo_columns 自动给旧库补列，无需逐版本迁移。
+    # Burst-unified species source (#162): the file name of the burst frame whose
+    # species (and birdid_confidence) this photo inherited. Cleared whenever the
+    # species is set any other way. Old databases get the column via
+    # _reconcile_photo_columns, no versioned migration needed.
+    ("burst_species_source", "TEXT", None),
+
     # 已停用：4.6.4 RC 期间识鸟对比模式（BirdTrace 识别、OSEA 验证）存的验证模型第一名。
     # OSEA 已删除、不再写入也不再读取；列保留不删，免得为旧库做迁移。
     # Retired: the check model's top-1 from the 4.6.4 RC Bird-ID compare mode (BirdTrace
@@ -1185,6 +1195,49 @@ class ReportDB:
             )
             self._safe_commit()
             return cursor.rowcount
+
+    def clear_cache_paths_for_prefixes(self, filenames: List[str]) -> int:
+        """
+        仅清空指定照片前缀的缓存路径字段（用于增量模式清理本次临时缓存，保留历史缓存路径）。
+
+        参数:
+            filenames (List[str]): 照片前缀列表（photos.filename 列）
+
+        返回:
+            int: 受影响的行数
+
+        Clear cache path columns only for the specified filename stems, preserving
+        cached paths belonging to earlier incremental batches.
+        """
+        if not filenames:
+            return 0
+        total = 0
+        chunk_size = 500
+        with self._lock:
+            for start in range(0, len(filenames), chunk_size):
+                chunk = filenames[start:start + chunk_size]
+                placeholders = ", ".join(["?"] * len(chunk))
+                cursor = self._conn.execute(
+                    f"UPDATE photos SET debug_crop_path = NULL, temp_jpeg_path = NULL, yolo_debug_path = NULL "
+                    f"WHERE filename IN ({placeholders})",
+                    chunk,
+                )
+                total += cursor.rowcount
+            self._safe_commit()
+        return total
+
+    def get_existing_prefixes(self) -> set:
+        """
+        获取数据库中所有已记录的照片前缀集合。
+
+        返回:
+            set: photos.filename 集合
+
+        Return the set of all photo filename stems currently stored in report.db.
+        """
+        with self._lock:
+            cursor = self._conn.execute("SELECT filename FROM photos")
+            return {row[0] for row in cursor.fetchall() if row[0]}
 
     # ==========================================================================
     #  元数据操作

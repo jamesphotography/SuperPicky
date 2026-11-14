@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import (
     Qt, Signal, QObject, Slot, QTimer, QPropertyAnimation, QEasingCurve, QMimeData,
-    QThread, QStandardPaths, QSize, QRect,
+    QThread, QStandardPaths, QSize, QRect, QEvent,
 )
 from PySide6.QtGui import QFont, QPixmap, QIcon, QAction, QTextCursor, QColor, QDragEnterEvent, QDropEvent, QKeySequence
 
@@ -178,13 +178,15 @@ class WorkerSignals(QObject):
 class WorkerThread(threading.Thread):
     """处理线程"""
 
-    def __init__(self, dir_path, ui_settings, signals, i18n=None, resume=False, scan_results=None):
+    def __init__(self, dir_path, ui_settings, signals, i18n=None, resume=False, scan_results=None,
+                 incremental=False):
         super().__init__(daemon=True)
         self.dir_path = dir_path
         self.ui_settings = ui_settings
         self.signals = signals
         self.i18n = i18n or get_i18n()
         self.resume = resume
+        self.incremental = bool(incremental)
         self.scan_results = list(scan_results) if scan_results is not None else None
         self._stop_event = threading.Event()
         self._active_processor = None
@@ -563,18 +565,33 @@ class WorkerThread(threading.Thread):
         )
 
         # Detect batch mode: check for subdirectories with photos
-        from core.recursive_scanner import DEFAULT_SCAN_MAX_DEPTH, scan_directories
+        from core.recursive_scanner import DEFAULT_SCAN_MAX_DEPTH, ScannedDirectory, scan_directories
+        from core.incremental_cull import inspect_directory_delta
 
         scan_results = self.scan_results
-        if scan_results is None:
+        if self.incremental and os.path.isfile(os.path.join(self.dir_path, ".superpicky", "report.db")):
+            # 增量单目录模式只扫描根目录，防止把按鸟种归类的子目录当成批量子目录
+            # Incremental single-folder mode scans root only so organized species
+            # folders are never misclassified as batch subdirectories.
+            if scan_results is None:
+                delta_scan = inspect_directory_delta(self.dir_path)
+                scan_results = [ScannedDirectory(
+                    path=os.path.abspath(self.dir_path),
+                    depth=0,
+                    photo_count=delta_scan.new_count,
+                    video_count=len(delta_scan.new_video_files),
+                    video_files=tuple(delta_scan.new_video_files),
+                )]
+                self.scan_results = scan_results
+        elif scan_results is None:
             scan_results = scan_directories(self.dir_path, max_depth=DEFAULT_SCAN_MAX_DEPTH)
 
         sub_dirs = [item.path for item in scan_results]
 
-        if len(scan_results) <= 1:
-            # Single directory mode (original behavior)
+        if len(scan_results) <= 1 or self.incremental:
+            # Single directory mode (original behavior, plus incremental cull #161)
             # 若扫描到的实际目录与根目录不同（根目录无图片、子目录有图片），使用实际目录
-            single_dir = scan_results[0].path if scan_results else self.dir_path
+            single_dir = self.dir_path if self.incremental else (scan_results[0].path if scan_results else self.dir_path)
             processor = PhotoProcessor(
                 dir_path=single_dir,
                 settings=settings,
@@ -594,7 +611,8 @@ class WorkerThread(threading.Thread):
                 result = processor.process(
                     organize_files=_organize_enabled,
                     cleanup_temp=not adv_config.keep_temp_files,
-                    resume=self.resume
+                    resume=self.resume,
+                    incremental=self.incremental,
                 )
 
                 burst_groups = result.stats.get('burst_groups', 0)
@@ -602,10 +620,12 @@ class WorkerThread(threading.Thread):
 
                 if burst_groups > 0:
                     log_callback(self.i18n.t("logs.burst_complete", groups=burst_groups, moved=burst_moved), "success")
-                elif settings.detect_burst:
+                elif settings.detect_burst and result.stats.get('total', 0) > 0:
                     log_callback(self.i18n.t("logs.burst_none_detected"), "info")
 
                 self.stats = result.stats
+                if self.incremental:
+                    self.stats['incremental'] = True
                 # 用 worker 级 wall time 覆盖 processor 内部口径（含预扫描/
                 # 会话头等前置开销），与批量模式口径一致。
                 # Override the processor-internal timing with the worker-level
@@ -620,6 +640,9 @@ class WorkerThread(threading.Thread):
             # Batch mode: process each subdirectory
             from advanced_config import get_advanced_config
             adv_config = get_advanced_config()
+            # 只认真正的 True（测试里的 Mock 属性恒为真值，不能当作开启）
+            # Accept only a real True (Mock attributes in tests are always truthy)
+            lab_incremental = bool(getattr(adv_config, "lab_incremental_cull", False) is True)
 
             log_callback(f"\n{'='*56}", "info")
             log_callback(f"  \U0001f4c2 Batch mode: {len(scan_results)} directories detected", "info")
@@ -648,6 +671,20 @@ class WorkerThread(threading.Thread):
                 n_photos = scanned_dir.photo_count
                 if n_photos == 0:
                     continue
+
+                # 实验室增量开启时：已选过且无新增的子目录跳过，有新增的按增量处理；
+                # 开关关闭时保持原行为（逐个全量处理）。
+                # With Labs incremental on: skip culled sub-folders with nothing new
+                # and run the others incrementally; off keeps the original behavior.
+                sub_incremental = False
+                if lab_incremental:
+                    sub_delta = inspect_directory_delta(sub_dir)
+                    if sub_delta.has_valid_db and not sub_delta.has_new_work and not self.resume:
+                        log_callback(f"\n{'_'*40}", "info")
+                        log_callback(f"\U0001f4c1 [{idx}/{len(sub_dirs)}] {rel}/ — {self.i18n.t('logs.incremental_nothing_new')}", "info")
+                        processed_so_far += n_photos
+                        continue
+                    sub_incremental = bool(sub_delta.has_valid_db and (sub_delta.has_new_work or self.resume))
 
                 log_callback(f"\n{'_'*40}", "info")
                 log_callback(f"\U0001f4c1 [{idx}/{len(sub_dirs)}] {rel}/ ({n_photos} photos)", "info")
@@ -688,7 +725,8 @@ class WorkerThread(threading.Thread):
                     result = processor.process(
                         organize_files=_organize_enabled,
                         cleanup_temp=not adv_config.keep_temp_files,
-                        resume=self.resume
+                        resume=self.resume,
+                        incremental=sub_incremental,
                     )
                     s = result.stats
                     for key in ('total', 'star_3', 'picked', 'star_2', 'star_1',
@@ -932,7 +970,18 @@ class SuperPickyMainWindow(QMainWindow):
         self._really_quit = False  # 标记是否真正退出
         self._tray_hint_shown = False  # 首次隐藏到托盘时提示一次（每次会话）
         self._suppress_results_browser_once = False
+        # #161：「重置并重选」= 快速复原完成后自动重新开始全量选片（见 _on_reset_complete）
+        # #161: "Reset and re-cull" = quick restore, then automatically start a full cull
+        self._reprocess_after_reset = False
+        # 快速复原保留 report.db，复原后那一次开始必须跳过「已完成选片」拦截，否则死循环
+        # Quick restore keeps report.db, so the start right after it must skip the
+        # already-processed check, or the user would loop on that dialog forever.
+        self._skip_processed_check_once = False
         self._resume_prompt_handled = False
+        self._pending_worker_incremental = False
+        self._pending_incremental_delta = None
+        self._last_incremental_banner_sig = None
+        self._window_activate_refreshing = False
         self._initialization_dialog_open = False
         self._initialization_prompt_dismissed = False
         self._startup_prompts_ran = False
@@ -2112,9 +2161,15 @@ class SuperPickyMainWindow(QMainWindow):
         # V3.9: 归一化路径并防止重复
         directory = os.path.normpath(directory)
         if directory == os.path.normpath(self.directory_path or ""):
-            return  # 同一个目录，跳过
+            # 同目录再次选择/拖入时轻量刷新状态，以便识别外部新增的未处理照片
+            # Lightly refresh state on re-selection/drop of the same folder
+            if (get_advanced_config().lab_incremental_cull
+                    and not self._is_lab_processing() and not self._is_multi_mode()):
+                self._check_report_csv(auto_open=False)
+            return  # 同一个目录，跳过日志重放与重复初始化
 
         self.directory_path = directory
+        self._last_incremental_banner_sig = None
         self.dir_input.setText(directory)
 
         self._log(self.i18n.t("messages.dir_selected", directory=directory))
@@ -2695,6 +2750,29 @@ class SuperPickyMainWindow(QMainWindow):
                     padding: 0 12px;
                 }}
             """)
+        elif state == "has_incremental":
+            counts = data or {}
+            by_rating = counts.get("by_rating", {})
+            total = counts.get("total", 0)
+            new_count = counts.get("new_count", 0)
+            n3 = by_rating.get(3, 0)
+            n2 = by_rating.get(2, 0)
+            n1 = by_rating.get(1, 0)
+            self._status_banner.setText(
+                self.i18n.t("labels.status_incremental").format(
+                    total=total, new=new_count, n3=n3, n2=n2, n1=n1
+                )
+            )
+            self._status_banner.setStyleSheet(f"""
+                QLabel {{
+                    background-color: rgba(0, 212, 170, 0.10);
+                    color: {COLORS['accent']};
+                    border: 1px solid {COLORS['accent']};
+                    border-radius: 6px;
+                    font-size: 12px;
+                    padding: 0 12px;
+                }}
+            """)
         elif state in ("processing", "stage"):
             # stage：收尾阶段文字原样显示，样式同处理中 / stage text shown as-is, same style
             filename = data or ""
@@ -2735,10 +2813,10 @@ class SuperPickyMainWindow(QMainWindow):
                 }}
             """)
 
-    def _update_action_buttons(self, state: str):
+    def _update_action_buttons(self, state: str, new_count: int = 0):
         """根据状态更新按钮区域。
 
-        state: "idle" | "ready" | "has_results" | "processing"
+        state: "idle" | "ready" | "has_results" | "has_incremental" | "processing"
         """
         if state == "idle":
             self.reset_btn.setEnabled(False)
@@ -2770,6 +2848,16 @@ class SuperPickyMainWindow(QMainWindow):
             if hasattr(self, 'view_results_btn'):
                 self.view_results_btn.setVisible(True)
                 self.view_results_btn.setObjectName("")
+        elif state == "has_incremental":
+            self.reset_btn.setEnabled(True)
+            self.reset_btn.setText(self.i18n.t("labels.reset_short"))
+            self.reset_btn.setObjectName("tertiary")
+            self.start_btn.setEnabled(True)
+            self.start_btn.setText(self.i18n.t("labels.start_incremental", count=new_count))
+            self.start_btn.setObjectName("")
+            if hasattr(self, 'view_results_btn'):
+                self.view_results_btn.setVisible(True)
+                self.view_results_btn.setObjectName("tertiary")
         elif state == "processing":
             self.reset_btn.setEnabled(False)
             # #144：处理中开始按钮变成「停止」/ the start button becomes Stop while processing
@@ -2807,13 +2895,39 @@ class SuperPickyMainWindow(QMainWindow):
         report_path = os.path.join(self.directory_path, ".superpicky", "report.db")
         if os.path.exists(report_path):
             counts = self._load_result_counts()
-            self._update_status_banner("has_results", counts)
-            self._update_action_buttons("has_results")
-            # 只有保留预览图时才自动弹出浏览器（无预览图时浏览器无内容）
             from advanced_config import get_advanced_config as _get_adv
-            if auto_open and _get_adv().keep_temp_files:
-                QTimer.singleShot(300, self._auto_open_results)
+            adv_cfg = _get_adv()
+            delta = None
+            if adv_cfg.lab_incremental_cull:
+                from core.incremental_cull import inspect_directory_delta
+                delta = inspect_directory_delta(self.directory_path)
+            if delta is not None and delta.has_valid_db and delta.has_new_work:
+                new_total = delta.new_count + len(delta.new_video_files)
+                banner_data = dict(counts or {})
+                banner_data["new_count"] = new_total
+                self._update_status_banner("has_incremental", banner_data)
+                self._update_action_buttons("has_incremental", new_count=new_total)
+                sig = (os.path.normpath(self.directory_path), new_total)
+                if sig != getattr(self, "_last_incremental_banner_sig", None):
+                    self._last_incremental_banner_sig = sig
+                    self._log(
+                        self.i18n.t(
+                            "logs.incremental_detected_banner",
+                            existing=delta.existing_count,
+                            new=new_total,
+                        ),
+                        "info",
+                    )
+            else:
+                self._last_incremental_banner_sig = None
+                self._update_status_banner("has_results", counts)
+                self._update_action_buttons("has_results")
+                # 只有保留预览图且无新增待选片文件时才自动弹出浏览器
+                # Auto-open Results Browser only when keeping previews and no new unprocessed files exist.
+                if auto_open and adv_cfg.keep_temp_files:
+                    QTimer.singleShot(300, self._auto_open_results)
         else:
+            self._last_incremental_banner_sig = None
             self._update_status_banner("ready")
             self._update_action_buttons("ready")
 
@@ -3068,6 +3182,19 @@ class SuperPickyMainWindow(QMainWindow):
         # Task 7: read switch states from advanced_config; old panel widgets removed
         _adv_confirm = get_advanced_config()
         extra_notes = []
+        _inc_delta = getattr(self, "_pending_incremental_delta", None)
+        if _inc_delta is not None and _inc_delta.has_valid_db and _inc_delta.has_new_work:
+            _new_total = _inc_delta.new_count + len(_inc_delta.new_video_files)
+            extra_notes.append(
+                _ico("sparkles.svg", _accent)
+                + _esc(
+                    self.i18n.t(
+                        "dialogs.incremental_confirm_note",
+                        new=_new_total,
+                        existing=_inc_delta.existing_count,
+                    )
+                )
+            )
         if _adv_confirm.flight_check:
             extra_notes.append(_ico("bird.svg", _flight) + _esc(self.i18n.t("dialogs.note_flight")))
         if _adv_confirm.birdid_auto_identify:
@@ -3142,6 +3269,11 @@ class SuperPickyMainWindow(QMainWindow):
 
     def _start_processing(self):
         """开始处理"""
+        # 在任何提前 return 之前消费一次性标记，避免残留到下一次手动开始而静默重跑
+        # Consume the one-shot flag before any early return so it never leaks
+        # into a later manual start (which would silently re-cull).
+        force_full = bool(getattr(self, "_skip_processed_check_once", False))
+        self._skip_processed_check_once = False
         if not self._require_initialization_for_processing():
             return
 
@@ -3174,9 +3306,83 @@ class SuperPickyMainWindow(QMainWindow):
             )
             return
 
+        # 检查是否有未完成的断点状态以及已有选片目录的增量状态 (#161)
+        # Check resume state and incremental delta for already-culled folders (#161)
+        from core.incremental_cull import inspect_directory_delta
+        from tools.resume_state import ResumeStateManager
+        has_resume_file = False
+        try:
+            has_resume_file = ResumeStateManager(self.directory_path).exists()
+        except Exception:
+            has_resume_file = False
+
+        _adv_cfg = get_advanced_config()
+        delta = inspect_directory_delta(self.directory_path)
+        if (not force_full and not has_resume_file
+                and delta.has_valid_db and delta.existing_count > 0):
+            from ui import custom_dialogs as _cd
+            new_total = delta.new_count + len(delta.new_video_files)
+            if _adv_cfg.lab_incremental_cull and delta.has_new_work:
+                dlg = _cd.DeleteConfirmDialog(
+                    self,
+                    title=self.i18n.t("dialogs.incremental_choice_title"),
+                    message=self.i18n.t(
+                        "dialogs.incremental_choice_msg",
+                        existing=delta.existing_count,
+                        new=new_total,
+                    ),
+                    buttons=[
+                        ("cancel", self.i18n.t("buttons.cancel"), "secondary"),
+                        ("reprocess", self.i18n.t("dialogs.btn_reprocess_all"), "secondary"),
+                        (
+                            "incremental",
+                            self.i18n.t("dialogs.btn_incremental_only", new=new_total),
+                            "primary",
+                        ),
+                    ],
+                    links=[("view", self.i18n.t("dialogs.btn_view_results"))],
+                    default_key="incremental",
+                )
+                dlg.exec()
+                if dlg.choice == "view":
+                    self._open_results_smart()
+                    return
+                elif dlg.choice == "reprocess":
+                    self._confirm_reset_and_reprocess()
+                    return
+                elif dlg.choice != "incremental":
+                    return
+            else:
+                msg_key = (
+                    "dialogs.already_processed_labs_hint_msg"
+                    if delta.has_new_work
+                    else "dialogs.already_processed_msg"
+                )
+                dlg = _cd.DeleteConfirmDialog(
+                    self,
+                    title=self.i18n.t("dialogs.already_processed_title"),
+                    message=self.i18n.t(
+                        msg_key,
+                        existing=delta.existing_count,
+                        new=new_total,
+                    ),
+                    buttons=[
+                        ("cancel", self.i18n.t("buttons.cancel"), "secondary"),
+                        ("view", self.i18n.t("dialogs.btn_view_results"), "secondary"),
+                        ("reprocess", self.i18n.t("dialogs.btn_reprocess_all"), "primary"),
+                    ],
+                    default_key="view",
+                )
+                dlg.exec()
+                if dlg.choice == "view":
+                    self._open_results_smart()
+                elif dlg.choice == "reprocess":
+                    self._confirm_reset_and_reprocess()
+                return
+
         # V4.3: 识鸟仍是「自动检测 (GPS)」时先问要不要去选国家
         # V4.3: Prompt if Bird ID country is still in Auto GPS mode
-        _adv_confirm = get_advanced_config()
+        _adv_confirm = _adv_cfg
         if _adv_confirm.birdid_auto_identify and _adv_confirm.birdid_country_code is None:
             reply = StyledMessageBox.question(
                 self,
@@ -3191,12 +3397,21 @@ class SuperPickyMainWindow(QMainWindow):
                 self._open_settings_center("common")
                 return  # 等用户配置后再开始 / Wait for user to configure
 
-        if not self._confirm_start():
+        self._pending_incremental_delta = (
+            delta
+            if (not force_full and _adv_cfg.lab_incremental_cull
+                and delta.has_valid_db and delta.has_new_work)
+            else None
+        )
+        try:
+            confirmed = self._confirm_start()
+        finally:
+            self._pending_incremental_delta = None
+        if not confirmed:
             return
 
         resume_processing = False
         try:
-            from tools.resume_state import ResumeStateManager
             resume_state = ResumeStateManager(self.directory_path)
             if resume_state.exists() and self._resume_prompt_handled:
                 resume_processing = True
@@ -3233,12 +3448,49 @@ class SuperPickyMainWindow(QMainWindow):
             )
             return
 
-        # 2. 照片数量预扫描（阻断型）/ Photo pre-scan (blocking)
-        scan = self._prescan(self.directory_path)
-        if scan is None:
-            return
-        scan_results = None if scan is _SCAN_FAILED else scan
+        # 增量只在实验室开关开启时生效（含断点续跑）；「重置并重选」后的那次一律全量。
+        # 开关关闭时续跑保持原行为，不走历史参考池 / 清单合并 / 连拍编号顺延。
+        # Incremental only when the Labs switch is on (resume included); the run
+        # right after "reset and re-cull" is always full. With the switch off a
+        # resume keeps its original behavior.
+        incremental_mode = bool(
+            not force_full
+            and _adv_cfg.lab_incremental_cull
+            and delta.has_valid_db
+            and (resume_processing or delta.has_new_work)
+        )
 
+        # 2. 照片数量预扫描（阻断型）/ Photo pre-scan (blocking)
+        if incremental_mode and delta.has_new_work:
+            from core.recursive_scanner import ScannedDirectory, is_dangerous_root
+            is_dangerous, reason = is_dangerous_root(self.directory_path)
+            if is_dangerous:
+                StyledMessageBox.warning(
+                    self,
+                    self.i18n.t("health.dangerous_dir_title"),
+                    self.i18n.t(
+                        "health.dangerous_dir_msg",
+                        directory=self.directory_path,
+                        reason=reason,
+                    ),
+                )
+                return
+            scan_results = [
+                ScannedDirectory(
+                    path=os.path.abspath(self.directory_path),
+                    depth=0,
+                    photo_count=delta.new_count,
+                    video_count=len(delta.new_video_files),
+                    video_files=tuple(delta.new_video_files),
+                )
+            ]
+        else:
+            scan = self._prescan(self.directory_path)
+            if scan is None:
+                return
+            scan_results = None if scan is _SCAN_FAILED else scan
+
+        self._pending_worker_incremental = incremental_mode
         self._launch_worker(self.directory_path, resume_processing, scan_results)
 
     def _prescan(self, directory: str, warn: bool = True) -> Optional[object]:
@@ -3409,6 +3661,17 @@ class SuperPickyMainWindow(QMainWindow):
             self._set_queue_editing(False)
             self._single_run_locked = True
 
+        incremental = bool(getattr(self, "_pending_worker_incremental", False))
+        self._pending_worker_incremental = False
+
+        # 若结果浏览器已打开并持有该目录的 DB 连接，处理前先释放以免写库冲突 (#161)
+        # Release Results Browser SQLite handle if held before writing DB (#161)
+        if getattr(self, "_results_browser", None) is not None:
+            try:
+                self._results_browser.release_directory()
+            except Exception:
+                pass
+
         # 启动工作线程
         self.worker = WorkerThread(
             directory,
@@ -3417,6 +3680,7 @@ class SuperPickyMainWindow(QMainWindow):
             self.i18n,
             resume=resume,
             scan_results=scan_results,
+            incremental=incremental,
         )
         self.worker.start()
 
@@ -3572,17 +3836,27 @@ class SuperPickyMainWindow(QMainWindow):
         # 4. Pre-check: unfinished folders resume; processed ones are skipped
         #    unless "Reprocess all" is ticked. queue_state also treats a
         #    batch-mode processed parent (results only in sub-folders) as processed
-        from core.folder_queue import FolderQueue, STATE_PROCESSED, STATE_RESUME, queue_state
+        from core.folder_queue import (
+            FolderQueue,
+            STATE_INCREMENTAL,
+            STATE_PROCESSED,
+            STATE_RESUME,
+            queue_state,
+        )
         states = {f: queue_state(f) for f in existing}
         resume_dirs = [f for f in existing if states[f] == STATE_RESUME]
+        incremental_dirs = [f for f in existing if states[f] == STATE_INCREMENTAL]
         processed_dirs = [f for f in existing if states[f] == STATE_PROCESSED]
         reprocess_all = False
-        if resume_dirs or processed_dirs:
+        if resume_dirs or incremental_dirs or processed_dirs:
             from ui import custom_dialogs as _cd
             parts = []
             if resume_dirs:
                 parts.append(self.i18n.t("dialogs.queue_precheck_resume",
                                          folders="\n".join(resume_dirs)))
+            if incremental_dirs:
+                parts.append(self.i18n.t("dialogs.queue_precheck_incremental",
+                                         folders="\n".join(incremental_dirs)))
             if processed_dirs:
                 parts.append(self.i18n.t("dialogs.queue_precheck_processed",
                                          folders="\n".join(processed_dirs)))
@@ -3594,7 +3868,7 @@ class SuperPickyMainWindow(QMainWindow):
                          ("start", self.i18n.t("dialogs.queue_start"), "primary")],
                 default_key="start",
                 checkbox_text=(self.i18n.t("dialogs.queue_reprocess_all")
-                               if processed_dirs else None),
+                               if (processed_dirs or incremental_dirs) else None),
             )
             dlg.exec()
             if dlg.choice != "start":
@@ -3694,16 +3968,21 @@ class SuperPickyMainWindow(QMainWindow):
                 if self._queue is not None and self._queue_pending_launch:
                     self._update_action_buttons("processing")
                 return
+            if action == "incremental":
+                if self._queue_launch(path, resume=False, incremental=True):
+                    return
+                continue
             if self._queue_launch(path, resume=(action == "resume")):
                 return
 
-    def _queue_launch(self, path: str, resume: bool) -> bool:
+    def _queue_launch(self, path: str, resume: bool, incremental: bool = False) -> bool:
         """
         对一个目录做与单目录相同的预扫描并启动工作线程（不弹窗、不清日志）。
 
         参数:
         path (str): 目录
         resume (bool): 是否从断点续处理
+        incremental (bool): 是否为增量选片模式
 
         返回:
         bool: 已启动为 True；扫描阻断（已记为出错）为 False
@@ -3714,17 +3993,39 @@ class SuperPickyMainWindow(QMainWindow):
         Parameters:
         path (str): the folder
         resume (bool): whether to resume from saved state
+        incremental (bool): whether to run in incremental cull mode
 
         Return:
         bool: True when launched; False when the scan blocked it (recorded as error)
         """
-        scan = self._prescan(path, warn=False)
-        if scan is None:
-            err = self._prescan_error or self.i18n.t("health.no_photos_title")
-            self._log(self.i18n.t("logs.queue_folder_error", path=path, error=err), "error")
-            self._queue_folder_ended("error", error=err)
-            return False
-        scan_results = None if scan is _SCAN_FAILED else scan
+        if incremental:
+            from core.incremental_cull import inspect_directory_delta
+            from core.recursive_scanner import ScannedDirectory, is_dangerous_root
+
+            is_dangerous, reason = is_dangerous_root(path)
+            if is_dangerous:
+                err = self.i18n.t("health.dangerous_dir_msg", directory=path, reason=reason)
+                self._log(self.i18n.t("logs.queue_folder_error", path=path, error=err), "error")
+                self._queue_folder_ended("error", error=err)
+                return False
+            delta = inspect_directory_delta(path)
+            scan_results = [
+                ScannedDirectory(
+                    path=os.path.abspath(path),
+                    depth=0,
+                    photo_count=delta.new_count,
+                    video_count=len(delta.new_video_files),
+                    video_files=tuple(delta.new_video_files),
+                )
+            ]
+        else:
+            scan = self._prescan(path, warn=False)
+            if scan is None:
+                err = self._prescan_error or self.i18n.t("health.no_photos_title")
+                self._log(self.i18n.t("logs.queue_folder_error", path=path, error=err), "error")
+                self._queue_folder_ended("error", error=err)
+                return False
+            scan_results = None if scan is _SCAN_FAILED else scan
         if scan_results is not None:
             # 用实际扫描修正总进度分母 / correct the overall denominator from the real scan
             actual = sum(item.photo_count for item in scan_results)
@@ -3734,6 +4035,7 @@ class SuperPickyMainWindow(QMainWindow):
         # The previous worker only stops caffeinate after `finished`; let it exit
         if self.worker is not None and self.worker.is_alive():
             self.worker.join(timeout=5)
+        self._pending_worker_incremental = bool(incremental)
         self._launch_worker(path, resume, scan_results, clear_log=False)
         return True
 
@@ -3992,7 +4294,8 @@ class SuperPickyMainWindow(QMainWindow):
         self._update_status(self.i18n.t("labels.complete"), COLORS['success'])
 
         # 更新状态条为完成状态
-        # 直接从 stats 参数构建（避免 DB 时序问题：处理线程可能还未关闭连接）
+        # 增量模式下从 report.db 读全量累计计数以匹配顶部累计口径；常规模式直接用本次 stats
+        # In incremental mode read cumulative DB counts for the banner; otherwise use snapshot stats
         counts = {
             "total": stats.get("total", 0),
             "by_rating": {
@@ -4003,6 +4306,11 @@ class SuperPickyMainWindow(QMainWindow):
                 -1: stats.get("no_bird", 0),
             },
         }
+        if stats.get("incremental"):
+            db_counts = self._load_result_counts()
+            if db_counts and db_counts.get("total", 0) > 0:
+                counts = db_counts
+                stats["cumulative_total"] = db_counts.get("total", stats.get("total", 0))
         self._update_status_banner("done", counts)
         self._update_action_buttons("has_results")
 
@@ -4053,6 +4361,40 @@ class SuperPickyMainWindow(QMainWindow):
         self._apply_pending_lab_switch()
 
     @Slot()
+    def _confirm_reset_and_reprocess(self) -> bool:
+        """
+        「重置并重选」前的二次确认（#161）。确认后快速复原目录，复原完成后由
+        _on_reset_complete 自动重新开始一次全量选片。
+
+        快速复原会把照片移回根目录、按新结果覆盖评分，用户在结果浏览器里手动改过的
+        星级、鸟种都会丢失——这正是 #161 投诉的数据损失，所以必须让用户明确确认。
+
+        返回:
+        bool: 用户确认并已开始复原为 True；取消为 False
+
+        Second confirmation before "reset and re-cull" (#161). On confirmation
+        the folder is quick-restored, and _on_reset_complete starts a full cull
+        automatically afterwards. Manual star / species edits made in the results
+        browser are lost, which is exactly the data loss #161 reported, so the
+        user must confirm explicitly.
+
+        Return:
+        bool: True when confirmed and the restore started; False when cancelled
+        """
+        reply = StyledMessageBox.question(
+            self,
+            self.i18n.t("dialogs.reprocess_confirm_title"),
+            self.i18n.t("dialogs.reprocess_confirm_msg"),
+            yes_text=self.i18n.t("dialogs.btn_reprocess_all"),
+            no_text=self.i18n.t("buttons.cancel"),
+        )
+        if reply != StyledMessageBox.Yes:
+            return False
+        self._reprocess_after_reset = True
+        self._suppress_results_browser_once = True
+        self._quick_restore_directory()
+        return True
+
     def _quick_restore_directory(self):
         """V4.0.4: 快速复原目录（只移动文件，不重置EXIF）
         
@@ -4614,10 +4956,20 @@ class SuperPickyMainWindow(QMainWindow):
         # 单目录重置：先清处理中标记、解锁列表，最后应用挂起的开关切换
         # Single reset: clear the flag and unlock first; apply a deferred switch last
         self._end_single_reset()
+        # #161「重置并重选」：复原完整成功才自动开始全量选片；有文件没移回时照常弹提示，
+        # 让用户先检查，不自动开始。
+        # #161 "reset and re-cull": auto-start the full cull only when every file
+        # was moved back; otherwise show the usual message and let the user check.
+        reprocess = bool(getattr(self, "_reprocess_after_reset", False))
+        self._reprocess_after_reset = False
+        auto_start = bool(
+            reprocess and success and not (restore_stats or {}).get('failed', 0)
+        )
         if success:
             self._update_status(self.i18n.t("labels.ready"), COLORS['accent'])
             self._log(self.i18n.t("messages.reset_complete_log"))
 
+        if success and not auto_start:
             msg_parts = [self.i18n.t("messages.reset_complete_msg") + "\n"]
 
             if restore_stats:
@@ -4637,7 +4989,7 @@ class SuperPickyMainWindow(QMainWindow):
                 "\n".join(msg_parts),
                 "info"
             )
-        else:
+        elif not success:
             self._update_status(self.i18n.t("labels.error"), COLORS['error'])
             self._log(self.i18n.t("messages.reset_failed_log"))
         if self._suppress_results_browser_once:
@@ -4647,6 +4999,11 @@ class SuperPickyMainWindow(QMainWindow):
         else:
             self._check_report_csv()
         self._apply_pending_lab_switch()
+        if auto_start and not self._is_multi_mode():
+            # 快速复原保留了 report.db，这次开始必须跳过「已完成选片」拦截并强制全量
+            # Quick restore kept report.db: skip the already-processed check and force full
+            self._skip_processed_check_once = True
+            QTimer.singleShot(0, self._start_processing)
 
     def _on_reset_error(self, error_msg):
         """
@@ -4665,6 +5022,7 @@ class SuperPickyMainWindow(QMainWindow):
         # 单目录重置：清标记、解锁；刷新状态后应用挂起的开关切换
         # Single reset: clear the flag and unlock; apply a deferred switch after refreshing
         self._end_single_reset()
+        self._reprocess_after_reset = False  # #161：复原出错不自动重选 / no auto re-cull
         self._log(f"Error: {error_msg}", "error")
         self._update_status("Error", COLORS['error'])
         self._show_message(
@@ -4739,8 +5097,10 @@ class SuperPickyMainWindow(QMainWindow):
         self._refresh_skill_chip()
         # 刷新首页快速参数面板,与设置中心改动保持一致(SSOT 双向同步)
         self._refresh_param_panel()
-        # 实验室页可能改了多目录开关：切换目录栏 / the Labs page may have flipped multi-folder
+        # 实验室页可能改了多目录/增量选片开关：切换目录栏并刷新单目录状态
         self._apply_lab_multi_folder()
+        if self.directory_path and not self._is_lab_processing() and not self._is_multi_mode():
+            self._check_report_csv(auto_open=False)
 
         # Task 8 guard: birdid_dock.reload_from_config 由 Task 8 提供
         # Task 8 guard: reload_from_config is provided by Task 8
@@ -5553,6 +5913,14 @@ class SuperPickyMainWindow(QMainWindow):
             f'<span style="color:{sec}">{esc(t("report.avg_time", avg=avg_time))}</span>',
             '',
         ]
+        if stats.get("incremental"):
+            cumulative_total = stats.get("cumulative_total", total)
+            rows.insert(
+                0,
+                f'<span style="color:{accent};font-weight:bold">'
+                f'{esc(t("report.incremental_note", new=total, cumulative=cumulative_total))}'
+                f'</span>',
+            )
         if total > 0:
             def pct(n):
                 return f"{n/total*100:.1f}%"
@@ -5655,6 +6023,27 @@ class SuperPickyMainWindow(QMainWindow):
                 )
             except Exception:
                 pass
+
+    def changeEvent(self, event):
+        """窗口切回前台时轻量刷新增量/结果状态，及时发现外部拷贝进来的新文件。
+
+        Lightly refresh folder incremental/result state on WindowActivate so files
+        added while the app was in the background are surfaced right away.
+        """
+        super().changeEvent(event)
+        if event.type() == QEvent.WindowActivate:
+            if (
+                getattr(self, "directory_path", "")
+                and get_advanced_config().lab_incremental_cull
+                and not self._is_lab_processing()
+                and not self._is_multi_mode()
+                and not getattr(self, "_window_activate_refreshing", False)
+            ):
+                self._window_activate_refreshing = True
+                try:
+                    self._check_report_csv(auto_open=False)
+                finally:
+                    self._window_activate_refreshing = False
 
     def closeEvent(self, event):
         """
