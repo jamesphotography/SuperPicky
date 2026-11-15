@@ -6,7 +6,6 @@ ThumbnailCard: 单张照片卡片（评分角标 + 对焦指示点）
 ThumbnailLoader: QThread 后台加载缩略图
 """
 
-import atexit
 import os
 import weakref
 import threading
@@ -22,6 +21,7 @@ from PySide6.QtGui import QPixmap, QColor, QPainter, QPen, QFont, QBrush, QImage
 
 from ui.styles import COLORS, FONTS
 from ui.icon_utils import render_tinted_image, ICON_DANGER
+from tools import exit_hooks
 from tools.i18n import get_i18n
 from tools.file_utils import sibling_jpeg
 from tools.species_display import species_display_text
@@ -361,7 +361,7 @@ class _LoaderSignals(QObject):
 # Worker threads park on a condition variable and only cancel() wakes them.
 # A grid that never gets cleaned up leaves live QThreads for PySide to destroy
 # at interpreter shutdown, which makes Qt qFatal the process. Track grids
-# weakly and drain them from an atexit hook.
+# weakly and drain them from an exit hook (tools/exit_hooks.py).
 _LIVE_GRIDS: "weakref.WeakSet" = weakref.WeakSet()
 
 
@@ -378,7 +378,7 @@ def _loader_still_running(loader) -> bool:
 
 
 def _stop_all_grid_loaders() -> None:
-    """解释器退出前停掉所有网格的加载线程（atexit 钩子）。"""
+    """进程退出前停掉所有网格的加载线程（exit_hooks 钩子）。Stop every grid's loader threads at exit."""
     for grid in list(_LIVE_GRIDS):
         try:
             grid.cleanup()
@@ -388,7 +388,9 @@ def _stop_all_grid_loaders() -> None:
             pass
 
 
-atexit.register(_stop_all_grid_loaders)
+# 经 exit_hooks 登记：GUI 以 os._exit 结束时也会执行（见 tools/exit_hooks.py）
+# Registered via exit_hooks so it also runs before the GUI's os._exit
+exit_hooks.register(_stop_all_grid_loaders)
 
 
 class _ThumbnailWorker(QThread):

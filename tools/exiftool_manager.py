@@ -19,7 +19,7 @@ import time
 import threading
 import queue
 
-import atexit
+from tools import exit_hooks
 
 
 def merge_keyword_lists(existing: List[str], additions: List[str]) -> Optional[List[str]]:
@@ -565,8 +565,9 @@ class ExifToolManager:
         self._raw_embed_fallbacks: List[Tuple[str, str]] = []
         self._raw_embed_fallback_lock = threading.Lock()
 
-        # 注册退出清理
-        atexit.register(self.shutdown)
+        # 注册退出清理（经 exit_hooks：GUI 以 os._exit 结束时也会执行）
+        # Register exit cleanup via exit_hooks so it also runs before the GUI's os._exit
+        exit_hooks.register(self.shutdown)
 
     def _get_exiftool_path(self) -> str:
         """获取exiftool可执行文件路径"""
