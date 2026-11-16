@@ -473,7 +473,7 @@ class WorkerThread(threading.Thread):
                 f"  Directory : {self.dir_path}",
                 "=" * 60,
                 "[UI Settings]",
-                f"  AI Confidence      : {settings.ai_confidence}%",
+                f"  Detection Conf.    : {settings.ai_confidence}%",
                 f"  Sharpness          : {settings.sharpness_threshold}",
                 f"  Aesthetics (TOPIQ) : {settings.nima_threshold}",
                 f"  Normalization      : {settings.normalization_mode}",
@@ -517,7 +517,7 @@ class WorkerThread(threading.Thread):
                     f"  Python             : {_si.get('python_version', '?')}",
                     f"  RAM Total          : {_si.get('ram_total_gb', '?')} GB",
                     f"  RAM Free           : {_si.get('ram_available_gb', '?')} GB",
-                    f"  AI Device          : {_si.get('ai_device', '?')}",
+                    f"  Compute Device     : {_si.get('ai_device', '?')}",
                 ]
                 if 'gpu_name' in _si:
                     _sys_lines.append(f"  GPU                : {_si['gpu_name']}")

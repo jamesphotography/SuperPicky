@@ -243,7 +243,7 @@ class I18n:
 
         Examples:
             >>> i18n.t("app.title")
-            "慧眼选鸟 - AI智能照片筛选"
+            "慧眼选鸟 - 智能照片筛选"
 
             >>> i18n.t("logs.batch_progress", start=1, end=50, success=45)
             "批次 1-50: 45 成功"

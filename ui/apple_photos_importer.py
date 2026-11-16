@@ -454,6 +454,7 @@ def build_compact_photos_description(
             "sharp": "Sharp",
             "aesthetics": "Aesthetics",
             "flying": "Flying",
+            "confidence": "Conf",
         }
         if prefer_english
         else {
@@ -467,6 +468,7 @@ def build_compact_photos_description(
             "sharp": "锐度",
             "aesthetics": "美学",
             "flying": "飞鸟",
+            "confidence": "置信度",
         }
     )
 
@@ -490,7 +492,7 @@ def build_compact_photos_description(
     confidence = _finite_number(photo.get("confidence"))
     if confidence is not None:
         confidence_percent = confidence * 100 if 0 <= confidence <= 1 else confidence
-        metric_parts.append(f"AI {confidence_percent:.0f}%")
+        metric_parts.append(f"{labels['confidence']} {confidence_percent:.0f}%")
     sharpness = _finite_number(photo.get("head_sharp"))
     if sharpness is not None:
         metric_parts.append(f"{labels['sharp']} {sharpness:.2f}")

@@ -259,7 +259,7 @@ def test_preflight_builds_localized_photos_metadata_from_report(
     assert candidate.source_size == len(b"untouched raw")
     assert candidate.metadata.title == "Common Tern"
     assert candidate.metadata.description == (
-        "Common Tern · 3★ Excellent\nAI 94% · Sharp 432.65 · Aesthetics 5.50 · Flying"
+        "Common Tern · 3★ Excellent\nConf 94% · Sharp 432.65 · Aesthetics 5.50 · Flying"
     )
     assert "第一行" not in candidate.metadata.description
     assert candidate.metadata.keywords == (
@@ -309,7 +309,7 @@ def test_compact_photos_description_uses_chinese_and_normalizes_confidence() -> 
     )
 
     assert metadata.description == (
-        "普通燕鸥 · 2★ 良好\nAI 94% · 锐度 432.65 · 美学 5.50 · 飞鸟"
+        "普通燕鸥 · 2★ 良好\n置信度 94% · 锐度 432.65 · 美学 5.50 · 飞鸟"
     )
 
 
