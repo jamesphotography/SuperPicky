@@ -765,6 +765,7 @@
     "metadata_field_label": "颜色标记（色标）",
     "metadata_field_title": "鸟种名（标题）",
     "metadata_field_caption": "评分说明（题注）",
+    "metadata_location_hint": "锐度、美学、对焦借用城市、省份、国家字段，方便在 Lightroom 里按分数排序。照片里已有真实地名时不会写入这三项，重置也不会清掉真实地名；不想用这三个字段，取消勾选即可。",
     "metadata_field_sharpness": "锐度（城市）",
     "metadata_field_aesthetic": "美学分（省/自治区）",
     "metadata_field_focus": "对焦状态（国家/地区）",

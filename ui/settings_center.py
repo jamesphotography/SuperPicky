@@ -2690,6 +2690,13 @@ class SettingsCenter(QDialog):
                     lambda on, fid=field.field_id: self._on_metadata_field_toggled(fid, on))
                 box_lay.addWidget(check)
                 self._meta_field_checks[field.field_id] = check
+                if field.field_id == "focus":
+                    # 锐度/美学/对焦借用城市/省份/国家的说明（真实地名保护）
+                    # Explain the City/State/Country borrowing and the real-place guard
+                    loc_hint = QLabel(self.i18n.t("advanced_settings.metadata_location_hint"))
+                    loc_hint.setWordWrap(True)
+                    loc_hint.setStyleSheet(f"color:{COLORS['text_muted']};font-size:11px;")
+                    box_lay.addWidget(loc_hint)
 
         lay.addWidget(self._meta_fields_box)
         self._xmp_none.toggled.connect(lambda on: self._meta_fields_box.setEnabled(not on))

@@ -765,6 +765,7 @@
     "metadata_field_label": "Color label (Label)",
     "metadata_field_title": "Species name (Title)",
     "metadata_field_caption": "Rating explanation (Caption)",
+    "metadata_location_hint": "Sharpness, aesthetics and focus use the City, State and Country fields so you can sort by score in Lightroom. Photos that already have a real place name keep it: these three are not written, and Reset leaves the place name alone. Untick them if you don't want these fields used.",
     "metadata_field_sharpness": "Sharpness (City)",
     "metadata_field_aesthetic": "Aesthetics (State / Province)",
     "metadata_field_focus": "Focus status (Country)",
