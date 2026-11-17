@@ -473,6 +473,19 @@ class _ExifToolProcess:
                 raise
 
 
+def _path_inside(path: str, root: str) -> bool:
+    """
+    path 解析符号链接后是否仍在 root 之内（重置恢复文件前的保险）。
+
+    Whether path, with symlinks resolved, still lies inside root.
+    """
+    try:
+        real, base = os.path.realpath(path), os.path.realpath(root)
+        return os.path.commonpath([real, base]) == base
+    except ValueError:  # Windows 上不同盘符 / different drives on Windows
+        return False
+
+
 def inline_text_arg(tag: str, value: Any) -> str:
     """
     临时文件写不出来时的退回写法：把文本直接放进 ExifTool 参数，但先把换行压成空格。
@@ -2665,6 +2678,13 @@ class ExifToolManager:
                             stats['not_found'] += 1
                             continue
 
+                        # 只恢复照片目录里的真实文件：符号链接、解析后在目录外的一律不动
+                        # Only real files inside the photo folder; never symlinks or
+                        # paths that resolve outside it
+                        if os.path.islink(src_path) or not _path_inside(src_path, dir_path):
+                            stats['not_found'] += 1
+                            continue
+
                         if os.path.exists(dst_path):
                             stats['failed'] += 1
                             log(t("logs.restore_skipped_exists", filename=filename))
@@ -2737,12 +2757,18 @@ class ExifToolManager:
             """递归恢复文件夹中的文件"""
             nonlocal stats
             
-            if not os.path.exists(folder_path):
+            # 符号链接一律不跟随、不移动：否则一个指向外部文件夹的链接会让这里
+            # 递归进去，把外部文件全搬进照片目录
+            # Never follow or move symlinks: a link to an outside folder would make
+            # this recurse into it and pull its files into the photo folder
+            if not os.path.exists(folder_path) or os.path.islink(folder_path):
                 return
             
             for entry in os.listdir(folder_path):
                 entry_path = os.path.join(folder_path, entry)
 
+                if os.path.islink(entry_path):
+                    continue
                 if os.path.isdir(entry_path):
                     # V4.0: 递归处理子目录（鸟种目录、连拍目录）
                     folders_to_check.add(entry_path)

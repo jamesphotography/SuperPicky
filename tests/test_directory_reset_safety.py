@@ -81,3 +81,61 @@ def test_cli_reset_uses_shared_safe_path(tmp_path):
 
     found = sorted(p.read_bytes() for p in root.rglob("DSC5.NEF"))
     assert found == [b"burst copy", b"root original"]
+
+
+# ---------------------------------------------------------------------------
+# 符号链接：重置只动照片目录里的真实文件，绝不把外部文件搬进来
+# Symlinks: reset only moves real files inside the photo folder
+# ---------------------------------------------------------------------------
+
+symlinks = pytest.mark.skipif(os.name == "nt", reason="Windows 建符号链接需要特权")
+
+
+def _outside(tmp_path):
+    """照片目录之外的一个文件夹，里面有一张照片 / a folder outside the photo folder."""
+    out = tmp_path / "outside"
+    _touch(out / "OUT1.NEF", b"outside photo")
+    return out
+
+
+@symlinks
+def test_symlinked_burst_folder_not_followed(tmp_path, i18n):
+    """评分目录里有指向外部文件夹的链接：外部照片原地不动，没被搬进照片目录。"""
+    root = tmp_path / "photos"
+    _touch(root / "2星_良好" / "DSC6.NEF", b"inside")
+    out = _outside(tmp_path)
+    os.symlink(out, root / "2星_良好" / "burst_009")
+
+    _reset(root, i18n)
+
+    assert (out / "OUT1.NEF").read_bytes() == b"outside photo"
+    assert not (root / "OUT1.NEF").exists() and not (root / "2星_良好" / "OUT1.NEF").exists()
+    assert (root / "DSC6.NEF").exists(), "真实照片照常移回"
+
+
+@symlinks
+def test_symlinked_file_in_rating_folder_not_moved(tmp_path, i18n):
+    """评分目录里有指向外部文件的链接：不移动，外部文件不受影响。"""
+    root = tmp_path / "photos"
+    out = _outside(tmp_path)
+    (root / "3星_优选").mkdir(parents=True)
+    os.symlink(out / "OUT1.NEF", root / "3星_优选" / "OUT1.NEF")
+
+    _reset(root, i18n)
+
+    assert (out / "OUT1.NEF").read_bytes() == b"outside photo"
+    assert not (root / "OUT1.NEF").exists()
+
+
+@symlinks
+def test_symlinked_rating_folder_untouched(tmp_path, i18n):
+    """评分目录本身是指向外部的链接（含按目录名摊平那一步）：外部文件原地不动。"""
+    root = tmp_path / "photos"
+    root.mkdir()
+    out = _outside(tmp_path)
+    os.symlink(out, root / "3星_优选")
+
+    _reset(root, i18n)
+
+    assert (out / "OUT1.NEF").read_bytes() == b"outside photo"
+    assert not (root / "OUT1.NEF").exists()

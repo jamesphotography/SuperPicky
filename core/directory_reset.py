@@ -18,6 +18,40 @@ import shutil
 from typing import Callable
 
 
+def _inside(path: str, root: str) -> bool:
+    """
+    path 的真实位置（解析符号链接后）是否仍在 root 之内。
+
+    参数:
+    path (str): 待检查的路径
+    root (str): 照片目录
+
+    返回:
+    bool: 在 root 之内为 True
+
+    Whether path, with symlinks resolved, still lies inside root.
+    """
+    try:
+        real, base = os.path.realpath(path), os.path.realpath(root)
+        return os.path.commonpath([real, base]) == base
+    except ValueError:  # Windows 上不同盘符 / different drives on Windows
+        return False
+
+
+def _safe_to_move(src: str, root: str) -> bool:
+    """
+    重置只移动照片目录里的真实文件：符号链接、解析后落到目录外的路径一律不碰。
+
+    否则评分目录里一个指向外部文件夹的符号链接，会让重置把外部文件「移回」照片目录
+    （命令行旧实现有这层保护，统一实现时须保留）。
+
+    Reset moves only real files inside the photo folder: never a symlink or a
+    path that resolves outside it, or a symlink in a rating folder would pull
+    files from elsewhere into the photo folder.
+    """
+    return os.path.isfile(src) and not os.path.islink(src) and _inside(src, root)
+
+
 def reset_single_directory(
     directory_path: str,
     i18n,
@@ -58,18 +92,22 @@ def reset_single_directory(
 
     for rating_dir in rating_dirs:
         rating_path = os.path.join(directory_path, rating_dir)
-        if not os.path.exists(rating_path):
+        # 评分目录本身是符号链接时不碰（不会是本软件建的）/ skip a symlinked rating folder
+        if not os.path.exists(rating_path) or os.path.islink(rating_path):
             continue
 
         for entry in os.listdir(rating_path):
             entry_path = os.path.join(rating_path, entry)
-            if os.path.isdir(entry_path):
-                # 递归将所有文件移回评分目录（V4.3.0: 同名跳过、绝不覆盖删除）
+            if os.path.isdir(entry_path) and not os.path.islink(entry_path):
+                # 递归将所有文件移回评分目录（V4.3.0: 同名跳过、绝不覆盖删除；
+                # 不进入、不移动符号链接）
+                # Move files back (skip same names; never follow or move symlinks)
                 for root, dirs, files in os.walk(entry_path):
+                    dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d))]
                     for filename in files:
                         src = os.path.join(root, filename)
                         dst = os.path.join(rating_path, filename)
-                        if os.path.isfile(src):
+                        if _safe_to_move(src, directory_path):
                             if os.path.exists(dst):
                                 continue  # 同名保留两者，不覆盖（数据安全）
                             try:
@@ -106,13 +144,13 @@ def reset_single_directory(
     fallback_restored = 0
     for rating_dir in rating_dirs:
         rating_path = os.path.join(directory_path, rating_dir)
-        if not os.path.exists(rating_path):
+        if not os.path.exists(rating_path) or os.path.islink(rating_path):
             continue
 
         for filename in os.listdir(rating_path):
             src = os.path.join(rating_path, filename)
             dst = os.path.join(directory_path, filename)
-            if os.path.isfile(src):
+            if _safe_to_move(src, directory_path):
                 if os.path.exists(dst):
                     continue  # V4.3.0: 同名不覆盖根目录原文件（数据安全）
                 try:
@@ -160,14 +198,20 @@ def reset_single_directory(
     deleted_dirs = 0
     for rating_dir in rating_dirs:
         rating_path = os.path.join(directory_path, rating_dir)
-        if os.path.exists(rating_path) and os.path.isdir(rating_path):
+        if (os.path.exists(rating_path) and os.path.isdir(rating_path)
+                and not os.path.islink(rating_path)):
             # 先清理系统元数据残留，再判断是否仍有真实文件需要保留。
             # Remove OS metadata residue first, then preserve any real files that remain.
             cleanup_ignorable_reset_residue(rating_path)
             # V4.3.0: 仅当评分目录内已无任何文件才删除，避免误删残留（数据安全）
             residual_files = []
             for _r, _d, fs in os.walk(rating_path):
-                for _filename in fs:
+                # 指向目录的符号链接在 os.walk 里算目录且不深入，也当作残留保留，
+                # 免得用户自己放的链接被一起删掉
+                # A symlink to a folder shows up as a directory and is not walked;
+                # keep it as a leftover so the user's link is not removed
+                _links = [d for d in _d if os.path.islink(os.path.join(_r, d))]
+                for _filename in list(fs) + _links:
                     _rel = os.path.relpath(os.path.join(_r, _filename), rating_path)
                     residual_files.append(_rel)
             if residual_files:
