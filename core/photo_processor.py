@@ -1003,7 +1003,21 @@ class PhotoProcessor:
         if groups:
             total_burst_photos = sum(len(g.photos) for g in groups)
             self._log(self.i18n.t("logs.burst_early_detected", groups=len(groups), photos=total_burst_photos))
-        
+
+        # 每次都写一行统计（#168）：分不出连拍时用户能看到原因
+        # Always log the statistics (#168) so "no bursts" comes with a reason
+        try:
+            gs = detector.gap_stats(photos)
+            median = gs["median_gap_ms"] if gs["median_gap_ms"] is not None else "-"
+            self._log(self.i18n.t("logs.burst_stats", threshold=gs["threshold_ms"], median=median,
+                                  with_sequence=gs["with_sequence"], groups=len(groups)))
+            if not groups and gs["suggest_slower"]:
+                self._log(self.i18n.t("logs.burst_hint_slower", pairs=gs["slow_pairs"],
+                                      threshold=gs["threshold_ms"],
+                                      upper=detector.SLOW_BURST_HINT_MAX_MS), "warning")
+        except Exception as e:
+            self._log(f"[Burst] stats failed: {e}", "warning")
+
         return burst_map
     
     def _consolidate_burst_groups(self, raw_dict: Dict[str, str]) -> Dict[str, int]:
@@ -1373,6 +1387,13 @@ class PhotoProcessor:
         except FileNotFoundError:
             self._log(self.i18n.t("logs.keypoint_model_missing"), "warning")
             use_keypoints = False
+        except Exception as e:
+            # GPU 问题在 move_model_to_device 里已退回 CPU；走到这里的是权重损坏等其它错误。
+            # 降级为整体锐度继续选片，不让一个模型拖垮整次处理（CLAUDE.md）。
+            # GPU problems already fell back to the CPU; anything else (e.g. a corrupt
+            # file) degrades to whole-bird sharpness instead of aborting the run.
+            self._log(self.i18n.t("logs.keypoint_model_load_failed", error=e), "warning")
+            use_keypoints = False
         
         # V3.4: 飞版检测模型
         use_flight = False
@@ -1385,7 +1406,12 @@ class PhotoProcessor:
             except FileNotFoundError:
                 self._log(self.i18n.t("logs.flight_model_missing"), "warning")
                 use_flight = False
-        
+            except Exception as e:
+                # 同关键点：非 GPU 的加载错误降级为跳过飞鸟检测，不中断选片
+                # As with keypoints: other load errors skip flight detection
+                self._log(self.i18n.t("logs.flight_model_load_failed", error=e), "warning")
+                use_flight = False
+
         total_files = display_total if display_total is not None else len(files_tbr)
         self._log(self.i18n.t("logs.files_to_process", total=total_files))
 

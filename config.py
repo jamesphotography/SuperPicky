@@ -881,6 +881,54 @@ def get_best_device():
         )
 
 
+def move_model_to_device(model, device, component: str, half: bool = False):
+    """
+    把已在 CPU 上加载好权重的模型搬到目标设备；GPU 上出错时退回 CPU 并写一条带组件名的日志。
+
+    get_best_device 只检查显卡架构支不支持，不会真的在 GPU 上分配显存：显存不足、
+    驱动异常要到搬模型时才暴露。此前三个模型直接 map_location=GPU 加载，一出错就让
+    整次选片中断。约定见 CLAUDE.md：先 CPU 加载，CUDA 失败可见地回退 CPU。
+
+    参数:
+    model (torch.nn.Module): 权重已加载（在 CPU 上）的模型
+    device (torch.device): 目标设备
+    component (str): 日志里的组件名，如 "Keypoint"、"Flight"、"TOPIQ"
+    half (bool): 在 MPS/CUDA 上是否转半精度推理
+
+    返回:
+    tuple: (模型, 实际使用的设备, 是否半精度)
+
+    异常:
+    目标就是 CPU 时出错照常抛出（没有更低的退路）。
+
+    Move a model whose weights were loaded on the CPU to the target device;
+    on a GPU failure (out of memory, driver error) fall back to the CPU with a
+    log line naming the component. Errors on the CPU itself are re-raised.
+    """
+    use_half = half and getattr(device, "type", "cpu") in ("mps", "cuda")
+    try:
+        model = model.to(device)
+        if use_half:
+            model = model.half()
+        return model, device, use_half
+    except Exception as exc:
+        if getattr(device, "type", "cpu") == "cpu":
+            raise
+        torch_module = _get_torch_module()
+        cpu = torch_module.device("cpu") if torch_module is not None else _FallbackDevice("cpu")
+        msg = (f"[{component}] GPU ({device}) 加载失败，改用 CPU / "
+               f"GPU load failed, falling back to CPU: {exc}")
+        print(f"⚠️ {msg}")
+        logger.warning(msg)
+        try:
+            if torch_module is not None and getattr(device, "type", "") == "cuda":
+                torch_module.cuda.empty_cache()
+        except Exception:
+            pass
+        model = model.float().to(cpu)
+        return model, cpu, False
+
+
 def migrate_old_data() -> bool:
     """
     迁移旧路径数据到新路径 / Migrate old path data to new path.

@@ -39,7 +39,6 @@ def _non_default_values() -> dict:
         "birdid_confidence": 80,
         "keep_temp_files": not d["keep_temp_files"],
         "external_apps": [{"name": "Editor", "path": "/Applications/Editor.app"}],
-        "birdid_country_shortlist": ["AU", "CN"],
     }
 
 
@@ -57,6 +56,9 @@ def test_reset_keeps_preserved_and_resets_the_rest():
     cfg.config["birdid_dock_settings_migrated"] = True
     cfg.config["initialization_completed"] = True
     cfg.config["recent_directories"] = ["/photos/a"]
+    # 用户手动整理的常用国家/地区列表须保留（2026-11-17 拍板）
+    # The hand-curated country shortlist is kept (decided 2026-11-17)
+    cfg.config["birdid_country_shortlist"] = ["AU", "CN"]
     cfg.config["merlin_app_path"] = "/old"           # 已废弃的旧键 / legacy key
     cfg.reset_to_default()
     for key, val in _non_default_values().items():
@@ -66,6 +68,7 @@ def test_reset_keeps_preserved_and_resets_the_rest():
     assert cfg.config["birdid_dock_settings_migrated"] is True
     assert cfg.config["initialization_completed"] is True
     assert cfg.config["recent_directories"] == ["/photos/a"]
+    assert cfg.config["birdid_country_shortlist"] == ["AU", "CN"]
     assert "merlin_app_path" not in cfg.config
 
 

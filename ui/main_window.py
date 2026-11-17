@@ -8,7 +8,6 @@ import os
 import sys
 import threading
 import subprocess
-from types import SimpleNamespace
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -3205,7 +3204,13 @@ class SuperPickyMainWindow(QMainWindow):
             region_display = _adv_confirm.birdid_selected_region or ""
             if country_display:
                 location_info = f"&nbsp;&nbsp;&nbsp;&nbsp;<b>{_esc(country_display)}"
-                if region_display and region_display != self.i18n.t("birdid.region_entire_country"):
+                # 按地区代码判断是否选了省/州：配置里存的是当时界面语言的显示名
+                # （默认是中文「整个国家」），拿它和当前语言的文字比较，换语言或改
+                # 措辞后会把「整个国家/地区」误当成具体地区显示出来。
+                # Decide by region code: the stored display name is in whatever
+                # language was active when saved, so comparing it with the current
+                # translation shows "entire country" as if it were a region.
+                if region_display and _adv_confirm.birdid_region_code:
                     location_info += f" - {_esc(region_display)}"
                 extra_notes.append(location_info + "</b>")
         if _adv_confirm.burst_check:
@@ -4650,8 +4655,6 @@ class SuperPickyMainWindow(QMainWindow):
 
             try:
                 from tools.exiftool_manager import get_exiftool_manager
-                from tools.find_bird_util import reset
-                import shutil
 
                 exiftool_mgr = get_exiftool_manager()
 
@@ -4701,185 +4704,32 @@ class SuperPickyMainWindow(QMainWindow):
                         emit_log(i18n.t("logs.batch_reset_sub_item", idx=idx,
                                         total=len(sub_dirs_to_reset), rel=rel))
                         try:
-                            # Reuse CLI reset logic
-                            _args = SimpleNamespace(directory=sub_dir, yes=True)
-                            from superpicky_cli import cmd_reset as _cli_reset
-                            _cli_reset(_args)
-                            emit_log(i18n.t("logs.batch_reset_sub_done", rel=rel))
+                            # 与根目录同一套安全重置。此前调用命令行版 cmd_reset，它同名先删、
+                            # 移动失败也无条件删目录，会丢照片。
+                            # Same safe reset as the root; the CLI cmd_reset used here
+                            # before deleted same-name files and removed folders
+                            # unconditionally.
+                            from core.directory_reset import reset_single_directory
+                            _sub = reset_single_directory(sub_dir, i18n, emit_log,
+                                                          exiftool_mgr=exiftool_mgr)
+                            if _sub["success"]:
+                                emit_log(i18n.t("logs.batch_reset_sub_done", rel=rel))
+                            else:
+                                emit_log(i18n.t("logs.batch_reset_sub_failed", rel=rel,
+                                                error="EXIF reset"))
                         except Exception as e:
                             emit_log(i18n.t("logs.batch_reset_sub_failed", rel=rel, error=e))
 
-                # Now reset the root directory
-                emit_log(i18n.t("logs.reset_step0"))
-                from constants import ALL_RATING_FOLDER_NAMES
-                rating_dirs = sorted(ALL_RATING_FOLDER_NAMES)
-                subdir_stats = {'dirs_removed': 0, 'files_restored': 0}
-                
-                for rating_dir in rating_dirs:
-                    rating_path = os.path.join(directory_path, rating_dir)
-                    if not os.path.exists(rating_path):
-                        continue
-                    
-                    for entry in os.listdir(rating_path):
-                        entry_path = os.path.join(rating_path, entry)
-                        if os.path.isdir(entry_path):
-                            # 递归将所有文件移回评分目录（V4.3.0: 同名跳过、绝不覆盖删除）
-                            for root, dirs, files in os.walk(entry_path):
-                                for filename in files:
-                                    src = os.path.join(root, filename)
-                                    dst = os.path.join(rating_path, filename)
-                                    if os.path.isfile(src):
-                                        if os.path.exists(dst):
-                                            continue  # 同名保留两者，不覆盖（数据安全）
-                                        try:
-                                            shutil.move(src, dst)
-                                            subdir_stats['files_restored'] += 1
-                                        except Exception as e:
-                                            emit_log(i18n.t("logs.move_failed", filename=filename, error=e))
-
-                            # 删除子目录（V4.3.0: 仅当其内已无任何文件，避免误删残留）
-                            try:
-                                if os.path.isdir(entry_path) and not any(
-                                    fs for _r, _d, fs in os.walk(entry_path)
-                                ):
-                                    shutil.rmtree(entry_path, ignore_errors=True)
-                                    subdir_stats['dirs_removed'] += 1
-                            except Exception as e:
-                                emit_log(i18n.t("logs.burst_clean_failed", entry=entry, error=e))
-                
-                if subdir_stats['dirs_removed'] > 0:
-                    emit_log(i18n.t("logs.burst_cleaned", dirs=subdir_stats['dirs_removed'], files=subdir_stats['files_restored']))
-                else:
-                    emit_log(i18n.t("logs.burst_no_clean"))
-
-                emit_log(i18n.t("logs.reset_step1"))
-                restore_stats = exiftool_mgr.restore_files_from_manifest(
-                    directory_path, log_callback=emit_log, i18n=i18n
+                # 根目录重置：与命令行、批量子目录共用 core.directory_reset（同名跳过、空才删）
+                # Root reset via the shared core.directory_reset (same rules as CLI/subfolders)
+                from core.directory_reset import reset_single_directory
+                _result = reset_single_directory(
+                    directory_path, i18n, emit_log,
+                    skip_exif_reset=_skip_exif_reset, exiftool_mgr=exiftool_mgr,
                 )
+                success = _result["success"]
+                restore_stats = _result["restore_stats"]
 
-                restored_count = restore_stats.get('restored', 0)
-                if restored_count > 0:
-                    emit_log(i18n.t("logs.restored_files", count=restored_count))
-                
-                # V4.0.5: Manifest 可能不包含所有文件，扫描评分目录将残留文件移回根目录
-                fallback_restored = 0
-                for rating_dir in rating_dirs:
-                    rating_path = os.path.join(directory_path, rating_dir)
-                    if not os.path.exists(rating_path):
-                        continue
-                    
-                    for filename in os.listdir(rating_path):
-                        src = os.path.join(rating_path, filename)
-                        dst = os.path.join(directory_path, filename)
-                        if os.path.isfile(src):
-                            if os.path.exists(dst):
-                                continue  # V4.3.0: 同名不覆盖根目录原文件（数据安全）
-                            try:
-                                shutil.move(src, dst)
-                                fallback_restored += 1
-                            except Exception as e:
-                                emit_log(i18n.t("logs.move_failed", filename=filename, error=e))
-                
-                if fallback_restored > 0:
-                    emit_log(i18n.t("logs.restored_files", count=fallback_restored))
-
-                # V4.3.1: 无条件「按目录名摊平」兜底——把仍残留在 鸟种/星级/burst_
-                # 子目录里的文件递归移回根目录。manifest 可能不完整（连拍成员未入库等），
-                # 仅靠上面的 manifest/根目录评分扫描会遗漏鸟种优先布局下的深层文件。
-                # force_flatten 幂等安全（同名不覆盖、只动 SuperPicky 目录、不碰用户目录），
-                # 无残留时 moved=0，因此始终执行无副作用。
-                # V4.3.1: unconditional name-based flatten safety net — recursively move
-                # any files still stranded in species/rating/burst_ subdirs back to root.
-                flatten_moved = 0
-                try:
-                    from tools.find_bird_util import force_flatten_directory
-                    _fstats = force_flatten_directory(directory_path, log_callback=emit_log, i18n=i18n)
-                    flatten_moved = int(_fstats.get("moved", 0)) if _fstats else 0
-                except Exception as _fe:
-                    emit_log(f"⚠️ flatten fallback failed: {_fe}")
-
-                # 恢复总数 = manifest 恢复 + 评分目录兜底 + 按目录名摊平兜底（合并显示,避免数字与实际不符）
-                total_restored = restored_count + fallback_restored + flatten_moved
-                if total_restored == 0:
-                    emit_log(i18n.t("logs.no_files_to_restore"))
-                else:
-                    emit_log(i18n.t("logs.restored_files", count=total_restored))
-
-                # V4.0.4: 根据模式决定是否重置EXIF
-                if _skip_exif_reset:
-                    emit_log("\n" + i18n.t("logs.skip_exif_reset"))
-                    success = True
-                else:
-                    emit_log("\n" + i18n.t("logs.reset_step2"))
-                    success = reset(directory_path, log_callback=emit_log, i18n=i18n)
-                
-                # V3.9: 删除评分目录（所有文件已移走）
-                emit_log(i18n.t("logs.reset_step3"))
-                from tools.find_bird_util import cleanup_ignorable_reset_residue
-                deleted_dirs = 0
-                for rating_dir in rating_dirs:
-                    rating_path = os.path.join(directory_path, rating_dir)
-                    if os.path.exists(rating_path) and os.path.isdir(rating_path):
-                        # 先清理系统元数据残留，再判断是否仍有真实文件需要保留。
-                        # Remove OS metadata residue first, then preserve any real files that remain.
-                        cleanup_ignorable_reset_residue(rating_path)
-                        # V4.3.0: 仅当评分目录内已无任何文件才删除，避免误删残留（数据安全）
-                        residual_files = []
-                        for _r, _d, fs in os.walk(rating_path):
-                            for _filename in fs:
-                                _rel = os.path.relpath(os.path.join(_r, _filename), rating_path)
-                                residual_files.append(_rel)
-                        if residual_files:
-                            sample = ", ".join(residual_files[:3])
-                            if len(residual_files) > 3:
-                                sample = f"{sample}, ..."
-                            emit_log(i18n.t("logs.empty_dir_delete_failed",
-                                            dir=rating_dir,
-                                            error=i18n.t("logs.reset_dir_has_leftovers", sample=sample)))
-                            continue
-                        try:
-                            shutil.rmtree(rating_path, ignore_errors=True)
-                            emit_log(i18n.t("logs.empty_dir_deleted", dir=rating_dir))
-                            deleted_dirs += 1
-                        except Exception as e:
-                            emit_log(i18n.t("logs.empty_dir_delete_failed", dir=rating_dir, error=e))
-                
-                # V4.0.5: 清理 .superpicky 隐藏目录和 manifest 文件
-                # Quick Restore: 重新处理时保留 .superpicky 缓存（预览图复用，节省时间）
-                superpicky_dir = os.path.join(directory_path, ".superpicky")
-                if not _skip_exif_reset and os.path.exists(superpicky_dir):
-                    # #146：跨平台删除（去只读 + 重试）；原兜底 `rm -rf` 在 Windows 上不存在
-                    # #146: cross-platform removal; the old `rm -rf` fallback does not exist on Windows
-                    from core.superpicky_dir import remove_superpicky_dir
-                    if remove_superpicky_dir(directory_path):
-                        emit_log("  ✅ .superpicky/")
-                        deleted_dirs += 1
-                    else:
-                        leftovers = ", ".join(sorted(os.listdir(superpicky_dir))[:5])
-                        emit_log(i18n.t("logs.reset_cache_delete_failed", error=leftovers))
-                elif _skip_exif_reset:
-                    emit_log(i18n.t("logs.reset_cache_kept"))
-                
-                manifest_file = os.path.join(directory_path, ".superpicky_manifest.json")
-                if os.path.exists(manifest_file):
-                    try:
-                        os.remove(manifest_file)
-                        emit_log("  ✅ .superpicky_manifest.json")
-                    except Exception as e:
-                        emit_log(i18n.t("logs.manifest_delete_failed", error=e))
-                
-                # 清理 macOS ._burst_XXX 残留文件
-                for filename in os.listdir(directory_path):
-                    if filename.startswith('._burst_') or filename.startswith('._其他') or filename.startswith('._栗'):
-                        try:
-                            os.remove(os.path.join(directory_path, filename))
-                        except Exception:
-                            pass
-                
-                if deleted_dirs > 0:
-                    emit_log(i18n.t("logs.empty_dirs_cleaned", count=deleted_dirs))
-                else:
-                    emit_log(i18n.t("logs.no_empty_dirs"))
 
                 emit_log("\n" + i18n.t("logs.reset_complete"))
                 complete_signal.emit(success, restore_stats, exif_stats)

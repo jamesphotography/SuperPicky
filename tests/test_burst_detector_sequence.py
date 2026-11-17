@@ -40,9 +40,11 @@ def test_sony_6fps_burst_is_found_with_default_10fps_setting():
 
 
 def test_sequence_reset_starts_a_new_burst():
-    """两次连拍只隔 276 ms（实拍最小值），序号回到 1 就断开。"""
+    """两次连拍只隔 276 ms（实拍最小值），序号回到 1 就断开。
+    阈值取界面能设的最大值 250 ms（最低 4 张/秒）：间隔在时间阈值内的一律同组（见下一条），
+    所以序号重置只在间隔超过阈值时才断开。"""
     times = [0, 166, 332, 498, 774, 940, 1106, 1272]
-    assert sizes(detector(threshold_ms=300), frames(times, [1, 2, 3, 4, 1, 2, 3, 4])) == [4, 4]
+    assert sizes(detector(threshold_ms=250), frames(times, [1, 2, 3, 4, 1, 2, 3, 4])) == [4, 4]
 
 
 def test_frames_deleted_in_camera_keep_the_burst_together():
@@ -51,8 +53,16 @@ def test_frames_deleted_in_camera_keep_the_burst_together():
 
 
 def test_single_shots_never_group():
-    """序号 0 是单张，离得再近也不成组。"""
-    assert sizes(detector(), frames([0, 50, 100, 150], [0, 0, 0, 0])) == []
+    """序号 0 是单张；正常的单张间隔（这里 400 ms）不成组。"""
+    assert sizes(detector(), frames([0, 400, 800, 1200], [0, 0, 0, 0])) == []
+
+
+def test_time_rule_still_groups_frames_labelled_single():
+    """标成单张（0）但间隔在时间阈值内的帧照样成组（#168 跟进）。
+
+    人手不可能在 100 ms 量级内连按快门，这么近的「单张」只能是相机把连拍帧标成了 0；
+    序号只能多认出连拍，不能把原来按时间能分出的组拆掉。"""
+    assert sizes(detector(), frames([0, 50, 100, 150], [0, 0, 0, 0])) == [4]
 
 
 def test_sequence_gap_over_one_second_splits():
@@ -97,3 +107,20 @@ def test_only_sony_reads_the_sequence_tag():
     parsed = d._parse_exif_timestamps([sony, single, canon, old])
     assert [p.sequence for p in parsed] == [4, 0, None, None]
     assert parsed[0].camera == "SONY|ILCE-7M4|"
+
+
+def test_gap_stats_suggests_slower_speed_for_6fps_without_sequence():
+    """没有序号的 6 张/秒机身：0 组，统计给出中位间隔并建议调低连拍速度（#168 跟进）。"""
+    d = detector()
+    photos = frames([i * 166 for i in range(12)], [None] * 12, camera="NIKON CORPORATION|Z 6_2|1")
+    assert sizes(d, photos) == []
+    stats = d.gap_stats(photos)
+    assert stats["threshold_ms"] == 100 and stats["median_gap_ms"] == 166
+    assert stats["with_sequence"] == 0 and stats["slow_pairs"] == 11 and stats["suggest_slower"]
+
+
+def test_gap_stats_no_hint_when_gaps_are_far_apart():
+    """单张之间隔得远（> 400 ms）不提示。"""
+    d = detector()
+    stats = d.gap_stats(frames([i * 900 for i in range(12)], [None] * 12, camera="X|Y|1"))
+    assert stats["slow_pairs"] == 0 and not stats["suggest_slower"]

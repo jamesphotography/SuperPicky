@@ -350,11 +350,13 @@ class BurstDetector:
         """
         相邻两帧（已按时间排序）是否属于同一次连拍。
 
-        两帧都有相机序号时，以序号为准：前一帧在连拍中（序号 >= 1）、序号递增且间隔不超过
-        SEQUENCE_MAX_GAP_MS 才算同一次连拍，与「连拍速度」设置无关（设置默认 10 张/秒，
-        6 张/秒的机身按时间一组都分不出来）；序号归零或重置就是新的一次快门。
-        时间和序号都相同的是同一帧的衍生文件（如 Lightroom 的 -Enhanced-NR.dng），跟原片同组。
-        其余情况沿用时间阈值 TIME_THRESHOLD_MS。调用方保证两帧来自同一台机身。
+        两条规则满足任意一条即为同一次连拍：
+        1. 间隔不超过时间阈值 TIME_THRESHOLD_MS（由「连拍速度」换算）。同一帧的衍生文件
+           （如 Lightroom 的 -Enhanced-NR.dng，时间相同）也由这条归入原片所在组。
+        2. 两帧都有相机序号：前一帧在连拍中（序号 >= 1）、序号递增且间隔不超过
+           SEQUENCE_MAX_GAP_MS。与「连拍速度」无关，6 张/秒的机身按默认 10 张/秒的阈值
+           一组都分不出，靠这条认出来（#168）。
+        序号只能多认出连拍，不会把按时间能分出的组拆开。调用方保证两帧来自同一台机身。
 
         参数:
         prev (PhotoTimestamp): 前一帧
@@ -365,13 +367,13 @@ class BurstDetector:
 
         Whether two adjacent frames (sorted by time) belong to one burst.
 
-        When both carry a camera sequence number, the number decides: the earlier frame must
-        be in a burst (number >= 1), the number must increase and the gap must not exceed
-        SEQUENCE_MAX_GAP_MS, whatever the "burst speed" setting says (its default of 10 fps
-        finds no burst at all on a 6 fps body); a number that drops or resets is a new shutter
-        press. Two files with the same time and number are one frame and its derivative (such
-        as Lightroom's -Enhanced-NR.dng) and stay together. Otherwise the time threshold
-        TIME_THRESHOLD_MS applies as before. The caller passes frames of one camera body.
+        Either rule makes them one burst: (1) the gap is within TIME_THRESHOLD_MS (from the
+        "burst speed" setting), which also keeps a derivative such as Lightroom's
+        -Enhanced-NR.dng (same time) with its original; (2) both carry a camera sequence
+        number, the earlier one is in a burst (>= 1), the number increases and the gap is within
+        SEQUENCE_MAX_GAP_MS, regardless of the setting (#168: a 6 fps body finds no burst with
+        the default 10 fps). The number only adds bursts, never splits ones the time rule
+        found. The caller passes frames of one camera body.
 
         Parameters:
         prev (PhotoTimestamp): earlier frame
@@ -381,11 +383,19 @@ class BurstDetector:
         bool: True when both frames are in the same burst
         """
         time_diff_ms = (curr.precise_time - prev.precise_time) * 1000
+        # 时间阈值判为同组时一律同组：人手不可能在阈值（默认 100 ms）内按两次快门，
+        # 所以序号只能「多认出」连拍，不能把原来按时间能分出的组拆掉。此前两帧都有
+        # 序号时只看序号——若某台机身在某些模式下给连拍帧都写 0（Single），相隔 50 ms
+        # 也分不到一组，比改动前还少（#168 跟进）。
+        # Frames within the time threshold are always one burst: nobody presses the
+        # shutter twice within it, so the sequence number may only add bursts, never
+        # split ones the time rule found. Previously the number alone decided, so a
+        # body writing 0 ("Single") for burst frames lost groups found before (#168).
+        if time_diff_ms <= self.TIME_THRESHOLD_MS:
+            return True
         if prev.sequence is not None and curr.sequence is not None:
-            if time_diff_ms == 0 and curr.sequence == prev.sequence:
-                return True
             return 1 <= prev.sequence < curr.sequence and time_diff_ms <= self.SEQUENCE_MAX_GAP_MS
-        return time_diff_ms <= self.TIME_THRESHOLD_MS
+        return False
 
     def detect_groups(self, photos: List[PhotoTimestamp]) -> List[BurstGroup]:
         """
@@ -415,7 +425,50 @@ class BurstDetector:
         # 只过滤有效时间戳，不看星级
         candidates = [p for p in photos if p.precise_time is not None]
         return self._detect_groups_internal(candidates)
-    
+
+    # 「疑似较慢连拍」的上限：相邻帧间隔落在 (阈值, 此值] 之间且数量不少时，提示调低连拍速度
+    # Upper bound of a "possibly slower burst" gap: many gaps in (threshold, this] trigger a hint
+    SLOW_BURST_HINT_MAX_MS = 400
+    SLOW_BURST_HINT_MIN_PAIRS = 8
+
+    def gap_stats(self, photos: List[PhotoTimestamp]) -> Dict[str, Any]:
+        """
+        统计同一机身相邻帧的拍摄间隔，供早期连拍检测写日志（#168）。
+
+        此前分不出连拍时只有一句「没有检测到连拍组」，用户无从知道是阈值太紧
+        （6 张/秒的机身默认 10 张/秒的阈值一组都分不出）。
+
+        参数:
+        photos (List[PhotoTimestamp]): read_timestamps 的结果
+
+        返回:
+        Dict[str, Any]: threshold_ms 阈值；median_gap_ms 1 秒内相邻帧间隔的中位数（没有则 None）；
+            with_sequence 带相机连拍序号的张数；slow_pairs 间隔在 (阈值, SLOW_BURST_HINT_MAX_MS]
+            之间的相邻帧对数；suggest_slower 是否值得提示调低连拍速度（另需调用方确认分出 0 组）
+
+        Gap statistics between adjacent frames of the same body, logged by the early
+        burst pass (#168) so "no bursts" comes with a reason.
+        """
+        frames = sorted((p for p in photos if p.precise_time is not None),
+                        key=lambda p: (p.camera, p.precise_time))
+        gaps = []
+        for prev, curr in zip(frames, frames[1:]):
+            if prev.camera != curr.camera:
+                continue
+            gap = (curr.precise_time - prev.precise_time) * 1000
+            if 0 < gap <= 1000:
+                gaps.append(gap)
+        gaps.sort()
+        slow = sum(1 for g in gaps if self.TIME_THRESHOLD_MS < g <= self.SLOW_BURST_HINT_MAX_MS)
+        return {
+            "threshold_ms": int(self.TIME_THRESHOLD_MS),
+            "median_gap_ms": int(round(gaps[len(gaps) // 2])) if gaps else None,
+            "with_sequence": sum(1 for p in photos if p.sequence is not None),
+            "slow_pairs": slow,
+            "suggest_slower": slow >= self.SLOW_BURST_HINT_MIN_PAIRS
+                              and self.TIME_THRESHOLD_MS < self.SLOW_BURST_HINT_MAX_MS,
+        }
+
     def _detect_groups_internal(self, candidates: List[PhotoTimestamp]) -> List[BurstGroup]:
         """
         内部分组检测逻辑

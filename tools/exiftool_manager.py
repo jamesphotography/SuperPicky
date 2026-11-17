@@ -473,6 +473,31 @@ class _ExifToolProcess:
                 raise
 
 
+def inline_text_arg(tag: str, value: Any) -> str:
+    """
+    临时文件写不出来时的退回写法：把文本直接放进 ExifTool 参数，但先把换行压成空格。
+
+    常驻 ExifTool 用 `-@ -` 逐行读参数，评分题注本身带换行；不压平的话，题注的每一行
+    都会被当成独立的参数或文件名。正常路径（`-TAG<=临时文件`）不受影响。
+
+    参数:
+    tag (str): 标签名，如 "XMP:Title"
+    value (Any): 要写入的文本
+
+    返回:
+    str: 单行的 `-TAG=值` 参数
+
+    Fallback when the UTF-8 temp file cannot be created: pass the text inline,
+    collapsing line breaks first. The persistent ExifTool reads one argument per
+    line (`-@ -`) and rating captions contain newlines, so each line would
+    otherwise become a separate argument or file name.
+    """
+    text = " ".join(str(value).splitlines())
+    print(f"⚠️ [ExifTool] {tag} 临时文件不可用，改为单行内联写入 / temp file unavailable, "
+          f"writing inline on one line")
+    return f"-{tag}={text}"
+
+
 def pick_flag_args(pick) -> List[str]:
     """
     把旗标写成 Lightroom 认的两个 XMP 字段（与 Lightroom 自己写的完全一致）。
@@ -1117,7 +1142,7 @@ class ExifToolManager:
                 temp_files.append(title_tmp_path)
                 args.append(f'-XMP:Title<={title_tmp_path}')
             except Exception:
-                args.append(f'-XMP:Title={title}')
+                args.append(inline_text_arg('XMP:Title', title))
 
         caption = item.get('caption')
         if caption is not None:
@@ -1128,7 +1153,7 @@ class ExifToolManager:
                 temp_files.append(caption_tmp_path)
                 args.append(f'-XMP:Description<={caption_tmp_path}')
             except Exception:
-                args.append(f'-XMP:Description={caption}')
+                args.append(inline_text_arg('XMP:Description', caption))
 
         # V4.3.0: 统一用 -overwrite_original_in_place（原地写，不创建 temp、不 rename）。
         # 旧的裸 -overwrite_original 在 ExFAT 外置盘/存储卡上 rename() 失败时会导致
@@ -1266,7 +1291,7 @@ class ExifToolManager:
                 temp_files.append(title_tmp_path)
                 args.append(f'-XMP:Title<={title_tmp_path}')
             except Exception as e:
-                args.append(f'-XMP:Title={title}')
+                args.append(inline_text_arg('XMP:Title', title))
 
         caption = item.get('caption')
         if caption is not None:
@@ -1277,7 +1302,7 @@ class ExifToolManager:
                 temp_files.append(caption_tmp_path)
                 args.append(f'-XMP:Description<={caption_tmp_path}')
             except Exception as e:
-                args.append(f'-XMP:Description={caption}')
+                args.append(inline_text_arg('XMP:Description', caption))
 
         args.extend(['-overwrite_original_in_place', xmp_path])  # V4.3.0: ExFAT 安全，避免 rename 删文件
 
@@ -2119,7 +2144,7 @@ class ExifToolManager:
                     args_list.append(f'-XMP:Title<={tmp_path}')
                 except Exception as e:
                     print(f"⚠️ Title temp file failed: {e}, fallback to inline")
-                    args_list.append(f'-XMP:Title={item["title"]}')
+                    args_list.append(inline_text_arg('XMP:Title', item['title']))
                 
             # Caption (使用临时 UTF-8 文件，避免换行破坏 -@ 参数流)
             caption = item.get('caption')
@@ -2132,7 +2157,7 @@ class ExifToolManager:
                     args_list.append(f'-XMP:Description<={tmp_path}')
                 except Exception as e:
                     print(f"⚠️ Caption temp file failed: {e}, fallback to inline")
-                    args_list.append(f'-XMP:Description={caption}')
+                    args_list.append(inline_text_arg('XMP:Description', caption))
 
             # 文件路径
             args_list.append(file_path)
