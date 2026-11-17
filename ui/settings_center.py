@@ -3545,7 +3545,7 @@ class SettingsCenter(QDialog):
         brand_layout.addWidget(title_label)
 
         subtitle_text = (
-            self.i18n.t("about.subtitle") if self.i18n else "AI Bird Photo Culling Tool"
+            self.i18n.t("about.subtitle") if self.i18n else "Smart Bird Photo Culling Tool"
         )
         subtitle_label = QLabel(subtitle_text)
         subtitle_label.setStyleSheet(
