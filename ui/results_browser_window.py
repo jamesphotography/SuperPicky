@@ -2172,6 +2172,14 @@ class ResultsBrowserWindow(QMainWindow):
         self._filtered_photos: list = []
         self._raw_filtered_photos: list = [] # V5: Store unfiltered sorted photos
         self._expanded_bursts: set = set()   # V5: Track expanded burst IDs
+        # #167：改星级后照片不符合星级筛选、或正按星级排序时，先留在原位（连按 ↓↓
+        # 只改这一张），等用户切到别的照片 / 退出全屏再重放筛选。这里记下改星级时
+        # 正在看的那张；None = 没有待刷新的改动。
+        # #167: after a rating change that leaves the rating filter or affects a
+        # rating sort, the photo stays put (repeated Down keeps editing it) until
+        # the user moves to another photo / leaves fullscreen. Holds the identity
+        # of the photo in view at the time; None = nothing pending.
+        self._rating_reflow_anchor: Optional[tuple] = None
         self._is_merged: bool = False
         self._sub_dirs: list = []
         self._fullscreen_nav_photos: list = []
@@ -3329,6 +3337,9 @@ class ResultsBrowserWindow(QMainWindow):
 
     @Slot(dict)
     def _apply_filters(self, filters: dict):
+        # 任何一次重放筛选都已反映最新星级，#167 的延迟刷新随之了结
+        # Any re-apply already reflects the new ratings; the #167 deferral is done
+        self._rating_reflow_anchor = None
         if not self._db:
             self._thumb_grid.load_photos([])
             self._update_status(0, 0)
@@ -3461,6 +3472,45 @@ class ResultsBrowserWindow(QMainWindow):
     def _on_photo_selected(self, photo: dict):
         self._detail_panel.show_photo(photo)
         self._refresh_nav_buttons()
+        # #167：离开改过星级的那张 → 重放筛选/排序。排到事件循环下一轮执行，
+        # 不在网格的点击 / 翻页处理中途重建网格。
+        # #167: leaving the re-rated photo re-applies filter/sort; queued so the
+        # grid is not rebuilt in the middle of its own click/arrow handling.
+        if (self._rating_reflow_anchor is not None
+                and self._stack.currentIndex() == 0
+                and _photo_identity(photo) != self._rating_reflow_anchor):
+            QTimer.singleShot(0, self._flush_rating_reflow)
+
+    def _rating_change_affects_view(self, new_rating: int) -> bool:
+        """
+        判断这次改星级是否影响网格（#167）：新星级不在当前星级筛选里（照片该消失），
+        或正按星级排序（照片该挪位）。其余情况无需重建网格。
+
+        参数:
+        new_rating (int): 新星级
+
+        返回:
+        bool: 是否需要在离开这张后重放筛选
+
+        Whether a rating change affects the grid (#167): the new rating falls
+        outside the rating filter, or the grid is sorted by rating.
+        """
+        filters = self._filter_panel.get_filters()
+        ratings = filters.get("ratings")
+        if isinstance(ratings, list) and new_rating not in ratings:
+            return True
+        return filters.get("sort_by") == "rating_desc"
+
+    def _flush_rating_reflow(self) -> None:
+        """
+        执行 #167 延迟的刷新：按当前条件重放筛选与排序（保留滚动位置与当前选中）。
+
+        Run the deferred #167 refresh: re-apply the current filter and sort,
+        keeping scroll position and the current selection.
+        """
+        if self._rating_reflow_anchor is None or not self._db:
+            return
+        self._apply_filters(self._filter_panel.get_filters())
 
     def _build_burst_sequence(self, photo: dict) -> list:
         burst_id = photo.get("burst_id")
@@ -3670,6 +3720,10 @@ class ResultsBrowserWindow(QMainWindow):
         self._detail_panel._switch_view(False)  # 退出全屏 → 切回全图
         self._refresh_nav_buttons()
         self.setFocus()  # 确保窗口拿回焦点
+        # #167：全屏里改过星级的，回到网格时一并按新星级筛选/排序
+        # #167: ratings changed in fullscreen take effect on return to the grid
+        if self._rating_reflow_anchor is not None:
+            self._flush_rating_reflow()
 
     @Slot()
     def _fullscreen_prev(self):
@@ -3754,6 +3808,14 @@ class ResultsBrowserWindow(QMainWindow):
                         p["rating"] = new_rating
                         break
         self._thumb_grid.refresh_photo(current_photo or filename, new_rating)
+        # #167：影响筛选/排序时先不动网格，记下正在看的那张，离开时再刷新
+        # #167: defer the grid refresh until the user leaves the photo in view
+        if self._rating_change_affects_view(new_rating):
+            if self._stack.currentIndex() == _PAGE_FULLSCREEN:
+                in_view = getattr(self._fullscreen, "_current_photo", None)
+            else:
+                in_view = getattr(self._detail_panel, "_current_photo", None)
+            self._rating_reflow_anchor = _photo_identity(in_view or current_photo or {"filename": filename})
         # 后台先移动文件、再写 EXIF（同一线程按序执行，见 _trigger_rating_move）。
         # 移动仅对已整理的照片生效（burst / 根目录 / 新旧相同时内部跳过）；
         # set_rating_and_pick 内部遵守 metadata_write_mode，none 时跳过。
