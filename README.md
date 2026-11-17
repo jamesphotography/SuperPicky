@@ -1,157 +1,154 @@
-# SuperPicky - AI Bird Photo Culling Tool 🦅
+<p align="center">
+  <img src="img/icon.png" width="96" alt="SuperPicky icon">
+</p>
 
-[![Version](https://img.shields.io/badge/version-4.2.0-blue.svg)](https://github.com/jamesphotography/SuperPicky)
-[![Platform](https://img.shields.io/badge/platform-macOS%20|%20Windows-lightgrey.svg)](https://github.com/jamesphotography/SuperPicky/releases)
-[![License](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
+<h1 align="center">SuperPicky</h1>
 
-[**中文文档 (Chinese)**](README_zh.md) | [**Release Notes**](RELEASE_NOTES.md)
+<p align="center">
+  <b>Smart bird photo culling for Mac and Windows · free and open source</b><br>
+  Shoot freely, pick smartly.
+</p>
 
-**Smart AI Culling Tool for Bird Photographers**
+<p align="center">
+  <a href="https://github.com/jamesphotography/SuperPicky/releases/latest"><img src="https://img.shields.io/github/v/release/jamesphotography/SuperPicky?label=release" alt="Latest release"></a>
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg" alt="Platform">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue.svg" alt="License"></a>
+</p>
 
-Shoot freely, cull easily! A smart photo culling software designed specifically for bird photographers. It uses multi-model AI technology to automatically identify, rate, and filter bird photos, significantly improving post-processing efficiency.
+<p align="center">
+  <a href="https://superpicky.app/"><b>Website</b></a> ·
+  <a href="https://superpicky.app/videos"><b>16 video tutorials</b></a> ·
+  <a href="https://superpicky.app/tutorial/"><b>Guide</b></a> ·
+  <a href="https://superpicky.app/faq.html"><b>FAQ</b></a> ·
+  <a href="README_zh.md"><b>中文</b></a>
+</p>
+
+<!-- 30-second promo, uploaded as a GitHub attachment -->
+https://github.com/user-attachments/assets/73b3e07d-5386-488e-88dd-90fecb1f20f1
+
+Back from a trip with 3,000 frames? Point SuperPicky at the folder and press Start. It finds the bird in every photo, checks head sharpness, aesthetics and where your camera's focus point landed, identifies the species in batch, groups bursts, tags flight shots, and hands out 1–3 stars. The results are written into your files, so Lightroom picks them up on import.
+
+About 0.25 s per photo on a MacBook Pro M3 Max, so 3,000 photos take roughly 12 minutes. On Windows, NVIDIA cards get CUDA acceleration.
 
 ---
 
-## 🛠️ Installation for Developers
+## Features
 
-To run SuperPicky from source or build it yourself, you must first download the required AI models:
+| | |
+|---|---|
+| **Smart rating** | Head sharpness + TOPIQ aesthetics → 1–3 stars, plus a Pick flag for the very best. [Video 05](https://superpicky.app/videos#05) |
+| **Best of the batch** | Stars are handed out by quota within each batch (3 stars: Beginner 40% / Intermediate 30% / Master 20%, or your own). With Bird ID on, quotas are per species, so rare birds always keep their best frame. |
+| **Focus check** | Reads the focus point from your RAW files: critical, good, soft or missed focus. |
+| **Batch Bird ID** | BirdTrace engine, 10,000+ species, written into the photo title. Matching is limited to the species of the country and region you choose. [Video 10](https://superpicky.app/videos#10) |
+| **Flight & bursts** | SuperFlier tags birds in flight; bursts are grouped so you stop comparing dozens of near-identical frames. [Video 06](https://superpicky.app/videos#06) |
+| **Global rarity** | A 0–100 rarity score built on GBIF occurrence data, plus IUCN status, so the rarest birds of the trip rise to the top. [Video 11](https://superpicky.app/videos#11) |
+| **Results browser** | Thumbnail grid, filters by stars / species / focus / flight, fullscreen viewer with the AF box, side-by-side compare, batch rating and delete. [Video 08](https://superpicky.app/videos#08) |
+| **Filed by species** | Photos are moved into species → rating folders, ready to browse. |
+| **Lightroom ready** | Star rating, Pick flag and colour labels go into the file or its XMP sidecar: blue = in flight, green = critical focus, red = focus problems. [Video 07](https://superpicky.app/videos#07) |
+| **Labs** | Incremental culling of newly added photos, multi-folder culling, trip reports, eBird export and video analysis. |
+
+New to SuperPicky? The [video tutorials](https://superpicky.app/videos) are 16 short episodes, about two minutes each, in English and Chinese.
+
+---
+
+## Download
+
+Get the latest release from **[superpicky.app](https://superpicky.app/#download)** or **[GitHub Releases](https://github.com/jamesphotography/SuperPicky/releases/latest)**.
+
+| Your computer | Installer |
+|---|---|
+| Mac with Apple silicon (M1–M5) | macOS · Apple Silicon |
+| Intel Mac (before 2020) | macOS · Intel x64 (runs on the CPU) |
+| Windows without an NVIDIA card | Windows · x64 · CPU |
+| Windows with GTX 10 series or older, GTX 16, RTX 20 / 30 / 40 | Windows · CUDA **CU118** |
+| Windows with RTX 50 series | Windows · CUDA **CU130** (3 files: download into one folder, don't rename them, run ①) |
+
+Not sure? RTX 50 → CU130, everything else → CU118. [Video 02](https://superpicky.app/videos#02) walks through it.
+
+Test builds are listed on the [Releases](https://github.com/jamesphotography/SuperPicky/releases) page. For everyday use, stay on the latest release.
+
+---
+
+## How ratings work
+
+Since 4.5.0, stars come from photos competing within the same batch rather than against fixed scores. Sharpness and aesthetics become batch percentiles and are weighted into one ranking; stars are then handed out by quota.
+
+| Stars | Who gets them |
+|---|---|
+| ★★★ | Top 30% of the batch (or of the species). Beginner 40% / Master 20%. |
+| ★★ | The next 30%. Frames where the eye can't be seen, and bursts that already have their share of 3 stars, also land here. |
+| ★ | Everything ranked below that. |
+| Reject | No bird, or below the basic gates. Excluded from the ranking and from the quota. |
+
+More detail in [video 05](https://superpicky.app/videos#05) and on the [website](https://superpicky.app/#rating).
+
+### Where the results go
+
+- **Metadata**: star rating, Pick flag and colour label, written to the RAW file or an XMP sidecar. Title = species, Description = rating reason, City = head sharpness, State = aesthetics score.
+- **Folders**: 3★ → `<Species>/3star_excellent`, 2★ → `<Species>/2star_good`, 1★ → `Other_Birds/1star_average`, no bird / rejects → `Other_Birds/0star_reject`. **Reset** puts everything back.
+- **Working data (`.superpicky` folder)**: each processed folder gets a hidden `.superpicky` folder holding `report.db` (scores, ratings, species and bursts, so the results browser can reopen the folder without re-analysing) and `cache` (previews and bird crops, most of the size). Your photos are never stored there. Deleting it doesn't lose your ratings or species names, which are already in the metadata, but the folder would need to be analysed again before you can browse it. To free up space and keep the results, use **Settings → Advanced → Storage → Clear All Preview Caches**, which removes only `cache`.
+
+---
+
+## Run from source
 
 ```bash
 git clone https://github.com/jamesphotography/SuperPicky.git
 cd SuperPicky
+python3 -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 python scripts/download_models.py
+python main.py
 ```
 
----
+There is also a command-line interface: see the [CLI reference](https://superpicky.app/cli-reference.html).
 
-## 🌟 Core Features
+### Species naming standards (AviList)
 
-### 🤖 Multi-Model Synergy
-- **YOLO11 Detection**: Precise bird detection and segmentation masks.
-- **[SuperEyes](https://github.com/triple333sR9/SuperBirdEye)**: Detects eye visibility and calculates head sharpness.
-- **[SuperFlier](https://github.com/triple333sR9/SuperFlier)**: Identifies flight poses for bonus points.
-- **TOPIQ Aesthetics**: Assesses overall image aesthetics, composition, and lighting.
-
-### ⭐ Smart Rating System (0-3 Stars)
-| Stars | Condition | Meaning |
-|-------|-----------|---------|
-| ⭐⭐⭐ | Sharpness OK + Aesthetics OK | Excellent, worth editing |
-| ⭐⭐ | Sharpness OK OR Aesthetics OK | Good, consider keeping |
-| ⭐ | Bird found but below threshold | Average, usually delete |
-| 0 | No bird / Poor quality | Delete |
-
-### ⚙️ Skill Level Presets (New)
-Automatically set thresholds based on your experience:
-- **🐣 Beginner**: Sharpness>300, Aesthetics>4.5 (Keep more)
-- **📷 Intermediate**: Sharpness>380, Aesthetics>4.8 (Balanced)
-- **👑 Master**: Sharpness>520, Aesthetics>5.5 (Strict)
-
-### 🏷️ Special Tags
-- **Pick (Flag)**: Top 25% intersection of sharpness & aesthetics among 3-star photos.
-- **Flying**: Green label for bird-in-flight photos.
-- **Exposure**: Filters over/under-exposed shots (Optional).
-
-### 📂 Auto-Organization
-- **Sort by Stars**: Auto-move to 0star/1star/2star/3star folders.
-- **EXIF Write**: Writes ratings, flags, and scores to RAW metadata.
-- **Lightroom Compatible**: Sort and filter immediately after import.
-- **Undo**: One-click reset to restore original state.
-- **Working data (`.superpicky` folder)**: Each folder you process gets a hidden
-  `.superpicky` folder holding SuperPicky's own data: `report.db` (scores, ratings,
-  species and bursts, so the results browser can reopen the folder without
-  re-analysing) and `cache` (preview images and bird crops, most of the size). It is
-  hidden so it stays out of the way of Lightroom and your file browser; your photos
-  are never stored there. Deleting it doesn't lose your ratings or species names,
-  which are written into the photos' metadata (or XMP sidecars), but the folder would
-  need to be analysed again before you can browse it. To free up space and keep the
-  results, use **Settings → Output → Clear All Preview Caches**, which removes only
-  `cache`.
-
----
-
-## 📥 Downloads
-
-### macOS
-**Apple Silicon (M1/M2/M3/M4) (v4.2.0)**
-- [GitHub Download](https://github.com/jamesphotography/SuperPicky/releases/download/v4.1.0/SuperPicky_v4.1.0_arm64_c869d64.dmg)
-- [Google Drive (Mirror)](https://drive.google.com/file/d/1odYNFvtYZa8pAO_bYZZCh5FZ6v0ggxFQ)
-- [Baidu Netdisk](https://pan.baidu.com/s/1xzex0UrSDiZeWyLuYRSqNg?pwd=t6c4) Code: t6c4
-- [Quark](https://pan.quark.cn/s/625a2dac438a)
-
-**Intel (Pre-2020 Mac) (v4.2.0)**
-- [GitHub Download](https://github.com/jamesphotography/SuperPicky/releases/download/v4.1.0/SuperPicky_v4.1.0_Intel_c869d64.dmg)
-- [Google Drive (Mirror)](https://drive.google.com/file/d/1dPdCoObVLuxy9ks_sYjbfSR4bI3A-IPD)
-- [Baidu Netdisk](https://pan.baidu.com/s/1lNz2mBUEee8qqrd95rPJsA?pwd=3821) Code: 3821
-- [Quark](https://pan.quark.cn/s/1b5d87b74059)
-
-### Windows
-**CUDA-GPU Version (v4.2.0 Beta)**
-- [Baidu Netdisk](https://pan.baidu.com/s/1XBaGXPim_WzjpNBgG-altg?pwd=c2a6) Code: c2a6
-- [Google Drive (Mirror)](https://drive.google.com/file/d/1IKSxB3KbQdDO7VhnsGnHjOb2EgqZIgSB/view?usp=sharing)
-- [Quark](https://pan.quark.cn/s/d15276717367)
-
-**CPU Version (v4.2.0)**
-- [GitHub Download](https://github.com/jamesphotography/SuperPicky/releases/download/v4.1.0/SuperPicky_Setup_Win64_4.1.0_242f4be.exe)
-- [Baidu Netdisk](https://pan.baidu.com/s/1dle-dGbKx5_On5cfdaaLXQ?pwd=872v) Code: 872v
-- [Google Drive (Mirror)](https://drive.google.com/file/d/1nTcgQdUqotu04kVkWUZqENnQtn573uzx)
-- [Quark](https://pan.quark.cn/s/1b7016c16f79)
-
-
----
-
-## 🚀 Quick Start
-
-1. **Select Folder**: Drag & drop or browse for a folder with bird photos.
-2. **Adjust Thresholds** (Optional): Sharpness (200-600), Aesthetics (4.0-7.0).
-3. **Toggle Features**: Flight detection, Exposure check.
-4. **Start**: Click to begin AI processing.
-5. **Review**: Photos are organized; import to Lightroom to see ratings.
-
----
-
-## 📝 Update Log
-
-### v4.0.5 (2026-02-15)
-- 🚀 **Architecture**: SQLite migration, ~1.9x speedup.
-- 🌟 **Community**: Thanks @OscarKing888 for Sony ARW & UTF-8 fixes.
-- 🧹 **Clean**: Unified temp files to hidden cache dir.
-- 🔧 **Fixes**: Chinese path support, ExifTool deadlock, Plugin metadata.
-
----
-
-## 🐦 Species Naming Standards (AviList Mapping)
-
-SuperPicky supports multiple English naming standards for bird species via the **AviList v2025** mapping. Choose your preferred format in **Settings > Culling Criteria > Species Name Format**:
+SuperPicky supports several English naming standards via the **AviList v2025** mapping. Choose one in **Settings → Common → Bird Name Display Format**:
 
 | Format | Source |
 |--------|--------|
 | Default | Original species-database names |
 | AviList v2025 | AviList unified English names |
-| Clements / eBird v2024 | Cornell/eBird taxonomy |
+| Clements / eBird v2024 | Cornell / eBird taxonomy |
 | BirdLife v9 | BirdLife International |
-| Scientific Name Only | Binomial nomenclature |
+| Scientific name only | Binomial nomenclature |
 
-**Updating AviList:** The mapping is built from `AviList-v2025-11Jun-extended.xlsx` (located in `scripts_dev/`) using an offline build script. When a new AviList version is released (typically annually), replace the xlsx file in `scripts_dev/` and re-run:
+The mapping is built offline from `scripts_dev/AviList-v2025-11Jun-extended.xlsx`. When a new AviList version is released (usually once a year), replace the xlsx file in `scripts_dev/` and re-run:
 
 ```bash
 pip install openpyxl  # first time only
 python scripts_dev/build_avilist_mapping.py
 ```
 
-Review unmatched species in the report output and add manual overrides to `scripts_dev/avilist_manual_overrides.json` if needed.
+Review unmatched species in the report and add manual overrides to `scripts_dev/avilist_manual_overrides.json` if needed.
 
 ---
 
-## 📄 License
+## Team
 
-Open sourced under **GPL-3.0 License**.
+| Role | Who |
+|---|---|
+| Developer | [James Yu](https://github.com/jamesphotography), professional photographer |
+| Model training | [Jordan Yu](https://github.com/triple333sR9): SuperEyes · SuperFlier |
+| Windows build | Xiaoping · Lyapunov · [Oscar King](https://github.com/OscarKing888) |
+| Model porting & optimization | Jianwen Chen |
+
+Thanks to everyone who has [sponsored](https://superpicky.app/sponsors.html) the project, reported bugs or sent in bird photos.
+
+---
+
+## License
+
+Open source under the **GPL-3.0 License**. See [LICENSE](LICENSE).
 
 This project uses:
 - **YOLO11** by Ultralytics
-- **[BirdTrace FastViT-MA36](https://huggingface.co/warden123/BirdTrace-FastViT-MA36-10K)** by Warden — bird species identification, licensed under [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)
-- **OSEA** by Sun Jiao (github.com/sun-jiao/osea) — species class list (the identification model itself is no longer bundled)
-- **[SuperEyes (SuperBirdEye)](https://github.com/triple333sR9/SuperBirdEye)** by [Jordan Yu (于若君)](https://github.com/triple333sR9)
-- **[SuperFlier](https://github.com/triple333sR9/SuperFlier)** by [Jordan Yu (于若君)](https://github.com/triple333sR9)
+- **[BirdTrace FastViT-MA36](https://huggingface.co/warden123/BirdTrace-FastViT-MA36-10K)** by Warden: bird species identification, licensed under [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)
+- **OSEA** by Sun Jiao (github.com/sun-jiao/osea): species class list (the identification model itself is no longer bundled)
+- **[SuperEyes (SuperBirdEye)](https://github.com/triple333sR9/SuperBirdEye)** and **[SuperFlier](https://github.com/triple333sR9/SuperFlier)** by [Jordan Yu](https://github.com/triple333sR9)
 - **TOPIQ** by Chaofeng Chen et al.
-- **AviList**: AviList Core Team. 2025. AviList: The Global Avian Checklist, v2025. https://doi.org/10.2173/avilist.v2025 — Licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
+- **[ExifTool](https://exiftool.org/)** by Phil Harvey
+- **AviList**: AviList Core Team. 2025. AviList: The Global Avian Checklist, v2025. https://doi.org/10.2173/avilist.v2025, licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)

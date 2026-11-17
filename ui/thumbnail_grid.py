@@ -15,9 +15,9 @@ from typing import Optional
 
 from PySide6.QtWidgets import (
     QScrollArea, QWidget, QGridLayout, QLabel, QFrame,
-    QVBoxLayout, QSizePolicy, QGraphicsOpacityEffect
+    QVBoxLayout, QSizePolicy, QGraphicsOpacityEffect, QRubberBand, QApplication
 )
-from PySide6.QtCore import Qt, Signal, QThread, QObject, Slot, QSize, QTimer, QPoint, QRect, QEasingCurve, QPropertyAnimation
+from PySide6.QtCore import Qt, Signal, QThread, QObject, Slot, QSize, QTimer, QPoint, QRect, QEasingCurve, QPropertyAnimation, QEvent
 from PySide6.QtGui import QPixmap, QColor, QPainter, QPen, QFont, QBrush, QImage, QImageReader
 
 from ui.styles import COLORS, FONTS
@@ -798,9 +798,55 @@ class ThumbnailCard(QFrame):
                 if self.is_burst_group or self.is_expanded_member:
                     self.badge_clicked.emit(self.photo)
                     return
-                
+
             self.clicked.emit(self.photo)
+            # 在照片上按下也可以开始框选：先按普通点击选中，拖动超过阈值后才出框。
+            # 必须 accept，否则按下事件会冒泡到网格容器的事件过滤器，被当成一次
+            # 空白处按下再开始一次框选。
+            # A press on a photo may also start a rubber-band selection: it acts
+            # as a normal click first, and the band only appears once the drag
+            # passes the threshold. Accept so the press does not bubble up to the
+            # container filter and start a second band.
+            grid = self._owner_grid()
+            if grid is not None:
+                grid.band_press(event.globalPosition().toPoint(), event.modifiers())
+            event.accept()
+            return
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        """按住左键拖动时把位置交给网格更新框选 / Feed drag moves to the grid's rubber band."""
+        if event.buttons() & Qt.LeftButton:
+            grid = self._owner_grid()
+            if grid is not None:
+                grid.band_move(event.globalPosition().toPoint())
+                event.accept()
+                return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        """松开左键结束框选 / Releasing the left button ends the rubber band."""
+        if event.button() == Qt.LeftButton:
+            grid = self._owner_grid()
+            if grid is not None:
+                grid.band_release()
+        super().mouseReleaseEvent(event)
+
+    def _owner_grid(self) -> Optional["ThumbnailGrid"]:
+        """
+        沿父链找到所属的 ThumbnailGrid（层级：card → _container → viewport → grid）。
+
+        返回:
+        Optional[ThumbnailGrid]: 所属网格；卡片尚未放进网格时为 None
+
+        Walk up the parent chain to the owning ThumbnailGrid, or None.
+        """
+        node = self.parent()
+        while node is not None:
+            if isinstance(node, ThumbnailGrid):
+                return node
+            node = node.parent()
+        return None
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -864,8 +910,31 @@ class ThumbnailGrid(QScrollArea):
         # Retired loaders are kept referenced until their threads exit.
         self._retired_loaders: list = []
         _LIVE_GRIDS.add(self)
-        self._last_clicked_idx: int = -1        # Shift 范围选起点
+        # Shift 范围选的起点：按 photo_key 记（筛选/排序后下标会变，key 不会）。
+        # 普通点击、Ctrl 点击、←/→ 翻图、外部 select_photo 都会把它移到当前那张；
+        # 为 None 时退回用带绿框的那张。
+        # Shift-range anchor, kept as a photo key (indices shift after filtering).
+        # Plain/Ctrl clicks, arrow navigation and select_photo move it; None
+        # falls back to the outlined photo.
+        self._range_anchor_key = None
+        # 本轮 Shift 范围开始前已勾选的集合。连续 Shift 点击时，新范围替换上一次
+        # 的范围、但保留这之前的勾（与访达/资源管理器一致）；锚点一变就作废。
+        # Checks that existed before the current Shift range. Successive Shift
+        # clicks replace the previous range but keep these, as Finder/Explorer
+        # do; reset whenever the anchor moves.
+        self._range_base: Optional[set] = None
         self._anchor_photo: Optional[dict] = None  # 单选锚点（对比视图左侧）
+        # 鼠标框选状态 / Rubber-band selection state
+        self._band: Optional[QRubberBand] = None           # 选框控件（懒创建）
+        self._band_origin: Optional[QPoint] = None        # 按下点（_container 坐标）
+        self._band_last_global: Optional[QPoint] = None   # 最近一次鼠标位置（全局坐标）
+        self._band_mods = Qt.NoModifier                   # 按下时的修饰键
+        self._band_active = False                         # 是否已超过拖动阈值
+        self._band_base: set = set()                      # 框选前保留的勾
+        # 拖到视口边缘外时自动滚动 / auto-scroll while dragging past the viewport edge
+        self._band_scroll_timer = QTimer(self)
+        self._band_scroll_timer.setInterval(30)
+        self._band_scroll_timer.timeout.connect(self._band_autoscroll)
         self._pending_photos: Optional[list] = None  # 延迟构建用
         # 分批构建定时器
         self._batch_timer = QTimer(self)
@@ -889,6 +958,8 @@ class ThumbnailGrid(QScrollArea):
         self._grid.setSpacing(8)
         self._grid.setContentsMargins(16, 16, 16, 16)
         self.setWidget(self._container)
+        # 在卡片之间的空隙/边距按下也能框选 / allow band selection from empty space
+        self._container.installEventFilter(self)
 
         # 空状态 label
         self._empty_label = QLabel(self.i18n.t("browser.no_results"))
@@ -979,9 +1050,11 @@ class ThumbnailGrid(QScrollArea):
         # 清空缩略图缓存
 
         # 彻底重置状态
+        self._band_cancel()   # 重建网格时旧卡片作废，进行中的框选一并取消
         self._cards.clear()
         self._multi_selected.clear()
-        self._last_clicked_idx = -1
+        self._range_anchor_key = None
+        self._range_base = None
         self._anchor_photo = None
         
         # 移除加载提示，改为渐进式渲染
@@ -1213,7 +1286,7 @@ class ThumbnailGrid(QScrollArea):
             card = self._cards.get(key)
             if card:
                 card.set_multi_selected(True)
-        self._last_clicked_idx = len(self._photos) - 1
+        self._range_base = None
         self._anchor_photo = self._photos[0] if self._photos else None
         self._emit_multi_selection()
 
@@ -1245,6 +1318,7 @@ class ThumbnailGrid(QScrollArea):
     def clear_multi_select(self):
         """公共接口：清空多选状态（ESC 快捷键或取消对比时使用）。"""
         self._clear_multi_selection()
+        self._range_base = None
         self._anchor_photo = None
         self._emit_multi_selection()
 
@@ -1354,9 +1428,24 @@ class ThumbnailGrid(QScrollArea):
         if built >= len(self._photos):
             self._grid.setRowStretch(last_row + 1, 1)
 
-    def select_photo(self, photo_or_key, ensure_visible: bool = True):
-        """高亮选中指定照片卡片。"""
+    def select_photo(self, photo_or_key, ensure_visible: bool = True,
+                     keep_anchor: bool = False):
+        """
+        高亮选中指定照片卡片（绿框）。
+
+        参数:
+        photo_or_key: 照片记录或 photo_key
+        ensure_visible (bool): 是否滚动到可见
+        keep_anchor (bool): True 时不移动 Shift 范围起点（Shift 点击 / Shift+方向键
+            扩选时用）；默认 False——选中哪张，下次 Shift 就从哪张算起
+
+        Outline the given photo. Unless keep_anchor is True (used while
+        extending a Shift range), the Shift-range anchor moves to this photo.
+        """
         photo_key = _photo_key(photo_or_key) if isinstance(photo_or_key, dict) else photo_or_key
+        if not keep_anchor:
+            self._range_anchor_key = photo_key
+            self._range_base = None
         if self._selected_key and self._selected_key in self._cards:
             self._cards[self._selected_key].set_selected(False)
         self._selected_key = photo_key
@@ -1483,24 +1572,20 @@ class ThumbnailGrid(QScrollArea):
                 card = self._cards.get(photo_key)
                 if card:
                     card.set_multi_selected(True)
-            self._last_clicked_idx = clicked_idx
+            # Ctrl 点过的这张成为下一次 Shift 的起点 / it becomes the next Shift anchor
+            self._range_anchor_key = photo_key
+            self._range_base = None
             self._emit_multi_selection()
-        elif modifiers & Qt.ShiftModifier and self._last_clicked_idx >= 0 and clicked_idx >= 0:
-            # Shift+点击：范围选中
-            lo = min(self._last_clicked_idx, clicked_idx)
-            hi = max(self._last_clicked_idx, clicked_idx)
-            for i in range(lo, hi + 1):
-                key = photo_keys[i]
-                self._multi_selected.add(key)
-                card = self._cards.get(key)
-                if card:
-                    card.set_multi_selected(True)
-            self._emit_multi_selection()
+        elif (modifiers & Qt.ShiftModifier and clicked_idx >= 0
+              and self._range_anchor_index(photo_keys) >= 0):
+            # Shift+点击：从起点（默认是带绿框的那张）到这张整段勾选
+            # Shift+click: check everything from the anchor to this photo
+            self._select_range_to(clicked_idx)
         else:
             # 普通点击：清空多选，单选当前，更新 anchor
+            # （select_photo 同时把 Shift 起点移到这张）
             self._clear_multi_selection()
             self._anchor_photo = photo
-            self._last_clicked_idx = clicked_idx
             self.select_photo(photo)
             self.photo_selected.emit(photo)
             self._emit_multi_selection()   # 让 compare 按钮隐藏
@@ -1517,6 +1602,262 @@ class ThumbnailGrid(QScrollArea):
         """发射多选变化信号（含 anchor 逻辑，最多传出 2 张）。"""
         self.multi_selection_changed.emit(self.get_multi_selected_photos())
 
+    # ------------------------------------------------------------------
+    #  Shift 范围选 / Shift range selection
+    # ------------------------------------------------------------------
+
+    def _range_anchor_index(self, photo_keys: Optional[list] = None) -> int:
+        """
+        Shift 范围起点在当前列表中的下标：优先用记下的起点，找不到时退回
+        带绿框的那张；都没有返回 -1。
+
+        参数:
+        photo_keys (Optional[list]): 已算好的 photo_key 列表，省一次遍历
+
+        返回:
+        int: 起点下标，或 -1
+
+        Index of the Shift-range anchor, falling back to the outlined photo;
+        -1 when neither is in the current list.
+        """
+        if photo_keys is None:
+            photo_keys = [_photo_key(p) for p in self._photos]
+        for key in (self._range_anchor_key, self._selected_key):
+            if key is not None and key in photo_keys:
+                return photo_keys.index(key)
+        return -1
+
+    def _set_multi_selection(self, keys: set) -> None:
+        """
+        把勾选集合整体换成 keys，只重绘状态有变化的卡片，有变化才发信号。
+
+        参数:
+        keys (set): 新的勾选 photo_key 集合
+
+        Replace the checked set with keys, repainting only changed cards and
+        emitting only when something changed.
+        """
+        if keys == self._multi_selected:
+            return
+        for key in self._multi_selected - keys:
+            card = self._cards.get(key)
+            if card:
+                card.set_multi_selected(False)
+        for key in keys - self._multi_selected:
+            card = self._cards.get(key)
+            if card:
+                card.set_multi_selected(True)
+        self._multi_selected.clear()
+        self._multi_selected.update(keys)
+        self._emit_multi_selection()
+
+    def _select_range_to(self, target_idx: int) -> None:
+        """
+        勾选从 Shift 起点到 target_idx 的整段，并把绿框移到 target_idx。
+
+        连续多次 Shift 操作时，新范围替换上一次的范围（不是越叠越多），
+        但本轮 Shift 之前已有的勾保留。绿框跟着移动、详情面板随之显示这张，
+        这样 Shift+方向键能一张张往外扩。起点本身不动。
+
+        参数:
+        target_idx (int): 范围终点在 self._photos 中的下标
+
+        Check the range from the anchor to target_idx and move the outline
+        there. Repeated Shift actions replace the previous range while keeping
+        checks made before it; the anchor itself stays put.
+        """
+        photo_keys = [_photo_key(p) for p in self._photos]
+        anchor_idx = self._range_anchor_index(photo_keys)
+        if anchor_idx < 0 or not 0 <= target_idx < len(photo_keys):
+            return
+        # 起点是退回来的绿框那张时，把它固定下来，后续 Shift 不再跟着绿框跑
+        # Pin a fallback anchor so later Shift steps don't follow the outline
+        self._range_anchor_key = photo_keys[anchor_idx]
+        if self._range_base is None:
+            self._range_base = set(self._multi_selected)
+        lo, hi = sorted((anchor_idx, target_idx))
+        self._set_multi_selection(self._range_base | set(photo_keys[lo:hi + 1]))
+        target = self._photos[target_idx]
+        if self._selected_key != photo_keys[target_idx]:
+            self.select_photo(target, keep_anchor=True)
+            self.photo_selected.emit(target)
+
+    def extend_selection_by_arrow(self, delta: int, modifiers) -> bool:
+        """
+        Shift+←/→：从起点往外扩选一张（与访达/资源管理器一致）。
+
+        参数:
+        delta (int): -1 向前，+1 向后
+        modifiers: 按键时的 Qt.KeyboardModifiers（macOS 方向键自带
+            KeypadModifier，判断时忽略）
+
+        返回:
+        bool: 是否已按 Shift 扩选处理（True 时调用方不要再翻图）
+
+        Shift+Left/Right extends the range by one photo. Returns True when
+        handled, so the caller must not also navigate.
+        """
+        mods = modifiers & ~Qt.KeypadModifier
+        if mods != Qt.ShiftModifier or not self._photos:
+            return False
+        idx = self._selected_index()
+        if idx < 0:
+            return False
+        new_idx = idx + delta
+        if 0 <= new_idx < len(self._photos):
+            self._select_range_to(new_idx)
+        return True   # 到头了也算处理过，避免退回普通翻图 / at an end: still consumed
+
+    # ------------------------------------------------------------------
+    #  鼠标框选 / Rubber-band selection
+    # ------------------------------------------------------------------
+
+    def eventFilter(self, obj, event) -> bool:
+        """
+        在卡片之间的空隙或网格边距按下拖动时框选。卡片自己 accept 按下事件，
+        所以从卡片上开始的拖动不会经过这里（由 ThumbnailCard 直接转给网格）。
+
+        Band selection starting from the gaps/margins of the grid container.
+        Cards accept their own presses, so drags starting on a card never
+        arrive here (ThumbnailCard forwards those directly).
+        """
+        # QAbstractScrollArea 自己也给滚动条装了过滤器，构造早期 _container 还不存在
+        # QAbstractScrollArea filters its scrollbars too, before _container exists
+        if obj is getattr(self, "_container", None):
+            etype = event.type()
+            if etype == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+                self.band_press(event.globalPosition().toPoint(), event.modifiers())
+                return True
+            if etype == QEvent.MouseMove and event.buttons() & Qt.LeftButton:
+                self.band_move(event.globalPosition().toPoint())
+                return True
+            if etype == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton:
+                self.band_release()
+                return True
+        return super().eventFilter(obj, event)
+
+    def band_press(self, global_pos: QPoint, modifiers) -> None:
+        """
+        记下框选起点；真正出框要等拖动超过系统拖动阈值（band_move 里判断），
+        所以单纯点击不受影响。
+
+        参数:
+        global_pos (QPoint): 按下位置（屏幕坐标）
+        modifiers: 按下时的修饰键；按住 Ctrl/⌘ 或 Shift 框选时保留原有勾选，
+            否则框选结果替换原有勾选
+
+        Remember the band origin. The band only appears after the drag passes
+        the system threshold, so plain clicks are unaffected. With Ctrl/Cmd or
+        Shift held the band adds to the existing checks; otherwise it replaces
+        them.
+        """
+        self._band_cancel()
+        self._band_origin = self._container.mapFromGlobal(global_pos)
+        self._band_last_global = QPoint(global_pos)
+        self._band_mods = modifiers
+
+    def band_move(self, global_pos: QPoint) -> None:
+        """
+        拖动中：超过阈值后显示选框，并按选框实时更新勾选。
+
+        参数:
+        global_pos (QPoint): 当前鼠标位置（屏幕坐标）
+
+        While dragging: show the band past the threshold and update the
+        checked set live.
+        """
+        if self._band_origin is None:
+            return
+        self._band_last_global = QPoint(global_pos)
+        if not self._band_active:
+            moved = self._container.mapFromGlobal(global_pos) - self._band_origin
+            if moved.manhattanLength() < QApplication.startDragDistance():
+                return
+            self._band_active = True
+            keep = self._band_mods & (Qt.ControlModifier | Qt.ShiftModifier)
+            self._band_base = set(self._multi_selected) if keep else set()
+            if self._band is None:
+                self._band = QRubberBand(QRubberBand.Rectangle, self._container)
+            self._band.show()
+            self._band.raise_()
+            self._band_scroll_timer.start()
+        self._band_update()
+
+    def band_release(self) -> None:
+        """
+        松开鼠标：结束框选。勾选在拖动中已实时更新，这里只收尾；
+        框选后的勾作为下一轮 Shift 范围之前「已有的勾」。
+
+        Mouse released: finish the band. Checks were already applied live;
+        they become the pre-existing checks for the next Shift range.
+        """
+        if self._band_active:
+            self._range_base = None
+        self._band_cancel()
+
+    def _band_cancel(self) -> None:
+        """隐藏选框并清空框选状态 / Hide the band and reset its state."""
+        self._band_scroll_timer.stop()
+        if self._band is not None:
+            self._band.hide()
+        self._band_origin = None
+        self._band_last_global = None
+        self._band_active = False
+        self._band_base = set()
+
+    def _band_update(self) -> None:
+        """
+        按当前鼠标位置重算选框，勾选与选框相交的所有卡片（加上保留的勾）。
+
+        起点存的是 _container 坐标，跟着内容走；滚动后鼠标屏幕位置不变，
+        映射到 _container 里就落在新内容上，选框自然延伸。
+
+        Recompute the band from the latest mouse position and check every card
+        it intersects (plus the kept checks). The origin is in container
+        coordinates, so it scrolls with the content.
+        """
+        if not self._band_active or self._band_origin is None or self._band_last_global is None:
+            return
+        current = self._container.mapFromGlobal(self._band_last_global)
+        rect = QRect(self._band_origin, current).normalized()
+        self._band.setGeometry(rect)
+        hits = {
+            key for key, card in self._cards.items()
+            if not card.isHidden() and card.geometry().intersects(rect)
+        }
+        self._set_multi_selection(self._band_base | hits)
+
+    def _band_autoscroll(self) -> None:
+        """
+        框选拖到视口上下边缘附近或之外时自动滚动，便于框选超出一屏的照片。
+        若松开事件丢失（如拖到窗口外松手），发现左键已不在按下状态就收尾。
+
+        Auto-scroll while the band is dragged near or past the top/bottom of
+        the viewport. If the release event was lost, finish once the left
+        button is no longer down.
+        """
+        if not self._band_active or self._band_last_global is None:
+            self._band_scroll_timer.stop()
+            return
+        if not (QApplication.mouseButtons() & Qt.LeftButton):
+            self.band_release()
+            return
+        y = self.viewport().mapFromGlobal(self._band_last_global).y()
+        edge = 24
+        height = self.viewport().height()
+        if y < edge:
+            step = y - edge
+        elif y > height - edge:
+            step = y - (height - edge)
+        else:
+            return
+        step = max(-60, min(60, step))
+        bar = self.verticalScrollBar()
+        old = bar.value()
+        bar.setValue(old + step)
+        if bar.value() != old:
+            self._band_update()
+
     def _on_context_menu_requested(self, photo: dict, pos):
         """C4：将右键菜单请求向上传递（由父级窗口处理）。"""
         # 通过信号链向上传递：ThumbnailGrid → ResultsBrowserWindow
@@ -1531,12 +1872,13 @@ class ThumbnailGrid(QScrollArea):
 
     def keyPressEvent(self, event):
         key = event.key()
-        if key == Qt.Key_Left:
-            self.clear_multi_select_for_arrow(event.modifiers())   # #166
-            self._select_adjacent(-1)
-        elif key == Qt.Key_Right:
-            self.clear_multi_select_for_arrow(event.modifiers())   # #166
-            self._select_adjacent(1)
+        if key in (Qt.Key_Left, Qt.Key_Right):
+            delta = -1 if key == Qt.Key_Left else 1
+            # Shift+←/→ 扩选；否则先清多选再翻图（#166）
+            # Shift+arrow extends the range; otherwise clear checks and move (#166)
+            if not self.extend_selection_by_arrow(delta, event.modifiers()):
+                self.clear_multi_select_for_arrow(event.modifiers())
+                self._select_adjacent(delta)
         elif key in (Qt.Key_Up, Qt.Key_Down):
             # 键盘打星(Paul P0-3):Up/Down 交给宿主窗口的打星分支处理。
             # 必须显式 ignore 并直接返回——不能落入 QScrollArea 默认滚动,

@@ -163,7 +163,7 @@ def format_system_info(info: dict) -> str:
         "[Hardware]",
         f"  RAM Total   : {info.get('ram_total_gb', '?')} GB",
         f"  RAM Free    : {info.get('ram_available_gb', '?')} GB",
-        f"  AI Device   : {info.get('ai_device', '?')}",
+        f"  Device      : {info.get('ai_device', '?')}",
     ])
     if 'gpu_name' in info:
         lines.append(f"  GPU         : {info['gpu_name']}")
