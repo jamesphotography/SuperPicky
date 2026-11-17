@@ -5714,6 +5714,10 @@ class ResultsBrowserWindow(QMainWindow):
         if key == Qt.Key_Left:
             if in_fullscreen:
                 self._fullscreen_prev()
+            elif (self._stack.currentIndex() == 0
+                  and self._thumb_grid.extend_selection_by_arrow(-1, event.modifiers())):
+                # 网格里 Shift+← 向前扩选，不翻图 / Shift+Left extends the range
+                pass
             else:
                 # 网格里键盘翻图先清多选的勾（#166）；面板上的「上一张」按钮不清，
                 # 对比页（index 2）靠勾选集工作，也不清
@@ -5725,6 +5729,10 @@ class ResultsBrowserWindow(QMainWindow):
         elif key == Qt.Key_Right:
             if in_fullscreen:
                 self._fullscreen_next()
+            elif (self._stack.currentIndex() == 0
+                  and self._thumb_grid.extend_selection_by_arrow(1, event.modifiers())):
+                # 网格里 Shift+→ 向后扩选，不翻图 / Shift+Right extends the range
+                pass
             else:
                 if self._stack.currentIndex() == 0:
                     self._thumb_grid.clear_multi_select_for_arrow(event.modifiers())
