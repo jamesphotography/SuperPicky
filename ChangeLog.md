@@ -1,3 +1,39 @@
+# SuperPicky 4.6.5 RC6
+
+**What's new since RC5:**
+
+- **Rating filter and Rating sort follow your changes.** With a Rating filter on, a photo you re-rate
+  out of the filter now drops out of the grid; with Sort by Rating, it moves to its new place. This
+  happens when you move on to another photo, so pressing Down twice still changes the same photo and a
+  batch rating change keeps your ticks. (#167)
+- **Drag to select in the results browser.** Drag across thumbnails (starting on a photo or in the gaps)
+  to tick every photo the box touches; hold Cmd/Ctrl or Shift while dragging to add to the current
+  ticks. Dragging to the top or bottom edge scrolls.
+- **Shift selection fixed.** Shift-click now starts from the outlined photo, including after moving with
+  the arrow keys or right after opening; a second Shift-click replaces the previous range instead of
+  adding to it. Shift+Left/Right extends the range one photo at a time.
+- **Clearer wording.** The confidence setting is now called Detection Confidence, and several messages and
+  titles were reworded.
+- This test build has no CUDA 13 installer; RTX 50 users can use the CPU or CUDA 11.8 build.
+
+---
+
+# SuperPicky 4.6.5 RC6（中文）
+
+**相比 RC5 的变化：**
+
+- **星级筛选和按星级排序会跟着改动更新。** 在星级筛选下把照片改成不在筛选范围内的星级，它会从网格里移走；
+  按星级排序时，它会挪到新位置。更新发生在你切到别的照片时，所以连按两次 ↓ 改的仍是同一张，批量改星级后
+  勾选也不会被清掉。（#167）
+- **结果浏览器支持拖动框选。** 在缩略图上拖动（从照片上或照片间的空隙开始都可以），选框碰到的照片都会被
+  勾上；拖动时按住 ⌘/Ctrl 或 Shift 是在原有勾选上加选。拖到上下边缘会自动滚动。
+- **修正 Shift 多选。** Shift+点击现在从带绿框的那张开始算，用方向键翻过或刚打开浏览器时也一样；再次
+  Shift+点击会替换上一次的范围，而不是越选越多。Shift+←/→ 可以逐张扩大或缩小选择。
+- **界面用语更清楚。** 置信度设置改称「检测置信度」，另有几处提示和标题改了措辞。
+- 本测试版不提供 CUDA 13 安装包，RTX 50 显卡请用 CPU 版或 CUDA 11.8 版。
+
+---
+
 # SuperPicky 4.6.5 RC5
 
 **What's new since RC4:**
