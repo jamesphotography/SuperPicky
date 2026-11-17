@@ -72,3 +72,28 @@ def test_batch_reset_mixed(mgr, tmp_path):
     assert _read(mgr, b, "XMP-photoshop:City") is None
     assert _read(mgr, a, "XMP-xmp:Rating") in (None, "0")
     assert _read(mgr, b, "XMP-xmp:Rating") in (None, "0")
+
+
+def test_reset_clears_stale_xmp_keeps_real_iptc(mgr, tmp_path):
+    """XMP 是我们的旧分数、IPTC 是真实城市：只清 XMP，IPTC 保留（终审 I1）。"""
+    p = _photo(mgr, tmp_path, "m.jpg", "095.30")
+    fd, tmp = tempfile.mkstemp(suffix=".txt")
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write("布里斯班")
+    try:
+        _exiftool(mgr, "-charset", "iptc=utf8", "-codedcharacterset=utf8", f"-IPTC:City<={tmp}",
+                  "-overwrite_original", p)
+    finally:
+        os.remove(tmp)
+    mgr.reset_metadata(p)
+    assert _read(mgr, p, "XMP-photoshop:City") is None
+    assert _read(mgr, p, "IPTC:City") == "布里斯班"
+
+
+def test_reset_with_failed_read_keeps_location(mgr, tmp_path, monkeypatch):
+    """读不到现有地点时重置不清地点字段（终审 I2）。"""
+    p = _photo(mgr, tmp_path, "f.jpg", "布里斯班")
+    monkeypatch.setattr(mgr, "read_metadata", lambda *a, **k: None)
+    mgr.reset_metadata(p)
+    monkeypatch.undo()
+    assert _read(mgr, p, "XMP-photoshop:City") == "布里斯班"

@@ -115,3 +115,50 @@ def test_sidecar_only_location_protects_body_write(mgr, tmp_path):
     mgr.batch_set_metadata([{"file": p, **SCORES}])
     assert _read(mgr, p, "XMP-photoshop:City") is None
     assert p in mgr.drain_location_protected()
+
+
+# ---------------------------------------------------------------------------
+# 终审修复 / Final-review fixes
+# ---------------------------------------------------------------------------
+
+def _mixed(mgr, tmp_path):
+    """IPTC 是真实城市、XMP 是 SuperPicky 旧分数（老版本只写 XMP 留下的）/ IPTC real, XMP old scores."""
+    p = _jpg(tmp_path)
+    _put(mgr, p, "IPTC:City", "布里斯班")
+    _exiftool(mgr, "-XMP-photoshop:City=095.30", "-XMP-photoshop:State=04.10",
+              "-XMP-photoshop:Country=GOOD", "-overwrite_original", p)
+    return p
+
+
+def test_stale_xmp_scores_refreshed_when_iptc_is_real(mgr, tmp_path):
+    """XMP 里是我们的旧分数：照常更新成新分数，IPTC 的真实城市不动（终审 I1）。"""
+    p = _mixed(mgr, tmp_path)
+    mgr.batch_set_metadata([{"file": p, **SCORES}])
+    assert _read(mgr, p, "XMP-photoshop:City") == "612.34"
+    assert _read(mgr, p, "IPTC:City") == "布里斯班"
+
+
+def test_failed_read_counts_as_protected(mgr, tmp_path, monkeypatch):
+    """读不到现有地点时按受保护处理，不冒险覆盖真实地名（终审 I2）。"""
+    p = _with_city(mgr, tmp_path, "布里斯班")
+    monkeypatch.setattr(mgr, "read_metadata", lambda *a, **k: None)
+    mgr.batch_set_metadata([{"file": p, **SCORES}])
+    monkeypatch.undo()
+    assert _read(mgr, p, "XMP-photoshop:City") == "布里斯班"
+
+
+def test_location_read_once_per_unchanged_file(mgr, tmp_path, monkeypatch):
+    """同一张没改过的照片只读一次地点（终审 I3）。"""
+    p = _with_city(mgr, tmp_path, "布里斯班")
+    calls = []
+    real = mgr.read_metadata
+
+    def counting(path, extra_args=None):
+        if extra_args and "-XMP-photoshop:City" in extra_args:
+            calls.append(path)
+        return real(path, extra_args=extra_args)
+
+    monkeypatch.setattr(mgr, "read_metadata", counting)
+    mgr._drop_scores_if_located({"file": p, **SCORES})
+    mgr._drop_scores_if_located({"file": p, **SCORES})
+    assert len(calls) == 1

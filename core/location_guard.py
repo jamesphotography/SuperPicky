@@ -37,6 +37,13 @@ LOCATION_RESET_ARGS: frozenset = frozenset({
     "-XMP:Country=", "-IPTC:Country-PrimaryLocationName=",
 })
 
+# 重置时按组分开：XMP 组与 IPTC 组各自判断（XMP 是旧分数、IPTC 是真实地名时只清 XMP）
+# Reset decides per group: XMP and IPTC separately (clear stale XMP scores, keep a real IPTC name)
+XMP_LOCATION_RESET_ARGS: frozenset = frozenset({"-XMP:City=", "-XMP:State=", "-XMP:Country="})
+IPTC_LOCATION_RESET_ARGS: frozenset = frozenset({
+    "-IPTC:City=", "-IPTC:Province-State=", "-IPTC:Country-PrimaryLocationName=",
+})
+
 # 读取现有地点的 ExifTool 参数；-G1 让 XMP 与 IPTC 的同名字段分开 / -G1 keeps XMP and IPTC apart
 LOCATION_READ_ARGS: List[str] = [
     "-G1",
@@ -109,6 +116,25 @@ def groups_from_exiftool_json(data: Dict[str, Any]) -> List[Tuple[str, str, str]
     return groups
 
 
+def group_is_real(group: Tuple[str, str, str]) -> bool:
+    """
+    一组城市/省份/国家是不是真实地名：非空，且不是工具写的。
+
+    参数:
+    group (Tuple[str, str, str]): (城市, 省份, 国家)
+
+    返回:
+    bool: 真实地名为 True
+
+    Whether one City/State/Country group is a real place name (non-empty and
+    not tool-written).
+    """
+    city, state, country = group
+    if not any((v or "").strip() for v in (city, state, country)):
+        return False
+    return not is_tool_written(city, state, country)
+
+
 def has_real_location(groups: Iterable[Tuple[str, str, str]]) -> bool:
     """
     是否有任一组是真实地名（非空，且不是工具写的）。
@@ -121,9 +147,4 @@ def has_real_location(groups: Iterable[Tuple[str, str, str]]) -> bool:
 
     Whether any group holds a real place name (non-empty, not tool-written).
     """
-    for city, state, country in groups:
-        if not any((v or "").strip() for v in (city, state, country)):
-            continue
-        if not is_tool_written(city, state, country):
-            return True
-    return False
+    return any(group_is_real(g) for g in groups)
