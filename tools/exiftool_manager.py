@@ -16,7 +16,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from constants import ALL_RATING_FOLDER_NAMES, SIDECAR_RAW_EXTENSIONS
 from core.metadata_fields import ALL_FIELDS, filter_item, has_payload
 from core.location_guard import (
-    LOCATION_READ_ARGS, SCORE_ITEM_KEYS, groups_from_exiftool_json, has_real_location,
+    LOCATION_READ_ARGS, LOCATION_RESET_ARGS, SCORE_ITEM_KEYS, groups_from_exiftool_json,
+    has_real_location,
 )
 import time
 import threading
@@ -1082,6 +1083,29 @@ class ExifToolManager:
             self._location_protected_paths.clear()
         return paths
 
+    def _drop_location_reset_args(self, args: List[str], file_path: str) -> List[str]:
+        """
+        照片已有真实地名时，从重置清除参数里去掉城市/省份/国家；其余照清。
+
+        参数里没有地点项时不读文件。
+
+        参数:
+        args (List[str]): 已按字段开关过滤的清除参数
+        file_path (str): 照片路径
+
+        返回:
+        List[str]: 受保护时去掉地点项后的参数，否则原参数
+
+        Keep City/State/Country out of the reset when the photo has a real place
+        name; everything else is still cleared. Reads nothing when args carry no
+        location item.
+        """
+        if not LOCATION_RESET_ARGS.intersection(args):
+            return args
+        if not self._location_protected(file_path):
+            return args
+        return [a for a in args if a not in LOCATION_RESET_ARGS]
+
     def _read_raw_layout_tags(self, file_path: str) -> Optional[Dict[str, Any]]:
         """
         经 read 常驻进程以 ``-n -json`` 读取 RAW_LAYOUT_TAGS。
@@ -1485,7 +1509,8 @@ class ExifToolManager:
         Goes through _verified_raw_inplace; skips files that carry none of
         these fields so untouched RAWs are not copied for nothing.
         """
-        clear_args = self._filter_reset_args(list(self._BODY_RESET_ARGS))
+        clear_args = self._drop_location_reset_args(
+            self._filter_reset_args(list(self._BODY_RESET_ARGS)), file_path)
         if not clear_args:
             return True
         try:
@@ -1539,6 +1564,7 @@ class ExifToolManager:
             '-XMP-iptcCore:IntellectualGenre=',
             '-XMP-iptcExt:Event=',
         ])
+        clear_args = self._drop_location_reset_args(clear_args, file_path)
         if not clear_args:
             return True
         args = [
@@ -2550,6 +2576,7 @@ class ExifToolManager:
             '-IPTC:Country-PrimaryLocationName=',
             '-IPTC:Province-State=',
         ])
+        clear_args = self._drop_location_reset_args(clear_args, file_path)
         if not clear_args:
             return True
         args = [
@@ -2641,49 +2668,67 @@ class ExifToolManager:
             if not batch_args:
                 stats['success'] += len(valid_files)
                 continue
-            batch_args.extend(valid_files)
-            batch_args.append('-execute')
+            # 已有真实地名的照片单独一组，用去掉城市/省份/国家的清除参数（一批共用一套参数，
+            # 不能逐张区分）；没有地点项时不读文件，整批一组
+            # Photos with a real place name form their own group with the location
+            # items removed (one argument set is shared per execute); with no
+            # location item nothing is read and the batch stays whole.
+            groups = [(batch_args, valid_files)]
+            if LOCATION_RESET_ARGS.intersection(batch_args):
+                protected = [f for f in valid_files if self._location_protected(f)]
+                if protected:
+                    kept_args = [a for a in batch_args if a not in LOCATION_RESET_ARGS]
+                    rest = [f for f in valid_files if f not in protected]
+                    groups = [(batch_args, rest), (kept_args, protected)]
+                    log(i18n.t("logs.location_reset_kept", count=len(protected)))
+            for group_args, group_files in groups:
+                if not group_files:
+                    continue
+                if not group_args:
+                    stats['success'] += len(group_files)
+                    continue
+                group_cmd = [*group_args, *group_files, '-execute']
 
-            try:
-                # V4.5: 批量重置走 write 进程，与批量写入同一路由
-                # V4.5: Batch reset uses the write process, same route as batch writes
-                wp = self._write_proc
-                with wp.lock:
-                    wp.start()
-                    if not wp.process:
-                        raise RuntimeError("Process not started")
+                try:
+                    # V4.5: 批量重置走 write 进程，与批量写入同一路由
+                    # V4.5: Batch reset uses the write process, same route as batch writes
+                    wp = self._write_proc
+                    with wp.lock:
+                        wp.start()
+                        if not wp.process:
+                            raise RuntimeError("Process not started")
 
-                    cmd_str = '\n'.join(batch_args) + '\n'
-                    wp.process.stdin.write(cmd_str.encode('utf-8'))
-                    wp.process.stdin.flush()
+                        cmd_str = '\n'.join(group_cmd) + '\n'
+                        wp.process.stdin.write(cmd_str.encode('utf-8'))
+                        wp.process.stdin.flush()
 
-                    # 单次 -execute，读一次 {ready} / Single -execute, one {ready} read.
-                    output = wp.read_until_ready(timeout=60)
-                    decoded = output.decode('utf-8', errors='replace')
+                        # 单次 -execute，读一次 {ready} / Single -execute, one {ready} read.
+                        output = wp.read_until_ready(timeout=60)
+                        decoded = output.decode('utf-8', errors='replace')
 
-                # 锁已释放，再做日志和统计，不阻塞其他 ExifTool 调用。
-                # Lock released; compute stats and log without holding it.
-                import re as _re
-                m = _re.search(r'(\d+)\s+image files?\s+updated', decoded)
-                updated_count = int(m.group(1)) if m else 0
-                error_lines = [
-                    ln for ln in decoded.splitlines()
-                    if 'Error' in ln and 'Warning' not in ln and ln.strip()
-                ]
-                error_count = len(error_lines)
-                # 未能解析更新数（文件本已无元数据可清除）时按全成功算。
-                # If updated count cannot be parsed, treat all files as success.
-                batch_success = updated_count if (updated_count > 0 or error_count > 0) else len(valid_files)
+                    # 锁已释放，再做日志和统计，不阻塞其他 ExifTool 调用。
+                    # Lock released; compute stats and log without holding it.
+                    import re as _re
+                    m = _re.search(r'(\d+)\s+image files?\s+updated', decoded)
+                    updated_count = int(m.group(1)) if m else 0
+                    error_lines = [
+                        ln for ln in decoded.splitlines()
+                        if 'Error' in ln and 'Warning' not in ln and ln.strip()
+                    ]
+                    error_count = len(error_lines)
+                    # 未能解析更新数（文件本已无元数据可清除）时按全成功算。
+                    # If updated count cannot be parsed, treat all files as success.
+                    batch_success = updated_count if (updated_count > 0 or error_count > 0) else len(group_files)
 
-                stats['success'] += batch_success
-                stats['failed'] += error_count
+                    stats['success'] += batch_success
+                    stats['failed'] += error_count
 
-                log(i18n.t("logs.batch_progress", start=batch_start+1, end=batch_end, success=batch_success, skipped=0))
+                    log(i18n.t("logs.batch_progress", start=batch_start+1, end=batch_end, success=batch_success, skipped=0))
 
-            except Exception as e:
-                stats['failed'] += len(valid_files)
-                self._write_proc.stop()
-                log(f"  ❌ {i18n.t('logs.batch_error', start=batch_start+1, end=batch_end, error=str(e))}")
+                except Exception as e:
+                    stats['failed'] += len(group_files)
+                    self._write_proc.stop()
+                    log(f"  ❌ {i18n.t('logs.batch_error', start=batch_start+1, end=batch_end, error=str(e))}")
 
         # V4.0.3: 清理潜在残留的临时文件
         self.cleanup_temp_files(file_paths)
