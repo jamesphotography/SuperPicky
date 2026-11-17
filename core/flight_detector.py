@@ -113,21 +113,25 @@ class FlightDetector:
         if not self.model_path.exists():
             raise FileNotFoundError(f"飞版检测模型未找到: {self.model_path}")
 
+        from config import move_model_to_device
         self.device = torch.device(str(get_best_device()))
-        self.model = self._build_model()
+        model = self._build_model()
 
+        # 先在 CPU 上加载权重，再搬到目标设备；GPU 出错时退回 CPU（见 move_model_to_device）
+        # Load weights on the CPU, then move; fall back to the CPU on GPU errors
         try:
             state_dict = torch.load(
                 self.model_path,
-                map_location=self.device,
+                map_location="cpu",
                 weights_only=True
             )
-            self.model.load_state_dict(state_dict)
+            model.load_state_dict(state_dict)
         except Exception as e:
-            raise RuntimeError(f"加载飞版检测模型失败: {e}")
+            raise RuntimeError(f"[Flight] 加载飞版检测模型失败 / failed to load flight model: {e}")
 
-        self.model.to(device=self.device)
-        self.model.eval()
+        model, self.device, _ = move_model_to_device(model, self.device, "Flight", half=False)
+        model.eval()
+        self.model = model
         self.model_loaded = True
     
     def detect(

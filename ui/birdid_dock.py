@@ -959,8 +959,10 @@ class BirdIDDockWidget(QDockWidget):
             return
         country = self.settings.get("selected_country", "")
         region = self.settings.get("selected_region", "")
-        t_entire = self.i18n.t("birdid.region_entire_country")
-        if country and region and region != t_entire:
+        # 有地区代码才算选了省/州；不比较显示名（存的是保存时的语言文字）
+        # Only a region code means a state/province was chosen; never compare the
+        # stored display name, which is in the language active when it was saved.
+        if country and region and self.settings.get("region_code"):
             text = f"{country} · {region}"
         elif country:
             text = country
@@ -2498,6 +2500,21 @@ class BirdIDDockWidget(QDockWidget):
         if self._sc_poll_count > 600:
             print("[Screenshot] ⚠️ 超时 (120s)，停止轮询")
             self._sc_poll_timer.stop()
+            # 结束仍在等用户框选的 screencapture：否则十字选框留在屏幕上，之后截的图
+            # 也没人接收。 / End the still-waiting screencapture, or its crosshair
+            # stays on screen and any later capture is never picked up.
+            proc = getattr(self, '_sc_proc', None)
+            if proc is not None and proc.poll() is None:
+                try:
+                    proc.terminate()
+                    proc.wait(timeout=2)
+                except Exception as e:
+                    print(f"[Screenshot] screencapture 结束失败 / terminate failed: {e}")
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+            self._sc_proc = None
             if getattr(self, '_sc_main_win', None):
                 self._sc_main_win.show()
                 self._sc_main_win.raise_()

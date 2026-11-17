@@ -338,12 +338,9 @@ def find_max_burst_id(dir_path: str, report_db=None) -> int:
 
     if report_db is not None:
         try:
-            with report_db._lock:
-                row = report_db._conn.execute(
-                    "SELECT MAX(burst_id) FROM photos WHERE burst_id IS NOT NULL"
-                ).fetchone()
-                if row and row[0] is not None:
-                    max_id = max(max_id, int(row[0]))
+            db_max = report_db.max_burst_id()
+            if db_max is not None:
+                max_id = max(max_id, db_max)
         except Exception:
             pass
     elif dir_path:

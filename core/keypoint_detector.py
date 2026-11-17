@@ -127,25 +127,27 @@ class KeypointDetector:
         if not os.path.exists(self.model_path):
             raise FileNotFoundError(f"关键点模型不存在: {self.model_path}")
         
-        self.model = PartLocalizer()
-        checkpoint = torch.load(self.model_path, map_location=self.device, weights_only=True)
-        
+        # 先在 CPU 上加载权重，再搬到目标设备；GPU 出错时退回 CPU（见 move_model_to_device）。
+        # 用局部变量构建，全部成功后才赋给 self.model：中途出错时 self.model 仍为 None，
+        # 下次调用会重新加载，而不是拿到一个没加载完的模型。
+        # Load weights on the CPU, then move (falling back to the CPU on GPU errors).
+        # Built in a local and assigned only on success, so a failure never leaves a
+        # half-loaded model behind for the next call.
+        from config import move_model_to_device
+        model = PartLocalizer()
+        checkpoint = torch.load(self.model_path, map_location="cpu", weights_only=True)
+
         if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
-            self.model.load_state_dict(checkpoint['model_state_dict'])
+            model.load_state_dict(checkpoint['model_state_dict'])
         else:
-            self.model.load_state_dict(checkpoint)
-            
-        self.model.to(self.device)
-        
-        # V4.0.5: 启用 FP16 半精度推理，提速约 30-50%
-        # MPS 和 CUDA 都支持 FP16
-        if self.device.type in ('mps', 'cuda'):
-            self.model = self.model.half()
-            self._use_fp16 = True
-        else:
-            self._use_fp16 = False
-            
-        self.model.eval()
+            model.load_state_dict(checkpoint)
+
+        # V4.0.5: MPS/CUDA 上用 FP16 半精度推理，提速约 30-50%
+        # V4.0.5: FP16 inference on MPS/CUDA (~30-50% faster)
+        model, self.device, self._use_fp16 = move_model_to_device(
+            model, self.device, "Keypoint", half=True)
+        model.eval()
+        self.model = model
     
     def detect(self, bird_crop: np.ndarray, box: Tuple[int, int, int, int] = None, 
                seg_mask: np.ndarray = None) -> Optional[KeypointResult]:

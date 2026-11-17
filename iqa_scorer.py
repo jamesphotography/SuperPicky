@@ -113,22 +113,25 @@ class IQAScorer:
                 # 获取权重路径
                 weight_path = get_topiq_weight_path()
                 
-                # 初始化 TOPIQ 模型
-                self._topiq_model = CFANet()
-                load_topiq_weights(self._topiq_model, weight_path, self.device)
-                self._topiq_model.to(self.device)
-                
-                # V4.0.5: 启用 FP16 半精度推理，提速约 30-50%
-                if self.device.type in ('mps', 'cuda'):
-                    self._topiq_model = self._topiq_model.half()
-                    self._use_fp16 = True
-                else:
-                    self._use_fp16 = False
-                    
-                self._topiq_model.eval()
+                # 初始化 TOPIQ 模型：先在 CPU 上加载权重，再搬到目标设备；GPU 出错时
+                # 退回 CPU（见 move_model_to_device）。局部变量构建，成功后才赋值。
+                # Load weights on the CPU, then move (CPU fallback on GPU errors);
+                # assigned only on success.
+                import torch
+                from config import move_model_to_device
+                model = CFANet()
+                load_topiq_weights(model, weight_path, torch.device("cpu"))
+
+                # V4.0.5: MPS/CUDA 上用 FP16 半精度推理，提速约 30-50%
+                # V4.0.5: FP16 inference on MPS/CUDA (~30-50% faster)
+                model, self.device, self._use_fp16 = move_model_to_device(
+                    model, self.device, "TOPIQ", half=True)
+                model.eval()
+                self._topiq_model = model
                 print(_t("logs.topiq_model_loaded"))
             except Exception as e:
-                raise RuntimeError(f"TOPIQ 模型加载失败: {e}")
+                self._topiq_model = None
+                raise RuntimeError(f"[TOPIQ] 模型加载失败 / model load failed: {e}")
         return self._topiq_model
 
     def preload(self) -> None:
