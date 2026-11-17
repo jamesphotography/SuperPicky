@@ -177,15 +177,15 @@ def _isolate_global_state(tmp_path_factory):
 # 结束，macOS 每次弹「Python 意外退出」。测试结论不受影响，但退出码被污染，任何靠退出码
 # 判断成败的自动化都会误报。与软件 ⌘Q 退出崩溃同一根因（分支 fix/macos-quit-segfault）。
 # 崩溃点实测在 PySide 自己登记的 atexit 收尾里（销毁 QApplication 与残留控件），所以
-# 不能把 atexit 全跑一遍：只点名执行本项目登记的两项清理——ExifTool 常驻进程关闭、
-# 缩略图加载线程停止（os._exit 跳过 atexit，不手动执行 ExifTool 会成孤儿进程），
-# 刷新输出，再按 pytest 的退出码 os._exit。
+# 不能把 atexit 全跑一遍：只执行本项目经 tools.exit_hooks 登记的清理（ExifTool 常驻进程
+# 关闭、缩略图加载线程停止等；os._exit 跳过 atexit，不手动执行 ExifTool 会成孤儿进程），
+# 刷新输出，再按 pytest 的退出码 os._exit——与 main.py 的 _finish_shutdown_and_exit 一致。
 # Incident: after every test passed, the process died with SIGSEGV (exit 139) in
 # PySide's own atexit teardown of the QApplication and leftover widgets. Same root
-# cause as the app's Cmd+Q crash. So we must not run every atexit handler: call only
-# this project's two cleanups (ExifTool's persistent process, thumbnail loader
-# threads; os._exit skips atexit and would orphan ExifTool), flush, then os._exit
-# with pytest's own status.
+# cause as the app's Cmd+Q crash. So we must not run every atexit handler: run only
+# this project's hooks registered via tools.exit_hooks (ExifTool's persistent
+# process, thumbnail loader threads; os._exit skips atexit and would orphan
+# ExifTool), flush, then os._exit with pytest's status, as main.py does.
 _SESSION_EXIT_STATUS = [0]
 
 
@@ -211,19 +211,14 @@ def pytest_unconfigure(config):
     if os.environ.get("SUPERPICKY_PYTEST_NORMAL_EXIT") == "1":
         return
     import sys
-    # 只清理已导入的模块，不为清理而额外导入 / only modules already imported
-    grid = sys.modules.get("ui.thumbnail_grid")
-    exif = sys.modules.get("tools.exiftool_manager")
-    for name, fn in (
-        ("thumbnail loaders", getattr(grid, "_stop_all_grid_loaders", None)),
-        ("ExifTool", getattr(getattr(exif, "exiftool_manager", None), "shutdown", None)),
-    ):
-        if fn is None:
-            continue
+    # 项目的退出清理都登记在 tools.exit_hooks（只有已导入的模块才登记过）
+    # Project exit cleanups live in tools.exit_hooks (registered on import only)
+    hooks = sys.modules.get("tools.exit_hooks")
+    if hooks is not None:
         try:
-            fn()
+            hooks.run_all()
         except Exception as exc:  # 清理失败不应掩盖测试结果 / never mask the test result
-            print(f"[conftest] {name} cleanup failed: {exc}", file=sys.stderr)
+            print(f"[conftest] exit hooks failed: {exc}", file=sys.stderr)
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.flush()
