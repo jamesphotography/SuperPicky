@@ -116,6 +116,41 @@ def _background_startup_disabled() -> bool:
     return os.environ.get(BACKGROUND_STARTUP_DISABLED_ENV) == "1"
 
 
+def _exit_event_loop(code: int = 0) -> None:
+    """
+    结束 Qt 事件循环以退出应用；本应用内一律用它，不要用 ``QApplication.quit()``。
+
+    ``QApplication.quit()`` 在 macOS 上会走平台退出 ``[NSApp terminate:]``。
+    ⌘Q / 「退出」Apple Event 本身就在 AppKit 的终止流程里：Qt 收到后同步关闭
+    各窗口，我们的 ``closeEvent`` 若再调 ``quit()``，就会嵌套一次
+    ``[NSApp terminate:]``，AppKit 直接调用 C 的 ``exit()``——
+    ``app.exec()`` 永不返回、``aboutToQuit`` 清理不执行（识鸟服务进程成孤儿、
+    ExifTool 未关闭），随后 shiboken 在 ``exit()`` 的静态析构里销毁残存的
+    Qt 包装对象，触发 ``QObject::destroyed`` 时 PySide 信号追踪器已失效，段错误。
+
+    ``QApplication.exit()`` 不经过 AppKit：它同步发出 ``aboutToQuit``、
+    让 ``exec()`` 正常返回，收尾由 ``main.py`` 统一完成。退出确认已在调用前做过，
+    故不需要 ``quit()`` 那一轮「询问各窗口能否关闭」。
+
+    参数:
+    code (int): ``app.exec()`` 的返回值（进程退出码），默认 0
+
+    Leave the Qt event loop to quit the app; always use this instead of
+    ``QApplication.quit()``. On macOS ``quit()`` goes through
+    ``[NSApp terminate:]``. ⌘Q / a "quit" Apple Event already runs inside
+    AppKit's termination flow, during which Qt closes our windows
+    synchronously; calling ``quit()`` again from ``closeEvent`` nests a second
+    ``terminate:`` and AppKit calls C ``exit()`` directly — ``exec()`` never
+    returns, ``aboutToQuit`` cleanup never runs (orphaned Bird-ID server,
+    ExifTool left open), and shiboken's static destructor then deletes the
+    surviving Qt wrappers, whose ``destroyed`` signal reaches PySide's already
+    torn-down signal tracker: SIGSEGV. ``exit()`` bypasses AppKit, emits
+    ``aboutToQuit`` synchronously and lets ``exec()`` return so ``main.py``
+    can finish shutdown. Callers have already confirmed the quit.
+    """
+    QApplication.exit(code)
+
+
 def _format_wall_clock(ts: float) -> str:
     """
     把 epoch 时间戳格式化为本地墙钟 HH:MM:SS，供完成报告显示。
@@ -1772,7 +1807,7 @@ class SuperPickyMainWindow(QMainWindow):
         self._really_quit = True
         if hasattr(self, 'tray_icon'):
             self.tray_icon.hide()         # 先隐藏托盘，避免用户二次点击
-        QApplication.quit()               # 触发 aboutToQuit → _cleanup_on_quit
+        _exit_event_loop()                # 发出 aboutToQuit → _cleanup_on_quit
 
     def _cleanup_on_quit(self):
         """统一退出清理（由 app.aboutToQuit 信号调用）
@@ -5969,7 +6004,7 @@ class SuperPickyMainWindow(QMainWindow):
                 event.ignore()
         else:
             self._save_main_window_placement()
-            QApplication.quit()           # 触发 aboutToQuit → _cleanup_on_quit
+            _exit_event_loop()            # 发出 aboutToQuit → _cleanup_on_quit
             event.accept()
 
     # ========== V4.2: 模型预加载功能 ==========
@@ -6370,9 +6405,9 @@ class SuperPickyMainWindow(QMainWindow):
                 from PySide6.QtWidgets import QApplication
                 def _restart_app():
                     dialog.accept()
-                    app = QApplication.instance()
-                    if app is not None:
-                        app.quit()
+                    # 走统一退出路径：不经过 closeEvent，托盘驻留也不会把退出变成隐藏
+                    # Unified quit path: skips closeEvent, so tray residency cannot turn it into a hide
+                    self._force_quit()
                 restart_btn.clicked.connect(_restart_app)
                 btn_row.addWidget(restart_btn)
 
@@ -6661,9 +6696,9 @@ class SuperPickyMainWindow(QMainWindow):
             # 用户已确认"立即安装"，installer 已启动；当前进程退出让出
             # 文件占用，确保 Windows Inno Setup / macOS DMG 替换不被挡。
             self._log(self.i18n.t("update.install_now"), "info")
-            app = QApplication.instance()
-            if app is not None:
-                app.quit()
+            # 走统一退出路径（同上，托盘驻留时 app.quit() 只会把窗口藏进托盘）
+            # Unified quit path (with tray residency, app.quit() would only hide the window)
+            self._force_quit()
 
     # ========== V4.3: 摄影水平预设 ==========
 
@@ -6700,7 +6735,9 @@ class SuperPickyMainWindow(QMainWindow):
 
         if result == QDialog.DialogCode.Rejected and dialog.interrupted_by_user:
             self._initialization_prompt_dismissed = True
-            QTimer.singleShot(0, QApplication.quit)
+            # 统一退出路径（见 _exit_event_loop）；托盘驻留时 quit() 只会把窗口藏起来
+            # Unified quit path (see _exit_event_loop); with tray residency quit() would only hide
+            QTimer.singleShot(0, self._force_quit)
 
     def _initialization_ready(self) -> bool:
         return self._init_manager.is_ready_for_main_ui()
