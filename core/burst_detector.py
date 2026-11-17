@@ -27,6 +27,12 @@ class PhotoTimestamp:
     rating: int = 0
     sharpness: float = 0.0
     topiq: float = 0.0
+    # 机身标识（厂商|型号|序列号），序号只在同一台机身内比较 / camera body key; sequence compares within one body
+    camera: str = ""
+    # 相机写入的连拍内序号：None=没有可用序号（按时间判断），0=单张，>=1=连拍第几张
+    # Shot number within a burst written by the camera: None = unavailable (fall back to
+    # time), 0 = single shot, >=1 = position in the burst.
+    sequence: Optional[int] = None
     
     @property
     def has_subsec(self) -> bool:
@@ -60,6 +66,11 @@ class BurstDetector:
     MIN_BURST_COUNT = 4      # V3.9: 默认 4 张
     MIN_RATING = 2           # 只处理 >= 2 星的照片
     
+    # 有相机连拍序号时，相邻两帧最多隔这么久仍算同一次连拍（机内删帧、缓冲写满掉速都会拉长间隔）
+    # With a camera sequence number, frames this far apart still belong to one burst
+    # (frames deleted in camera and buffer slowdowns stretch the gap).
+    SEQUENCE_MAX_GAP_MS = 1000
+
     # pHash 参数
     PHASH_THRESHOLD = 12     # 汉明距离阈值（<=12 视为相似）
     USE_PHASH = True         # 是否启用 pHash 验证
@@ -163,6 +174,10 @@ class BurstDetector:
             '-DateTimeOriginal',
             '-SubSecTimeOriginal',
             '-Rating',
+            '-Make',
+            '-Model',
+            '-SerialNumber',
+            '-SequenceNumber',
             '-@', '-'
         ]
         
@@ -265,12 +280,123 @@ class BurstDetector:
                 datetime_original=dt,
                 subsec=str(subsec) if subsec else None,
                 precise_time=precise_time,
-                rating=rating
+                rating=rating,
+                camera="|".join(str(item.get(k, "")) for k in ("Make", "Model", "SerialNumber")),
+                sequence=self._read_sequence(item),
             )
             results.append(photo)
         
         return results
     
+    @staticmethod
+    def _sony_sequence(item: dict) -> Optional[int]:
+        """
+        Sony 的连拍内序号：ExifTool 把 0 显示为 "Single"，连拍为 1、2、3…，老机型没有这个值。
+        已用 ILCE-7M4 的 1,779 张实拍核对：序号重置的位置就是每次连拍的边界。
+
+        参数:
+        item (dict): ExifTool 单个文件的 JSON 记录
+
+        返回:
+        Optional[int]: 0=单张，>=1=连拍第几张，None=没有可用序号
+
+        Sony's shot number within a burst: ExifTool prints 0 as "Single", bursts count 1, 2, 3...,
+        older bodies have no value. Checked on 1,779 ILCE-7M4 frames: the number resets exactly
+        at each burst boundary.
+
+        Parameters:
+        item (dict): one file's ExifTool JSON record
+
+        Return:
+        Optional[int]: 0 = single shot, >=1 = position in the burst, None = unavailable
+        """
+        value = item.get('SequenceNumber')
+        if value == 'Single':
+            return 0
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    # 厂商（EXIF Make 大写）→ 读取连拍内序号的函数。适配新厂商：在真实连拍文件上确认序号语义后，
+    # 在这里加一行；没登记的厂商一律按时间间隔判断。
+    # Make (upper-cased EXIF Make) -> reader of the in-burst shot number. To support another
+    # maker, confirm the tag's meaning on real burst files, then add a line here; makers not
+    # listed are grouped by time gap only.
+    SEQUENCE_READERS = {'SONY': _sony_sequence}
+
+    def _read_sequence(self, item: dict) -> Optional[int]:
+        """
+        按厂商取连拍内序号，未登记的厂商返回 None。
+
+        参数:
+        item (dict): ExifTool 单个文件的 JSON 记录
+
+        返回:
+        Optional[int]: 连拍内序号，None 表示按时间判断
+
+        Read the in-burst shot number for this file's maker; None for makers not registered.
+
+        Parameters:
+        item (dict): one file's ExifTool JSON record
+
+        Return:
+        Optional[int]: shot number, or None to fall back to time
+        """
+        reader = self.SEQUENCE_READERS.get(str(item.get('Make', '')).strip().upper())
+        return reader.__func__(item) if reader else None
+
+    def _same_burst(self, prev: PhotoTimestamp, curr: PhotoTimestamp) -> bool:
+        """
+        相邻两帧（已按时间排序）是否属于同一次连拍。
+
+        两条规则满足任意一条即为同一次连拍：
+        1. 间隔不超过时间阈值 TIME_THRESHOLD_MS（由「连拍速度」换算）。同一帧的衍生文件
+           （如 Lightroom 的 -Enhanced-NR.dng，时间相同）也由这条归入原片所在组。
+        2. 两帧都有相机序号：前一帧在连拍中（序号 >= 1）、序号递增且间隔不超过
+           SEQUENCE_MAX_GAP_MS。与「连拍速度」无关，6 张/秒的机身按默认 10 张/秒的阈值
+           一组都分不出，靠这条认出来（#168）。
+        序号只能多认出连拍，不会把按时间能分出的组拆开。调用方保证两帧来自同一台机身。
+
+        参数:
+        prev (PhotoTimestamp): 前一帧
+        curr (PhotoTimestamp): 后一帧
+
+        返回:
+        bool: True 表示同一次连拍
+
+        Whether two adjacent frames (sorted by time) belong to one burst.
+
+        Either rule makes them one burst: (1) the gap is within TIME_THRESHOLD_MS (from the
+        "burst speed" setting), which also keeps a derivative such as Lightroom's
+        -Enhanced-NR.dng (same time) with its original; (2) both carry a camera sequence
+        number, the earlier one is in a burst (>= 1), the number increases and the gap is within
+        SEQUENCE_MAX_GAP_MS, regardless of the setting (#168: a 6 fps body finds no burst with
+        the default 10 fps). The number only adds bursts, never splits ones the time rule
+        found. The caller passes frames of one camera body.
+
+        Parameters:
+        prev (PhotoTimestamp): earlier frame
+        curr (PhotoTimestamp): later frame
+
+        Return:
+        bool: True when both frames are in the same burst
+        """
+        time_diff_ms = (curr.precise_time - prev.precise_time) * 1000
+        # 时间阈值判为同组时一律同组：人手不可能在阈值（默认 100 ms）内按两次快门，
+        # 所以序号只能「多认出」连拍，不能把原来按时间能分出的组拆掉。此前两帧都有
+        # 序号时只看序号——若某台机身在某些模式下给连拍帧都写 0（Single），相隔 50 ms
+        # 也分不到一组，比改动前还少（#168 跟进）。
+        # Frames within the time threshold are always one burst: nobody presses the
+        # shutter twice within it, so the sequence number may only add bursts, never
+        # split ones the time rule found. Previously the number alone decided, so a
+        # body writing 0 ("Single") for burst frames lost groups found before (#168).
+        if time_diff_ms <= self.TIME_THRESHOLD_MS:
+            return True
+        if prev.sequence is not None and curr.sequence is not None:
+            return 1 <= prev.sequence < curr.sequence and time_diff_ms <= self.SEQUENCE_MAX_GAP_MS
+        return False
+
     def detect_groups(self, photos: List[PhotoTimestamp]) -> List[BurstGroup]:
         """
         检测连拍组（保留星级过滤，兼容旧逻辑）
@@ -299,7 +425,50 @@ class BurstDetector:
         # 只过滤有效时间戳，不看星级
         candidates = [p for p in photos if p.precise_time is not None]
         return self._detect_groups_internal(candidates)
-    
+
+    # 「疑似较慢连拍」的上限：相邻帧间隔落在 (阈值, 此值] 之间且数量不少时，提示调低连拍速度
+    # Upper bound of a "possibly slower burst" gap: many gaps in (threshold, this] trigger a hint
+    SLOW_BURST_HINT_MAX_MS = 400
+    SLOW_BURST_HINT_MIN_PAIRS = 8
+
+    def gap_stats(self, photos: List[PhotoTimestamp]) -> Dict[str, Any]:
+        """
+        统计同一机身相邻帧的拍摄间隔，供早期连拍检测写日志（#168）。
+
+        此前分不出连拍时只有一句「没有检测到连拍组」，用户无从知道是阈值太紧
+        （6 张/秒的机身默认 10 张/秒的阈值一组都分不出）。
+
+        参数:
+        photos (List[PhotoTimestamp]): read_timestamps 的结果
+
+        返回:
+        Dict[str, Any]: threshold_ms 阈值；median_gap_ms 1 秒内相邻帧间隔的中位数（没有则 None）；
+            with_sequence 带相机连拍序号的张数；slow_pairs 间隔在 (阈值, SLOW_BURST_HINT_MAX_MS]
+            之间的相邻帧对数；suggest_slower 是否值得提示调低连拍速度（另需调用方确认分出 0 组）
+
+        Gap statistics between adjacent frames of the same body, logged by the early
+        burst pass (#168) so "no bursts" comes with a reason.
+        """
+        frames = sorted((p for p in photos if p.precise_time is not None),
+                        key=lambda p: (p.camera, p.precise_time))
+        gaps = []
+        for prev, curr in zip(frames, frames[1:]):
+            if prev.camera != curr.camera:
+                continue
+            gap = (curr.precise_time - prev.precise_time) * 1000
+            if 0 < gap <= 1000:
+                gaps.append(gap)
+        gaps.sort()
+        slow = sum(1 for g in gaps if self.TIME_THRESHOLD_MS < g <= self.SLOW_BURST_HINT_MAX_MS)
+        return {
+            "threshold_ms": int(self.TIME_THRESHOLD_MS),
+            "median_gap_ms": int(round(gaps[len(gaps) // 2])) if gaps else None,
+            "with_sequence": sum(1 for p in photos if p.sequence is not None),
+            "slow_pairs": slow,
+            "suggest_slower": slow >= self.SLOW_BURST_HINT_MIN_PAIRS
+                              and self.TIME_THRESHOLD_MS < self.SLOW_BURST_HINT_MAX_MS,
+        }
+
     def _detect_groups_internal(self, candidates: List[PhotoTimestamp]) -> List[BurstGroup]:
         """
         内部分组检测逻辑
@@ -313,10 +482,11 @@ class BurstDetector:
         if len(candidates) < self.MIN_BURST_COUNT:
             return []
         
-        # 按精确时间排序
-        candidates.sort(key=lambda p: p.precise_time)
+        # 按机身、再按精确时间排序：两台机身同时连拍时各分各的组，不会互相打断
+        # Sort by camera body, then time: two bodies firing at once each get their own groups.
+        candidates.sort(key=lambda p: (p.camera, p.precise_time))
         
-        # 分组检测（基于时间戳）
+        # 分组检测（基于相机序号或时间戳）
         groups = []
         current_group = [candidates[0]]
         
@@ -324,10 +494,7 @@ class BurstDetector:
             prev = candidates[i - 1]
             curr = candidates[i]
             
-            # 计算时间差（毫秒）
-            time_diff_ms = (curr.precise_time - prev.precise_time) * 1000
-            
-            if time_diff_ms <= self.TIME_THRESHOLD_MS:
+            if prev.camera == curr.camera and self._same_burst(prev, curr):
                 # 属于同一组
                 current_group.append(curr)
             else:

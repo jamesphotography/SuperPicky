@@ -200,6 +200,85 @@ def _activate_main_window() -> None:
         _main_window._show_main_window()
 
 
+def _finish_shutdown_and_exit(exit_code: int) -> None:
+    """
+    事件循环结束后完成收尾，然后用 ``os._exit()`` 结束进程（不返回）。
+
+    为什么不让解释器正常退出：正常退出会经过 Python 的 atexit（PySide 的
+    ``moduleShutdown`` → ``destroyQCoreApplication``）和 C ``exit()`` 的静态析构
+    （shiboken ``BindingManager::~BindingManager``），两处都会销毁残存的 Qt 包装
+    对象；对象发出 ``destroyed`` 信号时 PySide 的信号追踪器已失效，macOS 上
+    稳定段错误、弹出「意外退出」报告（4.6.5 RC 的崩溃报告两种栈都出现过）。
+    这些析构不承担任何数据落盘，所以收尾做完后直接 ``os._exit()`` 跳过它们。
+
+    ``os._exit()`` 之前保证落盘的内容：
+    - ``aboutToQuit`` → ``_cleanup_on_quit``：此时已执行完（停处理线程与
+      caffeinate、停识鸟服务、关 ExifTool 等）；
+    - 非守护线程：与解释器正常退出一样经 ``threading._shutdown`` 等它们结束
+      （项目自建线程均为守护线程，正常退出时本来也不等；线程池工作线程会被通知退出）；
+    - ``tools.exit_hooks`` 登记的钩子：替代 atexit，在这里显式执行；
+    - 标准输出/错误与 logging 处理器：flush。
+    设置（advanced_config）在每次修改时即写盘，report.db 每次写入即提交，
+    都不依赖进程析构。
+
+    参数:
+    exit_code (int): ``app.exec()`` 的返回值，作为进程退出码
+
+    Finish shutdown after the event loop returns, then end the process with
+    ``os._exit()`` (never returns). A normal interpreter exit runs PySide's
+    atexit ``moduleShutdown`` and shiboken's static ``BindingManager``
+    destructor, both of which destroy surviving Qt wrappers whose
+    ``destroyed`` signal reaches PySide's dead signal tracker: a reliable
+    SIGSEGV on macOS. Neither step persists data, so we skip them. Before
+    ``os._exit()``: ``aboutToQuit`` cleanup has already run; non-daemon threads
+    are joined via ``threading._shutdown`` as a normal exit would; exit hooks
+    from ``tools.exit_hooks`` (our atexit replacement) run here; stdio and
+    logging are flushed. Settings
+    and report.db are written as they change and do not depend on teardown.
+
+    Parameters:
+    exit_code (int): Return value of ``app.exec()``, used as the exit status.
+    """
+    import threading
+    import logging
+    from tools import exit_hooks
+
+    # 与解释器正常退出的顺序一致：先 threading 收尾，再执行退出钩子。
+    # threading._shutdown 是解释器退出时调用的同一函数：先执行线程级 atexit
+    # （例如 concurrent.futures 通知线程池空闲线程退出——它们是非守护线程，
+    # 不通知就会一直阻塞），再等待所有非守护线程结束。私有函数缺失时退化为逐个 join。
+    # Same order as a normal interpreter exit: threading first, then exit hooks.
+    # threading._shutdown is what the interpreter itself calls: it runs
+    # threading-level atexit callbacks (e.g. concurrent.futures waking idle,
+    # non-daemon pool workers so they can exit) and then joins all non-daemon
+    # threads. Fall back to joining them one by one if it is missing.
+    threading_shutdown = getattr(threading, "_shutdown", None)
+    if callable(threading_shutdown):
+        threading_shutdown()
+    else:
+        current = threading.current_thread()
+        for thread in threading.enumerate():
+            if thread is current or thread.daemon or not thread.is_alive():
+                continue
+            print(f"[Shutdown] waiting for non-daemon thread: {thread.name}")
+            thread.join()
+
+    exit_hooks.run_all()
+
+    try:
+        logging.shutdown()
+    except Exception:
+        pass
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if stream is not None:
+                stream.flush()
+        except Exception:
+            pass
+
+    os._exit(exit_code)
+
+
 def main():
     """
     启动 Qt 应用并创建主窗口。
@@ -303,7 +382,10 @@ def main():
         _main_window.raise_()
         _main_window.activateWindow()
 
-    sys.exit(app.exec())
+    exit_code = app.exec()
+    # 跳过会段错误的 PySide/shiboken 析构，收尾见 _finish_shutdown_and_exit
+    # Skip the PySide/shiboken teardown that segfaults; see _finish_shutdown_and_exit
+    _finish_shutdown_and_exit(exit_code)
 
 
 if __name__ == "__main__":

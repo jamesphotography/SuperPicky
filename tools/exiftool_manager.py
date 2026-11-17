@@ -19,7 +19,7 @@ import time
 import threading
 import queue
 
-import atexit
+from tools import exit_hooks
 
 
 def merge_keyword_lists(existing: List[str], additions: List[str]) -> Optional[List[str]]:
@@ -473,6 +473,44 @@ class _ExifToolProcess:
                 raise
 
 
+def _path_inside(path: str, root: str) -> bool:
+    """
+    path 解析符号链接后是否仍在 root 之内（重置恢复文件前的保险）。
+
+    Whether path, with symlinks resolved, still lies inside root.
+    """
+    try:
+        real, base = os.path.realpath(path), os.path.realpath(root)
+        return os.path.commonpath([real, base]) == base
+    except ValueError:  # Windows 上不同盘符 / different drives on Windows
+        return False
+
+
+def inline_text_arg(tag: str, value: Any) -> str:
+    """
+    临时文件写不出来时的退回写法：把文本直接放进 ExifTool 参数，但先把换行压成空格。
+
+    常驻 ExifTool 用 `-@ -` 逐行读参数，评分题注本身带换行；不压平的话，题注的每一行
+    都会被当成独立的参数或文件名。正常路径（`-TAG<=临时文件`）不受影响。
+
+    参数:
+    tag (str): 标签名，如 "XMP:Title"
+    value (Any): 要写入的文本
+
+    返回:
+    str: 单行的 `-TAG=值` 参数
+
+    Fallback when the UTF-8 temp file cannot be created: pass the text inline,
+    collapsing line breaks first. The persistent ExifTool reads one argument per
+    line (`-@ -`) and rating captions contain newlines, so each line would
+    otherwise become a separate argument or file name.
+    """
+    text = " ".join(str(value).splitlines())
+    print(f"⚠️ [ExifTool] {tag} 临时文件不可用，改为单行内联写入 / temp file unavailable, "
+          f"writing inline on one line")
+    return f"-{tag}={text}"
+
+
 def pick_flag_args(pick) -> List[str]:
     """
     把旗标写成 Lightroom 认的两个 XMP 字段（与 Lightroom 自己写的完全一致）。
@@ -565,8 +603,9 @@ class ExifToolManager:
         self._raw_embed_fallbacks: List[Tuple[str, str]] = []
         self._raw_embed_fallback_lock = threading.Lock()
 
-        # 注册退出清理
-        atexit.register(self.shutdown)
+        # 注册退出清理（经 exit_hooks：GUI 以 os._exit 结束时也会执行）
+        # Register exit cleanup via exit_hooks so it also runs before the GUI's os._exit
+        exit_hooks.register(self.shutdown)
 
     def _get_exiftool_path(self) -> str:
         """获取exiftool可执行文件路径"""
@@ -1117,7 +1156,7 @@ class ExifToolManager:
                 temp_files.append(title_tmp_path)
                 args.append(f'-XMP:Title<={title_tmp_path}')
             except Exception:
-                args.append(f'-XMP:Title={title}')
+                args.append(inline_text_arg('XMP:Title', title))
 
         caption = item.get('caption')
         if caption is not None:
@@ -1128,7 +1167,7 @@ class ExifToolManager:
                 temp_files.append(caption_tmp_path)
                 args.append(f'-XMP:Description<={caption_tmp_path}')
             except Exception:
-                args.append(f'-XMP:Description={caption}')
+                args.append(inline_text_arg('XMP:Description', caption))
 
         # V4.3.0: 统一用 -overwrite_original_in_place（原地写，不创建 temp、不 rename）。
         # 旧的裸 -overwrite_original 在 ExFAT 外置盘/存储卡上 rename() 失败时会导致
@@ -1266,7 +1305,7 @@ class ExifToolManager:
                 temp_files.append(title_tmp_path)
                 args.append(f'-XMP:Title<={title_tmp_path}')
             except Exception as e:
-                args.append(f'-XMP:Title={title}')
+                args.append(inline_text_arg('XMP:Title', title))
 
         caption = item.get('caption')
         if caption is not None:
@@ -1277,7 +1316,7 @@ class ExifToolManager:
                 temp_files.append(caption_tmp_path)
                 args.append(f'-XMP:Description<={caption_tmp_path}')
             except Exception as e:
-                args.append(f'-XMP:Description={caption}')
+                args.append(inline_text_arg('XMP:Description', caption))
 
         args.extend(['-overwrite_original_in_place', xmp_path])  # V4.3.0: ExFAT 安全，避免 rename 删文件
 
@@ -2119,7 +2158,7 @@ class ExifToolManager:
                     args_list.append(f'-XMP:Title<={tmp_path}')
                 except Exception as e:
                     print(f"⚠️ Title temp file failed: {e}, fallback to inline")
-                    args_list.append(f'-XMP:Title={item["title"]}')
+                    args_list.append(inline_text_arg('XMP:Title', item['title']))
                 
             # Caption (使用临时 UTF-8 文件，避免换行破坏 -@ 参数流)
             caption = item.get('caption')
@@ -2132,7 +2171,7 @@ class ExifToolManager:
                     args_list.append(f'-XMP:Description<={tmp_path}')
                 except Exception as e:
                     print(f"⚠️ Caption temp file failed: {e}, fallback to inline")
-                    args_list.append(f'-XMP:Description={caption}')
+                    args_list.append(inline_text_arg('XMP:Description', caption))
 
             # 文件路径
             args_list.append(file_path)
@@ -2639,6 +2678,13 @@ class ExifToolManager:
                             stats['not_found'] += 1
                             continue
 
+                        # 只恢复照片目录里的真实文件：符号链接、解析后在目录外的一律不动
+                        # Only real files inside the photo folder; never symlinks or
+                        # paths that resolve outside it
+                        if os.path.islink(src_path) or not _path_inside(src_path, dir_path):
+                            stats['not_found'] += 1
+                            continue
+
                         if os.path.exists(dst_path):
                             stats['failed'] += 1
                             log(t("logs.restore_skipped_exists", filename=filename))
@@ -2711,12 +2757,18 @@ class ExifToolManager:
             """递归恢复文件夹中的文件"""
             nonlocal stats
             
-            if not os.path.exists(folder_path):
+            # 符号链接一律不跟随、不移动：否则一个指向外部文件夹的链接会让这里
+            # 递归进去，把外部文件全搬进照片目录
+            # Never follow or move symlinks: a link to an outside folder would make
+            # this recurse into it and pull its files into the photo folder
+            if not os.path.exists(folder_path) or os.path.islink(folder_path):
                 return
             
             for entry in os.listdir(folder_path):
                 entry_path = os.path.join(folder_path, entry)
 
+                if os.path.islink(entry_path):
+                    continue
                 if os.path.isdir(entry_path):
                     # V4.0: 递归处理子目录（鸟种目录、连拍目录）
                     folders_to_check.add(entry_path)

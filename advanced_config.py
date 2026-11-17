@@ -389,6 +389,11 @@ class AdvancedConfig:
         # 使用记录与窗口状态 / history and window state
         "recent_directories", "recent_directory_groups", "main_window_geometry", "main_window_maximized",
         "browser_copy_dir",
+        # 用户手动整理的常用国家/地区列表：与「最近打开的目录」同属个人整理的内容，
+        # 恢复默认时清掉会让用户重新挑一遍。
+        # The user's hand-curated country/region shortlist; like recent folders,
+        # it is personal curation that Restore Defaults should not wipe.
+        "birdid_country_shortlist",
     })
 
     def reset_to_default(self, keep_preserved: bool = True) -> None:
@@ -1670,7 +1675,16 @@ class AdvancedConfig:
         self.config["birdid_country_code"] = country_code
         self.config["birdid_selected_country"] = selected_country
         self.config["birdid_region_code"] = region_code
-        self.config["birdid_selected_region"] = selected_region
+        # 没选省/州（整个国家/地区）时存固定的默认值，不存当前语言的显示文字：
+        # 否则改措辞或换界面语言后，同一个「整个国家/地区」在配置里有好几种写法，
+        # 关闭设置中心时还会把默认值改掉。是否选了省/州一律看 region_code。
+        # With no state/province chosen, store the fixed default rather than the
+        # current translation; otherwise one "entire country/region" ends up
+        # spelled several ways across languages and wordings. Whether a region is
+        # chosen is always decided by region_code.
+        self.config["birdid_selected_region"] = (
+            selected_region if region_code else self.DEFAULT_CONFIG["birdid_selected_region"]
+        )
         # #143：所有选国家的入口最后都到这里；选了常用国家以外的（来自「更多国家」）就加进常用
         # #143: every picker ends here; a country outside the shortlist gets added
         from core.country_shortlist import add_country, effective_shortlist, system_country_code

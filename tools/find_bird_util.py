@@ -584,7 +584,9 @@ def force_flatten_directory(directory, log_callback=None, i18n=None) -> dict:
     matched_dirs = []
     for entry in top_entries:
         entry_path = os.path.join(directory, entry)
-        if not os.path.isdir(entry_path):
+        # 符号链接不跟随：一个名字像评分目录、实际指向外部的链接，会让 os.walk 走进
+        # 外部文件夹，把那里的文件搬进照片目录 / never follow a symlinked folder
+        if not os.path.isdir(entry_path) or os.path.islink(entry_path):
             continue
         if entry.startswith("."):  # 隐藏 / .superpicky 等内部目录，跳过
             continue
@@ -596,10 +598,13 @@ def force_flatten_directory(directory, log_callback=None, i18n=None) -> dict:
     for top_dir in matched_dirs:
         # 递归把该匹配目录内的所有文件移回根（任意深度）
         for root, dirs, files in os.walk(top_dir):
+            dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d))]
             for fname in files:
                 if fname.startswith("."):  # ._* / .DS_Store 等
                     continue
                 src = os.path.join(root, fname)
+                if os.path.islink(src):  # 只搬真实文件，不搬链接 / real files only
+                    continue
                 dst = os.path.join(directory, fname)
                 if os.path.exists(dst):
                     stats["skipped"] += 1

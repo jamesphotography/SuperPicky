@@ -194,11 +194,8 @@ def cmd_process(args):
 
 
 def cmd_reset(args):
-    """重置目录"""
-    from tools.find_bird_util import reset
-    from tools.exiftool_manager import get_exiftool_manager
+    """重置目录（与界面共用 core.directory_reset）/ Reset a directory (shared with the GUI)."""
     from tools.i18n import get_i18n
-    import shutil
     
     print_banner()
     print(t("cli.reset_dir", directory=args.directory))
@@ -209,167 +206,18 @@ def cmd_reset(args):
             print(t("cli.cancelled"))
             return 1
     
-    # V4.0.5: 先处理所有子目录（burst_XXX、鸟种 Other_Birds 等）
-    # 将文件移回评分目录，然后由步骤1的 manifest 恢复到根目录
-    print(t("cli.reset_step0"))
-    # 三种界面语言的评分目录（含 4★/5★）/ rating folders of all UI languages (incl. 4★/5★)
-    from constants import ALL_RATING_FOLDER_NAMES
-    rating_dirs = sorted(ALL_RATING_FOLDER_NAMES)
-    subdir_stats = {'dirs_removed': 0, 'files_restored': 0}
-    
-    for rating_dir in rating_dirs:
-        rating_path = os.path.join(args.directory, rating_dir)
-        if not os.path.exists(rating_path):
-            continue
-        
-        # 查找所有子目录（burst_XXX、鸟种目录等）
-        for entry in os.scandir(rating_path):
-            entry_path = entry.path
-            if entry.is_symlink():
-                print(t("cli.skip_symlink_dir", rating_dir=rating_dir, name=entry.name))
-                continue
-            if entry.is_dir(follow_symlinks=False):
-                print(t("cli.flatten_subdir", rating_dir=rating_dir, name=entry.name))
-                # 递归将所有文件移回评分目录
-                for root, dirs, files in os.walk(entry_path):
-                    # 防御性处理：不进入任何符号链接子目录
-                    dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d))]
-                    for filename in files:
-                        src = os.path.join(root, filename)
-                        if os.path.islink(src):
-                            print(t("cli.skip_symlink_file", filename=filename))
-                            continue
-                        dst = os.path.join(rating_path, filename)
-                        if os.path.isfile(src):
-                            try:
-                                if os.path.exists(dst):
-                                    os.remove(dst)
-                                shutil.move(src, dst)
-                                subdir_stats['files_restored'] += 1
-                            except Exception as e:
-                                print(t("cli.move_failed", filename=filename, e=e))
-
-                # 删除子目录
-                try:
-                    if os.path.exists(entry_path):
-                        shutil.rmtree(entry_path)
-                    subdir_stats['dirs_removed'] += 1
-                except Exception as e:
-                    print(t("cli.remove_subdir_failed", name=entry.name, e=e))
-    
-    if subdir_stats['dirs_removed'] > 0:
-        print(t("cli.subdirs_cleaned", dirs_removed=subdir_stats['dirs_removed'], files_restored=subdir_stats['files_restored']))
-    else:
-        print(t("cli.no_subdirs"))
-    
-    print(t("cli.reset_step1"))
-    exiftool_mgr = get_exiftool_manager()
-    restore_stats = exiftool_mgr.restore_files_from_manifest(args.directory)
-    
-    restored = restore_stats.get('restored', 0)
-    if restored > 0:
-        print(t("cli.manifest_restored", restored=restored))
-    
-    # V4.0.5: Manifest 可能不包含所有文件（来自上次运行的残留文件）
-    # 扫描评分目录，将所有文件强制移回根目录
-    fallback_restored = 0
-    for rating_dir in rating_dirs:
-        rating_path = os.path.join(args.directory, rating_dir)
-        if not os.path.exists(rating_path):
-            continue
-        
-        for filename in os.listdir(rating_path):
-            src = os.path.join(rating_path, filename)
-            dst = os.path.join(args.directory, filename)
-            if os.path.isfile(src):
-                try:
-                    if os.path.exists(dst):
-                        os.remove(dst)
-                    shutil.move(src, dst)
-                    fallback_restored += 1
-                except Exception as e:
-                    print(t("cli.move_back_failed", filename=filename, e=e))
-    
-    if fallback_restored > 0:
-        print(t("cli.fallback_restored", fallback_restored=fallback_restored))
-    
-    # V4.3.1: 按目录名摊平兜底——manifest/根目录评分扫描会漏掉「鸟种优先」布局下
-    # 鸟种/星级/burst_ 子目录里的深层文件;与 UI reset 保持一致。force_flatten 幂等安全
-    # （同名不覆盖、只动 SuperPicky 目录、不碰用户目录）。
-    flatten_moved = 0
-    try:
-        from tools.find_bird_util import force_flatten_directory
-        _fstats = force_flatten_directory(args.directory)
-        flatten_moved = int(_fstats.get("moved", 0)) if _fstats else 0
-    except Exception as _fe:
-        print(t("cli.flatten_fallback_failed", error=_fe))
-
-    total_restored = restored + fallback_restored + flatten_moved
-    if total_restored == 0:
-        print(t("cli.nothing_to_restore"))
-    else:
-        print(t("cli.total_restored", total_restored=total_restored))
-
-    print(t("cli.reset_step2"))
-    i18n = get_i18n()
-    success = reset(args.directory, i18n=i18n)
-    
-    # V4.0.5: 删除评分目录（所有文件已移走）
-    print(t("cli.reset_step3"))
-    deleted_dirs = 0
-    for rating_dir in rating_dirs:
-        rating_path = os.path.join(args.directory, rating_dir)
-        if os.path.exists(rating_path) and os.path.isdir(rating_path):
-            try:
-                shutil.rmtree(rating_path)
-                print(t("cli.deleted", name=rating_dir))
-                deleted_dirs += 1
-            except Exception as e:
-                print(t("cli.remove_rating_dir_failed", rating_dir=rating_dir, e=e))
-    
-    # V4.0.5: 清理 .superpicky 隐藏目录和 manifest 文件
-    superpicky_dir = os.path.join(args.directory, ".superpicky")
-    if os.path.exists(superpicky_dir):
-        try:
-            shutil.rmtree(superpicky_dir)
-            print(t("cli.deleted", name=".superpicky/"))
-            deleted_dirs += 1
-        except Exception:
-            try:
-                import subprocess
-                subprocess.run(['rm', '-rf', superpicky_dir], check=True, timeout=120)
-                print(t("cli.deleted", name=".superpicky/ (force)"))
-                deleted_dirs += 1
-            except Exception as e2:
-                print(t("cli.superpicky_dir_remove_failed", e2=e2))
-    
-    manifest_file = os.path.join(args.directory, ".superpicky_manifest.json")
-    if os.path.exists(manifest_file):
-        try:
-            os.remove(manifest_file)
-            print(t("cli.deleted", name=".superpicky_manifest.json"))
-        except Exception as e:
-            print(t("cli.manifest_remove_failed", e=e))
-    
-    # 清理 macOS ._burst_XXX 残留文件
-    for filename in os.listdir(args.directory):
-        if filename.startswith('._burst_') or filename.startswith('._其他') or filename.startswith('._栗'):
-            try:
-                os.remove(os.path.join(args.directory, filename))
-            except Exception:
-                pass
-    
-    if deleted_dirs > 0:
-        print(t("cli.dirs_cleaned", deleted_dirs=deleted_dirs))
-    else:
-        print(t("cli.no_empty_dirs"))
-    
-    if success:
+    # 与界面共用同一套安全重置（core.directory_reset）：同名跳过不覆盖、评分目录确实为空才删。
+    # 此前命令行自带一份实现，同名先删、移动失败也无条件删除子目录与评分目录，会丢照片。
+    # Shared safe reset with the GUI (core.directory_reset): same-name files are
+    # skipped, rating folders removed only when empty. The CLI's own copy deleted
+    # same-name files and removed folders unconditionally.
+    from core.directory_reset import reset_single_directory
+    result = reset_single_directory(args.directory, get_i18n(), print)
+    if result["success"]:
         print(t("cli.reset_done"))
         return 0
-    else:
-        print(t("cli.reset_failed"))
-        return 1
+    print(t("cli.reset_failed"))
+    return 1
 
 
 def cmd_info(args):

@@ -1085,6 +1085,26 @@ class ReportDB:
             row = self._conn.execute("SELECT COUNT(*) FROM photos").fetchone()
             return row[0]
 
+    def max_burst_id(self) -> Optional[int]:
+        """
+        返回库里最大的连拍组编号（增量选片据此给新连拍组续号）；没有连拍时为 None。
+        持锁执行，供业务代码代替直接访问 _conn。
+
+        返回:
+        Optional[int]: 最大 burst_id，或 None
+
+        Largest burst_id in the database (incremental culling continues the
+        numbering from it), or None when there are no bursts. Runs under the
+        lock so business code never touches _conn directly.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT MAX(burst_id) FROM photos WHERE burst_id IS NOT NULL"
+            ).fetchone()
+        if row is None or row[0] is None:
+            return None
+        return int(row[0])
+
     def exists(self) -> bool:
         """数据库文件是否存在。"""
         return os.path.exists(self.db_path)
