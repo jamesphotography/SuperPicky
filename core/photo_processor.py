@@ -1441,6 +1441,7 @@ class PhotoProcessor:
         # 清掉上一次（或浏览器里单张改星级）残留的「写本体回退边车」记录，汇总只算本轮（#165）
         # Drop fallback records from earlier runs / browser edits so the summary covers this run only (#165)
         exiftool_mgr.drain_raw_embed_fallbacks()
+        exiftool_mgr.drain_location_protected()   # 清掉上一轮残留 / clear leftovers from a previous run
         metadata_batch: List[Dict] = []
         metadata_batch_size = 64
         env_exif_batch = os.getenv("SUPERPICKY_EXIF_BATCH_SIZE", "").strip()
@@ -3872,6 +3873,14 @@ class PhotoProcessor:
                                   names=", ".join(fallback_names[:5])
                                   + (" …" if len(fallback_names) > 5 else ""),
                                   reasons="; ".join(fallback_reasons)), "warning")
+        # 已有真实地名、未写锐度/美学/对焦的照片：汇总一行，免得用户以为分数丢了
+        # Photos that kept a real place name instead of scores: one summary line
+        located = sorted({os.path.basename(path) for path in exiftool_mgr.drain_location_protected()})
+        if located:
+            self._log(self.i18n.t("logs.location_protected_summary",
+                                  count=len(located),
+                                  names=", ".join(located[:5]) + (" …" if len(located) > 5 else "")),
+                      "info")
         
         # SQLite 数据库会在 _update_csv_keypoint_data 中自动提交
         # 无需手动 flush

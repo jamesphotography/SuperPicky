@@ -15,6 +15,9 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from constants import ALL_RATING_FOLDER_NAMES, SIDECAR_RAW_EXTENSIONS
 from core.metadata_fields import ALL_FIELDS, filter_item, has_payload
+from core.location_guard import (
+    LOCATION_READ_ARGS, SCORE_ITEM_KEYS, groups_from_exiftool_json, has_real_location,
+)
 import time
 import threading
 import queue
@@ -602,6 +605,10 @@ class ExifToolManager:
         # RAW body writes that fell back to a sidecar (#165), drained by the pipeline
         self._raw_embed_fallbacks: List[Tuple[str, str]] = []
         self._raw_embed_fallback_lock = threading.Lock()
+        # 因已有真实地名而未写锐度/美学/对焦的照片，由处理流程汇总时取走
+        # Photos whose scores were skipped to keep a real place name, drained by the pipeline
+        self._location_protected_paths: List[str] = []
+        self._location_protected_lock = threading.Lock()
 
         # 注册退出清理（经 exit_hooks：GUI 以 os._exit 结束时也会执行）
         # Register exit cleanup via exit_hooks so it also runs before the GUI's os._exit
@@ -1003,6 +1010,78 @@ class ExifToolManager:
             self._raw_embed_fallbacks.clear()
         return events
 
+    def _location_protected(self, file_path: str) -> bool:
+        """
+        照片本体或旁边的 .xmp 边车里是否已有真实地名（不是 SuperPicky 写的分数）。
+
+        Lightroom 给 RAW 填的地点在边车里，只读本体会漏，所以两处都读。读取失败按
+        不保护处理，与改动前的行为一致。
+
+        参数:
+        file_path (str): 照片路径
+
+        返回:
+        bool: 有真实地名为 True
+
+        Whether the photo or its .xmp sidecar already holds a real place name
+        (not SuperPicky's scores). Both are read, since Lightroom keeps a RAW's
+        location in the sidecar. A failed read counts as unprotected.
+        """
+        if not file_path:
+            return False
+        sources = [file_path]
+        sidecar = os.path.splitext(file_path)[0] + '.xmp'
+        if sidecar != file_path and os.path.exists(sidecar):
+            sources.append(sidecar)
+        for source in sources:
+            try:
+                data = self.read_metadata(source, extra_args=list(LOCATION_READ_ARGS)) or {}
+            except Exception:
+                continue
+            if has_real_location(groups_from_exiftool_json(data)):
+                return True
+        return False
+
+    def _drop_scores_if_located(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        照片已有真实地名时去掉锐度/美学/对焦（它们写进城市/省份/国家），其余字段照写。
+
+        item 里没有这三项时不读文件。受保护的照片记入列表，由 drain_location_protected 取走。
+
+        参数:
+        item (Dict[str, Any]): 写入器 item（已经过字段开关过滤）
+
+        返回:
+        Dict[str, Any]: 受保护时为去掉三项的副本，否则原 item
+
+        Drop sharpness/aesthetics/focus (written to City/State/Country) when the
+        photo already has a real place name; other fields are still written.
+        Reads nothing when the item carries none of the three.
+        """
+        if not any(item.get(k) is not None for k in SCORE_ITEM_KEYS):
+            return item
+        file_path = item.get('file')
+        if not self._location_protected(file_path):
+            return item
+        with self._location_protected_lock:
+            self._location_protected_paths.append(file_path)
+        return {k: v for k, v in item.items() if k not in SCORE_ITEM_KEYS}
+
+    def drain_location_protected(self) -> List[str]:
+        """
+        取出并清空「因已有真实地名而未写分数」的照片路径。
+
+        返回:
+        List[str]: 照片路径列表
+
+        Return and clear the photos whose scores were skipped to keep a real
+        place name.
+        """
+        with self._location_protected_lock:
+            paths = list(self._location_protected_paths)
+            self._location_protected_paths.clear()
+        return paths
+
     def _read_raw_layout_tags(self, file_path: str) -> Optional[Dict[str, Any]]:
         """
         经 read 常驻进程以 ``-n -json`` 读取 RAW_LAYOUT_TAGS。
@@ -1106,6 +1185,7 @@ class ExifToolManager:
         # #153 关掉的字段不写；什么都不剩就是「按配置跳过」，算成功
         # #153 skip switched-off fields; nothing left counts as a configured skip
         item = self._apply_field_switches(item)
+        item = self._drop_scores_if_located(item)
         if not has_payload(item):
             return True
 
@@ -1253,6 +1333,7 @@ class ExifToolManager:
         # #153 关掉的字段不写；什么都不剩就不碰（也不新建）侧车
         # #153 skip switched-off fields; with nothing left, don't touch or create the sidecar
         item = self._apply_field_switches(item)
+        item = self._drop_scores_if_located(item)
         if not has_payload(item):
             return True
         xmp_path = os.path.splitext(file_path)[0] + '.xmp'
@@ -1480,6 +1561,7 @@ class ExifToolManager:
         # #153 先过滤：什么都不剩时，auto 模式也不必复制整张 RAW 去试写
         # #153 filter first, so auto mode doesn't copy a whole RAW for nothing
         item = self._apply_field_switches(item)
+        item = self._drop_scores_if_located(item)
         if not has_payload(item):
             return True
 
@@ -2040,7 +2122,8 @@ class ExifToolManager:
         # are configured skips, counted as success and never sent to exiftool
         # (an empty command fails with "nothing to do").
         enabled = self._enabled_fields()
-        filtered = [filter_item(it, enabled) for it in files_metadata]
+        filtered = [self._drop_scores_if_located(filter_item(it, enabled))
+                    for it in files_metadata]
         files_metadata = [it for it in filtered if has_payload(it)]
         stats['success'] += len(filtered) - len(files_metadata)
         if not files_metadata:
