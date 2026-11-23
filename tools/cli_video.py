@@ -14,6 +14,8 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from tools.i18n import t
+
 if TYPE_CHECKING:
     from core.video_analyzer import VideoAnalysisResult, VideoAnalyzer
     from tools.video_organizer import OrganizeResult
@@ -30,7 +32,7 @@ def _video_paths(raw_path: str) -> list[Path]:
     path = Path(raw_path).expanduser()
     extensions = set(VIDEO_EXTENSIONS)
     if path.is_symlink():
-        raise ValueError(f"Symbolic links are not accepted as inputs: {path}")
+        raise ValueError(t("cli.video_symlink_input", path=path))
     if path.is_dir():
         videos = sorted(
             (
@@ -43,12 +45,12 @@ def _video_paths(raw_path: str) -> list[Path]:
             key=lambda entry: (entry.name.casefold(), entry.name),
         )
         if not videos:
-            raise ValueError(f"No supported videos found in: {path}")
+            raise ValueError(t("cli.video_none_in_dir", path=path))
         return videos
     if not path.is_file():
-        raise ValueError(f"Video file or directory not found: {path}")
+        raise ValueError(t("cli.video_not_found", path=path))
     if path.suffix.lower() not in extensions:
-        raise ValueError(f"Unsupported video format: {path}")
+        raise ValueError(t("cli.video_unsupported", path=path))
     return [path.resolve()]
 
 
@@ -87,13 +89,13 @@ def _build_analyzer(args: Namespace) -> VideoAnalyzer:
         flight = bool(configured("video_enable_flight"))
 
     if max_frames < 1:
-        raise ValueError("--max-frames must be positive")
+        raise ValueError(t("cli.video_bad_max_frames"))
     if not 0 <= threshold <= 1:
-        raise ValueError("--yolo-threshold must be between 0 and 1")
+        raise ValueError(t("cli.video_bad_threshold"))
     if min_segment_frames < 1:
-        raise ValueError("video_min_segment_frames must be positive")
+        raise ValueError(t("cli.video_bad_min_segment"))
     if species_mode not in ("instant", "fast", "full"):
-        raise ValueError(f"Invalid video species mode: {species_mode}")
+        raise ValueError(t("cli.video_bad_mode", mode=species_mode))
 
     from ai_model import load_yolo_model
     from core.video_analyzer import VideoAnalyzer
@@ -130,7 +132,7 @@ def _check_manifest(path: Path) -> None:
     except FileNotFoundError:
         return
     if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-        raise ValueError(f"Unsafe video manifest: {path}")
+        raise ValueError(t("cli.video_unsafe_manifest", path=path))
 
 
 def _run(args: Namespace) -> tuple[list[dict], bool, bool]:
@@ -191,17 +193,17 @@ def _run(args: Namespace) -> tuple[list[dict], bool, bool]:
                 )
                 if result.cancelled or interrupted:
                     interrupted = True
-                    row["error"] = "Analysis interrupted"
+                    row["error"] = t("cli.video_analysis_interrupted")
                     break
                 if result.sampled_frames == 0:
-                    raise ValueError("No frames could be decoded")
+                    raise ValueError(t("cli.video_no_frames"))
                 row["analysis"] = asdict(result)
                 if organizer is not None:
                     if video.is_symlink() or not video.is_file():
-                        raise ValueError("Source is no longer a regular video file")
+                        raise ValueError(t("cli.video_source_changed"))
                     organized = organizer.organize(str(video), result.segments)
                     if not organized.success:
-                        raise OSError(organized.error or "Video organization failed")
+                        raise OSError(organized.error or t("cli.video_organize_failed"))
                     row["target"] = organized.target_video_path
                     row["skipped"] = organized.skipped
                     if not organized.skipped and organized.target_video_path != str(
@@ -222,11 +224,11 @@ def _run(args: Namespace) -> tuple[list[dict], bool, bool]:
 
                     _check_manifest(manifest)
                     if not record_organized_results(moves):
-                        raise OSError("No video manifest was written")
+                        raise OSError(t("cli.video_no_manifest"))
                 except Exception as error:
                     failed = True
                     print(
-                        f"{manifest}: {error}; use the reported paths to recover moved videos.",
+                        t("cli.video_manifest_failed", path=manifest, error=error),
                         file=sys.stderr,
                     )
         finally:
@@ -251,7 +253,7 @@ def analyze_video(args: Namespace) -> int:
         interrupted = True
     except Exception as error:
         failed = True
-        print(f"Video analysis: {error}", file=sys.stderr)
+        print(t("cli.video_failed", error=error), file=sys.stderr)
 
     if getattr(args, "json", False):
         # ASCII 转义让 Unicode 路径可在任意管道编码下往返 / ASCII escapes preserve Unicode on any pipe encoding.
@@ -260,7 +262,8 @@ def analyze_video(args: Namespace) -> int:
         for row in rows:
             result = row.get("analysis")
             if result is not None:
-                verdict = "bird detected" if result["has_bird"] else "no bird detected"
+                verdict = t("cli.video_verdict_bird" if result["has_bird"]
+                            else "cli.video_verdict_no_bird")
                 species = list(
                     dict.fromkeys(
                         segment["species_en"] or segment["species_zh"]
@@ -269,15 +272,17 @@ def analyze_video(args: Namespace) -> int:
                         and (segment["species_en"] or segment["species_zh"])
                     )
                 )
-                details = f" ({', '.join(species)})" if species else ""
-                print(
-                    f"{row['path']}: {verdict}{details}; {result['sampled_frames']} frames"
+                details = (
+                    t("cli.video_species_list", names=t("logs.name_list_sep").join(species))
+                    if species else ""
                 )
+                print(t("cli.video_result", path=row["path"], verdict=verdict,
+                        details=details, frames=result["sampled_frames"]))
             if row.get("target") is not None:
-                status = "Already organized" if row["skipped"] else "Moved to"
-                print(f"  {status}: {row['target']}")
+                key = "cli.video_already_organized" if row["skipped"] else "cli.video_moved_to"
+                print(t(key, path=row["target"]))
 
     if interrupted:
-        print("Video analysis interrupted.", file=sys.stderr)
+        print(t("cli.video_interrupted"), file=sys.stderr)
         return 130
     return int(failed)

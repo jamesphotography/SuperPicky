@@ -534,6 +534,11 @@ def _add_optional_commands(subparsers: argparse._SubParsersAction) -> None:
     report.add_argument('--text-only', action='store_true', help=t('cli.help_report_text_only'))
     checklist.add_argument('--location', required=True, help=t('cli.help_ebird_location'))
     checklist.add_argument('--country', help=t('cli.help_ebird_export_country'))
+    # 默认不写坐标（精确点位可能暴露敏感地点）；显式加参数时与 GUI 导出一致，写入中位坐标。
+    # Coordinates are omitted by default (exact spots can be sensitive); opting in
+    # matches the GUI export, which writes the photos' median coordinates.
+    checklist.add_argument('--include-gps', action='store_true',
+                           help=t('cli.help_ebird_include_gps'))
 
     video = subparsers.add_parser('video', help=t('cli.cmd_video'))
     video.add_argument('path', help=t('cli.help_video_path'))
@@ -546,6 +551,9 @@ def _add_optional_commands(subparsers: argparse._SubParsersAction) -> None:
                        help=t('cli.help_video_species'))
     video.add_argument('--flight', action=argparse.BooleanOptionalAction, default=None,
                        help=t('cli.help_video_flight'))
+    # 机器可读输出：结果 JSON 写到 stdout，诊断信息写到 stderr。
+    # Machine-readable output: JSON results on stdout, diagnostics on stderr.
+    video.add_argument('--json', action='store_true', help=t('cli.help_video_json'))
 
 
 def main():

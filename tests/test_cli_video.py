@@ -2,6 +2,7 @@
 """视频 CLI 回归测试，无需模型权重 / Video CLI regressions without model weights."""
 
 import json
+import re
 import signal
 import sys
 from argparse import Namespace
@@ -13,6 +14,23 @@ import pytest
 
 from core.video_segment import BirdSegment
 from tools import cli_video, video_organizer
+from tools.i18n import t
+
+
+def _msg(key: str) -> str:
+    """
+    取语言包模板里最长的一段固定文字，用来断言本地化后的报错。
+
+    参数:
+    key (str): 语言包键，例如 "cli.export_no_parent"
+
+    返回:
+    str: 模板中去掉 {占位符} 后最长的一段文字（与当前测试语言无关）
+
+    Return the longest literal fragment of a locale template, so assertions on
+    localized messages hold whatever the test language is.
+    """
+    return max(re.split(r"\{[^}]*\}", t(key)), key=len).strip()
 
 
 def _args(path: Path, **overrides: object) -> Namespace:
@@ -102,9 +120,9 @@ def test_flat_scan_reports_video_results_without_touching_files(
 @pytest.mark.parametrize(
     ("kind", "message"),
     [
-        ("missing", "not found"),
-        ("unsupported", "Unsupported"),
-        ("empty", "No supported"),
+        ("missing", "cli.video_not_found"),
+        ("unsupported", "cli.video_unsupported"),
+        ("empty", "cli.video_none_in_dir"),
     ],
 )
 def test_invalid_paths_fail_before_loading_model(
@@ -123,7 +141,7 @@ def test_invalid_paths_fail_before_loading_model(
     monkeypatch.setattr(cli_video, "_build_analyzer", forbid_loading)
     assert cli_video.analyze_video(_args(path)) == 1
     captured = capsys.readouterr()
-    assert message in captured.err
+    assert _msg(message) in captured.err
     assert json.loads(captured.out) == {
         "videos": [],
         "failed": True,
@@ -142,7 +160,7 @@ def test_directory_skips_symlink_videos_and_explicit_symlink_is_rejected(
     assert cli_video.analyze_video(_args(tmp_path)) == 0
     assert len(json.loads(capsys.readouterr().out)["videos"]) == 1
     assert cli_video.analyze_video(_args(link)) == 1
-    assert "Symbolic links" in capsys.readouterr().err
+    assert _msg("cli.video_symlink_input") in capsys.readouterr().err
 
 
 @pytest.fixture
@@ -216,7 +234,8 @@ def test_bad_options_do_not_load_model(tmp_path, fake_inference, capsys, overrid
     video.touch()
     assert cli_video.analyze_video(_args(video, **override)) == 1
     assert not fake_inference.loads
-    assert "must be" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert _msg("cli.video_bad_max_frames") in err or _msg("cli.video_bad_threshold") in err
 
 
 def test_per_clip_failure_continues_without_moving_failed_clips(
@@ -238,7 +257,7 @@ def test_per_clip_failure_continues_without_moving_failed_clips(
     rows = json.loads(capsys.readouterr().out)["videos"]
     assert [row.get("error") for row in rows] == [
         "Cannot open video",
-        "No frames could be decoded",
+        t("cli.video_no_frames"),
         None,
     ]
     assert (tmp_path / "a.mp4").is_file() and (tmp_path / "b.mp4").is_file()
@@ -270,7 +289,9 @@ def test_organize_cannot_write_through_symlinks(tmp_path, monkeypatch, capsys, l
     _install_analyzer(monkeypatch, lambda path, stop_callback: _Analysis())
     monkeypatch.setattr(video_organizer, "_locate_exiftool", lambda: None)
     assert cli_video.analyze_video(_args(folder, organize=True)) == 1
-    assert "Unsafe video" in capsys.readouterr().err
+    key = ("cli.video_unsafe_destination" if linked == "destination"
+           else "cli.video_unsafe_manifest")
+    assert _msg(key) in capsys.readouterr().err
     assert list(outside.iterdir()) == []
     assert video.read_bytes() == b"clip"
 
@@ -296,7 +317,7 @@ def test_interrupt_preserves_manifest_for_completed_moves(
     assert seen == ["a.mp4", "b.mp4"]
     assert signal.getsignal(signal.SIGINT) is previous_handler
     captured = capsys.readouterr()
-    assert "interrupted" in captured.err.lower()
+    assert t("cli.video_interrupted") in captured.err
     report = json.loads(captured.out)
     assert report["cancelled"] and not report["failed"]
     assert "target" in report["videos"][0] and "target" not in report["videos"][1]
@@ -337,5 +358,6 @@ def test_real_decoder_with_mock_yolo(tmp_path, monkeypatch, capsys):
         == 0
     )
     assert len(frames) == 2
-    assert "no bird detected; 2 frames" in capsys.readouterr().out
+    assert t("cli.video_result", path=str(clip), verdict=t("cli.video_verdict_no_bird"),
+             details="", frames=2) in capsys.readouterr().out
     assert list(tmp_path.iterdir()) == [clip]

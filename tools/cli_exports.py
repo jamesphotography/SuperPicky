@@ -16,6 +16,7 @@ from tempfile import TemporaryDirectory
 from typing import cast
 
 from core.superpicky_dir import SUPERPICKY_DIRNAME
+from tools.i18n import t
 from tools.report_db import ReportDB
 
 
@@ -23,7 +24,7 @@ def _load_photos(directory: Path) -> list[dict]:
     """只读载入照片，不初始化或升级数据库 / Read photos without initializing or migrating the DB."""
     db_path = directory / SUPERPICKY_DIRNAME / ReportDB.DB_FILENAME
     if not db_path.is_file():
-        raise ValueError(f"No report.db at {db_path}; process the directory first.")
+        raise ValueError(t("cli.export_no_db", path=db_path))
     try:
         # 保留 SQLite 的 WAL 读取能力；immutable 会忽略正在使用的日志。
         # Keep WAL reads enabled; immutable mode is not safe for a live database.
@@ -34,9 +35,9 @@ def _load_photos(directory: Path) -> list[dict]:
                 for row in db.execute("SELECT * FROM photos ORDER BY filename")
             ]
     except sqlite3.Error as exc:
-        raise ValueError(f"Cannot read report.db at {db_path}: {exc}") from exc
+        raise ValueError(t("cli.export_db_unreadable", path=db_path, error=exc)) from exc
     if not rows:
-        raise ValueError(f"There are no photos in {db_path}.")
+        raise ValueError(t("cli.export_db_empty", path=db_path))
     return rows
 
 
@@ -44,11 +45,11 @@ def _output_path(output: str | Path, suffixes: tuple[str, ...], force: bool) -> 
     """校验输出类型和覆盖选项 / Validate the output type and overwrite option."""
     path = Path(output).expanduser().absolute()
     if path.suffix.lower() not in suffixes:
-        raise ValueError(f"--output must end with {' or '.join(suffixes)}: {path}")
+        raise ValueError(t("cli.export_bad_suffix", suffixes=" / ".join(suffixes), path=path))
     if not path.parent.is_dir():
-        raise ValueError(f"Output parent directory does not exist: {path.parent}")
+        raise ValueError(t("cli.export_no_parent", path=path.parent))
     if os.path.lexists(path) and not force:
-        raise ValueError(f"Output already exists: {path}; use --force to replace it.")
+        raise ValueError(t("cli.export_exists", path=path))
     return path
 
 
@@ -68,9 +69,7 @@ def _publish(output: Path, force: bool, write: Callable[[str], None]) -> None:
             else:
                 os.link(temporary, output)
         except FileExistsError as exc:
-            raise ValueError(
-                f"Output already exists: {output}; use --force to replace it."
-            ) from exc
+            raise ValueError(t("cli.export_exists", path=output)) from exc
 
 
 def _report_paths(directory: Path, photos: list[dict]) -> None:
@@ -121,9 +120,9 @@ def export_report(args: Namespace) -> int:
             lambda path: report_export.write_report_atomically(path, html),
         )
     except (OSError, ValueError) as exc:
-        print(f"Report export failed: {exc}", file=sys.stderr)
+        print(t("cli.report_failed", error=exc), file=sys.stderr)
         return 1
-    print(f"Report saved: {output}")
+    print(t("cli.report_saved", path=output))
     return 0
 
 
@@ -140,13 +139,11 @@ def export_ebird(args: Namespace) -> int:
         location = getattr(args, "location", None) or ""
         location = location.translate(str.maketrans("", "", '"“”')).strip()
         if not location or len(location.splitlines()) > 1:
-            raise ValueError("--location must be a nonempty, single-line place name.")
+            raise ValueError(t("cli.ebird_bad_location"))
         raw_country = getattr(args, "country", None)
         country = "" if raw_country is None else raw_country.strip().upper()
         if raw_country is not None and country not in known_country_codes():
-            raise ValueError(
-                "--country must be a known two-letter eBird country code (e.g. AU)."
-            )
+            raise ValueError(t("cli.ebird_bad_country"))
         directory = Path(args.directory).expanduser().absolute()
         force = getattr(args, "force", False)
         output = _output_path(args.output, (".csv",), force)
@@ -159,25 +156,21 @@ def export_ebird(args: Namespace) -> int:
                 row.pop("gps_longitude", None)
         checklists = ebird_export.build_checklists(photos, location)
         if not checklists:
-            raise ValueError(
-                "There are no eligible records (2+ stars, species ID, capture time)."
-            )
+            raise ValueError(t("cli.ebird_no_records"))
         rows = ebird_export.to_rows(checklists)
         country_column = ebird_export.EBIRD_COLUMNS.index("Country Code")
         for row in rows:
             row[country_column] = country
         _publish(output, force, lambda path: ebird_export.write_csv(path, rows))
     except (OSError, ValueError, TypeError) as exc:
-        print(f"eBird export failed: {exc}", file=sys.stderr)
+        print(t("cli.ebird_failed", error=exc), file=sys.stderr)
         return 1
     stats = ebird_export.summarize(checklists)
-    print(
-        f"eBird CSV saved locally: {output} "
-        f"({stats['checklists']} checklist(s), {stats['rows']} row(s))."
-    )
+    print(t("cli.ebird_saved", path=output,
+            checklists=stats["checklists"], rows=stats["rows"]))
     needs_review = cast(list[str], stats["needs_review"])
     if needs_review:
-        print("Review before importing:", file=sys.stderr)
+        print(t("cli.ebird_review"), file=sys.stderr)
         for note in needs_review:
             print(f"  {note}", file=sys.stderr)
     return 0

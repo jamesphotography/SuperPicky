@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import csv
 import os
+import re
 import sqlite3
 from argparse import Namespace
 from pathlib import Path
@@ -10,7 +11,24 @@ from PIL import Image
 
 from core import report_export
 from tools.cli_exports import export_ebird, export_report
+from tools.i18n import t
 from tools.report_db import ReportDB
+
+
+def _msg(key: str) -> str:
+    """
+    取语言包模板里最长的一段固定文字，用来断言本地化后的报错。
+
+    参数:
+    key (str): 语言包键，例如 "cli.export_no_parent"
+
+    返回:
+    str: 模板中去掉 {占位符} 后最长的一段文字（与当前测试语言无关）
+
+    Return the longest literal fragment of a locale template, so assertions on
+    localized messages hold whatever the test language is.
+    """
+    return max(re.split(r"\{[^}]*\}", t(key)), key=len).strip()
 
 
 @pytest.fixture
@@ -79,7 +97,7 @@ def test_report_embeds_existing_preview_and_escapes_title(processed, tmp_path, c
 def test_export_does_not_create_missing_output_parent(processed, tmp_path, capsys):
     output = tmp_path / "missing" / "report.html"
     assert export_report(Namespace(directory=processed, output=output)) == 1
-    assert "Output parent directory does not exist" in capsys.readouterr().err
+    assert _msg("cli.export_no_parent") in capsys.readouterr().err
     assert not output.parent.exists()
 
 
@@ -119,7 +137,7 @@ def test_ebird_outputs_record_format_without_gps(processed, tmp_path, capsys):
     assert row[:4] == ["", "Merops", "ornatus", "1"]
     assert row[5:13] == ["观鸟公园", "", "", "9/4/2026", "7:30", "", "AU", "Incidental"]
     assert row[15] == "N"
-    assert "1 checklist" in capsys.readouterr().out
+    assert t("cli.ebird_saved", path=output, checklists=1, rows=1) in capsys.readouterr().out
 
 
 def test_ebird_gps_is_explicit_opt_in(processed, tmp_path):
@@ -170,7 +188,11 @@ def test_ebird_rejects_invalid_location_or_country(
 
 @pytest.mark.parametrize(
     "state, error",
-    [("missing", "report.db"), ("empty", "no photos"), ("invalid", "report.db")],
+    [
+        ("missing", "cli.export_no_db"),
+        ("empty", "cli.export_db_empty"),
+        ("invalid", "cli.export_db_unreadable"),
+    ],
 )
 @pytest.mark.parametrize(
     "runner, suffix", [(export_report, ".html"), (export_ebird, ".csv")]
@@ -189,7 +211,7 @@ def test_missing_empty_or_invalid_db_creates_no_output(
         db_path.write_text("not SQLite", encoding="utf-8")
     output = tmp_path / ("export" + suffix)
     assert runner(Namespace(directory=directory, output=output, location="Park")) == 1
-    assert error in capsys.readouterr().err
+    assert _msg(error) in capsys.readouterr().err
     assert not output.exists()
     if state == "missing":
         assert not db_path.parent.exists()
@@ -207,7 +229,7 @@ def test_ebird_no_eligible_records_does_not_overwrite(processed, tmp_path, capsy
         )
         == 1
     )
-    assert "no eligible" in capsys.readouterr().err
+    assert _msg("cli.ebird_no_records") in capsys.readouterr().err
     assert output.read_text(encoding="utf-8") == "existing"
 
 

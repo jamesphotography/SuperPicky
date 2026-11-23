@@ -428,7 +428,8 @@ class VideoOrganizer:
                 target_dir.is_symlink()
                 or target_dir.resolve().parent != source_p.parent.resolve()
             ):
-                raise ValueError(f"Unsafe video destination: {target_dir}")
+                from tools.i18n import get_i18n
+                raise ValueError(get_i18n().t("cli.video_unsafe_destination", path=target_dir))
             target_filename = build_target_filename(
                 video_path, species_list, has_bird, capture_date,
                 no_bird_name=self.options.no_bird_folder,
