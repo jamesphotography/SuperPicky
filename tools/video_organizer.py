@@ -69,6 +69,8 @@ class OrganizeOptions:
     other_species_folder: str = "其他鸟"
     use_english: bool = False
     use_taiwan: bool = False
+    # CLI 只允许整理到源目录的直接子目录 / CLI only permits direct child destinations.
+    confine_to_source: bool = False
 
 
 @dataclass(slots=True)
@@ -312,13 +314,13 @@ def resolve_name_conflict(target_dir: Path, filename: str) -> Path:
     Return a non-conflicting path, suffixing _2, _3, ... if needed.
     """
     target_path = target_dir / filename
-    if not target_path.exists():
+    if not target_path.exists() and not target_path.is_symlink():
         return target_path
     stem, ext = os.path.splitext(filename)
     counter = 2
     while True:
         candidate = target_dir / f"{stem}_{counter}{ext}"
-        if not candidate.exists():
+        if not candidate.exists() and not candidate.is_symlink():
             return candidate
         counter += 1
 
@@ -422,6 +424,11 @@ class VideoOrganizer:
             # 3. 构建目标路径（无星级，按鸟种 / 其他鸟 / 无鸟 分目录）
             target_dir = build_target_directory(
                 video_path, self.options, species_list, has_bird)
+            if self.options.confine_to_source and (
+                target_dir.is_symlink()
+                or target_dir.resolve().parent != source_p.parent.resolve()
+            ):
+                raise ValueError(f"Unsafe video destination: {target_dir}")
             target_filename = build_target_filename(
                 video_path, species_list, has_bird, capture_date,
                 no_bird_name=self.options.no_bird_folder,

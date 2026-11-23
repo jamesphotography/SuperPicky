@@ -69,6 +69,20 @@ https://github.com/user-attachments/assets/76c9b9e6-04ea-4a3e-9dcd-97bdcaf4bd2f
 
 ---
 
+## 用 AI 助手运行
+
+在能运行终端命令的 AI 助手（如 Claude Code 或 Codex）中打开 SuperPicky 源码目录，替换下面的文件夹占位符，再粘贴这段提示词。助手必须能在本机访问源码和照片。[操作指南](SKILL.md) 介绍了命令行工作流程。
+
+```text
+请用慧眼选鸟 SuperPicky（https://github.com/jamesphotography/SuperPicky）对“<照片目录的绝对路径>”里的鸟类照片选片。先读源码目录下的 SKILL.md，使用项目的 Python 环境，并通过本机相应子命令的 --help 确认命令和参数。
+
+先检查目录、已有结果和续跑检查点。写入前请先告诉我计划并等我确认；如果发现检查点，续跑或重跑前都要先问我。默认使用 XMP 边车，照片留在原处；不要写入内嵌元数据、移动或删除原片，也不要上传照片、元数据或报告。
+
+如果我要求生成报告或导出 eBird 文件，请确认本地输出路径及所需的地点信息，不覆盖已有文件，也不要在线提交。经我确认执行后，请核对结果并汇报数量、失败项、实际改动和输出路径。
+```
+
+---
+
 ## 评分规则
 
 4.5.0 起，星级由同一批照片互相比较得出，而不再比对固定分数：锐度与美学换算成批内百分位后加权排序，再按配额定星。
@@ -102,7 +116,7 @@ python scripts/download_models.py
 python main.py
 ```
 
-也可以用命令行：见 [CLI 参考](https://superpicky.app/cli-reference.html)。
+本仓库的命令行用法见 [CLI 操作指南](SKILL.md)，也可查看 [官网 CLI 参考](https://superpicky.app/cli-reference)。
 
 ### 鸟种英文命名标准（AviList）
 

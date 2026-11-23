@@ -69,6 +69,20 @@ Test builds are listed on the [Releases](https://github.com/jamesphotography/Sup
 
 ---
 
+## Run with your agent
+
+Open your SuperPicky checkout in a terminal-capable agent (such as Claude Code or Codex), replace the folder placeholder, and paste this prompt. The agent needs local access to the checkout and your photos. The [agent skill](SKILL.md) covers the CLI workflow.
+
+```text
+Use SuperPicky (https://github.com/jamesphotography/SuperPicky) to cull the bird photos in "<ABSOLUTE_PATH_TO_PHOTO_FOLDER>". Read SKILL.md in the checkout first. Use the project's Python environment and check the relevant local --help before choosing commands or flags.
+
+Inspect the folder and any previous results or resume checkpoint. Show me the plan and wait for my approval before making changes; if a checkpoint exists, ask before resuming or starting over. Default to XMP sidecars and leave photos in place; don't write embedded metadata, move or delete originals, or upload photos, metadata, or reports.
+
+If I request a report or eBird export, confirm the local output path and any required location details, don't overwrite existing files, and don't submit anything online. After an approved run, verify the result and summarize counts, failures, changes, and any output paths.
+```
+
+---
+
 ## How ratings work
 
 Since 4.5.0, stars come from photos competing within the same batch rather than against fixed scores. Sharpness and aesthetics become batch percentiles and are weighted into one ranking; stars are then handed out by quota.
@@ -102,7 +116,7 @@ python scripts/download_models.py
 python main.py
 ```
 
-There is also a command-line interface: see the [CLI reference](https://superpicky.app/cli-reference.html).
+For command-line usage in this checkout, see the [CLI workflow](SKILL.md). For the website guide, see the [official CLI reference](https://superpicky.app/cli-reference).
 
 ### Species naming standards (AviList)
 

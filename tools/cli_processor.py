@@ -5,14 +5,87 @@ CLI Processor - 命令行处理器
 简化版 - 调用核心 PhotoProcessor
 """
 
-from typing import Dict, List
+import os
+import signal
+from threading import current_thread, main_thread
+from types import FrameType
+from typing import Dict, List, Optional
+
+from advanced_config import get_advanced_config
+from core.incremental_cull import scan_root_photos
 from core.photo_processor import (
     PhotoProcessor,
+    ProcessingCancelled,
     ProcessingSettings,
     ProcessingCallbacks,
     ProcessingResult
 )
+from .resume_state import ResumeStateManager
 from .utils import log_message
+
+
+class CLIResumeError(RuntimeError):
+    """续跑检查失败，reason 用于本地化 / Resume rejected; reason is a translation suffix."""
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
+class CLIProcessingPaused(RuntimeError):
+    """处理在安全检查点停止 / Processing stopped at a cooperative cancellation point."""
+
+    def __init__(self, checkpoint_available: bool):
+        super().__init__("Photo processing interrupted")
+        self.checkpoint_available = checkpoint_available
+
+
+class _CLIResumeState(ResumeStateManager):
+    """复用 GUI 进度文件，显式续跑不回退为新一轮 / Reuse GUI state without fresh-run fallback."""
+
+    def __init__(self, directory: str):
+        super().__init__(directory)
+        self.active = False
+
+    def _pending(self) -> List[str]:
+        """验证进度文件并读取待处理前缀 / Validate the checkpoint and return pending stems."""
+        if not self.exists():
+            raise CLIResumeError("missing")
+        state = self.load()
+        if not state or state.get("version") != 1 or state.get("status") != "running":
+            raise CLIResumeError("invalid")
+        pending = state.get("pending_prefixes")
+        total = state.get("total_files")
+        if (not isinstance(pending, list) or type(total) is not int or total < len(pending)
+                or not all(isinstance(p, str) and p for p in pending)):
+            raise CLIResumeError("invalid")
+        return pending
+
+    def validate(self, available_prefixes: List[str]) -> None:
+        """检查是否还有在场的待处理照片 / Reject a checkpoint with no available pending photo."""
+        if not set(self._pending()).intersection(available_prefixes):
+            raise CLIResumeError("no_pending")
+
+    def get_resume_plan(self, available_prefixes: List[str]) -> Dict:
+        """在 RAW 提取后再次验证；不让核心回退到全新处理 / Recheck after RAW extraction."""
+        self.validate(available_prefixes)
+        plan = super().get_resume_plan(available_prefixes)
+        if not plan:
+            raise CLIResumeError("no_pending")
+        self.active = True
+        return plan
+
+    def start(self, ordered_prefixes: List[str]) -> bool:
+        """记录这次运行真正启用的检查点 / Track whether this run initialized a checkpoint."""
+        self.active = super().start(ordered_prefixes)
+        return self.active
+
+    def can_continue(self) -> bool:
+        """不要声称旧状态或不可读的状态已保存 / Do not advertise stale or unreadable state."""
+        try:
+            return self.active and bool(self._pending())
+        except CLIResumeError:
+            return False
 
 
 class CLIProcessor:
@@ -38,6 +111,7 @@ class CLIProcessor:
         """
         self.verbose = verbose
         self.dir_path = dir_path  # 保存目录路径用于日志
+        self._stop_requested = False
         
         # V4.0: 如果直接传入了 ProcessingSettings，使用它
         if settings is not None:
@@ -67,9 +141,12 @@ class CLIProcessor:
             settings=settings,
             callbacks=ProcessingCallbacks(
                 log=self._log,
-                progress=self._progress
+                progress=self._progress,
+                should_stop=lambda: self._stop_requested,
             )
         )
+        self._resume_state = _CLIResumeState(dir_path)
+        self.processor.resume_state = self._resume_state
     
     def _log(self, msg: str, level: str = "info"):
         """日志回调 - 带颜色输出并写入文件"""
@@ -99,26 +176,68 @@ class CLIProcessor:
         # CLI 模式下可以选择是否显示进度
         # 目前不显示，避免输出过多
         pass
-    
-    def process(self, organize_files: bool = True, cleanup_temp: bool = True) -> Dict:
+
+    def _available_stems(self) -> List[str]:
+        """按核心格式筛选检查 JPEG 和待提取 RAW / Find eligible JPEG and RAW stems."""
+        scan = scan_root_photos(
+            self.dir_path, allowed_exts=get_advanced_config().get_allowed_extensions()
+        )
+        stems = set(scan.raw_dict) | {os.path.splitext(name)[0] for name in scan.files_tbr}
+        return sorted(stems, key=lambda name: (name.lower(), name))
+
+    def process(
+        self, organize_files: bool = True, cleanup_temp: bool = True, *, resume: bool = False
+    ) -> Dict:
         """
         主处理流程
         
         Args:
             organize_files: 是否移动文件到分类文件夹
             cleanup_temp: 是否清理临时JPG
+            resume: 仅继续可用的已有进度 / Continue only an existing usable checkpoint
             
         Returns:
             处理统计字典
+
+        Raises:
+            CLIResumeError: 显式续跑不可用 / Explicit resume is unavailable
+            CLIProcessingPaused: 处理协作停止 / Cooperative stop interrupted processing
         """
-        # 打印横幅
-        self._print_banner()
-        
-        # 调用核心处理器
-        result = self.processor.process(
-            organize_files=organize_files,
-            cleanup_temp=cleanup_temp
-        )
+        self._stop_requested = False
+        self._resume_state.active = False
+        if resume:
+            self._resume_state.validate(self._available_stems())
+            self._resume_state.active = True
+
+        def request_pause(_signum: int, _frame: Optional[FrameType]) -> None:
+            """让核心在安全边界停止 / Let the core stop at a cooperative boundary."""
+            self._stop_requested = True
+
+        # Python 只允许主线程设置信号处理器；退出时恢复调用方的设置。
+        # Only the main thread can install a signal handler; restore it on exit.
+        previous_handler = None
+        if current_thread() is main_thread():
+            previous_handler = signal.signal(signal.SIGINT, request_pause)
+        try:
+            self._print_banner()
+            result = self.processor.process(
+                organize_files=organize_files,
+                cleanup_temp=cleanup_temp,
+                resume=resume,
+            )
+        except ProcessingCancelled as exc:
+            # RAW 预览提取可能比核心写检查点更早停止。此时没有开始评分，
+            # 所有候选都待处理；绝不拿这个清单覆盖以前的检查点。
+            # RAW extraction can stop before core creates the checkpoint. No
+            # photos have been scored yet; record candidates without replacing old state.
+            if not self._resume_state.active and not self._resume_state.exists():
+                pending = self._available_stems()
+                if pending:
+                    self._resume_state.start(pending)
+            raise CLIProcessingPaused(self._resume_state.can_continue()) from exc
+        finally:
+            if previous_handler is not None:
+                signal.signal(signal.SIGINT, previous_handler)
         
         # 打印摘要
         self._print_summary(result)
