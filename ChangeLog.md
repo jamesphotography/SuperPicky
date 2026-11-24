@@ -1,3 +1,50 @@
+# SuperPicky 4.6.5 RC7
+
+**What's new since RC6:**
+
+- **Quitting no longer crashes on macOS.** Cmd+Q or Quit from the Dock could end in a crash report,
+  and the Bird ID server and ExifTool kept running in the background. They now shut down with the app.
+- **Sony bursts are grouped again.** Burst detection also uses the camera's own burst sequence number, so
+  bodies shooting around 6 frames per second get burst groups instead of none. The log now shows burst
+  statistics, with a hint when the Burst Speed setting looks too high. Thanks @lincleejun. (#168, PR #169)
+- **Reset is safer.** Reset, Batch Reset and the command line now share one implementation. It no
+  longer deletes a photo when a file with the same name is already in the folder, only removes folders
+  that are empty, and does not follow symbolic links out of the photo folder.
+- **GPU problems no longer stop a cull.** The keypoint, flight and aesthetic models load on the CPU first;
+  if the graphics card fails, they fall back to the CPU and the log names the model.
+- **Real place names are kept.** If a photo or its .xmp sidecar already has a real City, State/Province or
+  Country, SuperPicky no longer writes sharpness, aesthetics or focus there, and Reset leaves those
+  fields alone. Settings now explain which fields are borrowed for scores.
+- **Region fixes.** The English start confirmation no longer shows "Australia - 整个国家", and your
+  common countries/regions list is kept by Restore Defaults.
+- **Command line (running from source).** `process --resume` and Ctrl+C to pause, plus new `report`,
+  `export-ebird` and `video` commands. Thanks @Bensonson. (PR #170)
+- This test build has no CUDA 13 installer; RTX 50 users can use the CPU or CUDA 11.8 build.
+
+---
+
+# SuperPicky 4.6.5 RC7（中文）
+
+**相比 RC6 的变化：**
+
+- **修正 macOS 退出时崩溃。** 按 ⌘Q 或从程序坞退出时可能弹出崩溃报告，识鸟服务和 ExifTool 还留在后台。
+  现在会随软件一起关闭。
+- **Sony 连拍重新能分组。** 连拍检测同时参考相机记录的连拍序号，约 6 张/秒的机身不再一组都分不出。日志里
+  会写出连拍统计，「连拍速度」设得偏高时会提示。感谢 @lincleejun。（#168，PR #169）
+- **重置更安全。** 重置、批量重置和命令行改用同一套逻辑：目录里已有同名文件时不再删照片，只删除已经空了
+  的文件夹，也不会顺着符号链接跑到照片目录外面。
+- **显卡出问题不再中断选片。** 关键点、飞版和美学模型先在 CPU 上加载；显卡出错时退回 CPU，并在日志里
+  写明是哪个模型。
+- **保留照片里的真实地名。** 照片或 .xmp 边车里已有真实的城市、省/州或国家时，不再往这些字段写锐度、
+  美学和对焦，重置也不会清掉它们。设置里加了说明，写明哪些字段被借来存分数。
+- **国家/地区相关修正。** 中文界面「国家」统一改为「国家/地区」；英文界面开始确认框不再显示
+  「Australia - 整个国家」；恢复默认设置会保留常用国家/地区列表。
+- **命令行（源码运行）。** `process --resume` 续跑、Ctrl+C 暂停，新增 `report`、`export-ebird`、
+  `video` 命令。感谢 @Bensonson。（PR #170）
+- 本测试版不提供 CUDA 13 安装包，RTX 50 显卡请用 CPU 版或 CUDA 11.8 版。
+
+---
+
 # SuperPicky 4.6.5 RC6
 
 **What's new since RC5:**
