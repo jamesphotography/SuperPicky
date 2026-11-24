@@ -15,6 +15,11 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from constants import ALL_RATING_FOLDER_NAMES, SIDECAR_RAW_EXTENSIONS
 from core.metadata_fields import ALL_FIELDS, filter_item, has_payload
+from core.location_guard import (
+    IPTC_LOCATION_RESET_ARGS, LOCATION_READ_ARGS, LOCATION_RESET_ARGS, SCORE_ITEM_KEYS,
+    XMP_LOCATION_RESET_ARGS, group_is_real, groups_from_exiftool_json, has_real_location,
+    is_tool_written,
+)
 import time
 import threading
 import queue
@@ -602,6 +607,12 @@ class ExifToolManager:
         # RAW body writes that fell back to a sidecar (#165), drained by the pipeline
         self._raw_embed_fallbacks: List[Tuple[str, str]] = []
         self._raw_embed_fallback_lock = threading.Lock()
+        # 因已有真实地名而未写锐度/美学/对焦的照片，由处理流程汇总时取走
+        # Photos whose scores were skipped to keep a real place name, drained by the pipeline
+        self._location_protected_paths: List[str] = []
+        self._location_protected_lock = threading.Lock()
+        # 地点读取缓存（路径, 修改时间, 大小）→ 两组地点 / location read cache
+        self._location_cache: Dict[Tuple[str, int, int], List[Tuple[str, str, str]]] = {}
 
         # 注册退出清理（经 exit_hooks：GUI 以 os._exit 结束时也会执行）
         # Register exit cleanup via exit_hooks so it also runs before the GUI's os._exit
@@ -1003,6 +1014,190 @@ class ExifToolManager:
             self._raw_embed_fallbacks.clear()
         return events
 
+    def _location_state(self):
+        """
+        地点保护用的锁、缓存与记录列表；没经过 __init__ 构造的实例（测试替身）也能用。
+
+        Lock, cache and record list for the location guard; also works on
+        instances built without __init__ (test doubles).
+        """
+        state = self.__dict__
+        if '_location_protected_lock' not in state:
+            state['_location_protected_lock'] = threading.Lock()
+            state.setdefault('_location_protected_paths', [])
+            state.setdefault('_location_cache', {})
+        return state['_location_protected_lock'], state['_location_cache'], state['_location_protected_paths']
+
+    def _read_location_groups(self, path: str) -> Optional[List[Tuple[str, str, str]]]:
+        """
+        读取一个文件现有的 [XMP 组, IPTC 组] 城市/省份/国家；按（路径, 修改时间, 大小）缓存。
+
+        文件改过后缓存自然失效，所以同一张照片在一次写入里的多层判断只读一次（终审 I3）。
+        文件不存在返回 []；读取失败返回 None（不缓存），由调用方按「受保护」处理。
+
+        参数:
+        path (str): 照片本体或 .xmp 边车路径
+
+        返回:
+        Optional[List[Tuple[str, str, str]]]: 两组地点；文件不存在为 []；读取失败为 None
+
+        Read a file's [XMP group, IPTC group] City/State/Country, cached by
+        (path, mtime, size) so one write decision reads each file once. []
+        for a missing file; None (not cached) when the read fails.
+        """
+        if not path or not os.path.exists(path):
+            return []
+        try:
+            st = os.stat(path)
+            key = (os.path.abspath(path), st.st_mtime_ns, st.st_size)
+        except OSError:
+            return None
+        lock, cache, _ = self._location_state()
+        with lock:
+            cached = cache.get(key)
+        if cached is not None:
+            return cached
+        data = self.read_metadata(path, extra_args=list(LOCATION_READ_ARGS))
+        if data is None:
+            return None
+        groups = groups_from_exiftool_json(data)
+        with lock:
+            if len(cache) > 4096:
+                cache.clear()
+            cache[key] = groups
+        return groups
+
+    def _photo_location_sources(self, photo_path: str) -> List[str]:
+        """
+        一张照片要看的地点来源：本体，加上旁边的 .xmp 边车（存在时）。
+
+        Lightroom 给 RAW 填的地点在边车里，只看本体会漏。
+
+        Where a photo's location may live: the file and its .xmp sidecar.
+        """
+        sources = [photo_path]
+        sidecar = os.path.splitext(photo_path)[0] + '.xmp'
+        if sidecar != photo_path and os.path.exists(sidecar):
+            sources.append(sidecar)
+        return sources
+
+    def _scores_blocked(self, photo_path: str, target_path: str) -> bool:
+        """
+        写入 target_path 时是否该跳过锐度/美学/对焦（它们写进 XMP 的城市/省份/国家）。
+
+        按写入目标判断（终审 I1）：
+        - 目标自己的 XMP 地点组已经是 SuperPicky 的分数 → 照常用新分数覆盖，不丢任何真实信息；
+        - 否则照片（本体或边车）任何一组是真实地名 → 跳过；
+        - 任何一次读取失败 → 跳过（宁可不写分数，也不冒险覆盖真实地名，终审 I2）。
+
+        参数:
+        photo_path (str): 照片本体路径
+        target_path (str): 这次实际写入的文件（本体或 .xmp 边车）
+
+        返回:
+        bool: 该跳过为 True
+
+        Decide per write target: refresh scores already in the target's XMP
+        group; otherwise skip when any group anywhere holds a real name; a
+        failed read counts as protected.
+        """
+        target_groups = self._read_location_groups(target_path)
+        if target_groups is None:
+            print(f"⚠️ [ExifTool] location read failed, keeping place fields: {os.path.basename(target_path)}")
+            return True
+        if target_groups and is_tool_written(*target_groups[0]):
+            return False
+        sources = self._photo_location_sources(photo_path)
+        if target_path not in sources:
+            sources.append(target_path)
+        for source in sources:
+            groups = self._read_location_groups(source)
+            if groups is None:
+                print(f"⚠️ [ExifTool] location read failed, keeping place fields: {os.path.basename(source)}")
+                return True
+            if has_real_location(groups):
+                return True
+        return False
+
+    def _drop_scores_if_located(self, item: Dict[str, Any],
+                                target_path: Optional[str] = None) -> Dict[str, Any]:
+        """
+        写入前判断一次：该跳过时去掉锐度/美学/对焦，其余字段照写；结果打上标记，内层写入不再重复判断。
+
+        item 里没有这三项时不读文件。受保护的照片记入列表，由 drain_location_protected 取走。
+
+        参数:
+        item (Dict[str, Any]): 写入器 item（已经过字段开关过滤）
+        target_path (Optional[str]): 实际写入的文件；默认为照片本体（item['file']）
+
+        返回:
+        Dict[str, Any]: 带 _location_checked 标记的 item（受保护时去掉了三项）
+
+        Decide once before writing: drop the three scores when blocked, keep
+        everything else, and mark the item so inner writers skip the check.
+        Reads nothing when the item carries none of the three.
+        """
+        if item.get('_location_checked'):
+            return item
+        if not any(item.get(k) is not None for k in SCORE_ITEM_KEYS):
+            return item
+        photo_path = item.get('file')
+        target = target_path or photo_path
+        checked = dict(item)
+        checked['_location_checked'] = True
+        if not photo_path or not self._scores_blocked(photo_path, target):
+            return checked
+        lock, _, paths = self._location_state()
+        with lock:
+            paths.append(photo_path)
+        return {k: v for k, v in checked.items() if k not in SCORE_ITEM_KEYS}
+
+    def drain_location_protected(self) -> List[str]:
+        """
+        取出并清空「因已有真实地名而未写分数」的照片路径。
+
+        返回:
+        List[str]: 照片路径列表
+
+        Return and clear the photos whose scores were skipped to keep a real
+        place name.
+        """
+        lock, _, recorded = self._location_state()
+        with lock:
+            paths = list(recorded)
+            recorded.clear()
+        return paths
+
+    def _drop_location_reset_args(self, args: List[str], target_path: str) -> List[str]:
+        """
+        重置 target_path 时按组决定清不清地点：XMP 组、IPTC 组各自判断，真实地名那组保留（终审 I1）。
+
+        参数里没有地点项时不读文件；读取失败时地点项一律保留（终审 I2）。
+
+        参数:
+        args (List[str]): 已按字段开关过滤的清除参数
+        target_path (str): 这次实际清除的文件（本体或 .xmp 边车）
+
+        返回:
+        List[str]: 去掉了该保留的地点项的参数
+
+        Decide per group for the reset target: keep whichever of the XMP / IPTC
+        groups holds a real name; keep all location items when the read fails.
+        Reads nothing when args carry no location item.
+        """
+        if not LOCATION_RESET_ARGS.intersection(args):
+            return args
+        groups = self._read_location_groups(target_path)
+        if groups is None:
+            print(f"⚠️ [ExifTool] location read failed, keeping place fields: {os.path.basename(target_path)}")
+            return [a for a in args if a not in LOCATION_RESET_ARGS]
+        keep = set()
+        if groups and group_is_real(groups[0]):
+            keep |= XMP_LOCATION_RESET_ARGS
+        if len(groups) > 1 and group_is_real(groups[1]):
+            keep |= IPTC_LOCATION_RESET_ARGS
+        return [a for a in args if a not in keep]
+
     def _read_raw_layout_tags(self, file_path: str) -> Optional[Dict[str, Any]]:
         """
         经 read 常驻进程以 ``-n -json`` 读取 RAW_LAYOUT_TAGS。
@@ -1106,6 +1301,7 @@ class ExifToolManager:
         # #153 关掉的字段不写；什么都不剩就是「按配置跳过」，算成功
         # #153 skip switched-off fields; nothing left counts as a configured skip
         item = self._apply_field_switches(item)
+        item = self._drop_scores_if_located(item)
         if not has_payload(item):
             return True
 
@@ -1253,9 +1449,11 @@ class ExifToolManager:
         # #153 关掉的字段不写；什么都不剩就不碰（也不新建）侧车
         # #153 skip switched-off fields; with nothing left, don't touch or create the sidecar
         item = self._apply_field_switches(item)
+        xmp_path = os.path.splitext(file_path)[0] + '.xmp'
+        # 写入目标是边车：按边车自己的地点组判断（终审 I1）/ the target is the sidecar
+        item = self._drop_scores_if_located(item, target_path=xmp_path)
         if not has_payload(item):
             return True
-        xmp_path = os.path.splitext(file_path)[0] + '.xmp'
         self._cleanup_sidecar_tmp(xmp_path)
 
         args = [] # 使用常驻进程的参数模式
@@ -1404,7 +1602,8 @@ class ExifToolManager:
         Goes through _verified_raw_inplace; skips files that carry none of
         these fields so untouched RAWs are not copied for nothing.
         """
-        clear_args = self._filter_reset_args(list(self._BODY_RESET_ARGS))
+        clear_args = self._drop_location_reset_args(
+            self._filter_reset_args(list(self._BODY_RESET_ARGS)), file_path)
         if not clear_args:
             return True
         try:
@@ -1458,6 +1657,8 @@ class ExifToolManager:
             '-XMP-iptcCore:IntellectualGenre=',
             '-XMP-iptcExt:Event=',
         ])
+        # 清的是边车：按边车自己的地点组判断（终审 I1）/ the sidecar is the target
+        clear_args = self._drop_location_reset_args(clear_args, xmp_path)
         if not clear_args:
             return True
         args = [
@@ -1480,6 +1681,8 @@ class ExifToolManager:
         # #153 先过滤：什么都不剩时，auto 模式也不必复制整张 RAW 去试写
         # #153 filter first, so auto mode doesn't copy a whole RAW for nothing
         item = self._apply_field_switches(item)
+        # 地点判断不在这里做：边车与本体写入各按自己的目标判断（终审 I1/I3）
+        # No location decision here: the sidecar and body writers decide per target
         if not has_payload(item):
             return True
 
@@ -1493,7 +1696,9 @@ class ExifToolManager:
         # auto: 经校验写本体；任一步不通过都回退边车，原文件永远不会被写坏（#165）
         # auto: verified body write; any failure falls back to the sidecar (#165)
         def write_copy(tmp_path: str) -> bool:
-            tmp_item = dict(item)
+            # 按真正的 RAW 本体判断地点（临时副本旁没有边车），结果随标记带进副本写入
+            # Decide on the real RAW body (the temp copy has no sidecar); the mark carries over
+            tmp_item = dict(self._drop_scores_if_located(item, target_path=file_path))
             tmp_item['file'] = tmp_path
             return self._write_metadata_subprocess(tmp_item, in_place=True)
 
@@ -2078,6 +2283,15 @@ class ExifToolManager:
         # (JPG/DNG/HEIF) use the persistent-process embedded batch path.
         arw_items = [it for it in files_metadata if self._is_sidecar_raw(it.get('file', ''))]
         other_items = [it for it in files_metadata if it not in arw_items]
+        # 本体批量写入在这里判断地点（专有 RAW 与边车模式在各自写入函数里判断）；
+        # 去掉分数后什么都不剩的条目按「跳过」计成功，不交给 exiftool
+        # The body batch decides here (RAW and sidecar writers decide themselves);
+        # items left empty after dropping scores count as skipped successes
+        other_items = [self._drop_scores_if_located(it) for it in other_items]
+        emptied = [it for it in other_items if not has_payload(it)]
+        if emptied:
+            stats['success'] += len(emptied)
+            other_items = [it for it in other_items if has_payload(it)]
 
         for item in arw_items:
             if not os.path.exists(item.get('file', '')):
@@ -2467,6 +2681,7 @@ class ExifToolManager:
             '-IPTC:Country-PrimaryLocationName=',
             '-IPTC:Province-State=',
         ])
+        clear_args = self._drop_location_reset_args(clear_args, file_path)
         if not clear_args:
             return True
         args = [
@@ -2558,49 +2773,66 @@ class ExifToolManager:
             if not batch_args:
                 stats['success'] += len(valid_files)
                 continue
-            batch_args.extend(valid_files)
-            batch_args.append('-execute')
+            # 已有真实地名的照片单独一组，用去掉城市/省份/国家的清除参数（一批共用一套参数，
+            # 不能逐张区分）；没有地点项时不读文件，整批一组
+            # Photos with a real place name form their own group with the location
+            # items removed (one argument set is shared per execute); with no
+            # location item nothing is read and the batch stays whole.
+            by_args: Dict[Tuple[str, ...], List[str]] = {}
+            for f in valid_files:
+                by_args.setdefault(tuple(self._drop_location_reset_args(batch_args, f)), []).append(f)
+            groups = [(list(a), fs) for a, fs in by_args.items()]
+            kept = sum(len(fs) for a, fs in by_args.items() if len(a) < len(batch_args))
+            if kept:
+                log(i18n.t("logs.location_reset_kept", count=kept))
+            for group_args, group_files in groups:
+                if not group_files:
+                    continue
+                if not group_args:
+                    stats['success'] += len(group_files)
+                    continue
+                group_cmd = [*group_args, *group_files, '-execute']
 
-            try:
-                # V4.5: 批量重置走 write 进程，与批量写入同一路由
-                # V4.5: Batch reset uses the write process, same route as batch writes
-                wp = self._write_proc
-                with wp.lock:
-                    wp.start()
-                    if not wp.process:
-                        raise RuntimeError("Process not started")
+                try:
+                    # V4.5: 批量重置走 write 进程，与批量写入同一路由
+                    # V4.5: Batch reset uses the write process, same route as batch writes
+                    wp = self._write_proc
+                    with wp.lock:
+                        wp.start()
+                        if not wp.process:
+                            raise RuntimeError("Process not started")
 
-                    cmd_str = '\n'.join(batch_args) + '\n'
-                    wp.process.stdin.write(cmd_str.encode('utf-8'))
-                    wp.process.stdin.flush()
+                        cmd_str = '\n'.join(group_cmd) + '\n'
+                        wp.process.stdin.write(cmd_str.encode('utf-8'))
+                        wp.process.stdin.flush()
 
-                    # 单次 -execute，读一次 {ready} / Single -execute, one {ready} read.
-                    output = wp.read_until_ready(timeout=60)
-                    decoded = output.decode('utf-8', errors='replace')
+                        # 单次 -execute，读一次 {ready} / Single -execute, one {ready} read.
+                        output = wp.read_until_ready(timeout=60)
+                        decoded = output.decode('utf-8', errors='replace')
 
-                # 锁已释放，再做日志和统计，不阻塞其他 ExifTool 调用。
-                # Lock released; compute stats and log without holding it.
-                import re as _re
-                m = _re.search(r'(\d+)\s+image files?\s+updated', decoded)
-                updated_count = int(m.group(1)) if m else 0
-                error_lines = [
-                    ln for ln in decoded.splitlines()
-                    if 'Error' in ln and 'Warning' not in ln and ln.strip()
-                ]
-                error_count = len(error_lines)
-                # 未能解析更新数（文件本已无元数据可清除）时按全成功算。
-                # If updated count cannot be parsed, treat all files as success.
-                batch_success = updated_count if (updated_count > 0 or error_count > 0) else len(valid_files)
+                    # 锁已释放，再做日志和统计，不阻塞其他 ExifTool 调用。
+                    # Lock released; compute stats and log without holding it.
+                    import re as _re
+                    m = _re.search(r'(\d+)\s+image files?\s+updated', decoded)
+                    updated_count = int(m.group(1)) if m else 0
+                    error_lines = [
+                        ln for ln in decoded.splitlines()
+                        if 'Error' in ln and 'Warning' not in ln and ln.strip()
+                    ]
+                    error_count = len(error_lines)
+                    # 未能解析更新数（文件本已无元数据可清除）时按全成功算。
+                    # If updated count cannot be parsed, treat all files as success.
+                    batch_success = updated_count if (updated_count > 0 or error_count > 0) else len(group_files)
 
-                stats['success'] += batch_success
-                stats['failed'] += error_count
+                    stats['success'] += batch_success
+                    stats['failed'] += error_count
 
-                log(i18n.t("logs.batch_progress", start=batch_start+1, end=batch_end, success=batch_success, skipped=0))
+                    log(i18n.t("logs.batch_progress", start=batch_start+1, end=batch_end, success=batch_success, skipped=0))
 
-            except Exception as e:
-                stats['failed'] += len(valid_files)
-                self._write_proc.stop()
-                log(f"  ❌ {i18n.t('logs.batch_error', start=batch_start+1, end=batch_end, error=str(e))}")
+                except Exception as e:
+                    stats['failed'] += len(group_files)
+                    self._write_proc.stop()
+                    log(f"  ❌ {i18n.t('logs.batch_error', start=batch_start+1, end=batch_end, error=str(e))}")
 
         # V4.0.3: 清理潜在残留的临时文件
         self.cleanup_temp_files(file_paths)

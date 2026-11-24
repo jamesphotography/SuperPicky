@@ -1144,3 +1144,27 @@ def test_focus_arb_spin_range_save_and_v1_disable():
     finally:
         _ac_mod.get_advanced_config = _orig_get
         os.unlink(tmp_path)
+
+
+def test_metadata_location_hint_shown():
+    """
+    元数据字段框里有说明：锐度/美学/对焦借用城市/省份/国家，已有真实地名时不写、不清。
+    The metadata box explains the City/State/Country borrowing and the real-place guard.
+    """
+    import json
+    import os
+    from PySide6.QtWidgets import QLabel
+    from tools.i18n import get_i18n
+    from ui.settings_center import SettingsCenter
+
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for lang in ("zh_CN", "zh_TW", "en_US"):
+        with open(os.path.join(root, "locales", f"{lang}.json"), encoding="utf-8") as fh:
+            assert "metadata_location_hint" in json.load(fh)["advanced_settings"], lang
+
+    i18n = get_i18n()
+    w = SettingsCenter(i18n)
+    text = i18n.t("advanced_settings.metadata_location_hint")
+    labels = [lb.text() for lb in w._meta_fields_box.findChildren(QLabel)]
+    assert text in labels
+    w.close()

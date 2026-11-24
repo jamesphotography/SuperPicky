@@ -142,7 +142,7 @@ def cmd_burst(args):
 
 def cmd_process(args):
     """处理照片目录"""
-    from tools.cli_processor import CLIProcessor
+    from tools.cli_processor import CLIProcessingPaused, CLIProcessor, CLIResumeError
     from tools.cli_settings import resolve_processing_settings, apply_config_overrides
     from advanced_config import get_advanced_config
 
@@ -184,10 +184,19 @@ def cmd_process(args):
     )
 
     # 连拍检测/跨目录合并由 PhotoProcessor 内部处理。
-    stats = processor.process(
-        organize_files=args.organize,
-        cleanup_temp=not adv_config.keep_temp_files  # 保留则不清理
-    )
+    try:
+        processor.process(
+            organize_files=args.organize,
+            cleanup_temp=not adv_config.keep_temp_files,
+            resume=args.resume,
+        )
+    except CLIResumeError as exc:
+        print(t(f'cli.resume_{exc.reason}'), file=sys.stderr)
+        return 1
+    except CLIProcessingPaused as exc:
+        key = 'cli.paused_with_checkpoint' if exc.checkpoint_available else 'cli.paused_without_checkpoint'
+        print(t(key), file=sys.stderr)
+        return 130
 
     print(t("cli.processing_complete"))
     return 0
@@ -513,6 +522,40 @@ def _add_processing_args(parser):
                         help=t("cli.help_save_crop"))
 
 
+def _add_optional_commands(subparsers: argparse._SubParsersAction) -> None:
+    """注册按需工作流，不在解析参数时加载模型 / Register opt-in workflows lazily."""
+    report = subparsers.add_parser('report', help=t('cli.cmd_report'))
+    checklist = subparsers.add_parser('export-ebird', help=t('cli.cmd_export_ebird'))
+    for command in (report, checklist):
+        command.add_argument('directory', help=t('cli.help_export_dir'))
+        command.add_argument('-o', '--output', required=True, help=t('cli.help_export_output'))
+        command.add_argument('--force', action='store_true', help=t('cli.help_export_force'))
+    report.add_argument('--title', help=t('cli.help_report_title'))
+    report.add_argument('--text-only', action='store_true', help=t('cli.help_report_text_only'))
+    checklist.add_argument('--location', required=True, help=t('cli.help_ebird_location'))
+    checklist.add_argument('--country', help=t('cli.help_ebird_export_country'))
+    # 默认不写坐标（精确点位可能暴露敏感地点）；显式加参数时与 GUI 导出一致，写入中位坐标。
+    # Coordinates are omitted by default (exact spots can be sensitive); opting in
+    # matches the GUI export, which writes the photos' median coordinates.
+    checklist.add_argument('--include-gps', action='store_true',
+                           help=t('cli.help_ebird_include_gps'))
+
+    video = subparsers.add_parser('video', help=t('cli.cmd_video'))
+    video.add_argument('path', help=t('cli.help_video_path'))
+    video.add_argument('--organize', action='store_true', help=t('cli.help_video_organize'))
+    video.add_argument('--max-frames', type=int, help=t('cli.help_video_max_frames'))
+    video.add_argument('--yolo-threshold', type=float, help=t('cli.help_video_yolo'))
+    video.add_argument('--species-mode', choices=('instant', 'fast', 'full'),
+                       help=t('cli.help_video_mode'))
+    video.add_argument('--species', action=argparse.BooleanOptionalAction, default=None,
+                       help=t('cli.help_video_species'))
+    video.add_argument('--flight', action=argparse.BooleanOptionalAction, default=None,
+                       help=t('cli.help_video_flight'))
+    # 机器可读输出：结果 JSON 写到 stdout，诊断信息写到 stderr。
+    # Machine-readable output: JSON results on stdout, diagnostics on stderr.
+    video.add_argument('--json', action='store_true', help=t('cli.help_video_json'))
+
+
 def main():
     """主入口"""
     apply_saved_language()
@@ -537,6 +580,7 @@ def main():
     p_process.add_argument('-q', '--quiet', action='store_true', help=t("cli.help_quiet"))
     p_process.add_argument('--cleanup-days', type=int, default=30,
                           help=t("cli.help_cleanup_days"))
+    p_process.add_argument('--resume', action='store_true', help=t('cli.help_resume'))
     p_process.set_defaults(organize=True, cleanup=True)
 
     # ===== reset 命令 =====
@@ -592,12 +636,19 @@ def main():
     p_batch_reset.add_argument('-y', '--yes', action='store_true',
                               help=t("cli.help_yes"))
 
+    _add_optional_commands(subparsers)
+
     # 解析参数
     args = parser.parse_args()
 
     if not args.command:
         parser.print_help()
         return 1
+
+    # video 可接收文件或目录，由视频命令验证 / Let video validate its file or folder.
+    if args.command == 'video':
+        from tools.cli_video import analyze_video
+        return analyze_video(args)
 
     # identify 命令验证文件，其他命令验证目录
     if args.command == 'identify':
@@ -627,6 +678,12 @@ def main():
         return cmd_batch(args)
     elif args.command == 'batch-reset':
         return cmd_batch_reset(args)
+    elif args.command == 'report':
+        from tools.cli_exports import export_report
+        return export_report(args)
+    elif args.command == 'export-ebird':
+        from tools.cli_exports import export_ebird
+        return export_ebird(args)
     else:
         parser.print_help()
         return 1
