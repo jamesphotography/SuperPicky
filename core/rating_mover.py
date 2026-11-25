@@ -118,10 +118,12 @@ def move_photo_on_metadata_change(
     # RAW
     files_to_move.append(("raw", current_abs))
 
-    # 配套 JPEG（同 change_bird_species：内部缓存预览不搬，见那里的说明）
-    # Companion JPEG only; never relocate the internal cache preview.
-    jpeg_abs = photo.get("temp_jpeg_path") or ""
-    if jpeg_abs and os.path.exists(jpeg_abs) and not _is_internal_cache_path(jpeg_abs):
+    # 配套 JPEG（同 change_bird_species：内部缓存预览不搬，见那里的说明；
+    # 纯 JPEG 照片的 temp_jpeg_path 就是它自己，不能再搬第二次，issue #171）
+    # Companion JPEG only; never relocate the internal cache preview, and
+    # never move a JPEG-only photo twice (issue #171).
+    jpeg_abs, jpeg_is_body = _companion_jpeg(current_abs, photo)
+    if jpeg_abs:
         files_to_move.append(("jpeg", jpeg_abs))
 
     # XMP sidecar（与 RAW 同目录同 stem）
@@ -166,6 +168,12 @@ def move_photo_on_metadata_change(
                 pass
         return False
 
+    # 纯 JPEG 照片：temp_jpeg_path 就是原图本体，随本体一起指向新位置，
+    # 否则它会留着已不存在的旧路径（issue #171）。
+    # JPEG-only photo: temp_jpeg_path is the body, so it follows the body.
+    if jpeg_is_body:
+        moved_jpeg_rel = moved_raw_rel
+
     # 9. 更新 DB
     if report_db is not None:
         update: dict = {}
@@ -185,7 +193,7 @@ def move_photo_on_metadata_change(
     # 11. 更新 manifest
     raw_basename = os.path.basename(current_abs)
     _update_manifest(dir_path, raw_basename, new_rel_folder)
-    if jpeg_abs and moved_jpeg_rel:
+    if jpeg_abs and moved_jpeg_rel and not jpeg_is_body:
         _update_manifest(dir_path, os.path.basename(jpeg_abs), new_rel_folder)
 
     # 12. 清理旧目录（若已空）
@@ -363,6 +371,66 @@ def _is_internal_cache_path(path: str) -> bool:
     return basename.startswith(("tmp_", "tmp."))
 
 
+def _same_file(a: str, b: str) -> bool:
+    """
+    判断两个路径是否指向磁盘上的同一个文件。
+
+    macOS / Windows 默认文件系统不区分大小写，「X.JPG」和「X.jpg」是同一个
+    文件，只比字符串会判错；两边都存在时用 os.path.samefile 认身份，
+    否则退回 normcase + normpath 比对。
+
+    参数 / Args:
+        a: 路径一 / first path
+        b: 路径二 / second path
+
+    返回 / Returns:
+        bool: True 表示同一文件 / True when both name the same file
+
+    Whether two paths name the same file on disk (case-insensitive file
+    systems included).
+    """
+    if not a or not b:
+        return False
+    try:
+        if os.path.exists(a) and os.path.exists(b):
+            return os.path.samefile(a, b)
+    except OSError:
+        pass
+    return os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
+
+
+def _companion_jpeg(current_abs: str, photo: dict) -> tuple[str, bool]:
+    """
+    找出需要跟原图一起搬的「真配套 JPEG」。
+
+    temp_jpeg_path 有三种来源：RAW+JPEG 双格式拍摄的那张 JPEG（要一起搬）、
+    .superpicky 内部缓存预览（绝不能搬，见 change_bird_species 的说明）、
+    以及纯 JPEG 照片**自己**——此时它和 current_path 是同一个文件。最后这种
+    以前会被当成第二个文件再搬一次，第一次搬完后目标目录里已有「它自己」，
+    于是误报「目标目录已有同名文件」，且 temp_jpeg_path 留着旧路径（issue #171）。
+
+    参数 / Args:
+        current_abs: 原图本体的绝对路径 / absolute path of the image body
+        photo:       照片记录（读取 temp_jpeg_path）/ the photo record
+
+    返回 / Returns:
+        tuple[str, bool]: (要单独搬的配套 JPEG 路径，没有则为空串;
+                           temp_jpeg_path 是否就是原图本体)
+
+    Return (companion JPEG to move separately or "", whether temp_jpeg_path is
+    the image body itself). A JPEG-only photo's temp_jpeg_path is the body, and
+    moving it twice produced a false "target exists" failure (issue #171).
+    """
+    jpeg_abs = photo.get("temp_jpeg_path") or ""
+    if not jpeg_abs or _is_internal_cache_path(jpeg_abs):
+        return "", False
+    if _same_file(jpeg_abs, current_abs):
+        return "", True
+    if not os.path.exists(jpeg_abs):
+        return "", False
+    return jpeg_abs, False
+
+
 def _collect_changed(changed_files: Optional[list], path: str) -> None:
     """
     登记一个「鸟名已变、需要同步元数据」的文件（去重，排除内部缓存）。
@@ -513,8 +581,10 @@ def _change_bird_species_single(
         # current_path，RAW 从此被永久落在旧目录(2026-09-05 现网确认)。
         # Move only a real companion JPEG; temp_jpeg_path usually points at the
         # internal cache preview, and relocating that corrupts the library.
-        jpeg_abs = photo.get("temp_jpeg_path") or ""
-        if jpeg_abs and os.path.exists(jpeg_abs) and not _is_internal_cache_path(jpeg_abs):
+        # 纯 JPEG 照片的 temp_jpeg_path 就是它自己，只搬一次（issue #171）。
+        # A JPEG-only photo's temp_jpeg_path is the body: move it once (#171).
+        jpeg_abs, jpeg_is_body = _companion_jpeg(current_abs, photo)
+        if jpeg_abs:
             files_to_move.append(("jpeg", jpeg_abs))
 
         xmp_abs = os.path.join(os.path.dirname(current_abs), raw_stem + ".xmp")
@@ -540,6 +610,11 @@ def _change_bird_species_single(
                     path_update["current_path"] = rel
                     photo["current_path"] = os.path.join(dir_path, rel)
                     _collect_changed(changed_files, photo["current_path"])
+                    if jpeg_is_body:
+                        # 纯 JPEG：temp_jpeg_path 随本体指向新位置（#171）
+                        # JPEG-only: temp_jpeg_path follows the body (#171).
+                        path_update["temp_jpeg_path"] = rel
+                        photo["temp_jpeg_path"] = photo["current_path"]
                 elif kind == "jpeg":
                     path_update["temp_jpeg_path"] = rel
                     photo["temp_jpeg_path"] = os.path.join(dir_path, rel)
