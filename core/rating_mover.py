@@ -68,6 +68,11 @@ def move_photo_on_metadata_change(
     """
     因星等或鸟种变化，将照片（及配套 JPEG / XMP sidecar）移动到新目录。
 
+    连拍组（burst_xxx 目录）内的照片不单张拆出，而是整组随「组内最高星级」移动，
+    见 _move_burst_on_rating_change（#173）；report_db 为 None 时连拍照片不动。
+    Burst members move as a whole folder following the group's highest rating
+    (see _move_burst_on_rating_change, #173); skipped when report_db is None.
+
     参数 / Args:
         dir_path:      批处理根目录（绝对路径）
         photo:         来自 DB 的 photo 字典，current_path 已解析为绝对路径
@@ -80,7 +85,12 @@ def move_photo_on_metadata_change(
     返回 / Returns:
         True 表示实际发生了文件移动，False 表示跳过
     """
-    # 1. 获取当前文件绝对路径
+    # 1. 获取当前文件绝对路径。有 DB 时先按 DB 修正失效路径：批量改星时同组前一张
+    #    可能已把整个连拍目录搬走，这张手里的 current_path 已指向旧位置（#173）。
+    # 1. Resolve the current path; with a DB, refresh a stale one first — an
+    #    earlier photo of the same batch may already have moved the burst (#173).
+    if report_db is not None:
+        _ensure_current_path(dir_path, photo, report_db, db_key)
     current_abs = photo.get("current_path") or photo.get("original_path") or ""
     if not current_abs or not os.path.exists(current_abs):
         return False
@@ -91,9 +101,16 @@ def move_photo_on_metadata_change(
     except ValueError:
         return False  # Windows 跨盘符
 
-    # 3. Burst 子目录检测：不移动连拍组内的照片
+    # 3. 连拍组内的照片：整组随「组内最高星级」移动（#173）；没有 DB 无从得知
+    #    组内其余照片的星级，只能不动。
+    # 3. Burst members move as a whole folder following the group's highest
+    #    rating (#173); without a DB the other ratings are unknown, so skip.
     if _is_in_burst(current_rel):
-        return False
+        if report_db is None:
+            return False
+        return _move_burst_on_rating_change(
+            dir_path, photo, current_abs, new_rating, new_bird_name, layout, report_db
+        )
 
     # 4. 根目录检测：未整理的文件不移动
     if _is_in_root(current_rel):
@@ -200,6 +217,176 @@ def move_photo_on_metadata_change(
     _cleanup_empty_dirs(dir_path, os.path.dirname(current_abs))
 
     return True
+
+
+def _burst_members(report_db, burst_id, dir_path: str) -> list:
+    """
+    取连拍组全部成员的 DB 记录；合并报告模式按所在目录过滤（burst_id 各目录会撞号）。
+
+    参数 / Args:
+        report_db: ReportDB / MergedReportDB 实例
+        burst_id:  连拍组 ID
+        dir_path:  批处理根目录（绝对路径）
+
+    返回 / Returns:
+        list: 成员记录（dict），查询失败时为空列表
+
+    Fetch every member row of a burst group; merged mode filters by directory
+    because burst ids collide across batches. Empty list on failure.
+    """
+    getter = getattr(report_db, "get_photos_by_burst_id", None)
+    if not callable(getter) or burst_id in (None, ""):
+        return []
+    try:
+        if hasattr(report_db, "root_dir"):
+            return getter(burst_id, dir_path)
+        return getter(burst_id)
+    except Exception:
+        return []
+
+
+def _move_burst_on_rating_change(
+    dir_path: str,
+    photo: dict,
+    current_abs: str,
+    new_rating: int,
+    new_bird_name: str,
+    layout: str,
+    report_db,
+) -> bool:
+    """
+    连拍组内某张照片改星级后，让整个 burst_xxx 目录跟随「组内最高星级」移动（#173）。
+
+    处理流程建连拍目录时就是按组内最高星级放的（photo_processor 连拍整理段：
+    compute_target_folder(highest_rating, 鸟种, layout)），这里沿用同一规则：
+    - 组内最高星级对应的目录没变 → 不动（例如组里还有别的 3★）；
+    - 变了 → 整个目录搬过去，组内每张的 DB current_path 与 manifest 一并更新；
+    - 目标位置已有同名 burst 目录 → 整组不动，不覆盖。
+    全组降到 2★ 以下时也整组搬（进「其他鸟类/1星_普通」等），不拆散连拍组，
+    之后再升回来还能整组搬回。
+
+    批量改星时浏览器对每张都调用一次，且先把整批星级写进 DB；每次都按 DB 现算目标，
+    所以无论调用顺序如何，最后一次调用看到的都是最终星级，结果收敛且幂等。
+
+    参数 / Args:
+        dir_path:      批处理根目录（绝对路径）
+        photo:         改星级的照片（current_path 为绝对路径，移动后就地更新）
+        current_abs:   该照片当前的绝对路径（在 burst_xxx 目录内）
+        new_rating:    该照片的新星级（DB 里可能尚未写入，以此为准）
+        new_bird_name: 该照片的鸟种目录名，组内取不到鸟名时兜底
+        layout:        "species-first" | "rating-first"
+        report_db:     ReportDB / MergedReportDB 实例（非 None）
+
+    返回 / Returns:
+        bool: True 表示整组实际移动了，False 表示无需移动或移动失败
+
+    After a rating change inside a burst, move the whole burst_xxx folder so it
+    follows the group's highest rating — the same rule processing used to place
+    it. No move when that folder is unchanged or the target already holds a
+    folder of the same name. Recomputed from the DB on every call, so a batch
+    converges regardless of call order.
+    """
+    burst_folder_abs = os.path.dirname(current_abs)
+    burst_folder_name = os.path.basename(burst_folder_abs)
+    if not burst_folder_name.startswith("burst_"):
+        return False  # 非预期层级（burst 目录下再套子目录）/ unexpected nesting
+    old_parent_abs = os.path.dirname(burst_folder_abs)
+    try:
+        old_parent_rel = os.path.relpath(old_parent_abs, dir_path)
+    except ValueError:
+        return False
+
+    burst_id = photo.get("burst_id")
+    if burst_id in (None, ""):
+        row = _db_row(report_db, photo.get("filename"))
+        burst_id = (row or {}).get("burst_id")
+    members = _burst_members(report_db, burst_id, dir_path)
+    if not members:
+        return False
+
+    # 组内最高星级：这张以 new_rating 为准，其余按 DB
+    # Highest rating in the group: this photo uses new_rating, the rest the DB
+    own = photo.get("filename")
+
+    def _rating_of(row: dict) -> int:
+        if row.get("filename") == own:
+            return int(new_rating)
+        try:
+            return int(row.get("rating") if row.get("rating") is not None else 0)
+        except (TypeError, ValueError):
+            return 0
+
+    leader = max(members, key=_rating_of)
+    highest = _rating_of(leader)
+    # 目录鸟名取最高星那张的（与处理流程一致），取不到再用调用方给的
+    # Folder species from the top-rated member (as processing does), else the caller's
+    bird_name = _folder_bird_name(
+        leader.get("bird_species_cn") or "", leader.get("bird_species_en") or ""
+    ) or new_bird_name
+
+    new_parent_rel = compute_target_folder(highest, bird_name or None, normalize_layout(layout))
+    if not new_parent_rel:
+        return False  # 平铺布局：不分目录 / flat layout keeps files in place
+    if os.path.normpath(new_parent_rel) == os.path.normpath(old_parent_rel):
+        return False
+
+    new_parent_abs = os.path.join(dir_path, new_parent_rel)
+    new_burst_abs = os.path.join(new_parent_abs, burst_folder_name)
+    if os.path.exists(new_burst_abs):
+        from tools.utils import log_message
+        log_message(f"[rating_mover] burst move skipped, target exists: {new_burst_abs}")
+        return False
+    try:
+        os.makedirs(new_parent_abs, exist_ok=True)
+        shutil.move(burst_folder_abs, new_burst_abs)
+    except Exception as exc:
+        from tools.utils import log_message
+        log_message(f"[rating_mover] burst move failed {burst_folder_abs}: {exc}")
+        return False
+
+    new_burst_rel = os.path.join(new_parent_rel, burst_folder_name)
+    is_merged = hasattr(report_db, "root_dir")
+    for row in members:
+        cur = row.get("current_path") or ""
+        if not cur:
+            continue
+        basename = os.path.basename(cur)
+        update = {"current_path": os.path.join(new_burst_rel, basename)}
+        # 配套 JPEG 若也在这个连拍目录里，路径一并改（内部缓存预览不在这里，不受影响）
+        # A companion JPEG inside the same burst folder follows too
+        jpeg = row.get("temp_jpeg_path") or ""
+        if jpeg and not os.path.isabs(jpeg) and \
+                os.path.normpath(os.path.dirname(jpeg)) == os.path.normpath(
+                    os.path.join(old_parent_rel, burst_folder_name)):
+            update["temp_jpeg_path"] = os.path.join(new_burst_rel, os.path.basename(jpeg))
+        key = (row.get("source_dir", ""), row["filename"]) if is_merged else row["filename"]
+        try:
+            report_db.update_photo(key, update)
+        except Exception as exc:
+            from tools.utils import log_message
+            log_message(f"[rating_mover] DB path update failed for {row['filename']}: {exc}")
+        _update_manifest(dir_path, basename, new_burst_rel)
+        if row.get("filename") == own:
+            photo["current_path"] = os.path.join(dir_path, update["current_path"])
+            if "temp_jpeg_path" in update:
+                photo["temp_jpeg_path"] = os.path.join(dir_path, update["temp_jpeg_path"])
+
+    _cleanup_empty_dirs(dir_path, old_parent_abs)
+    return True
+
+
+def _db_row(report_db, filename) -> Optional[dict]:
+    """
+    按文件名取一条 DB 记录；没有 get_photo 或查询失败时返回 None。
+    Fetch one DB row by filename; None when unavailable.
+    """
+    getter = getattr(report_db, "get_photo", None)
+    if not callable(getter) or not filename:
+        return None
+    try:
+        return getter(filename)
+    except Exception:
+        return None
 
 
 def change_bird_species(
