@@ -2856,6 +2856,12 @@ class ResultsBrowserWindow(QMainWindow):
         """
         if not directory:
             return
+        # 先退回缩略图网格，再换库（#172）：窗口是复用的，离开时停在全屏/对比页，
+        # 换目录后那一页仍显示上个目录的照片，且全屏里的打星/删除会作用在它身上。
+        # 必须在关旧库之前退：退全屏会把 #167 延迟的重排落到旧目录的数据上。
+        # Return to the grid before swapping the database (#172); must run while
+        # the old database is still open (see _return_to_grid).
+        self._return_to_grid()
         # 记下打开的目录，供目录标签高亮 / remembered for folder-tab highlighting
         self._opened_folder = directory
 
@@ -2875,6 +2881,29 @@ class ResultsBrowserWindow(QMainWindow):
         if not chosen:
             return
         self._apply_selection(chosen)
+
+    def _return_to_grid(self) -> None:
+        """
+        若停在全屏页或对比页，按各自的正常退出流程回到缩略图网格（issue #172）。
+
+        结果浏览器是复用的单例，离开时只隐藏，停在哪一页就留在哪一页。换目录
+        只换数据与列表，若不先退回网格，全屏页会继续显示并操作上个目录的照片
+        （打星/删除/改鸟种都读全屏页当前照片），右侧详情却已是新目录的。
+        走 _exit_fullscreen / _exit_comparison 而不是直接切页：前者还会恢复
+        详情面板的全图视图并落下 #167 延迟的星级重排，后者会把隐藏的详情面板
+        重新显示出来。调用时旧库须仍打开，重排才作用在旧目录上。
+
+        Leave the fullscreen or comparison page through its normal exit so a
+        reused (merely hidden) browser does not keep showing and acting on the
+        previous folder's photo after a folder switch (#172). The exits also
+        restore the detail panel and flush the deferred #167 reflow, so call
+        this while the old database is still open.
+        """
+        page = self._stack.currentIndex()
+        if page == _PAGE_FULLSCREEN:
+            self._exit_fullscreen()
+        elif page == _PAGE_COMPARISON:
+            self._exit_comparison()
 
     def _resolve_directories(self, directory: str, ask_batches: bool = True) -> list:
         """
@@ -3817,7 +3846,8 @@ class ResultsBrowserWindow(QMainWindow):
                 in_view = getattr(self._detail_panel, "_current_photo", None)
             self._rating_reflow_anchor = _photo_identity(in_view or current_photo or {"filename": filename})
         # 后台先移动文件、再写 EXIF（同一线程按序执行，见 _trigger_rating_move）。
-        # 移动仅对已整理的照片生效（burst / 根目录 / 新旧相同时内部跳过）；
+        # 移动仅对已整理的照片生效（根目录 / 新旧相同时内部跳过；连拍组整组随
+        # 组内最高星级移动，#173）；
         # set_rating_and_pick 内部遵守 metadata_write_mode，none 时跳过。
         # Move then write EXIF in one background thread (see _trigger_rating_move).
         if current_photo:

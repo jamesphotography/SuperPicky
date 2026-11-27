@@ -35,6 +35,31 @@ This file is the rule source for AI coding assistants in this repository. The fo
 - 在仓库根目录运行 `python3 -m pytest`（`pytest.ini` 的 `testpaths = tests`）；共享夹具与全局防线在根目录 `conftest.py`。
   Run `python3 -m pytest` from the repo root (`pytest.ini` sets `testpaths = tests`); shared fixtures live in the root `conftest.py`.
 
+## Bug 排查流程 / Bug Investigation Workflow
+
+1. **先写测试复现**：在 `tests/` 写一个能复现的失败测试——这步不能省，修好后它留作回归测试。
+   Reproduce first with a failing test in `tests/`; it stays as the regression test.
+2. **看得懂就直接修**：失败信息 + 读相关代码能确定原因时，直接修，不必上调试器。
+   If the failure message plus the code explain the cause, fix it directly.
+3. **看不懂再上调试器**（PyCharm Debugger MCP）：分支多、状态在哪一步变坏不明确、跨多个函数时，在该测试上用日志断点（`log_message` + `suspend_policy="none"`）或条件断点（`condition`）定位，用 `evaluate_expression` 当场验证假设，不要反复加 print 再跑。
+   Otherwise debug that test with logpoints / conditional breakpoints and verify hypotheses with `evaluate_expression` instead of print-and-rerun loops.
+4. **修复 → 测试转绿 → 跑全量**，按「Minimum Verification」收尾。
+   Fix, make the test pass, run the full suite, then follow Minimum Verification.
+
+调试器要点 / Debugger notes:
+- pytest 运行配置写在 `.run/<名字>.run.xml`（`type="tests" factoryName="py.test"`，`_new_target` 指测试文件，`_new_keywords` 填 `-k`），PyCharm 立即识别；`.idea/runConfigurations/` 运行中新增不会被识别。`.run/` 是本机文件，不入库。
+  Put pytest run configs in `.run/<name>.run.xml` (picked up live); `.run/` is local, not committed.
+- 调试旧版本（修复前）用 scratchpad 里的 `git worktree`，运行配置须设 `ADD_CONTENT_ROOTS` / `ADD_SOURCE_ROOTS` 为 `false`，否则导入的是当前工作区的代码。
+  To debug an old revision use a scratchpad `git worktree` and turn off content/source roots, or the current checkout's code is imported.
+- `step_over` / `resume` 立即返回 running，必须接 `wait_for_pause` 再读状态；会话结束后控制台读不到，结果要在结束前读或用命令行复跑。
+  Follow every step/resume with `wait_for_pause`; read console output before the session ends.
+- 断点暂停会改变时序（C++ 层的 `QThread.wait(ms)` 计时照走），超时/竞争类问题优先用日志断点。`suspend_policy="thread"` 实测无效，暂停时整个进程停。
+  Pausing perturbs timing; prefer logpoints for timeout/race bugs. `suspend_policy="thread"` does not work here — the whole process stops.
+- 调试 `main` 会读写用户真实配置与日志：只查看，不 `set_variable`。`stop_debug_session` 返回 stopped 后仍可能残留进程（主程序 + `birdid_server` 占 5156 端口），须用 `list_debug_sessions` 与 `ps` 复核并清理；用完删除自建断点与临时 worktree。
+  Debugging `main` touches real user config — inspect only. After stopping, verify no leftover processes (main + birdid_server on 5156) and remove your breakpoints / worktrees.
+- 调试器只适用于本机可复现的问题；用户机器、打包版、Windows 现场问题仍靠日志与复现测试。
+  The debugger only helps with locally reproducible bugs; field / packaged / Windows issues still rely on logs and repro tests.
+
 ## 设置中心架构 / Settings Center Architecture
 
 所有用户设置统一由「设置中心」管理。改动任何设置相关代码前必读以下约定（违反这些约定正是本次重构前的混乱根源）：
