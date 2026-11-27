@@ -3846,7 +3846,8 @@ class ResultsBrowserWindow(QMainWindow):
                 in_view = getattr(self._detail_panel, "_current_photo", None)
             self._rating_reflow_anchor = _photo_identity(in_view or current_photo or {"filename": filename})
         # 后台先移动文件、再写 EXIF（同一线程按序执行，见 _trigger_rating_move）。
-        # 移动仅对已整理的照片生效（burst / 根目录 / 新旧相同时内部跳过）；
+        # 移动仅对已整理的照片生效（根目录 / 新旧相同时内部跳过；连拍组整组随
+        # 组内最高星级移动，#173）；
         # set_rating_and_pick 内部遵守 metadata_write_mode，none 时跳过。
         # Move then write EXIF in one background thread (see _trigger_rating_move).
         if current_photo:
