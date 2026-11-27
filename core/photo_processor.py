@@ -43,7 +43,12 @@ from core.rating_caption import CaptionFacts, build_caption, outcome_from_reason
 from core.iso_sharpness import ISO_BASE, ISO_MIN_FACTOR, ISO_PENALTY_FACTOR, iso_sharpness_factor
 from core.flight_detector import FlightDetector, get_flight_detector, FlightResult
 from core.exposure_detector import ExposureDetector, get_exposure_detector, ExposureResult
-from core.focus_point_detector import get_focus_detector, verify_focus_in_bbox, arbitrate_focus_weights
+from core.focus_point_detector import (
+    FocusPointDetector,
+    get_focus_detector,
+    verify_focus_in_bbox,
+    arbitrate_focus_weights,
+)
 from core.burst_species import BirdIdOutcome, reconcile_burst_species
 from core.incremental_cull import (
     HistoricalV2Context,
@@ -560,6 +565,27 @@ class PhotoProcessor:
             pass
         return None
     
+    @staticmethod
+    def _invalidate_exif_cache_for(file_paths) -> None:
+        """
+        使指定文件的合并读取缓存失效（写回元数据后必须调用）。
+
+        容错：任何非 str / 空值条目直接跳过；检测器缓存异常不影响主流程
+        （缓存只是性能优化，失效失败最坏情况是读到旧值，但不能因此中断选片）。
+        Evicts the merged-read cache for the given files. Best-effort: the cache is
+        only a performance aid, so failures must never interrupt the culling flow.
+
+        参数:
+        file_paths: 文件路径的可迭代对象 / iterable of file paths
+        """
+        try:
+            detector = get_focus_detector()
+            for path in file_paths or []:
+                if isinstance(path, str) and path.strip():
+                    detector.invalidate_cache(path)
+        except Exception:
+            pass
+
     def _read_all_exif_metadata(self, filepath: str) -> dict:
         """
         V2: 一次性读取所有需要的 EXIF 元数据
@@ -573,18 +599,12 @@ class PhotoProcessor:
         Returns:
             包含所有 EXIF 字段的字典，读取失败的字段值为 None
         """
-        exif_fields = [
-            # 相机设置
-            'ISO', 'ShutterSpeed', 'Aperture', 'FocalLength',
-            'FocalLengthIn35mmFormat', 'Model', 'LensModel',
-            # GPS
-            'GPSLatitude', 'GPSLongitude', 'GPSAltitude',
-            # IPTC 元数据
-            'Title', 'Caption-Abstract', 'City', 'State', 'Country',
-            # 时间
-            'DateTimeOriginal',
-        ]
-        
+        # 标签清单统一由 FocusPointDetector.DETAIL_TAGS 提供（与合并读取共用一份超集），
+        # 避免两处各维护一份清单后漂移。
+        # The tag list lives on FocusPointDetector.DETAIL_TAGS so it cannot drift
+        # from the merged-read superset.
+        exif_fields = FocusPointDetector.DETAIL_TAGS
+
         result = {
             'iso': None,
             'shutter_speed': None,
@@ -1488,6 +1508,10 @@ class PhotoProcessor:
             else:
                 result = exiftool_mgr.batch_set_metadata(batch) or {}
                 exif_guard.record(len(batch), result, batch_files)
+                # 写回后立即失效这些文件的合并读取缓存，避免后续读取拿到写之前的旧值。
+                # Invalidate the merged-read cache for these files right after the
+                # write so later reads cannot return pre-write values.
+                self._invalidate_exif_cache_for(batch_files)
                 if result.get('timed_out'):
                     self._log(self.i18n.t("logs.exif_batch_timeout", seconds=BATCH_IDLE_TIMEOUT,
                                           count=int(result.get('failed', len(batch)) or 0)), "warning")
@@ -3000,10 +3024,14 @@ class PhotoProcessor:
                             # ExifTool read process instead of spawning a
                             # subprocess per photo (~30-80ms on Mac, 100-300ms
                             # on Windows with process creation + Defender).
+                            # FocusMode 已包含在合并读取超集内，这里走检测器缓存，
+                            # 不再额外开一次 exiftool 往返。
+                            # FocusMode is part of the merged superset, so reuse the
+                            # detector cache instead of a fourth round-trip.
                             is_manual_focus = False
                             try:
-                                _fm_meta = exiftool_mgr.read_metadata(
-                                    raw_path, extra_args=['-FocusMode'])
+                                _fm_meta = get_focus_detector()._read_exif(
+                                    raw_path, ['FocusMode'])
                                 focus_mode = str(
                                     (_fm_meta or {}).get('FocusMode', '')).strip().lower()
                                 if 'manual' in focus_mode or focus_mode == 'mf' or focus_mode == 'm':
@@ -4406,6 +4434,7 @@ class PhotoProcessor:
             
             exiftool_mgr = get_exiftool_manager()
             picked_stats = exiftool_mgr.batch_set_metadata(picked_batch)
+            self._invalidate_exif_cache_for([it.get('file') for it in picked_batch])
             
             if picked_stats['failed'] == 0:
                 self._log(self.i18n.t("logs.picked_exif_success"))
