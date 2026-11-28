@@ -2019,8 +2019,29 @@ class PhotoProcessor:
         
         yolo_result_queue = queue.Queue(maxsize=yolo_prefetch_depth) if yolo_prefetch_enabled else None
         yolo_prefetch_thread = None
+        # 解码队列：只缓冲「读盘 + 解码」。解码约 130ms/张，比推理线程（YOLO+关键点+
+        # TOPIQ 约 150ms/张）略快，深度 1 就足以让两步完全重叠；同时把在途大图
+        # （45MP 预览解码后约 172MB/张）压到最少。可用 SUPERPICKY_DECODE_PREFETCH_DEPTH
+        # 覆盖（最小 1）。
+        # Decode queue: buffers read + imdecode only. Decoding is slightly faster than the
+        # inference thread, so depth 1 already overlaps the two stages fully while keeping
+        # the number of in-flight full-size frames (~172MB each for 45MP previews) minimal.
+        decode_prefetch_depth = 1
+        env_decode_prefetch_depth = os.getenv("SUPERPICKY_DECODE_PREFETCH_DEPTH", "").strip()
+        if env_decode_prefetch_depth.isdigit():
+            decode_prefetch_depth = max(1, int(env_decode_prefetch_depth))
+        decode_result_queue = queue.Queue(maxsize=decode_prefetch_depth) if yolo_prefetch_enabled else None
+        decode_prefetch_thread = None
         yolo_infer_lock = threading.Lock()
         focus_exif_lock = threading.Lock()
+        # TOPIQ 单例的推理锁：关键点/TOPIQ 搬进推理线程后，主线程的「早期拒绝详情」
+        # 路径仍会调用同一个 IQAScorer；同一模块并发 forward 在 MPS/CUDA 上不安全，
+        # 这里串行化以保持改动前「同一线程串行调用」的语义。
+        # Inference lock for the TOPIQ singleton. After keypoint/TOPIQ moved to the
+        # inference thread, the main thread's early-rejected detail path still calls
+        # the same IQAScorer; concurrent forward on one module is unsafe on MPS/CUDA,
+        # so this restores the previous same-thread serialisation.
+        topiq_infer_lock = threading.Lock()
 
         def normalize_path_for_match(path_value: str) -> str:
             """Normalize separators so cache-path checks work on both Windows and POSIX."""
@@ -2168,7 +2189,8 @@ class PhotoProcessor:
                     from config import get_best_device
                     scorer = get_iqa_scorer(device=get_best_device().type)
                     topiq_scorer = scorer
-                whole_topiq = scorer.calculate_from_array(image_bgr)
+                with topiq_infer_lock:
+                    whole_topiq = scorer.calculate_from_array(image_bgr)
                 if whole_topiq is not None:
                     detail["nima_score"] = whole_topiq
                     detail["adj_topiq"] = whole_topiq
@@ -2177,21 +2199,23 @@ class PhotoProcessor:
 
             return detail
         
-        def build_yolo_item(index: int, in_filename: str) -> Dict[str, Any]:
+        def decode_photo(index: int, in_filename: str) -> Dict[str, Any]:
+            """
+            只做「解析路径 + 读盘解码」，由解码线程调用。
+
+            参数:
+            index (int): 全局序号（display_start 起算）
+            in_filename (str): 待处理文件名（RAW 或缓存预览图）
+
+            返回:
+            Dict[str, Any]: resolve_file_context 的各字段 + decoded_image + decode_ms
+
+            Read + decode only. YOLO / keypoint / TOPIQ run in analyze_photo() on the
+            inference thread so file I/O and GPU inference overlap.
+            """
             ctx = resolve_file_context(in_filename)
-            in_filepath = ctx['filepath']
-            
-            yolo_start = time.time()
-            decoded_image = read_image_bgr(in_filepath)
-            yolo_result = None
-            yolo_error = None
-            try:
-                yolo_result = run_yolo_detection(in_filepath, None, decoded_image)
-                if yolo_result is None:
-                    yolo_error = self.i18n.t("logs.cannot_process", filename=in_filename)
-            except Exception as e:
-                yolo_error = self.i18n.t("logs.processing_error", filename=in_filename, error=str(e))
-            
+            decode_start = time.time()
+            decoded_image = read_image_bgr(ctx['filepath'])
             return {
                 'index': index,
                 'filename': ctx['filename'],
@@ -2202,11 +2226,365 @@ class PhotoProcessor:
                 'raw_path': ctx['raw_path'],
                 'can_read_focus_raw': ctx['can_read_focus_raw'],
                 'decoded_image': decoded_image,
-                'result': yolo_result,
-                'error': yolo_error,
-                'yolo_ms': (time.time() - yolo_start) * 1000,
+                'decode_ms': (time.time() - decode_start) * 1000,
             }
-        
+
+        def analyze_photo(decoded_item: Dict[str, Any]) -> Dict[str, Any]:
+            """
+            在已解码的图上完成全部推理：YOLO → 多鸟复选 → 关键点 → TOPIQ。
+
+            这些步骤原本串行在主线程上（关键点约 27ms + TOPIQ 约 48ms 每张），
+            搬到这里后与解码线程重叠，主线程只剩评分/写库/落盘等轻量工作。
+
+            参数:
+            decoded_item (Dict[str, Any]): decode_photo() 的返回值
+
+            返回:
+            Dict[str, Any]: 在 decoded_item 上补齐 result / error / yolo_ms /
+                preloaded_focus_result / stage_ms，以及关键点与 TOPIQ 的全部派生量
+
+            Runs every inference step for one photo. Moving keypoint + TOPIQ here
+            takes ~75ms/photo off the main thread and overlaps it with decoding.
+            """
+            nonlocal topiq_scorer
+            yolo_item = dict(decoded_item)
+            filename = yolo_item['filename']
+            filepath = yolo_item['filepath']
+            raw_path = yolo_item['raw_path']
+            can_read_focus_raw = yolo_item['can_read_focus_raw']
+            decoded_image = yolo_item.get('decoded_image')
+            decode_ms = yolo_item.get('decode_ms', 0.0) or 0.0
+            stage_ms: Dict[str, float] = {}
+
+            def add_stage(stage: str, ms: float) -> None:
+                """
+                累计本张照片的分阶段耗时，交由主线程并入 PERF 统计。
+
+                参数:
+                stage (str): 阶段名（与主线程 add_photo_stage 同名）
+                ms (float): 该阶段耗时（毫秒，负值按 0 计）
+                """
+                stage_ms[stage] = stage_ms.get(stage, 0.0) + max(0.0, float(ms))
+
+            # 1) YOLO 检测（yolo_infer_lock 保证与主线程补救调用串行）
+            # yolo_infer_lock keeps this serialised with any main-thread rescue call.
+            infer_start = time.time()
+            yolo_result = None
+            yolo_error = None
+            try:
+                yolo_result = run_yolo_detection(filepath, None, decoded_image)
+                if yolo_result is None:
+                    yolo_error = self.i18n.t("logs.cannot_process", filename=filename)
+            except Exception as e:
+                yolo_error = self.i18n.t("logs.processing_error", filename=filename, error=str(e))
+            # 口径不变：yolo_ms 仍覆盖「解码 + 首次检测」，主线程据此算单张耗时
+            # Same accounting as before: yolo_ms covers decode + first detection.
+            yolo_item['error'] = yolo_error
+            yolo_item['result'] = yolo_result
+            yolo_item['yolo_ms'] = decode_ms + (time.time() - infer_start) * 1000
+            yolo_item['preloaded_focus_result'] = None
+            if yolo_result is None:
+                yolo_item['stage_ms'] = stage_ms
+                return yolo_item
+
+            # 2) 解构 AI 结果（10 个返回值，含 bird_count 与 rescued）
+            detected, _, confidence, sharpness, _, bird_bbox, img_dims, bird_mask, bird_count, rescued = yolo_result
+
+            # 3) 多鸟复选：必须在关键点之前完成（关键点要用复选后的框）
+            # The multi-bird refine must run before keypoints so they use the refined box.
+            if detected and bird_count > 1 and can_read_focus_raw:
+                pre_focus_start = time.time()
+                preloaded_focus_result = None
+                try:
+                    preloaded_focus_result = read_focus_result_safe(raw_path)
+                except Exception:
+                    preloaded_focus_result = None
+                add_stage('focus_prefetch', (time.time() - pre_focus_start) * 1000)
+
+                if preloaded_focus_result is not None:
+                    refine_start = time.time()
+                    try:
+                        refined_result = run_yolo_detection(
+                            filepath,
+                            (preloaded_focus_result.x, preloaded_focus_result.y),
+                            decoded_image,
+                        )
+                        if refined_result is not None:
+                            detected, _, confidence, sharpness, _, bird_bbox, img_dims, bird_mask, bird_count, rescued = refined_result
+                            yolo_item['result'] = refined_result
+                    except Exception:
+                        pass
+                    add_stage('yolo_refine', (time.time() - refine_start) * 1000)
+                yolo_item['preloaded_focus_result'] = preloaded_focus_result
+
+            # 4) 早期拒绝的照片（无鸟 / 低置信度且不需要详情）在主循环里直接 continue，
+            #    原本就跑不到关键点与 TOPIQ。推理线程照旧跳过，既不白烧约 75ms GPU
+            #    时间，也让分阶段耗时口径与改动前完全一致。
+            # Photos rejected by detection exit early in the main loop and never ran
+            # keypoint/TOPIQ; skip them here too so we neither waste ~75ms of GPU time
+            # nor change the per-stage timing breakdown.
+            confidence_threshold = self.settings.ai_confidence / 100.0
+            rejected_by_detection = not detected or (
+                detected and not rescued and confidence < confidence_threshold)
+            needs_expensive_rejected_detail = bool(detail_metadata_for_rejected and detected)
+            if rejected_by_detection and not needs_expensive_rejected_detail:
+                yolo_item['stage_ms'] = stage_ms
+                return yolo_item
+
+            # Phase 2: 关键点检测（在裁剪区域上执行，更准确）
+            all_keypoints_hidden = False
+            both_eyes_hidden = False  # 保留用于日志/调试
+            best_eye_visibility = 0.0  # V3.8: 眼睛最高置信度，用于封顶逻辑
+            head_sharpness = 0.0
+            flight_future = None  # 与关键点阶段并行提交飞版检测
+            has_visible_eye = False
+            has_visible_beak = False
+            left_eye_vis = 0.0
+            right_eye_vis = 0.0
+            beak_vis = 0.0
+
+            # V3.9: 头部区域信息（用于对焦验证）
+            head_center_orig = None
+            head_radius_val = None
+
+            # V3.9.4: 原图尺寸和裁剪偏移（用于对焦点坐标转换）
+            # 这些变量必须在循环开始时初始化，确保后续代码可用
+            w_orig, h_orig = None, None
+            x_orig, y_orig = 0, 0  # 裁剪偏移默认为 0
+
+            # V3.2优化: 只读取原图一次，在关键点检测和NIMA计算中复用
+            orig_img = None  # 原图缓存
+            bird_crop_bgr = None  # 裁剪区域缓存（BGR）
+            # 识鸟专用方形裁剪：鸟框最长边 ×1.15 的正方形、真实背景，只有超出画面才补黑；
+            # 与识鸟面板/BirdTrace 作者的取法一致。上面的长方形裁剪直接压成 384×384 会把鸟拉伸。
+            # Square crop for Bird ID: 1.15 × the box's long side, real background, black only
+            # beyond the frame — matching the Bird ID panel and BirdTrace's author. Squashing the
+            # rectangular crop above to 384×384 would stretch the bird.
+            birdid_crop_bgr = None
+            bird_crop_mask = None # 裁剪区域掩码缓存
+            bird_mask_orig = None  # V3.9: 原图尺寸的分割掩码（用于对焦验证）
+
+            keypoint_start = time.time()
+            if use_keypoints and detected and bird_bbox is not None and img_dims is not None:
+                try:
+                    import cv2
+                    orig_img = yolo_item.get('decoded_image')
+                    if orig_img is None:
+                        orig_img = read_image_bgr(filepath)
+                    if orig_img is not None:
+                        h_orig, w_orig = orig_img.shape[:2]
+                        # 获取YOLO处理时的图像尺寸
+                        w_resized, h_resized = img_dims
+
+                        # 计算缩放比例：原图 / 缩放图
+                        scale_x = w_orig / w_resized
+                        scale_y = h_orig / h_resized
+
+                        # 将bbox从缩放尺寸转换到原图尺寸
+                        x, y, w, h = bird_bbox
+                        x_orig = int(x * scale_x)
+                        y_orig = int(y * scale_y)
+                        w_orig_box = int(w * scale_x)
+                        h_orig_box = int(h * scale_y)
+
+                        if self.settings.auto_identify:
+                            try:
+                                from tools.image_crop import smart_square_crop
+                                # .copy()：裁剪完全落在画面内时返回的是 orig_img 的视图
+                                # .copy(): a crop fully inside the frame is a view of orig_img
+                                birdid_crop_bgr = smart_square_crop(
+                                    orig_img,
+                                    (x_orig, y_orig, x_orig + w_orig_box, y_orig + h_orig_box),
+                                    padding_ratio=0.15,
+                                ).copy()
+                            except Exception as e:
+                                self._log(f"[BirdID] 方形裁剪失败，改用整图识别 / square crop failed, "
+                                          f"using the full image: {e}", "warning")
+                                birdid_crop_bgr = None
+
+                        # V4.3: 与 BirdID 保持一致，加 15% padding
+                        # 防止鸟头在 bbox 边缘时被裁切，导致关键点模型看不到眼睛
+                        pad = int(max(w_orig_box, h_orig_box) * 0.15)
+                        x_orig_pad = max(0, x_orig - pad)
+                        y_orig_pad = max(0, y_orig - pad)
+                        x2_pad = min(w_orig, x_orig + w_orig_box + pad)
+                        y2_pad = min(h_orig, y_orig + h_orig_box + pad)
+                        # 更新裁切区域（含 padding）
+                        x_orig = x_orig_pad
+                        y_orig = y_orig_pad
+                        w_orig_box = x2_pad - x_orig_pad
+                        h_orig_box = y2_pad - y_orig_pad
+
+                        # 确保边界有效
+                        x_orig = max(0, min(x_orig, w_orig - 1))
+                        y_orig = max(0, min(y_orig, h_orig - 1))
+                        w_orig_box = min(w_orig_box, w_orig - x_orig)
+                        h_orig_box = min(h_orig_box, h_orig - y_orig)
+
+                        # 裁剪鸟的区域（保存BGR版本供关键点/飞版/曝光使用）
+                        # .copy() 断开对 orig_img 的 view 依赖，使 orig_img 可在 TOPIQ 后提前释放
+                        bird_crop_bgr = orig_img[y_orig:y_orig+h_orig_box, x_orig:x_orig+w_orig_box].copy()
+
+                        # 同样裁剪 mask (如果存在)
+                        if bird_mask is not None:
+                            # 缩放 mask 到原图尺寸 (Mask是整图的)
+                            # bird_mask 是 (h_resized, w_resized)，需要放大到 (h_orig, w_orig)
+                            if bird_mask.shape[:2] != (h_orig, w_orig):
+                                # 使用最近邻插值保持二值特性
+                                bird_mask_orig = cv2.resize(bird_mask, (w_orig, h_orig), interpolation=cv2.INTER_NEAREST)
+                            else:
+                                bird_mask_orig = bird_mask
+
+                            bird_crop_mask = bird_mask_orig[y_orig:y_orig+h_orig_box, x_orig:x_orig+w_orig_box]
+
+                        if bird_crop_bgr.size > 0:
+                            # 关键点与飞版并行：飞版在线程池异步执行，主线程继续关键点检测
+                            if use_flight:
+                                try:
+                                    flight_future = inference_pool.submit(flight_detector.detect, bird_crop_bgr)
+                                except Exception:
+                                    flight_future = None
+
+                            crop_rgb = cv2.cvtColor(bird_crop_bgr, cv2.COLOR_BGR2RGB)
+                            # 在裁剪区域上进行关键点检测，传入分割掩码
+                            kp_result = keypoint_detector.detect(
+                                crop_rgb, 
+                                box=(x_orig, y_orig, w_orig_box, h_orig_box),
+                                seg_mask=bird_crop_mask  # 传入分割掩码
+                            )
+                            if kp_result is not None:
+                                both_eyes_hidden = kp_result.both_eyes_hidden  # 保留兼容
+                                all_keypoints_hidden = kp_result.all_keypoints_hidden  # 新属性
+                                best_eye_visibility = kp_result.best_eye_visibility  # V3.8
+                                has_visible_eye = kp_result.visible_eye is not None
+                                has_visible_beak = kp_result.beak_vis >= 0.3  # V3.8: 降低到 0.3
+                                left_eye_vis = kp_result.left_eye_vis
+                                right_eye_vis = kp_result.right_eye_vis
+                                beak_vis = kp_result.beak_vis
+                                head_sharpness = kp_result.head_sharpness
+
+                                # V3.9: 计算头部区域中心和半径（用于对焦验证）
+                                ch, cw = bird_crop_bgr.shape[:2]
+                                # 选择更可见的眼睛作为头部中心
+                                if left_eye_vis >= right_eye_vis and left_eye_vis >= 0.3:
+                                    eye_px = (int(kp_result.left_eye[0] * cw), int(kp_result.left_eye[1] * ch))
+                                elif right_eye_vis >= 0.3:
+                                    eye_px = (int(kp_result.right_eye[0] * cw), int(kp_result.right_eye[1] * ch))
+                                else:
+                                    eye_px = None
+
+                                if eye_px is not None:
+                                    # 转换到原图坐标
+                                    head_center_orig = (eye_px[0] + x_orig, eye_px[1] + y_orig)
+                                    # 计算半径
+                                    beak_px = (int(kp_result.beak[0] * cw), int(kp_result.beak[1] * ch))
+                                    if beak_vis >= 0.3:
+                                        import math
+                                        dist = math.sqrt((eye_px[0] - beak_px[0])**2 + (eye_px[1] - beak_px[1])**2)
+                                        head_radius_val = int(dist * 1.2)
+                                    else:
+                                        head_radius_val = int(max(cw, ch) * 0.15)
+                                    head_radius_val = max(20, min(head_radius_val, min(cw, ch) // 2))
+                except Exception as e:
+                    self._log(self.i18n.t("logs.keypoint_error", error=e), "warning")
+                    # import traceback
+                    # self._log(traceback.format_exc(), "error")
+                    pass
+                add_stage('keypoint', (time.time() - keypoint_start) * 1000)
+
+            # Phase 3: 根据关键点可见性决定是否计算TOPIQ
+            # V4.8: 移除 best_eye_visibility >= 0.3 这道守卫。它与锐度归零
+            # 是同一个误删链路的两环——双眼可见度低的照片连美学分都不算，
+            # topiq=None 在 compute_q 里按 0 参与百分位(rating_quota.py),
+            # Q 分白丢 0.35 权重，即便锐度修好也仍排在最末。实测新增计算
+            # 约占批次 23%，单张 TOPIQ 42ms(MPS)，1000 张批次多耗约 10s。
+            # V4.8: drop the best_eye_visibility >= 0.3 guard. It was the
+            # second half of the same false-reject chain: photos with low
+            # eye visibility got no aesthetics score at all, and a None
+            # topiq counts as 0 in the Q percentile, so they ranked last
+            # even after the sharpness fix. Costs ~10s per 1000-shot batch.
+            topiq = None
+            if detected and not all_keypoints_hidden:
+                # 双眼可见，需要计算NIMA以进行星级判定
+                topiq_start = time.time()
+                try:
+                    import time as time_module
+
+                    step_start = time_module.time()
+                    scorer = topiq_scorer
+                    if scorer is None:
+                        from iqa_scorer import get_iqa_scorer
+                        from config import get_best_device
+                        scorer = get_iqa_scorer(device=get_best_device().type)
+                        topiq_scorer = scorer
+
+                    # V4.6(rating-v2/T2): TOPIQ 改打鸟裁剪区。整图分在鸟占画面
+                    # 小时实测≈给背景打分(与裁剪分相关性仅 0.24)，裁剪分才反映
+                    # 「这只鸟拍得好不好」；无裁剪时回退整图，保持向后兼容。
+                    # V4.6 (rating-v2/T2): score TOPIQ on the bird crop. When the
+                    # bird is small, whole-frame TOPIQ effectively rates the
+                    # background (r=0.24 vs crop, measured); fall back to the
+                    # whole image when no crop exists.
+                    # 与主线程「早期拒绝详情」共用同一 TOPIQ 单例，加锁串行
+                    # Serialised against the main thread's early-reject detail path,
+                    # which calls the same TOPIQ singleton.
+                    with topiq_infer_lock:
+                        if bird_crop_bgr is not None and bird_crop_bgr.size > 0:
+                            topiq = scorer.calculate_from_array(bird_crop_bgr)
+                        elif orig_img is not None:
+                            topiq = scorer.calculate_from_array(orig_img)
+                        else:
+                            topiq = scorer.calculate_nima(filepath)
+                except Exception as e:
+                    pass  # V3.3: 简化日志，静默 TOPIQ 计算失败
+                finally:
+                    # TOPIQ 计算后立即释放原图（bird_crop_bgr 已是独立 copy，不受影响）
+                    del orig_img
+                    orig_img = None
+                add_stage('topiq', (time.time() - topiq_start) * 1000)
+            # V3.8: 移除跳过日志，改用 all_keypoints_hidden 后跳过的情况会少很多
+
+            yolo_item.update({
+                'all_keypoints_hidden': all_keypoints_hidden,
+                'both_eyes_hidden': both_eyes_hidden,
+                'best_eye_visibility': best_eye_visibility,
+                'head_sharpness': head_sharpness,
+                'flight_future': flight_future,
+                'has_visible_eye': has_visible_eye,
+                'has_visible_beak': has_visible_beak,
+                'left_eye_vis': left_eye_vis,
+                'right_eye_vis': right_eye_vis,
+                'beak_vis': beak_vis,
+                'head_center_orig': head_center_orig,
+                'head_radius_val': head_radius_val,
+                'w_orig': w_orig,
+                'h_orig': h_orig,
+                'x_orig': x_orig,
+                'y_orig': y_orig,
+                'bird_crop_bgr': bird_crop_bgr,
+                'birdid_crop_bgr': birdid_crop_bgr,
+                'bird_crop_mask': bird_crop_mask,
+                'bird_mask_orig': bird_mask_orig,
+                'topiq': topiq,
+                'stage_ms': stage_ms,
+            })
+            return yolo_item
+
+        def build_yolo_item(index: int, in_filename: str) -> Dict[str, Any]:
+            """
+            同步一步到位版本：解码 + 推理（未开启预取时的回退路径）。
+
+            参数:
+            index (int): 全局序号
+            in_filename (str): 待处理文件名
+
+            返回:
+            Dict[str, Any]: 与预取路径完全同构的照片结果字典
+
+            Blocking variant used when prefetch is disabled: decode then analyse.
+            """
+            return analyze_photo(decode_photo(index, in_filename))
+
         # MPS 上每 N 张照片强制重载 YOLO，防止 MPS 显存状态累积导致模型输出崩溃
         # 经实测：M5 在处理 5000 张时约第 1900 张完全失效，300 张间隔可有效预防
         _YOLO_MPS_RELOAD_INTERVAL = 300
@@ -2228,18 +2606,137 @@ class PhotoProcessor:
                 _yolo_model_box[0] = load_yolo_model()
             self._log(self.i18n.t("logs.yolo_reloaded"), "info")
 
-        if yolo_prefetch_enabled and yolo_result_queue is not None:
-            def yolo_prefetch_worker():
+        if yolo_prefetch_enabled and yolo_result_queue is not None and decode_result_queue is not None:
+
+            def _put_cancelable(target_queue: queue.Queue, payload: Any) -> bool:
+                """
+                带停止检查的入队，避免取消后工作线程死等在满队列上。
+
+                参数:
+                target_queue (queue.Queue): 目标队列
+                payload (Any): 待入队对象（None 用作结束哨兵）
+
+                返回:
+                bool: 入队成功 True；检测到停止请求而放弃 False
+
+                Cancel-aware put so a worker never blocks forever after a stop.
+                """
+                while True:
+                    if self._should_stop():
+                        return False
+                    try:
+                        target_queue.put(payload, timeout=0.1)
+                        return True
+                    except queue.Full:
+                        continue
+
+            def _get_cancelable(source_queue: queue.Queue) -> Optional[Dict[str, Any]]:
+                """
+                带停止检查的出队，兼作结束哨兵读取。
+
+                参数:
+                source_queue (queue.Queue): 源队列
+
+                返回:
+                Optional[Dict[str, Any]]: 取到的对象；读到哨兵或需要停止时返回 None
+
+                Cancel-aware get; None means "sentinel received" or "stop requested".
+                """
+                while True:
+                    if self._should_stop():
+                        return None
+                    try:
+                        return source_queue.get(timeout=0.1)
+                    except queue.Empty:
+                        continue
+
+            def decode_prefetch_worker() -> None:
+                """
+                解码线程：只做读盘 + 解码，把整张图交给推理线程。
+
+                单张解码异常时构造一个带 error 的条目继续，不让一张坏图截断整批。
+
+                Decode-only worker; hands full-size frames to the inference thread.
+                One bad file produces an error item instead of truncating the batch.
+                """
                 try:
                     for idx, queued_filename in enumerate(files_tbr, 1):
+                        try:
+                            item = decode_photo(idx, queued_filename)
+                        except Exception as e:
+                            item = {
+                                'index': idx,
+                                'filename': queued_filename,
+                                'filepath': os.path.join(self.dir_path, queued_filename),
+                                'file_prefix': os.path.splitext(queued_filename)[0],
+                                'original_prefix': os.path.splitext(queued_filename)[0],
+                                'raw_ext': None,
+                                'raw_path': None,
+                                'can_read_focus_raw': False,
+                                'decoded_image': None,
+                                'decode_ms': 0.0,
+                                'result': None,
+                                'error': self.i18n.t(
+                                    "logs.processing_error",
+                                    filename=queued_filename,
+                                    error=str(e),
+                                ),
+                                'yolo_ms': 0.0,
+                                'stage_ms': {},
+                            }
+                        if not _put_cancelable(decode_result_queue, item):
+                            return
+                finally:
+                    _put_cancelable(decode_result_queue, None)
+
+            def yolo_prefetch_worker() -> None:
+                """
+                推理线程：YOLO → 多鸟复选 → 关键点 → TOPIQ，结果交给主线程。
+
+                主线程只保留评分/写库/落盘等轻量工作，GPU 推理不再占用关键路径。
+
+                All inference for one photo runs here, so the main thread only keeps
+                the lightweight bookkeeping (rating / DB / metadata).
+                """
+                try:
+                    while True:
+                        decoded_item = _get_cancelable(decode_result_queue)
+                        if decoded_item is None:
+                            return
+                        idx = decoded_item.get('index', 0) or 0
                         # MPS 周期重载：在推理前执行，确保新模型处理后续批次
                         if mps_available and idx > 1 and (idx - 1) % _YOLO_MPS_RELOAD_INTERVAL == 0:
                             _reload_yolo_if_mps()
-                        yolo_result_queue.put(build_yolo_item(idx, queued_filename))
+                        if decoded_item.get('error'):
+                            # 解码阶段已失败：不要再拿 None 去跑推理
+                            # Decode already failed: do not feed None into the models.
+                            item = decoded_item
+                        else:
+                            try:
+                                item = analyze_photo(decoded_item)
+                            except Exception as e:
+                                # 单张推理异常不能截断整批：构造错误项交给主线程记录后继续
+                                # One failing photo must not silently truncate the batch.
+                                item = dict(decoded_item)
+                                item['result'] = None
+                                item['error'] = self.i18n.t(
+                                    "logs.processing_error",
+                                    filename=decoded_item.get('filename', ''),
+                                    error=str(e),
+                                )
+                                item['yolo_ms'] = decoded_item.get('decode_ms', 0.0) or 0.0
+                                item['stage_ms'] = {}
+                        if not _put_cancelable(yolo_result_queue, item):
+                            return
                 finally:
-                    # 结束哨兵，保证主线程可正常退出
-                    yolo_result_queue.put(None)
-            
+                    _put_cancelable(yolo_result_queue, None)
+
+            decode_prefetch_thread = threading.Thread(
+                target=decode_prefetch_worker,
+                daemon=True,
+                name="sp-decode-prefetch"
+            )
+            decode_prefetch_thread.start()
             yolo_prefetch_thread = threading.Thread(
                 target=yolo_prefetch_worker,
                 daemon=True,
@@ -2247,13 +2744,13 @@ class PhotoProcessor:
             )
             yolo_prefetch_thread.start()
             if self._perf_enabled:
-                self._log(f"  ⚙️ YOLO prefetch: on (depth={yolo_prefetch_depth})")
+                self._log(f"  ⚙️ YOLO prefetch: on (depth={yolo_prefetch_depth}, decode={decode_prefetch_depth})")
         elif self._perf_enabled:
             if env_yolo_prefetch_raw:
                 self._log("  ⚙️ YOLO prefetch: off")
             else:
                 self._log(f"  ⚙️ YOLO prefetch: off (auto, mps={'on' if mps_available else 'off'})")
-        
+
         # EXIF 异步预取：把 EXIF 元数据读取与主流程并行，减少主线程等待
         # V2: 扩展为读取所有 EXIF 字段（相机设置、GPS、IPTC、时间等）
         env_exif_prefetch = os.getenv("SUPERPICKY_EXIF_PREFETCH", "1").strip().lower()
@@ -2451,7 +2948,6 @@ class PhotoProcessor:
             
                 # 延迟对焦点读取：仅在必要时触发，避免在早期退出样本上浪费 IO
                 preloaded_focus_result = None
-                focus_point_for_selection = None
             
                 # 更新进度（统一工作单元口径：照片 + 识鸟任务）
                 # Update progress (unified work units: photos + BirdID tasks)
@@ -2487,30 +2983,18 @@ class PhotoProcessor:
                 # V4.2: 解构 AI 结果（现在有 10 个返回值，包含 bird_count 和 rescued）
                 detected, _, confidence, sharpness, _, bird_bbox, img_dims, bird_mask, bird_count, rescued = result
             
-                # 多鸟场景才补读对焦点，并在需要时做一次 YOLO 复选（避免全量样本都读 RAW 对焦）
-                if detected and bird_count > 1 and can_read_focus_raw:
-                    pre_focus_start = time.time()
-                    try:
-                        preloaded_focus_result = read_focus_result_safe(raw_path)
-                        if preloaded_focus_result is not None:
-                            focus_point_for_selection = (preloaded_focus_result.x, preloaded_focus_result.y)
-                    except Exception:
-                        preloaded_focus_result = None
-                    add_photo_stage('focus_prefetch', (time.time() - pre_focus_start) * 1000)
-                
-                    if focus_point_for_selection is not None:
-                        refine_start = time.time()
-                        try:
-                            refined_result = run_yolo_detection(
-                                filepath,
-                                focus_point_for_selection,
-                                yolo_item.get('decoded_image'),
-                            )
-                            if refined_result is not None:
-                                detected, _, confidence, sharpness, _, bird_bbox, img_dims, bird_mask, bird_count, rescued = refined_result
-                        except Exception:
-                            pass
-                        add_photo_stage('yolo_refine', (time.time() - refine_start) * 1000)
+                # 推理线程算好的分阶段耗时并入本张统计（关键点 / TOPIQ / 复选等）。
+                # 必须放在早期拒绝分支之前：那些照片原本就会记录复选耗时。
+                # Merge the per-stage timings the inference thread measured. This must
+                # happen before the early-exit branch, which already recorded refine time.
+                for _stage_name, _stage_ms in (yolo_item.get('stage_ms') or {}).items():
+                    add_photo_stage(_stage_name, _stage_ms)
+
+                # 多鸟复选（含对焦点补读）已前移到推理线程，见 analyze_photo；
+                # 这里直接取回复选时读到的对焦结果，供 Phase 6 复用，避免重复读 RAW。
+                # The multi-bird refine moved to the inference thread; reuse the focus
+                # result it already read instead of hitting the RAW twice.
+                preloaded_focus_result = yolo_item.get('preloaded_focus_result')
             
                 # V4.1/V4.2: 无鸟或低置信度先标记为拒绝；是否早期退出由详情元数据设置决定。
                 # V4.1/V4.2: Mark no-bird/low-confidence photos as rejected first;
@@ -2633,215 +3117,45 @@ class PhotoProcessor:
 
                     continue  # 跳过后续所有检测
             
-                # Phase 2: 关键点检测（在裁剪区域上执行，更准确）
-                all_keypoints_hidden = False
-                both_eyes_hidden = False  # 保留用于日志/调试
-                best_eye_visibility = 0.0  # V3.8: 眼睛最高置信度，用于封顶逻辑
-                head_sharpness = 0.0
-                flight_future = None  # 与关键点阶段并行提交飞版检测
-                has_visible_eye = False
-                has_visible_beak = False
-                left_eye_vis = 0.0
-                right_eye_vis = 0.0
-                beak_vis = 0.0
-            
-                # V3.9: 头部区域信息（用于对焦验证）
-                head_center_orig = None
-                head_radius_val = None
-            
-                # V3.9.4: 原图尺寸和裁剪偏移（用于对焦点坐标转换）
-                # 这些变量必须在循环开始时初始化，确保后续代码可用
-                w_orig, h_orig = None, None
-                x_orig, y_orig = 0, 0  # 裁剪偏移默认为 0
-            
-                # V3.2优化: 只读取原图一次，在关键点检测和NIMA计算中复用
-                orig_img = None  # 原图缓存
-                bird_crop_bgr = None  # 裁剪区域缓存（BGR）
-                # 识鸟专用方形裁剪：鸟框最长边 ×1.15 的正方形、真实背景，只有超出画面才补黑；
-                # 与识鸟面板/BirdTrace 作者的取法一致。上面的长方形裁剪直接压成 384×384 会把鸟拉伸。
-                # Square crop for Bird ID: 1.15 × the box's long side, real background, black only
-                # beyond the frame — matching the Bird ID panel and BirdTrace's author. Squashing the
-                # rectangular crop above to 384×384 would stretch the bird.
-                birdid_crop_bgr = None
-                bird_crop_mask = None # 裁剪区域掩码缓存
-                bird_mask_orig = None  # V3.9: 原图尺寸的分割掩码（用于对焦验证）
-            
-                keypoint_start = time.time()
-                if use_keypoints and detected and bird_bbox is not None and img_dims is not None:
-                    try:
-                        import cv2
-                        orig_img = yolo_item.get('decoded_image')
-                        if orig_img is None:
-                            orig_img = read_image_bgr(filepath)
-                        if orig_img is not None:
-                            h_orig, w_orig = orig_img.shape[:2]
-                            # 获取YOLO处理时的图像尺寸
-                            w_resized, h_resized = img_dims
-                        
-                            # 计算缩放比例：原图 / 缩放图
-                            scale_x = w_orig / w_resized
-                            scale_y = h_orig / h_resized
-                        
-                            # 将bbox从缩放尺寸转换到原图尺寸
-                            x, y, w, h = bird_bbox
-                            x_orig = int(x * scale_x)
-                            y_orig = int(y * scale_y)
-                            w_orig_box = int(w * scale_x)
-                            h_orig_box = int(h * scale_y)
-                        
-                            if self.settings.auto_identify:
-                                try:
-                                    from tools.image_crop import smart_square_crop
-                                    # .copy()：裁剪完全落在画面内时返回的是 orig_img 的视图
-                                    # .copy(): a crop fully inside the frame is a view of orig_img
-                                    birdid_crop_bgr = smart_square_crop(
-                                        orig_img,
-                                        (x_orig, y_orig, x_orig + w_orig_box, y_orig + h_orig_box),
-                                        padding_ratio=0.15,
-                                    ).copy()
-                                except Exception as e:
-                                    self._log(f"[BirdID] 方形裁剪失败，改用整图识别 / square crop failed, "
-                                              f"using the full image: {e}", "warning")
-                                    birdid_crop_bgr = None
+                # Phase 2（关键点）与 Phase 3（TOPIQ）已在推理线程预先算好
+                # （见 analyze_photo）：主线程只做解包，GPU 推理不再卡在关键路径上。
+                # Phase 2 (keypoints) and Phase 3 (TOPIQ) are precomputed on the
+                # inference thread; here we only unpack them.
+                # 全尺寸解码帧（45MP 约 172MB）在主线程已无用途：早期退出的详情/预览
+                # 分支都在上面 continue 了，这里立刻摘掉，避免它活过本轮 tail。
+                # The decoded full-size frame (~172MB) is no longer needed here; the
+                # early-exit branches above already returned via continue.
+                yolo_item.pop('decoded_image', None)
 
-                            # V4.3: 与 BirdID 保持一致，加 15% padding
-                            # 防止鸟头在 bbox 边缘时被裁切，导致关键点模型看不到眼睛
-                            pad = int(max(w_orig_box, h_orig_box) * 0.15)
-                            x_orig_pad = max(0, x_orig - pad)
-                            y_orig_pad = max(0, y_orig - pad)
-                            x2_pad = min(w_orig, x_orig + w_orig_box + pad)
-                            y2_pad = min(h_orig, y_orig + h_orig_box + pad)
-                            # 更新裁切区域（含 padding）
-                            x_orig = x_orig_pad
-                            y_orig = y_orig_pad
-                            w_orig_box = x2_pad - x_orig_pad
-                            h_orig_box = y2_pad - y_orig_pad
-                        
-                            # 确保边界有效
-                            x_orig = max(0, min(x_orig, w_orig - 1))
-                            y_orig = max(0, min(y_orig, h_orig - 1))
-                            w_orig_box = min(w_orig_box, w_orig - x_orig)
-                            h_orig_box = min(h_orig_box, h_orig - y_orig)
-                        
-                            # 裁剪鸟的区域（保存BGR版本供关键点/飞版/曝光使用）
-                            # .copy() 断开对 orig_img 的 view 依赖，使 orig_img 可在 TOPIQ 后提前释放
-                            bird_crop_bgr = orig_img[y_orig:y_orig+h_orig_box, x_orig:x_orig+w_orig_box].copy()
-                        
-                            # 同样裁剪 mask (如果存在)
-                            if bird_mask is not None:
-                                # 缩放 mask 到原图尺寸 (Mask是整图的)
-                                # bird_mask 是 (h_resized, w_resized)，需要放大到 (h_orig, w_orig)
-                                if bird_mask.shape[:2] != (h_orig, w_orig):
-                                    # 使用最近邻插值保持二值特性
-                                    bird_mask_orig = cv2.resize(bird_mask, (w_orig, h_orig), interpolation=cv2.INTER_NEAREST)
-                                else:
-                                    bird_mask_orig = bird_mask
-                                
-                                bird_crop_mask = bird_mask_orig[y_orig:y_orig+h_orig_box, x_orig:x_orig+w_orig_box]
-                        
-                            if bird_crop_bgr.size > 0:
-                                # 关键点与飞版并行：飞版在线程池异步执行，主线程继续关键点检测
-                                if use_flight:
-                                    try:
-                                        flight_future = inference_pool.submit(flight_detector.detect, bird_crop_bgr)
-                                    except Exception:
-                                        flight_future = None
-                            
-                                crop_rgb = cv2.cvtColor(bird_crop_bgr, cv2.COLOR_BGR2RGB)
-                                # 在裁剪区域上进行关键点检测，传入分割掩码
-                                kp_result = keypoint_detector.detect(
-                                    crop_rgb, 
-                                    box=(x_orig, y_orig, w_orig_box, h_orig_box),
-                                    seg_mask=bird_crop_mask  # 传入分割掩码
-                                )
-                                if kp_result is not None:
-                                    both_eyes_hidden = kp_result.both_eyes_hidden  # 保留兼容
-                                    all_keypoints_hidden = kp_result.all_keypoints_hidden  # 新属性
-                                    best_eye_visibility = kp_result.best_eye_visibility  # V3.8
-                                    has_visible_eye = kp_result.visible_eye is not None
-                                    has_visible_beak = kp_result.beak_vis >= 0.3  # V3.8: 降低到 0.3
-                                    left_eye_vis = kp_result.left_eye_vis
-                                    right_eye_vis = kp_result.right_eye_vis
-                                    beak_vis = kp_result.beak_vis
-                                    head_sharpness = kp_result.head_sharpness
-                                
-                                    # V3.9: 计算头部区域中心和半径（用于对焦验证）
-                                    ch, cw = bird_crop_bgr.shape[:2]
-                                    # 选择更可见的眼睛作为头部中心
-                                    if left_eye_vis >= right_eye_vis and left_eye_vis >= 0.3:
-                                        eye_px = (int(kp_result.left_eye[0] * cw), int(kp_result.left_eye[1] * ch))
-                                    elif right_eye_vis >= 0.3:
-                                        eye_px = (int(kp_result.right_eye[0] * cw), int(kp_result.right_eye[1] * ch))
-                                    else:
-                                        eye_px = None
-                                
-                                    if eye_px is not None:
-                                        # 转换到原图坐标
-                                        head_center_orig = (eye_px[0] + x_orig, eye_px[1] + y_orig)
-                                        # 计算半径
-                                        beak_px = (int(kp_result.beak[0] * cw), int(kp_result.beak[1] * ch))
-                                        if beak_vis >= 0.3:
-                                            import math
-                                            dist = math.sqrt((eye_px[0] - beak_px[0])**2 + (eye_px[1] - beak_px[1])**2)
-                                            head_radius_val = int(dist * 1.2)
-                                        else:
-                                            head_radius_val = int(max(cw, ch) * 0.15)
-                                        head_radius_val = max(20, min(head_radius_val, min(cw, ch) // 2))
-                    except Exception as e:
-                        self._log(self.i18n.t("logs.keypoint_error", error=e), "warning")
-                        # import traceback
-                        # self._log(traceback.format_exc(), "error")
-                        pass
-                    add_photo_stage('keypoint', (time.time() - keypoint_start) * 1000)
-            
-                # Phase 3: 根据关键点可见性决定是否计算TOPIQ
-                # V4.8: 移除 best_eye_visibility >= 0.3 这道守卫。它与锐度归零
-                # 是同一个误删链路的两环——双眼可见度低的照片连美学分都不算，
-                # topiq=None 在 compute_q 里按 0 参与百分位(rating_quota.py),
-                # Q 分白丢 0.35 权重，即便锐度修好也仍排在最末。实测新增计算
-                # 约占批次 23%，单张 TOPIQ 42ms(MPS)，1000 张批次多耗约 10s。
-                # V4.8: drop the best_eye_visibility >= 0.3 guard. It was the
-                # second half of the same false-reject chain: photos with low
-                # eye visibility got no aesthetics score at all, and a None
-                # topiq counts as 0 in the Q percentile, so they ranked last
-                # even after the sharpness fix. Costs ~10s per 1000-shot batch.
-                topiq = None
-                if detected and not all_keypoints_hidden:
-                    # 双眼可见，需要计算NIMA以进行星级判定
-                    topiq_start = time.time()
-                    try:
-                        import time as time_module
-                    
-                        step_start = time_module.time()
-                        scorer = topiq_scorer
-                        if scorer is None:
-                            from iqa_scorer import get_iqa_scorer
-                            from config import get_best_device
-                            scorer = get_iqa_scorer(device=get_best_device().type)
-                            topiq_scorer = scorer
-                    
-                        # V4.6(rating-v2/T2): TOPIQ 改打鸟裁剪区。整图分在鸟占画面
-                        # 小时实测≈给背景打分(与裁剪分相关性仅 0.24)，裁剪分才反映
-                        # 「这只鸟拍得好不好」；无裁剪时回退整图，保持向后兼容。
-                        # V4.6 (rating-v2/T2): score TOPIQ on the bird crop. When the
-                        # bird is small, whole-frame TOPIQ effectively rates the
-                        # background (r=0.24 vs crop, measured); fall back to the
-                        # whole image when no crop exists.
-                        if bird_crop_bgr is not None and bird_crop_bgr.size > 0:
-                            topiq = scorer.calculate_from_array(bird_crop_bgr)
-                        elif orig_img is not None:
-                            topiq = scorer.calculate_from_array(orig_img)
-                        else:
-                            topiq = scorer.calculate_nima(filepath)
-                    except Exception as e:
-                        pass  # V3.3: 简化日志，静默 TOPIQ 计算失败
-                    finally:
-                        # TOPIQ 计算后立即释放原图（bird_crop_bgr 已是独立 copy，不受影响）
-                        del orig_img
-                        orig_img = None
-                    add_photo_stage('topiq', (time.time() - topiq_start) * 1000)
-                # V3.8: 移除跳过日志，改用 all_keypoints_hidden 后跳过的情况会少很多
-            
+                # Phase 2 派生量（关键点可见性 / 头部区域）
+                all_keypoints_hidden = yolo_item.get('all_keypoints_hidden', False)
+                both_eyes_hidden = yolo_item.get('both_eyes_hidden', False)
+                best_eye_visibility = yolo_item.get('best_eye_visibility', 0.0)
+                head_sharpness = yolo_item.get('head_sharpness', 0.0)
+                flight_future = yolo_item.get('flight_future')
+                has_visible_eye = yolo_item.get('has_visible_eye', False)
+                has_visible_beak = yolo_item.get('has_visible_beak', False)
+                left_eye_vis = yolo_item.get('left_eye_vis', 0.0)
+                right_eye_vis = yolo_item.get('right_eye_vis', 0.0)
+                beak_vis = yolo_item.get('beak_vis', 0.0)
+
+                # V3.9: 头部区域信息（用于对焦验证）
+                head_center_orig = yolo_item.get('head_center_orig')
+                head_radius_val = yolo_item.get('head_radius_val')
+
+                # V3.9.4: 原图尺寸和裁剪偏移（用于对焦点坐标转换）
+                w_orig = yolo_item.get('w_orig')
+                h_orig = yolo_item.get('h_orig')
+                x_orig = yolo_item.get('x_orig', 0)
+                y_orig = yolo_item.get('y_orig', 0)
+
+                # 裁剪/掩码缓存与 Phase 3 的 TOPIQ 分数
+                bird_crop_bgr = yolo_item.get('bird_crop_bgr')
+                birdid_crop_bgr = yolo_item.get('birdid_crop_bgr')
+                bird_crop_mask = yolo_item.get('bird_crop_mask')
+                bird_mask_orig = yolo_item.get('bird_mask_orig')
+                topiq = yolo_item.get('topiq')
+
                 # Phase 4: V3.4 飞版检测（在鸟的裁剪区域上执行）
                 is_flying = False
                 flight_confidence = 0.0
@@ -3557,6 +3871,11 @@ class PhotoProcessor:
         if yolo_prefetch_thread is not None:
             try:
                 yolo_prefetch_thread.join(timeout=30)
+            except Exception:
+                pass
+        if decode_prefetch_thread is not None:
+            try:
+                decode_prefetch_thread.join(timeout=30)
             except Exception:
                 pass
         if exif_prefetch_thread is not None:
