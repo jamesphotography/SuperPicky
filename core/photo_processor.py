@@ -41,6 +41,7 @@ from core.rating_engine import RatingEngine, create_rating_engine_from_config
 from core.keypoint_detector import KeypointDetector, get_keypoint_detector
 from core.rating_caption import CaptionFacts, build_caption, outcome_from_reason_key
 from core.iso_sharpness import ISO_BASE, ISO_MIN_FACTOR, ISO_PENALTY_FACTOR, iso_sharpness_factor
+from core.ordered_decode import OrderedDecodeGate
 from core.flight_detector import FlightDetector, get_flight_detector, FlightResult
 from core.exposure_detector import ExposureDetector, get_exposure_detector, ExposureResult
 from core.focus_point_detector import (
@@ -2019,19 +2020,29 @@ class PhotoProcessor:
         
         yolo_result_queue = queue.Queue(maxsize=yolo_prefetch_depth) if yolo_prefetch_enabled else None
         yolo_prefetch_thread = None
-        # 解码队列：只缓冲「读盘 + 解码」。解码约 130ms/张，比推理线程（YOLO+关键点+
-        # TOPIQ 约 150ms/张）略快，深度 1 就足以让两步完全重叠；同时把在途大图
-        # （45MP 预览解码后约 172MB/张）压到最少。可用 SUPERPICKY_DECODE_PREFETCH_DEPTH
-        # 覆盖（最小 1）。
-        # Decode queue: buffers read + imdecode only. Decoding is slightly faster than the
-        # inference thread, so depth 1 already overlaps the two stages fully while keeping
-        # the number of in-flight full-size frames (~172MB each for 45MP previews) minimal.
-        decode_prefetch_depth = 1
-        env_decode_prefetch_depth = os.getenv("SUPERPICKY_DECODE_PREFETCH_DEPTH", "").strip()
-        if env_decode_prefetch_depth.isdigit():
-            decode_prefetch_depth = max(1, int(env_decode_prefetch_depth))
-        decode_result_queue = queue.Queue(maxsize=decode_prefetch_depth) if yolo_prefetch_enabled else None
-        decode_prefetch_thread = None
+        # 并行解码：cv2.imdecode 在 C 层释放 GIL，多线程是真并行（本机 24 核实测 188ms/张
+        # → 3 条 109ms/张 → 4 条 88ms/张）。线程数既是吞吐旋钮也是内存上限——同时在解码的帧
+        # 不超过线程数，队列里最多再留 1 张待推理帧，每张 45MP 预览约 172MB，因此在途大图
+        # <= 线程数 + 1。默认 3（比推理线程约 150ms/张留有余量），并按逻辑核心数收缩以免小
+        # 机器抢核；可用 SUPERPICKY_DECODE_PREFETCH_DEPTH 覆盖（沿用第 2 步引入的名字：
+        # 「预取深度」与「并行线程数」是同一个量）。序号分配与交付顺序见
+        # core.ordered_decode.OrderedDecodeGate。
+        # Parallel decoding: cv2.imdecode releases the GIL, so threads decode for real
+        # (188ms/photo single-threaded vs 109ms with 3 on a 24-core box). The worker count
+        # caps both throughput and memory: at most that many frames decode at once plus one
+        # queued frame, ~172MB each for a 45MP preview (in flight <= workers + 1). Default 3,
+        # shrunk by the logical core count and overridable via
+        # SUPERPICKY_DECODE_PREFETCH_DEPTH (name kept from step 2). Index handout and delivery
+        # order live in core.ordered_decode.OrderedDecodeGate.
+        decode_workers = max(1, min(3, (os.cpu_count() or 1) // 2))
+        env_decode_workers = os.getenv("SUPERPICKY_DECODE_PREFETCH_DEPTH", "").strip()
+        if env_decode_workers.isdigit():
+            decode_workers = max(1, int(env_decode_workers))
+        # 队列深度保持 1：推理线程逐张消费，多开槽位只会多压几张 172MB 大图
+        # Queue depth stays 1: the inference thread consumes one at a time and extra slots
+        # would only hold more 172MB frames.
+        decode_result_queue = queue.Queue(maxsize=1) if yolo_prefetch_enabled else None
+        decode_threads: List[threading.Thread] = []
         yolo_infer_lock = threading.Lock()
         focus_exif_lock = threading.Lock()
         # TOPIQ 单例的推理锁：关键点/TOPIQ 搬进推理线程后，主线程的「早期拒绝详情」
@@ -2650,26 +2661,59 @@ class PhotoProcessor:
                     except queue.Empty:
                         continue
 
-            def decode_prefetch_worker() -> None:
+            # 保序并行解码：序号分配、交付顺序、幂等结束哨兵与中止唤醒全部由
+            # OrderedDecodeGate 负责（见 core/ordered_decode.py，可单独单元测试）。
+            # 本闭包只做「读盘 + 解码 + 入队」，不持有顺序状态。
+            # Ordered parallel decoding: the gate owns index handout, delivery order,
+            # the exactly-once sentinel and abort wake-up. This closure only reads,
+            # decodes and enqueues.
+            decode_gate = OrderedDecodeGate(len(files_tbr), decode_workers, self._should_stop)
+
+            def _send_decode_sentinel() -> None:
                 """
-                解码线程：只做读盘 + 解码，把整张图交给推理线程。
+                向推理线程发送结束哨兵，最多一次。
 
-                单张解码异常时构造一个带 error 的条目继续，不让一张坏图截断整批。
+                只在闸门确认「本次由我负责发送」后入队，因此推理线程不会在还有结果未交付时
+                提前结束，也不会收到重复哨兵。
 
-                Decode-only worker; hands full-size frames to the inference thread.
-                One bad file produces an error item instead of truncating the batch.
+                Send the end sentinel to the inference thread at most once. The gate decides
+                who sends it, so the consumer never stops early and never sees a duplicate.
+                """
+                if decode_gate.take_sentinel():
+                    _put_cancelable(decode_result_queue, None)
+
+            def decode_worker() -> None:
+                """
+                并行解码线程：领取序号 → 读盘解码 → 等到轮次 → 按序交付。
+
+                多条线程同时解码（cv2.imdecode 在 C 层释放 GIL，多核上是真并行），但交付顺序
+                与 files_tbr 完全一致，因此推理线程与主线程看到的结果顺序与单线程版本相同，
+                评分、连拍分组和按鸟种分配的星级配额都不受影响。
+
+                单张解码失败只产生一个带 error 的条目继续，不让一张坏图截断整批；停止请求或
+                未预期异常会在 finally 里中止闸门并补发哨兵，让主流程按停止语义收尾而不是挂死。
+
+                One parallel decoder: claim an index, read + decode, wait for its turn, then
+                deliver in files_tbr order. Consumers therefore see exactly the single-threaded
+                ordering, so rating, burst grouping and per-species star quotas stay unchanged.
+                A decode failure yields an error item instead of truncating the batch; a stop
+                request or unexpected error aborts the gate and sends the sentinel in the
+                finally block, so the main flow finishes by itself instead of hanging.
                 """
                 try:
-                    for idx, queued_filename in enumerate(files_tbr, 1):
+                    while True:
+                        pos = decode_gate.claim_index()
+                        if pos is None:
+                            return
                         try:
-                            item = decode_photo(idx, queued_filename)
+                            item = decode_photo(pos + 1, files_tbr[pos])
                         except Exception as e:
                             item = {
-                                'index': idx,
-                                'filename': queued_filename,
-                                'filepath': os.path.join(self.dir_path, queued_filename),
-                                'file_prefix': os.path.splitext(queued_filename)[0],
-                                'original_prefix': os.path.splitext(queued_filename)[0],
+                                'index': pos + 1,
+                                'filename': files_tbr[pos],
+                                'filepath': os.path.join(self.dir_path, files_tbr[pos]),
+                                'file_prefix': os.path.splitext(files_tbr[pos])[0],
+                                'original_prefix': os.path.splitext(files_tbr[pos])[0],
                                 'raw_ext': None,
                                 'raw_path': None,
                                 'can_read_focus_raw': False,
@@ -2678,16 +2722,28 @@ class PhotoProcessor:
                                 'result': None,
                                 'error': self.i18n.t(
                                     "logs.processing_error",
-                                    filename=queued_filename,
+                                    filename=files_tbr[pos],
                                     error=str(e),
                                 ),
                                 'yolo_ms': 0.0,
                                 'stage_ms': {},
                             }
+                        if not decode_gate.wait_turn(pos):
+                            return
                         if not _put_cancelable(decode_result_queue, item):
                             return
+                        if decode_gate.mark_delivered(pos):
+                            _send_decode_sentinel()
+                            return
                 finally:
-                    _put_cancelable(decode_result_queue, None)
+                    # 无论线程是正常结束、单张失败、停止请求还是未预期异常退出，都必须唤醒其余
+                    # 解码线程并幂等补发哨兵：否则持有后序序号的线程会一直等轮次，推理线程与
+                    # 主线程也会等一个永远不会到来的结果。两个调用都幂等，重复执行无副作用。
+                    # No matter how this thread ends (normal, stop request or unexpected error)
+                    # it must release the other decoders and send the sentinel. Both calls are
+                    # idempotent, so repeating them is harmless.
+                    decode_gate.abort()
+                    _send_decode_sentinel()
 
             def yolo_prefetch_worker() -> None:
                 """
@@ -2731,12 +2787,22 @@ class PhotoProcessor:
                 finally:
                     _put_cancelable(yolo_result_queue, None)
 
-            decode_prefetch_thread = threading.Thread(
-                target=decode_prefetch_worker,
-                daemon=True,
-                name="sp-decode-prefetch"
-            )
-            decode_prefetch_thread.start()
+            decode_threads = [
+                threading.Thread(
+                    target=decode_worker,
+                    daemon=True,
+                    name=f"sp-decode-prefetch-{worker_no}"
+                )
+                for worker_no in range(1, decode_workers + 1)
+            ]
+            for decode_thread in decode_threads:
+                decode_thread.start()
+            if decode_gate.total == 0:
+                # 空批次：立刻给推理线程发哨兵，让它按原来的方式正常退出（解码线程同样会
+                # 立刻返回，这里只是不依赖线程调度顺序）。
+                # Empty batch: send the sentinel right away so the inference thread exits as
+                # before; the decoders also exit at once, this just does not rely on scheduling.
+                _send_decode_sentinel()
             yolo_prefetch_thread = threading.Thread(
                 target=yolo_prefetch_worker,
                 daemon=True,
@@ -2744,7 +2810,7 @@ class PhotoProcessor:
             )
             yolo_prefetch_thread.start()
             if self._perf_enabled:
-                self._log(f"  ⚙️ YOLO prefetch: on (depth={yolo_prefetch_depth}, decode={decode_prefetch_depth})")
+                self._log(f"  ⚙️ YOLO prefetch: on (depth={yolo_prefetch_depth}, decode_threads={decode_workers})")
         elif self._perf_enabled:
             if env_yolo_prefetch_raw:
                 self._log("  ⚙️ YOLO prefetch: off")
@@ -3873,9 +3939,9 @@ class PhotoProcessor:
                 yolo_prefetch_thread.join(timeout=30)
             except Exception:
                 pass
-        if decode_prefetch_thread is not None:
+        for decode_thread in decode_threads:
             try:
-                decode_prefetch_thread.join(timeout=30)
+                decode_thread.join(timeout=30)
             except Exception:
                 pass
         if exif_prefetch_thread is not None:
