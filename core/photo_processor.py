@@ -43,6 +43,7 @@ from core.rating_caption import CaptionFacts, build_caption, outcome_from_reason
 from core.iso_sharpness import ISO_BASE, ISO_MIN_FACTOR, ISO_PENALTY_FACTOR, iso_sharpness_factor
 from core.ordered_decode import OrderedDecodeGate
 from core.memory_budget import (
+    InflightByteBudget,
     available_memory_bytes,
     clamp_count,
     clamp_prefetch_workers,
@@ -2039,46 +2040,59 @@ class PhotoProcessor:
         # 可用内存只探测一次，供预取深度与解码线程数共用（探测失败按「未知」保守处理）。
         # Probe available memory once; the prefetch depth and the decode worker count share it.
         avail_mem_bytes = available_memory_bytes()
+        # 在途帧的内存闸门：线程数只表达「同时解几张」，表达不了「一张有多大」。24MP 与
+        # 151MP 目录用同一套并发配置时，靠它把内存单位从「帧」换成「字节」——大图自然少放、
+        # 小图自然多放，混合像素目录不需要任何特殊处理。
+        # Byte gate for in-flight frames: the worker count says how many decode at once but
+        # not how big each one is. Switching the unit from frames to bytes keeps a 24MP and a
+        # 151MP folder equally safe under one config, mixed-pixel folders included.
+        decode_budget = InflightByteBudget(available_bytes=avail_mem_bytes)
         yolo_prefetch_depth = 3
         env_yolo_prefetch_depth = os.getenv("SUPERPICKY_YOLO_PREFETCH_DEPTH", "").strip()
         if env_yolo_prefetch_depth.isdigit():
             yolo_prefetch_depth = max(2, int(env_yolo_prefetch_depth))
-        # 环境变量此前没有上限：设 32 就会压住 32 张 172MB 大图（≈5.5GB）直接 OOM。
-        # 这里先受硬上限约束，再按可用内存（默认 25%）收紧。
-        # The env var used to be unbounded: 32 would pin ~5.5GB of 172MB frames and OOM.
-        # It is now capped hard and then shrunk by available memory (25% by default).
+        # 环境变量此前没有上限：设 32 就会压住 32 张全尺寸帧，高像素机型直接 OOM。
+        # 这里先受硬上限约束，再按可用内存（默认保留 20% 空闲）收紧。
+        # The env var used to be unbounded: 32 would pin 32 full-size frames and OOM on a
+        # high-megapixel body. It is capped hard and then shrunk to keep 20% memory free.
         yolo_prefetch_depth, yolo_depth_mem_limited = clamp_queue_depth(
             yolo_prefetch_depth, available_bytes=avail_mem_bytes)
         
         yolo_result_queue = queue.Queue(maxsize=yolo_prefetch_depth) if yolo_prefetch_enabled else None
         yolo_prefetch_thread = None
+        # 预取关闭时不存在闸门；主循环释放额度后要唤醒它重判，因此先声明为 None。
+        # No gate exists when prefetch is off; the main loop wakes it after releasing budget,
+        # so declare it here.
+        decode_gate: Optional[OrderedDecodeGate] = None
         # 并行解码：cv2.imdecode 在 C 层释放 GIL，多线程是真并行（本机 24 核实测 188ms/张
-        # → 3 条 109ms/张 → 4 条 88ms/张）。线程数既是吞吐旋钮也是内存上限——同时在解码的帧
-        # 不超过线程数，队列里最多再留 1 张待推理帧，每张 45MP 预览约 172MB，因此在途大图
-        # <= 线程数 + 1。默认 3（比推理线程约 150ms/张留有余量），并按逻辑核心数收缩以免小
-        # 机器抢核；可用 SUPERPICKY_DECODE_PREFETCH_DEPTH 覆盖（沿用第 2 步引入的名字：
-        # 「预取深度」与「并行线程数」是同一个量）。序号分配与交付顺序见
-        # core.ordered_decode.OrderedDecodeGate。
+        # → 3 条 109ms/张 → 4 条 88ms/张）。线程数只决定「同时在解几张」，真正的内存闸门是
+        # 上面的 decode_budget（按实测字节记账），因为在途的整帧不止解码线程手里的那几张：
+        # 解码队列、推理线程手里的那张、推理结果队列、以及主线程尚未释放的上一张都各持一份。
+        # 默认 3（比推理线程约 150ms/张留有余量），并按逻辑核心数收缩以免小机器抢核；可用
+        # SUPERPICKY_DECODE_PREFETCH_DEPTH 覆盖（沿用第 2 步引入的名字：「预取深度」与
+        # 「并行线程数」是同一个量）。序号分配与交付顺序见 core.ordered_decode.OrderedDecodeGate。
         # Parallel decoding: cv2.imdecode releases the GIL, so threads decode for real
         # (188ms/photo single-threaded vs 109ms with 3 on a 24-core box). The worker count
-        # caps both throughput and memory: at most that many frames decode at once plus one
-        # queued frame, ~172MB each for a 45MP preview (in flight <= workers + 1). Default 3,
-        # shrunk by the logical core count and overridable via
+        # only sets how many frames decode at once; the real memory gate is decode_budget
+        # (charged in measured bytes), because full-size frames are also held by the decode
+        # queue, the inference thread, the result queue and the main loop's unreleased frame.
+        # Default 3, shrunk by the logical core count and overridable via
         # SUPERPICKY_DECODE_PREFETCH_DEPTH (name kept from step 2). Index handout and delivery
         # order live in core.ordered_decode.OrderedDecodeGate.
         decode_workers = max(1, min(3, (os.cpu_count() or 1) // 2))
         env_decode_workers = os.getenv("SUPERPICKY_DECODE_PREFETCH_DEPTH", "").strip()
         if env_decode_workers.isdigit():
             decode_workers = max(1, int(env_decode_workers))
-        # 同上：线程数直接决定在途大图数量（在途 = 线程数 + 1），必须同时受硬上限与
-        # 可用内存约束，否则一个环境变量就能把进程推到 OOM。
-        # Same as above: workers bound the in-flight frames (workers + 1), so both the hard
-        # cap and available memory must constrain it, or one env var can push it into OOM.
+        # 同上：线程数直接决定同时在解的帧数，必须同时受硬上限与可用内存约束，否则一个
+        # 环境变量就能把进程推到 OOM。字节口径的精确约束由 decode_budget 负责。
+        # Same as above: the worker count sets how many frames decode at once, so both the
+        # hard cap and available memory must constrain it. decode_budget enforces the exact
+        # byte ceiling on top of that.
         decode_workers, decode_workers_mem_limited = clamp_prefetch_workers(
             decode_workers, available_bytes=avail_mem_bytes)
-        # 队列深度保持 1：推理线程逐张消费，多开槽位只会多压几张 172MB 大图
-        # Queue depth stays 1: the inference thread consumes one at a time and extra slots
-        # would only hold more 172MB frames.
+        # 队列深度保持 1：推理线程逐张消费，多开槽位只会多压整帧（高像素机型每张数百 MB）
+        # Queue depth stays 1: the inference thread consumes one at a time, and extra slots
+        # would only pin more full-size frames (hundreds of MB each on a high-MP body).
         decode_result_queue = queue.Queue(maxsize=1) if yolo_prefetch_enabled else None
         decode_threads: List[threading.Thread] = []
         yolo_infer_lock = threading.Lock()
@@ -2699,13 +2713,36 @@ class PhotoProcessor:
                     except queue.Empty:
                         continue
 
+            def _admit_decode(tag: int) -> bool:
+                """
+                闸门准入回调：字节额度够才允许领取该序号。
+
+                额度器顺带完成预占，因此返回 True 就代表这一帧的内存位置已经占好；解码完成
+                后由 resize() 用实测字节校正，主循环用完再由 release() 归还。额度为 0 表示
+                「稍后重试」，闸门会在内部等待并重判，不会丢帧。
+
+                参数:
+                tag (int): 0 基序号，同时作为额度记账的键
+
+                返回:
+                bool: True 表示已预占成功、可以开始解码
+
+                Gate admission callback: claim the index only when the byte budget has room.
+                The budget reserves as a side effect, so True means the slot is already held;
+                resize() corrects it after decoding and the main loop releases it when done.
+                A zero result means "retry later" — the gate waits and re-checks, never drops.
+                """
+                return decode_budget.try_acquire(tag) > 0
+
             # 保序并行解码：序号分配、交付顺序、幂等结束哨兵与中止唤醒全部由
-            # OrderedDecodeGate 负责（见 core/ordered_decode.py，可单独单元测试）。
-            # 本闭包只做「读盘 + 解码 + 入队」，不持有顺序状态。
-            # Ordered parallel decoding: the gate owns index handout, delivery order,
-            # the exactly-once sentinel and abort wake-up. This closure only reads,
-            # decodes and enqueues.
-            decode_gate = OrderedDecodeGate(len(files_tbr), decode_workers, self._should_stop)
+            # OrderedDecodeGate 负责（见 core/ordered_decode.py，可单独单元测试）；
+            # 字节额度也在这里判定，因此序号与字节永远同序，不会出现「持后序号的线程先占满
+            # 额度、持前序号的线程永远等不到」的死锁。
+            # Ordered parallel decoding: the gate owns index handout, delivery order, the
+            # exactly-once sentinel and abort wake-up; it also runs the byte-budget check so
+            # indices and bytes stay in the same order and cannot deadlock each other.
+            decode_gate = OrderedDecodeGate(
+                len(files_tbr), decode_workers, self._should_stop, admit=_admit_decode)
 
             def _send_decode_sentinel() -> None:
                 """
@@ -2738,11 +2775,17 @@ class PhotoProcessor:
                 request or unexpected error aborts the gate and sends the sentinel in the
                 finally block, so the main flow finishes by itself instead of hanging.
                 """
+                # 已领取但尚未交付的序号：线程若在交付前退出（停止请求 / 入队失败），
+                # finally 里必须归还它的额度，否则这部分字节再也不会回到额度池。
+                # Index claimed but not delivered yet: if this thread exits before delivery
+                # (stop request or a failed enqueue) the finally block must return its budget.
+                pending_tag: Optional[int] = None
                 try:
                     while True:
                         pos = decode_gate.claim_index()
                         if pos is None:
                             return
+                        pending_tag = pos
                         try:
                             item = decode_photo(pos + 1, files_tbr[pos])
                         except Exception as e:
@@ -2766,14 +2809,33 @@ class PhotoProcessor:
                                 'yolo_ms': 0.0,
                                 'stage_ms': {},
                             }
+                        # 用实测字节校正预占：解码期的临时缓冲此时已经释放，条目里留下的
+                        # 只有整帧数组本身（解码失败的条目是 None，按 0 记账）。
+                        # Correct the reservation with the measured size: the decode scratch
+                        # is already gone, only the frame array itself is still held.
+                        _frame = item.get('decoded_image')
+                        decode_budget.resize(pos, int(getattr(_frame, 'nbytes', 0) or 0))
+                        # 把记账键交给下游，由主循环在这张处理完之后归还额度。
+                        # Hand the accounting key downstream; the main loop releases it.
+                        item['budget_tag'] = pos
                         if not decode_gate.wait_turn(pos):
                             return
                         if not _put_cancelable(decode_result_queue, item):
                             return
+                        # 已交付：释放责任转移给主循环。
+                        # Delivered: the main loop now owns the release.
+                        pending_tag = None
                         if decode_gate.mark_delivered(pos):
                             _send_decode_sentinel()
                             return
                 finally:
+                    # 未交付的序号先把额度还掉并唤醒闸门，再中止：否则等额度的线程要空转到
+                    # 下一个轮询周期才可能发现额度已回。
+                    # Return the un-delivered budget and wake the gate before aborting, or a
+                    # thread waiting for budget would spin until the next poll interval.
+                    if pending_tag is not None:
+                        decode_budget.release(pending_tag)
+                        decode_gate.notify_progress()
                     # 无论线程是正常结束、单张失败、停止请求还是未预期异常退出，都必须唤醒其余
                     # 解码线程并幂等补发哨兵：否则持有后序序号的线程会一直等轮次，推理线程与
                     # 主线程也会等一个永远不会到来的结果。两个调用都幂等，重复执行无副作用。
@@ -2855,6 +2917,9 @@ class PhotoProcessor:
                 mem_note = []
                 if avail_mem_bytes:
                     mem_note.append(f"avail={avail_mem_bytes // (1024 * 1024)}MB")
+                _budget_snap = decode_budget.snapshot()
+                if _budget_snap.get('limit_mb'):
+                    mem_note.append(f"budget={_budget_snap['limit_mb']}MB")
                 if yolo_depth_mem_limited:
                     mem_note.append("depth=mem-limited")
                 if decode_workers_mem_limited:
@@ -2963,8 +3028,18 @@ class PhotoProcessor:
             _use_cuda = False
             _cache_interval = 200
 
+        # 上一张照片的额度记账键：本张可能在下面的 continue 分支提前结束，所以归还点放在
+        # 「下一轮开头」，循环结束之后再补一次，任何路径都能还上（release 幂等）。
+        # Budget tag of the previous photo: this one may end early through a continue branch,
+        # so the release happens at the head of the next iteration, plus once after the loop.
+        prev_budget_tag: Optional[int] = None
         for local_index in range(1, len(files_tbr) + 1):
             cancel_processing()
+            if prev_budget_tag is not None:
+                decode_budget.release(prev_budget_tag)
+                prev_budget_tag = None
+                if decode_gate is not None:
+                    decode_gate.notify_progress()
             i = display_start + local_index - 1
             photo_stage_ms = {}
             
@@ -3001,6 +3076,9 @@ class PhotoProcessor:
                 else:
                     filename_inline = files_tbr[local_index - 1]
                     yolo_item = build_yolo_item(i, filename_inline)
+                # 预取路径的解码条目带记账键；同步回退路径没有，取到 None 即不记账。
+                # Prefetched items carry the accounting key; the synchronous fallback does not.
+                prev_budget_tag = yolo_item.get('budget_tag')
             
                 prefetched_exif = None
                 exif_prefetched = False
@@ -3240,10 +3318,15 @@ class PhotoProcessor:
                 # （见 analyze_photo）：主线程只做解包，GPU 推理不再卡在关键路径上。
                 # Phase 2 (keypoints) and Phase 3 (TOPIQ) are precomputed on the
                 # inference thread; here we only unpack them.
-                # 全尺寸解码帧（45MP 约 172MB）在主线程已无用途：早期退出的详情/预览
-                # 分支都在上面 continue 了，这里立刻摘掉，避免它活过本轮 tail。
-                # The decoded full-size frame (~172MB) is no longer needed here; the
-                # early-exit branches above already returned via continue.
+                # 全尺寸解码帧在主线程已无用途：早期退出的详情/预览分支都在上面 continue 了，
+                # 这里立刻摘掉，避免它活过本轮 tail。不能再提前——上面的早期拒绝详情与
+                # crop_debug 都还要用这张帧（缺了它会重新解码一次，单张 200-400ms）。
+                # 额度不在这里归还：continue 分支会跳过这里，归还点统一放在循环开头。
+                # The decoded full-size frame is no longer needed here; the early-exit branches
+                # above already returned via continue. It cannot be dropped earlier — the
+                # rejected-detail and crop_debug paths above still use it (a missing frame
+                # costs another 200-400ms decode). The budget is released at the loop head
+                # instead, because the continue branches skip this line.
                 yolo_item.pop('decoded_image', None)
 
                 # Phase 2 派生量（关键点可见性 / 头部区域）
@@ -3961,6 +4044,15 @@ class PhotoProcessor:
                 self._handle_photo_failure(i, filename, original_prefix, e, raw_dict)
                 continue
         
+        # 循环结束：最后一张的额度在这里归还（前面的 continue 路径已由下一轮开头处理）。
+        # End of the loop: release the last photo's budget (continue paths were handled by the
+        # head of the following iteration).
+        if prev_budget_tag is not None:
+            decode_budget.release(prev_budget_tag)
+            prev_budget_tag = None
+            if decode_gate is not None:
+                decode_gate.notify_progress()
+
         if self._should_stop():
             if metadata_async_enabled and metadata_queue is not None:
                 try:

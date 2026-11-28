@@ -8,7 +8,9 @@ Regression tests for the memory-budget clamps and the EXIF cache-invalidation ch
 
     1. core/memory_budget.py 把「预取深度 / 解码线程数 / EXIF 批次 / EXIF 队列批数」
        从「环境变量可以无限放大」改成「硬上限 + 可用内存收紧」。此前
-       SUPERPICKY_DECODE_PREFETCH_DEPTH=32 会在途 33 张 172MB 预览（≈5.7GB）直接 OOM。
+       SUPERPICKY_DECODE_PREFETCH_DEPTH=32 会在途 33 张全尺寸预览（60MP 约 5.7GB）直接 OOM。
+       随后又进一步：不再预设「每张照片多少字节」，改由 InflightByteBudget 按
+       decoded_image.nbytes 实测记账，并按字节额度决定还能放几帧进来。
     2. 写元数据后必须让 FocusPointDetector 的 47 标签合并读缓存（1024 条 LRU）失效，
        否则同一进程内后续读取仍返回写之前的快照。失效由
        core.focus_point_detector.invalidate_exif_cache 统一实现，
@@ -31,11 +33,13 @@ from core import focus_point_detector as fpd
 from core import memory_budget as mb
 from core.memory_budget import (
     DECODE_MEMORY_SHARE,
-    FRAME_BYTES_45MP,
+    FALLBACK_FRAME_BYTES,
+    InflightByteBudget,
     MAX_DECODE_WORKERS,
     MAX_EXIF_BATCH_SIZE,
     MAX_EXIF_QUEUE_BATCHES,
     MAX_YOLO_PREFETCH_DEPTH,
+    MIN_DECODE_WORKERS,
     available_memory_bytes,
     clamp_count,
     clamp_prefetch_workers,
@@ -56,13 +60,18 @@ def test_available_memory_never_raises_and_is_sane():
     assert value is None or (isinstance(value, int) and value > 0)
 
 
-def test_unknown_memory_falls_back_to_hard_cap_only():
-    """内存未知时只信硬上限，不据此收紧（避免把未知当无限，也避免当零）。"""
-    workers, limited = clamp_prefetch_workers(999, available_bytes=None)
+def test_unknown_memory_falls_back_to_hard_cap_only(monkeypatch):
+    """
+    内存未知时只信硬上限，不据此收紧（避免把未知当无限，也避免当零）。
+    available_bytes=None 在实现里表示「现在探一次」，所以这里把探测本身钉成 None。
+    """
+    monkeypatch.setattr(mb, "available_memory_bytes", lambda: None)
+
+    workers, limited = clamp_prefetch_workers(999)
     assert workers == MAX_DECODE_WORKERS
     assert limited is False
 
-    depth, depth_limited = clamp_queue_depth(999, available_bytes=None)
+    depth, depth_limited = clamp_queue_depth(999)
     assert depth == MAX_YOLO_PREFETCH_DEPTH
     assert depth_limited is False
 
@@ -129,9 +138,12 @@ def test_workers_are_capped_even_with_plenty_of_memory():
 
 
 def test_workers_shrink_under_memory_pressure():
-    """可用内存 1GB、25% 预算、每帧 172MB：在途 = workers + 1，只能开 1 条线程。"""
+    """
+    可用内存 1GB 时只能开最低线程数。
+    Decoding-time scratch doubles the charge, so 1GB leaves room for two frames only.
+    """
     workers, limited = clamp_prefetch_workers(8, available_bytes=1 * GIB)
-    assert workers == 1
+    assert workers == MIN_DECODE_WORKERS
     assert limited is True
 
 
@@ -143,11 +155,17 @@ def test_workers_defaults_survive_a_normal_machine():
 
 
 def test_worker_memory_math_uses_in_flight_frames():
-    """预算刚好够 N 张在途时应给 N-1 条线程（在途 = 线程数 + 1）。"""
-    budget = int(2 * FRAME_BYTES_45MP / DECODE_MEMORY_SHARE)  # 25% 预算 = 2 帧
-    workers, limited = clamp_prefetch_workers(8, available_bytes=budget)
-    assert workers == 1
-    assert limited is True
+    """
+    预算刚好够 5 帧时就只给 5 条线程；再少也不低于 MIN_DECODE_WORKERS。
+    A budget of exactly five frames yields five threads; below that the floor applies.
+    """
+    per_frame = FALLBACK_FRAME_BYTES * 2  # 解码期一帧的真实占用（数组 + 瞬时缓冲）
+
+    available = per_frame * 5 * 5 // 4  # 反解：80% 份额刚好等于 5 帧
+    assert clamp_prefetch_workers(8, available_bytes=available) == (5, True)
+
+    available = per_frame * 5 // 4  # 只够 1 帧
+    assert clamp_prefetch_workers(8, available_bytes=available) == (MIN_DECODE_WORKERS, True)
 
 
 # --------------------------------------------------------------------------
@@ -162,9 +180,12 @@ def test_queue_depth_capped_by_hard_limit():
 
 
 def test_queue_depth_shrinks_under_memory_pressure():
-    """队列不再减 1（后端没有额外在途槽位），1GB 可用 → 25% 预算只够 1 个槽。"""
+    """
+    队列里的帧已解码完成、只占数组本身（不乘 2）：1GB 的 80% 只够 4 个槽。
+    Queued frames hold only the array, so 1GB admits four slots, not one.
+    """
     depth, limited = clamp_queue_depth(8, available_bytes=1 * GIB)
-    assert depth == 1
+    assert depth == 4
     assert limited is True
 
 
@@ -197,7 +218,111 @@ def test_clamp_count_for_exif_queue_batches():
 
 
 # --------------------------------------------------------------------------
-# 5. 模块级失效函数 / module-level invalidator
+# 5. 在途字节额度 / in-flight byte budget
+# --------------------------------------------------------------------------
+
+def _frame(mib: int) -> int:
+    """把 MiB 换算成字节，让用例里的数字一眼可读 / MiB to bytes."""
+    return mib * 1024 * 1024
+
+
+def test_budget_admits_the_first_frame_even_when_memory_is_tiny():
+    """
+    空场永远放行：哪怕额度只够半帧，也必须让流水线动起来，否则整批照片卡在准入上。
+    An empty field is always admitted, otherwise the whole batch stalls on admission.
+    """
+    budget = InflightByteBudget(available_bytes=1024)  # 1KB，连一帧都装不下
+    assert budget.try_acquire(0) > 0
+    assert budget.snapshot()['inflight'] == 1
+
+    # 已经有一帧在途，第二帧就该被拒
+    # With one frame in flight the second one must be refused.
+    assert budget.try_acquire(1) == 0
+
+
+def test_budget_charges_the_measured_frame_size():
+    """
+    记账口径：额度 = 可用内存 x DECODE_MEMORY_SHARE，按实测字节累计。
+    Charge = measured bytes against available memory times DECODE_MEMORY_SHARE.
+    """
+    budget = InflightByteBudget(available_bytes=1000 * 1024 * 1024)
+    assert budget.bytes_limit() == int(1000 * 1024 * 1024 * DECODE_MEMORY_SHARE)
+
+    budget.try_acquire(0)          # 首次按估计值占位
+    budget.resize(0, _frame(300))  # 解码完成，用实测值校正
+    assert budget.snapshot()['inflight_mb'] == 300
+    assert budget.snapshot()['frame_peak_mb'] == 300
+
+
+def test_budget_refuses_when_the_next_frame_would_overflow():
+    """
+    估计值 = 窗口峰值 x 2（解码期瞬时缓冲约等于一个整数组），据此拦截下一帧。
+    The estimate doubles the window peak (decode scratch), which gates the next frame.
+    """
+    budget = InflightByteBudget(available_bytes=1024 * 1024 * 1024)  # 额度 819MB
+    assert budget.try_acquire(0) > 0
+    budget.resize(0, _frame(500))  # 在途 500MB，下一帧估计 1000MB > 819MB
+    assert budget.try_acquire(1) == 0
+
+    budget.release(0)              # 释放后空场，必须再次放行
+    assert budget.try_acquire(1) > 0
+
+
+def test_budget_unknown_memory_admits_everything(monkeypatch):
+    """
+    内存未知时只信硬上限（未知不是零）：额度为 None，准入全部放行。
+    Unknown memory means trust only the hard caps: no byte ceiling, everything admits.
+    """
+    monkeypatch.setattr(mb, "available_memory_bytes", lambda: None)
+
+    budget = InflightByteBudget(available_bytes=None)
+    assert budget.bytes_limit() is None
+    assert budget.snapshot()['limit_mb'] is None
+    assert budget.try_acquire(0) > 0
+    assert budget.try_acquire(1) > 0
+
+
+def test_budget_release_and_resize_are_idempotent():
+    """
+    主循环会「循环开头释放上一张 + 循环后再补一次」，重复释放必须安全。
+    The loop releases the previous tag every round plus once more at the end, so both
+    release and an unknown tag must be safe no-ops.
+    """
+    budget = InflightByteBudget(available_bytes=4 * 1024 * 1024 * 1024)
+    budget.try_acquire(0)
+    budget.resize(0, _frame(100))
+    assert budget.release(0) == _frame(100)
+    assert budget.release(0) == 0, "重复释放必须返回 0，不能把计数减成负数"
+    assert budget.snapshot()['inflight'] == 0
+    assert budget.snapshot()['inflight_mb'] == 0
+
+    # 未知 tag 的 resize 也是空操作（解码线程在交付前退出时可能出现）
+    assert budget.resize(99, _frame(10)) == 0
+
+
+def test_budget_try_acquire_is_idempotent_per_tag():
+    """
+    主循环与解码线程用同一个 0 基序号做 tag，浅拷贝条目不能重复记账。
+    Decoder and main loop share the 0-based index as tag, so a shallow-copied item must
+    never be charged twice.
+    """
+    budget = InflightByteBudget(available_bytes=2 * 1024 * 1024 * 1024)
+    first = budget.try_acquire(7)
+    assert first > 0
+    assert budget.try_acquire(7) == first, "同一 tag 再次准入必须返回既有值"
+    assert budget.snapshot()['inflight'] == 1
+
+
+def test_budget_snapshot_shape():
+    """PERF 日志依赖这几个键，改名会静默让日志失去解释力。"""
+    snap = InflightByteBudget(available_bytes=8 * 1024 * 1024 * 1024).snapshot()
+    assert set(snap) == {
+        'avail_mb', 'limit_mb', 'inflight_mb', 'inflight',
+        'frame_peak_mb', 'estimate_mb', 'mem_limited', 'samples',
+    }
+
+# --------------------------------------------------------------------------
+# 6. 模块级失效函数 / module-level invalidator
 # --------------------------------------------------------------------------
 
 class _RecordingDetector:
@@ -264,7 +389,7 @@ def test_invalidate_swallows_detector_errors(monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# 6. ExifToolManager 钩子 / the manager-side hook
+# 7. ExifToolManager 钩子 / the manager-side hook
 # --------------------------------------------------------------------------
 
 def _fresh_manager() -> ExifToolManager:
