@@ -2064,22 +2064,28 @@ class PhotoProcessor:
         # No gate exists when prefetch is off; the main loop wakes it after releasing budget,
         # so declare it here.
         decode_gate: Optional[OrderedDecodeGate] = None
-        # 并行解码：cv2.imdecode 在 C 层释放 GIL，多线程是真并行（本机 24 核实测 188ms/张
-        # → 3 条 109ms/张 → 4 条 88ms/张）。线程数只决定「同时在解几张」，真正的内存闸门是
-        # 上面的 decode_budget（按实测字节记账），因为在途的整帧不止解码线程手里的那几张：
-        # 解码队列、推理线程手里的那张、推理结果队列、以及主线程尚未释放的上一张都各持一份。
-        # 默认 3（比推理线程约 150ms/张留有余量），并按逻辑核心数收缩以免小机器抢核；可用
-        # SUPERPICKY_DECODE_PREFETCH_DEPTH 覆盖（沿用第 2 步引入的名字：「预取深度」与
-        # 「并行线程数」是同一个量）。序号分配与交付顺序见 core.ordered_decode.OrderedDecodeGate。
+        # 并行解码：cv2.imdecode 在 C 层释放 GIL，多线程是真并行（本机 24 核隔离扫描：1 条
+        # 110.8ms/张 → 3 条 40.3ms → 4 条 31.6ms，3.51× 加速）。线程数只决定「同时在解几张」，
+        # 真正的内存闸门是上面的 decode_budget（按实测字节记账）——在途的整帧不止解码线程
+        # 手里那几张：解码队列、推理线程手里的那张、推理结果队列，以及主线程尚未释放的上一张。
+        # 默认 4：现代机器普遍是 2c4p 起步，4 条线程才吃得满；再多收益递减（3→4 还有 21%，
+        # 4→5 只剩 14%，5→6 只剩 12%，且峰值 RSS 从 1.0GB 跳到 1.7GB）。上限仍按逻辑核心数
+        # 收缩以免小机器抢核；可用 SUPERPICKY_DECODE_PREFETCH_DEPTH 覆盖（沿用第 2 步引入的
+        # 名字：「预取深度」与「并行线程数」是同一个量）。序号分配与交付顺序见
+        # core.ordered_decode.OrderedDecodeGate。
         # Parallel decoding: cv2.imdecode releases the GIL, so threads decode for real
-        # (188ms/photo single-threaded vs 109ms with 3 on a 24-core box). The worker count
-        # only sets how many frames decode at once; the real memory gate is decode_budget
-        # (charged in measured bytes), because full-size frames are also held by the decode
-        # queue, the inference thread, the result queue and the main loop's unreleased frame.
-        # Default 3, shrunk by the logical core count and overridable via
-        # SUPERPICKY_DECODE_PREFETCH_DEPTH (name kept from step 2). Index handout and delivery
-        # order live in core.ordered_decode.OrderedDecodeGate.
-        decode_workers = max(1, min(3, (os.cpu_count() or 1) // 2))
+        # (isolated scan on a 24-core box: 110.8ms/photo with 1 thread, 40.3ms with 3, 31.6ms
+        # with 4). The worker count only sets how many frames decode at once; the real memory
+        # gate is decode_budget (charged in measured bytes), because full-size frames are also
+        # held by the decode queue, the inference thread, the result queue and the main loop's
+        # not-yet-released frame.
+        # Default 4: modern machines start at 2 cores / 4 threads, and 4 decoders is where the
+        # returns flatten out (3->4 is still 21%, 4->5 only 14%, 5->6 only 12%, while peak RSS
+        # jumps from 1.0GB to 1.7GB).
+        # Still shrunk by the logical core count so small machines keep their cores, and
+        # overridable via SUPERPICKY_DECODE_PREFETCH_DEPTH (name kept from step 2). Index
+        # handout and delivery order live in core.ordered_decode.OrderedDecodeGate.
+        decode_workers = max(1, min(4, os.cpu_count() or 1))
         env_decode_workers = os.getenv("SUPERPICKY_DECODE_PREFETCH_DEPTH", "").strip()
         if env_decode_workers.isdigit():
             decode_workers = max(1, int(env_decode_workers))
