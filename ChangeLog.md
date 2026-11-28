@@ -1,3 +1,33 @@
+# SuperPicky 4.6.5 RC8
+
+**What's new since RC7:**
+
+- **Changing a rating now moves burst photos too.** Photos inside a burst folder (burst_xxx) stayed where
+  they were when their rating changed. The whole burst folder now moves to match the highest rating left in
+  the group, the same rule used when culling; it stays put while the group still has a photo at the old
+  highest rating. (#173)
+- **The results browser no longer shows the previous folder.** If you left it in full screen or compare
+  view and then opened another folder, it could still show the old folder's photos, and ratings or deletes
+  there could act on the wrong photo. Opening a folder now always starts at the thumbnail grid. (#172)
+- **JPEG-only photos no longer report "a file with the same name already exists"** when you change their
+  species, and changing their rating keeps the right path. (#171)
+- This test build has no CUDA 13 installer; RTX 50 users can use the CPU or CUDA 11.8 build.
+
+---
+
+# SuperPicky 4.6.5 RC8（中文）
+
+**相比 RC7 的变化：**
+
+- **改星级时连拍照片也会换目录。** 连拍文件夹（burst_xxx）里的照片改了星级，文件却一直留在原处。现在整个
+  连拍文件夹按「组里剩下的最高星级」移动，与选片时的规则相同；组里还有原最高星级的照片时不移动。（#173）
+- **结果浏览器不再显示上一个目录。** 在全屏或对比页离开后再打开另一个目录，可能仍显示上个目录的照片，
+  在那里打星或删除也可能作用到错的照片。现在打开目录一律从缩略图网格开始。（#172）
+- **纯 JPEG 照片改鸟种不再误报「目标目录已有同名文件」**，改星级后记录的路径也正确了。（#171）
+- 本测试版不提供 CUDA 13 安装包，RTX 50 显卡请用 CPU 版或 CUDA 11.8 版。
+
+---
+
 # SuperPicky 4.6.5 RC7
 
 **What's new since RC6:**
