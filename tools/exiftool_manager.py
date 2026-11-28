@@ -611,12 +611,92 @@ class ExifToolManager:
         # Photos whose scores were skipped to keep a real place name, drained by the pipeline
         self._location_protected_paths: List[str] = []
         self._location_protected_lock = threading.Lock()
+        # 元数据写成功后的缓存失效回调（由 core 侧注册，见 set_metadata_cache_invalidator）
+        # Callback fired after a successful metadata write; registered from the core side
+        self._metadata_cache_invalidator: Optional[Callable[[List[str]], None]] = None
+        self._metadata_cache_invalidator_lock = threading.Lock()
         # 地点读取缓存（路径, 修改时间, 大小）→ 两组地点 / location read cache
         self._location_cache: Dict[Tuple[str, int, int], List[Tuple[str, str, str]]] = {}
 
         # 注册退出清理（经 exit_hooks：GUI 以 os._exit 结束时也会执行）
         # Register exit cleanup via exit_hooks so it also runs before the GUI's os._exit
         exit_hooks.register(self.shutdown)
+
+    def set_metadata_cache_invalidator(
+            self, callback: Optional[Callable[[List[str]], None]]) -> None:
+        """
+        注册「元数据写成功后失效 EXIF 读取缓存」的回调（由 core 侧注入）。
+
+        为什么放在这里而不是 core 侧直接 import：core.focus_point_detector 已经
+        import 了本模块，本模块若反向 import 会形成循环导入，因此这里只保留一个
+        无依赖的钩子，由持有管理器实例的 core 侧注入实现。
+
+        参数:
+            callback (Optional[Callable[[List[str]], None]]): 接收一批文件路径的
+                失效函数；传 None 表示注销。
+
+        Register the callback fired after a successful metadata write.
+
+        This module never imports core (core.focus_point_detector already imports
+        us), so the core side injects the implementation once it holds the manager
+        instance.
+
+        Parameters:
+            callback (Optional[Callable[[List[str]], None]]): Invalidator taking a
+                batch of file paths, or None to unregister.
+        """
+        # 用锁保护赋值；实例缺锁时（object.__new__ 绕过 __init__ 的测试替身）
+        # 直接赋值即可，钩子只是可选优化。
+        # Guard the assignment with the lock; instances built via object.__new__
+        # (tests) have no lock, and a direct assignment is fine for an optional hook.
+        lock = getattr(self, "_metadata_cache_invalidator_lock", None)
+        if lock is None:
+            self._metadata_cache_invalidator = callback
+            return
+        with lock:
+            self._metadata_cache_invalidator = callback
+
+    def _notify_metadata_cache_invalidator(self, file_paths: List[str]) -> None:
+        """
+        写成功后通知 core 侧：这些文件的 EXIF 读取缓存已过期（best-effort）。
+
+        未注册回调、回调自身抛异常都静默忽略——缓存失效只是性能优化，绝不能因此
+        影响元数据写入结果。重复失效是幂等的，调用方无需精确筛出真正成功的那几张。
+
+        参数:
+            file_paths (List[str]): 已写入（或尝试写入）的文件路径列表。
+
+        Notify the core side that these files' EXIF read cache is stale (best-effort).
+
+        A missing callback or a raising callback is swallowed: cache invalidation is
+        only an optimization and must never affect the write result. Repeated
+        invalidation is idempotent, so callers need not filter exact successes.
+
+        Parameters:
+            file_paths (List[str]): Paths that were written (or attempted).
+        """
+        if not file_paths:
+            return
+        # getattr 兜底：测试与历史代码用 object.__new__ 绕过 __init__，实例上
+        # 可能没有这两个属性；缺锁时退化为无锁读取回调。
+        # getattr fallbacks: object.__new__ bypasses __init__ in tests, so these
+        # attributes may be absent; without a lock we just read the callback.
+        lock = getattr(self, "_metadata_cache_invalidator_lock", None)
+        if lock is None:
+            callback = getattr(self, "_metadata_cache_invalidator", None)
+        else:
+            with lock:
+                callback = getattr(self, "_metadata_cache_invalidator", None)
+        if callback is None:
+            return
+        paths = [p for p in file_paths if isinstance(p, str) and p]
+        if not paths:
+            return
+        try:
+            callback(paths)
+        except Exception:
+            # 缓存失效失败不影响写入结果 / cache invalidation never breaks a write
+            pass
 
     def _get_exiftool_path(self) -> str:
         """获取exiftool可执行文件路径"""
@@ -1375,7 +1455,10 @@ class ExifToolManager:
         args.append(file_path)
 
         try:
-            return self._send_to_process(args, timeout=60)
+            ok = self._send_to_process(args, timeout=60)
+            if ok:
+                self._notify_metadata_cache_invalidator([file_path])
+            return ok
         except Exception as e:
             print(f"❌ ExifTool error: {e}")
             return False
@@ -1520,6 +1603,8 @@ class ExifToolManager:
 
         try:
             success = self._send_to_process(args, timeout=30)
+            if success:
+                self._notify_metadata_cache_invalidator([file_path])
             return success
         except Exception as e:
             print(f"❌ XMP sidecar write error: {e}")
@@ -1635,6 +1720,9 @@ class ExifToolManager:
         if reason is not None:
             self._record_raw_embed_fallback(file_path, f"reset: {reason}")
             return False
+        # 本体字段确实被清掉了（或本来就没有）：读取缓存里的旧星级必须失效
+        # The body was really cleared: drop the stale rating from the read cache
+        self._notify_metadata_cache_invalidator([file_path])
         return True
 
     def _reset_xmp_sidecar(self, file_path: str) -> bool:
@@ -1667,7 +1755,10 @@ class ExifToolManager:
             xmp_path
         ]
         try:
-            return self._send_to_process(args, timeout=30)
+            ok = self._send_to_process(args, timeout=30)
+            if ok:
+                self._notify_metadata_cache_invalidator([file_path])
+            return ok
         except Exception as e:
             print(f"❌ XMP sidecar reset error: {e}")
             return False
@@ -2137,8 +2228,15 @@ class ExifToolManager:
             sidecar_args = build_args(True)
             if not sidecar_args:
                 return False
-            return self._send_to_process(
+            ok = self._send_to_process(
                 sidecar_args + ['-overwrite_original_in_place', sidecar_path], timeout=30)
+            if ok:
+                # set_metadata 自己拼参数直调 _send_to_process，不经过底层 writer，
+                # 因此这里必须显式失效读取缓存，否则改完 Title 仍读到旧值。
+                # set_metadata builds args and calls _send_to_process directly,
+                # bypassing the low-level writers, so invalidate the read cache here.
+                self._notify_metadata_cache_invalidator([file_path])
+            return ok
 
         try:
             if use_sidecar:
@@ -2151,8 +2249,13 @@ class ExifToolManager:
             if not raw_body:
                 # JPEG / HEIF / DNG 等：直接写本体（与其余写入路径一致，ExFAT 安全、保留 inode）
                 # JPEG / HEIF / DNG: write the body directly (ExFAT-safe, keeps the inode)
-                return self._send_to_process(
+                ok = self._send_to_process(
                     body_args + ['-overwrite_original_in_place', file_path], timeout=30)
+                if ok:
+                    # 同上：直调 _send_to_process，需显式失效读取缓存
+                    # Same as above: direct _send_to_process call, invalidate explicitly
+                    self._notify_metadata_cache_invalidator([file_path])
+                return ok
 
             reason = self._verified_raw_inplace(
                 file_path,
@@ -2165,6 +2268,9 @@ class ExifToolManager:
             # Keep an existing sidecar in step (never create one), as in _write_metadata_arw
             if os.path.exists(sidecar_path):
                 write_sidecar()
+            # 本体已写成功：失效读取缓存（与上面两条直调路径保持一致）
+            # The body was written: invalidate the read cache, as on the two paths above
+            self._notify_metadata_cache_invalidator([file_path])
             return True
         except Exception as e:
             print(f"❌ set_metadata error [{os.path.basename(file_path)}]: {e}")
@@ -2469,6 +2575,12 @@ class ExifToolManager:
         # (incl. RAF/ORF) routes through the sidecar branch above, so calling
         # _create_xmp_sidecars_for_raf here would double-write those files.
 
+        # 批量写结束后一次性失效这批文件的 EXIF 读取缓存：失效幂等，不必精确筛出
+        # 成功项；sidecar 分支由 _write_metadata_xmp_sidecar 逐条通知，这里再兜一次。
+        # Invalidate the EXIF read cache for the whole batch once it is written;
+        # invalidation is idempotent, so exact successes need not be filtered out.
+        self._notify_metadata_cache_invalidator([it.get('file') for it in files_metadata])
+
         return stats
         
     def cleanup_temp_files(self, file_paths: List[str]):
@@ -2693,6 +2805,7 @@ class ExifToolManager:
         try:
             success = self._send_to_process(args, timeout=30)
             if success:
+                self._notify_metadata_cache_invalidator([file_path])
                 filename = os.path.basename(file_path)
                 # print(f"✅ EXIF reset: {filename}")
             return success
@@ -2838,6 +2951,8 @@ class ExifToolManager:
         self.cleanup_temp_files(file_paths)
 
         log(f"\n{i18n.t('logs.batch_complete', success=stats['success'], skipped=0, failed=stats['failed'])}")
+        # 重置完成后一次性失效这批文件的 EXIF 读取缓存（幂等）/ idempotent batch invalidation
+        self._notify_metadata_cache_invalidator(file_paths)
         return stats
 
     def restore_files_from_manifest(self, dir_path: str, log_callback=None, i18n=None) -> Dict[str, int]:

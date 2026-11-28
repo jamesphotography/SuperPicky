@@ -14,7 +14,7 @@ Focus Point Detector - 对焦点检测器
 
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Iterable, Optional, Tuple
 import json
 import math
 import numpy as np
@@ -202,7 +202,7 @@ class FocusPointDetector:
             FocusPointResult 或 None (无对焦数据)
         """
         # 先读取通用标签确定相机品牌
-        exif_data = self._read_exif(raw_path, self.COMMON_TAGS)
+        exif_data = self.read_exif(raw_path, self.COMMON_TAGS)
         if exif_data is None:
             return None
         
@@ -226,7 +226,7 @@ class FocusPointDetector:
     
     def _detect_nikon(self, raw_path: str, common_data: dict) -> Optional[FocusPointResult]:
         """Nikon Z8/Z9 对焦点检测"""
-        exif_data = self._read_exif(raw_path, self.NIKON_TAGS)
+        exif_data = self.read_exif(raw_path, self.NIKON_TAGS)
         if exif_data is None:
             return None
         exif_data.update(common_data)
@@ -287,7 +287,7 @@ class FocusPointDetector:
     
     def _detect_sony(self, raw_path: str, common_data: dict) -> Optional[FocusPointResult]:
         """Sony A1/A7R5/A7M4 对焦点检测"""
-        exif_data = self._read_exif(raw_path, self.SONY_TAGS)
+        exif_data = self.read_exif(raw_path, self.SONY_TAGS)
         if exif_data is None:
             return None
         exif_data.update(common_data)
@@ -362,7 +362,7 @@ class FocusPointDetector:
         Canon 坐标系统: 从图像中心偏移！
         实际坐标 = 中心 + 偏移量
         """
-        exif_data = self._read_exif(raw_path, self.CANON_TAGS)
+        exif_data = self.read_exif(raw_path, self.CANON_TAGS)
         if exif_data is None:
             return None
         exif_data.update(common_data)
@@ -479,7 +479,7 @@ class FocusPointDetector:
         - AF Point Selected: 归一化坐标 "x y" (0.0-1.0)
         - AF Focus Area: 像素坐标 "x y w h"
         """
-        exif_data = self._read_exif(raw_path, self.OLYMPUS_TAGS)
+        exif_data = self.read_exif(raw_path, self.OLYMPUS_TAGS)
         if exif_data is None:
             return None
         exif_data.update(common_data)
@@ -591,7 +591,7 @@ class FocusPointDetector:
         Fujifilm 坐标系统:
         - Focus Pixel: 像素坐标 "x y"
         """
-        exif_data = self._read_exif(raw_path, self.FUJIFILM_TAGS)
+        exif_data = self.read_exif(raw_path, self.FUJIFILM_TAGS)
         if exif_data is None:
             return None
         exif_data.update(common_data)
@@ -660,7 +660,7 @@ class FocusPointDetector:
         Panasonic 坐标系统:
         - AF Point Position: 归一化坐标 "0.5 0.5" (0.0-1.0)
         """
-        exif_data = self._read_exif(raw_path, self.PANASONIC_TAGS)
+        exif_data = self.read_exif(raw_path, self.PANASONIC_TAGS)
         if exif_data is None:
             return None
         exif_data.update(common_data)
@@ -813,9 +813,18 @@ class FocusPointDetector:
                 self._exif_cache.popitem(last=False)
         return dict(merged)
 
-    def _read_exif(self, file_path: str, tags: list) -> Optional[dict]:
+    def read_exif(self, file_path: str, tags: list) -> Optional[dict]:
         """
         读取指定的 EXIF 标签 (V4.2.1: 使用统一的 ExifToolManager 常驻进程)
+
+        这是本模块对外提供的唯一 EXIF 读取入口：读一次合并超集（47 个标签）后按 tags
+        裁剪，多个模块共用同一份进程内缓存（上限 1024 条，LRU 淘汰）。之前以 _read_exif
+        之名被 core/photo_processor.py 跨模块直接调用，既破坏封装又让「改私有实现」变成
+        改公共契约；对外公开后调用方不必再知道缓存内部结构。
+        Public EXIF read entry point: reads the merged 47-tag superset once and slices it,
+        sharing one process-wide bounded cache (1024 entries, LRU). It used to be called
+        cross-module as _read_exif, which made a private implementation detail a de-facto
+        contract; now callers depend on a documented API instead.
 
         V4.x: 不再按 tags 各开一次往返，而是读一次合并超集再裁剪。
         返回字典只包含「请求且文件中确实存在」的标签（与逐标签读取的返回形态一致：
@@ -1081,3 +1090,49 @@ def get_focus_detector() -> FocusPointDetector:
     if _focus_detector is None:
         _focus_detector = FocusPointDetector()
     return _focus_detector
+
+
+def invalidate_exif_cache(file_paths: Optional[Iterable[str]] = None) -> None:
+    """失效 EXIF 合并读缓存（供跨模块在写完元数据后调用）。
+
+    检测器把 47 个标签合并成的元数据按文件缓存 1024 条（LRU），写回元数据后
+    缓存里的旧值（Title / City / Rating 等）必须作废，否则同一进程内后续读取
+    会拿到写之前的快照。此函数是该失效动作的公开入口，供 tools/exiftool_manager
+    的回调钩子与 core/photo_processor 的批量写路径统一调用。
+
+    参数:
+    file_paths (Optional[Iterable[str]]): 需要失效的文件路径集合；传 None 表示
+        清空整张缓存表。列表里的非字符串元素（含 None）会被跳过，避免误触发
+        「清空全表」语义。
+
+    返回:
+    None: 纯副作用函数；失败被吞掉——缓存只是加速手段，失效失败不会影响正确性
+        的最终落盘结果，只会让下一次读取变慢。单例尚未创建时直接返回，不为失效
+        动作去构造检测器（构造会触发 ExifTool 探测）。
+
+    Invalidate the merged EXIF read cache after metadata writes.
+
+    Parameters:
+    file_paths (Optional[Iterable[str]]): Paths to invalidate; None clears the whole
+        cache. Non-string entries (including None) are skipped so a mixed list can
+        never be mistaken for a full-table clear.
+
+    Return:
+    None: Side-effect only; failures are swallowed. When the singleton has not been
+        created yet this returns immediately instead of constructing the detector.
+    """
+    detector = _focus_detector
+    if detector is None:
+        return
+    try:
+        if file_paths is None:
+            detector.invalidate_cache()
+            return
+        if isinstance(file_paths, str):
+            detector.invalidate_cache(file_paths)
+            return
+        for file_path in file_paths:
+            if isinstance(file_path, str):
+                detector.invalidate_cache(file_path)
+    except Exception:
+        pass

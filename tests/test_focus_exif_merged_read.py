@@ -71,7 +71,7 @@ def test_read_exif_returns_only_requested_keys(sample_raw, fake_manager):
     fake_manager({"Make": "SONY", "ISO": 400, "FocusLocation": "6000 4000 3000 2000"})
     det = FocusPointDetector()
 
-    assert det._read_exif(sample_raw, ["Make", "ISO"]) == {"Make": "SONY", "ISO": 400}
+    assert det.read_exif(sample_raw, ["Make", "ISO"]) == {"Make": "SONY", "ISO": 400}
 
 
 def test_read_exif_missing_tags_stay_absent(sample_raw, fake_manager):
@@ -79,7 +79,7 @@ def test_read_exif_missing_tags_stay_absent(sample_raw, fake_manager):
     fake_manager({"Make": "SONY"})
     det = FocusPointDetector()
 
-    result = det._read_exif(sample_raw, ["Make", "FocusFrameSize"])
+    result = det.read_exif(sample_raw, ["Make", "FocusFrameSize"])
     assert result == {"Make": "SONY"}
     assert "FocusFrameSize" not in result
 
@@ -89,7 +89,7 @@ def test_read_exif_returns_none_when_nothing_matched(sample_raw, fake_manager):
     fake_manager({"Make": "SONY"})
     det = FocusPointDetector()
 
-    assert det._read_exif(sample_raw, ["CropArea"]) == {}
+    assert det.read_exif(sample_raw, ["CropArea"]) == {}
 
 
 # --------------------------------------------------------------------------
@@ -101,11 +101,11 @@ def test_returned_dict_is_not_shared_with_cache(sample_raw, fake_manager):
     fake_manager({"Make": "NIKON", "AFAreaMode": "Single"})
     det = FocusPointDetector()
 
-    first = det._read_exif(sample_raw, ["Make", "AFAreaMode"])
+    first = det.read_exif(sample_raw, ["Make", "AFAreaMode"])
     first["Make"] = "MUTATED"
     first["injected"] = True
 
-    second = det._read_exif(sample_raw, ["Make", "AFAreaMode"])
+    second = det.read_exif(sample_raw, ["Make", "AFAreaMode"])
     assert second == {"Make": "NIKON", "AFAreaMode": "Single"}
 
 
@@ -114,7 +114,7 @@ def test_each_call_returns_distinct_object(sample_raw, fake_manager):
     fake_manager({"Make": "CANON"})
     det = FocusPointDetector()
 
-    assert det._read_exif(sample_raw, ["Make"]) is not det._read_exif(sample_raw, ["Make"])
+    assert det.read_exif(sample_raw, ["Make"]) is not det.read_exif(sample_raw, ["Make"])
 
 
 # --------------------------------------------------------------------------
@@ -127,7 +127,7 @@ def test_read_exif_rejects_invalid_paths(bad_path, fake_manager):
     mgr = fake_manager({"Make": "SONY"})
     det = FocusPointDetector()
 
-    assert det._read_exif(bad_path, ["Make"]) is None
+    assert det.read_exif(bad_path, ["Make"]) is None
     assert mgr.calls == []
 
 
@@ -136,7 +136,7 @@ def test_read_exif_returns_none_for_missing_file(fake_manager, tmp_path):
     mgr = fake_manager({"Make": "SONY"})
     det = FocusPointDetector()
 
-    assert det._read_exif(str(tmp_path / "nope.arw"), ["Make"]) is None
+    assert det.read_exif(str(tmp_path / "nope.arw"), ["Make"]) is None
     assert mgr.calls == []
 
 
@@ -146,7 +146,7 @@ def test_read_exif_returns_none_for_empty_tag_list(sample_raw, fake_manager, emp
     mgr = fake_manager({"Make": "SONY"})
     det = FocusPointDetector()
 
-    assert det._read_exif(sample_raw, empty_tags) is None
+    assert det.read_exif(sample_raw, empty_tags) is None
     assert mgr.calls == []
 
 
@@ -156,8 +156,8 @@ def test_failed_read_is_not_cached(sample_raw, fake_manager, payload):
     mgr = fake_manager(payload)
     det = FocusPointDetector()
 
-    assert not det._read_exif(sample_raw, ["Make"])
-    assert not det._read_exif(sample_raw, ["Make"])
+    assert not det.read_exif(sample_raw, ["Make"])
+    assert not det.read_exif(sample_raw, ["Make"])
     assert len(mgr.calls) == 2
 
 
@@ -170,9 +170,9 @@ def test_repeat_reads_hit_cache(sample_raw, fake_manager):
     mgr = fake_manager({"Make": "SONY", "ISO": 800})
     det = FocusPointDetector()
 
-    det._read_exif(sample_raw, ["Make"])
-    det._read_exif(sample_raw, ["ISO"])
-    det._read_exif(sample_raw, ["Make", "ISO", "Model"])
+    det.read_exif(sample_raw, ["Make"])
+    det.read_exif(sample_raw, ["ISO"])
+    det.read_exif(sample_raw, ["Make", "ISO", "Model"])
 
     assert len(mgr.calls) == 1
 
@@ -182,7 +182,7 @@ def test_merged_superset_is_requested_once(sample_raw, fake_manager):
     mgr = fake_manager({"Make": "SONY"})
     det = FocusPointDetector()
 
-    det._read_exif(sample_raw, ["Make"])
+    det.read_exif(sample_raw, ["Make"])
 
     assert len(mgr.calls) == 1
     _, extra_args = mgr.calls[0]
@@ -196,9 +196,9 @@ def test_invalidate_single_path_forces_reread(sample_raw, fake_manager):
     mgr = fake_manager({"Make": "SONY"})
     det = FocusPointDetector()
 
-    det._read_exif(sample_raw, ["Make"])
+    det.read_exif(sample_raw, ["Make"])
     det.invalidate_cache(sample_raw)
-    det._read_exif(sample_raw, ["Make"])
+    det.read_exif(sample_raw, ["Make"])
 
     assert len(mgr.calls) == 2
 
@@ -210,11 +210,11 @@ def test_invalidate_all_clears_whole_cache(sample_raw, fake_manager, tmp_path):
     mgr = fake_manager({"Make": "SONY"})
     det = FocusPointDetector()
 
-    det._read_exif(sample_raw, ["Make"])
-    det._read_exif(str(other), ["Make"])
+    det.read_exif(sample_raw, ["Make"])
+    det.read_exif(str(other), ["Make"])
     det.invalidate_cache()
-    det._read_exif(sample_raw, ["Make"])
-    det._read_exif(str(other), ["Make"])
+    det.read_exif(sample_raw, ["Make"])
+    det.read_exif(str(other), ["Make"])
 
     assert len(mgr.calls) == 4
 
@@ -225,10 +225,10 @@ def test_invalidate_cache_tolerates_bad_arguments(sample_raw, fake_manager, bad_
     fake_manager({"Make": "SONY"})
     det = FocusPointDetector()
 
-    det._read_exif(sample_raw, ["Make"])
+    det.read_exif(sample_raw, ["Make"])
     det.invalidate_cache(bad_arg)  # None = 清空；其余应被忽略
     det.invalidate_cache(bad_arg)
-    assert det._read_exif(sample_raw, ["Make"]) == {"Make": "SONY"}
+    assert det.read_exif(sample_raw, ["Make"]) == {"Make": "SONY"}
 
 
 def test_cache_is_bounded(fake_manager, tmp_path, monkeypatch):
@@ -242,13 +242,13 @@ def test_cache_is_bounded(fake_manager, tmp_path, monkeypatch):
         p = tmp_path / f"f{i}.arw"
         p.write_bytes(b"II*\x00")
         paths.append(str(p))
-        det._read_exif(str(p), ["Make"])
+        det.read_exif(str(p), ["Make"])
 
     with det._exif_cache_lock:
         assert len(det._exif_cache) == 4
 
     # 最早的三个已被淘汰，需要重新解析
-    det._read_exif(paths[0], ["Make"])
+    det.read_exif(paths[0], ["Make"])
     assert len(mgr.calls) == 8
 
 
@@ -269,7 +269,7 @@ def test_concurrent_reads_are_consistent(sample_raw, fake_manager):
         try:
             barrier.wait(timeout=10)
             for _ in range(20):
-                results.append(det._read_exif(sample_raw, ["Make", "ISO"]))
+                results.append(det.read_exif(sample_raw, ["Make", "ISO"]))
         except Exception as exc:  # pragma: no cover - 失败时用于报错
             errors.append(exc)
 
@@ -289,7 +289,7 @@ def test_instance_without_init_still_works(sample_raw, fake_manager):
     fake_manager({"Make": "SONY"})
     det = object.__new__(FocusPointDetector)
 
-    assert det._read_exif(sample_raw, ["Make"]) == {"Make": "SONY"}
+    assert det.read_exif(sample_raw, ["Make"]) == {"Make": "SONY"}
     det.invalidate_cache(sample_raw)
 
 

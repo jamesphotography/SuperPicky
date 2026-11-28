@@ -42,11 +42,20 @@ from core.keypoint_detector import KeypointDetector, get_keypoint_detector
 from core.rating_caption import CaptionFacts, build_caption, outcome_from_reason_key
 from core.iso_sharpness import ISO_BASE, ISO_MIN_FACTOR, ISO_PENALTY_FACTOR, iso_sharpness_factor
 from core.ordered_decode import OrderedDecodeGate
+from core.memory_budget import (
+    available_memory_bytes,
+    clamp_count,
+    clamp_prefetch_workers,
+    clamp_queue_depth,
+    MAX_EXIF_BATCH_SIZE,
+    MAX_EXIF_QUEUE_BATCHES,
+)
 from core.flight_detector import FlightDetector, get_flight_detector, FlightResult
 from core.exposure_detector import ExposureDetector, get_exposure_detector, ExposureResult
 from core.focus_point_detector import (
     FocusPointDetector,
     get_focus_detector,
+    invalidate_exif_cache,
     verify_focus_in_bbox,
     arbitrate_focus_weights,
 )
@@ -559,7 +568,7 @@ class PhotoProcessor:
         try:
             # V4.0.5: 复用 focus_detector 的常驻 exiftool 进程
             focus_detector = get_focus_detector()
-            exif_data = focus_detector._read_exif(filepath, ['ISO'])
+            exif_data = focus_detector.read_exif(filepath, ['ISO'])
             if exif_data and 'ISO' in exif_data:
                 return int(exif_data['ISO'])
         except Exception:
@@ -571,21 +580,18 @@ class PhotoProcessor:
         """
         使指定文件的合并读取缓存失效（写回元数据后必须调用）。
 
-        容错：任何非 str / 空值条目直接跳过；检测器缓存异常不影响主流程
-        （缓存只是性能优化，失效失败最坏情况是读到旧值，但不能因此中断选片）。
-        Evicts the merged-read cache for the given files. Best-effort: the cache is
-        only a performance aid, so failures must never interrupt the culling flow.
+        薄封装：实际实现在 core.focus_point_detector.invalidate_exif_cache，那里也
+        是 ExifToolManager 写成功回调的统一入口，两条路径共用一个失效实现。
+        容错：任何非 str / 空值条目由下层跳过；未创建检测器时直接返回，不会为了
+        失效去构造检测器（构造会触发 ExifTool 探测）。
+        Thin wrapper over core.focus_point_detector.invalidate_exif_cache, the same
+        entry the ExifToolManager write callback uses. Best-effort by design: the
+        cache is only a performance aid and must never interrupt the culling flow.
 
         参数:
         file_paths: 文件路径的可迭代对象 / iterable of file paths
         """
-        try:
-            detector = get_focus_detector()
-            for path in file_paths or []:
-                if isinstance(path, str) and path.strip():
-                    detector.invalidate_cache(path)
-        except Exception:
-            pass
+        invalidate_exif_cache(file_paths)
 
     def _read_all_exif_metadata(self, filepath: str) -> dict:
         """
@@ -627,7 +633,7 @@ class PhotoProcessor:
         
         try:
             focus_detector = get_focus_detector()
-            exif_data = focus_detector._read_exif(filepath, exif_fields)
+            exif_data = focus_detector.read_exif(filepath, exif_fields)
             
             if exif_data:
                 # 相机设置
@@ -1459,6 +1465,13 @@ class PhotoProcessor:
                 )
         
         exiftool_mgr = get_exiftool_manager()
+        # 把「写成功 → 失效 EXIF 读取缓存」的钩子挂到管理器上：浏览器改星级、识鸟写
+        # Title 等其他调用方也从这里受益，不必各自记得调用失效（缓存是进程级的）。
+        # 管理器不 import core（会循环导入），所以由这边注入实现。
+        # Attach the write-then-invalidate hook to the manager so every writer — including
+        # the results browser and BirdID's Title write — drops the process-level cache;
+        # the manager never imports core (circular import), so core injects the callback.
+        exiftool_mgr.set_metadata_cache_invalidator(invalidate_exif_cache)
         # 清掉上一次（或浏览器里单张改星级）残留的「写本体回退边车」记录，汇总只算本轮（#165）
         # Drop fallback records from earlier runs / browser edits so the summary covers this run only (#165)
         exiftool_mgr.drain_raw_embed_fallbacks()
@@ -1467,7 +1480,12 @@ class PhotoProcessor:
         metadata_batch_size = 64
         env_exif_batch = os.getenv("SUPERPICKY_EXIF_BATCH_SIZE", "").strip()
         if env_exif_batch.isdigit():
-            metadata_batch_size = max(8, int(env_exif_batch))
+            # 上限兜底：一批 64 条已经够摊薄 ExifTool 往返，再大只是把每条记录（含
+            # UTF-8 题注临时文件路径与参数字符串）堆在内存里，且首次进度上报更迟。
+            # Upper bound: 64 already amortises the ExifTool round-trip; larger batches only
+            # pile per-item dicts and argv strings in memory and delay the first progress line.
+            metadata_batch_size = clamp_count(
+                int(env_exif_batch), 8, MAX_EXIF_BATCH_SIZE)
         # 收尾阶段改用小批次：V2 评星把星级写入全部挂到收尾才写，每批写完才报一次
         # 进度；64 条一批时外接盘上第一批要很久，状态条长时间停在 0（#150）。
         # 专有 RAW 本就逐条写边车，小批次几乎不增加开销。
@@ -1482,7 +1500,12 @@ class PhotoProcessor:
         metadata_queue_max_batches = 6
         env_exif_qmax = os.getenv("SUPERPICKY_EXIF_QUEUE_MAX", "").strip()
         if env_exif_qmax.isdigit():
-            metadata_queue_max_batches = max(2, int(env_exif_qmax))
+            # 队列里每一批都是一份待写记录列表，队深 × 批大小就是积压上限；
+            # 无上限时两个环境变量相乘能把内存推到 GB 级，这里一并钳住。
+            # Each queued batch holds its full item list, so depth x batch size is the backlog;
+            # with no cap the two env vars multiplied into gigabytes of retained records.
+            metadata_queue_max_batches = clamp_count(
+                int(env_exif_qmax), 2, MAX_EXIF_QUEUE_BATCHES)
         
         metadata_queue = queue.Queue(maxsize=metadata_queue_max_batches) if metadata_async_enabled else None
         metadata_writer_thread = None
@@ -2013,10 +2036,19 @@ class PhotoProcessor:
             # yolo_infer_lock 已串行化所有 YOLO 推理调用，MPS 不存在并发访问风险
             yolo_prefetch_enabled = True
         
+        # 可用内存只探测一次，供预取深度与解码线程数共用（探测失败按「未知」保守处理）。
+        # Probe available memory once; the prefetch depth and the decode worker count share it.
+        avail_mem_bytes = available_memory_bytes()
         yolo_prefetch_depth = 3
         env_yolo_prefetch_depth = os.getenv("SUPERPICKY_YOLO_PREFETCH_DEPTH", "").strip()
         if env_yolo_prefetch_depth.isdigit():
             yolo_prefetch_depth = max(2, int(env_yolo_prefetch_depth))
+        # 环境变量此前没有上限：设 32 就会压住 32 张 172MB 大图（≈5.5GB）直接 OOM。
+        # 这里先受硬上限约束，再按可用内存（默认 25%）收紧。
+        # The env var used to be unbounded: 32 would pin ~5.5GB of 172MB frames and OOM.
+        # It is now capped hard and then shrunk by available memory (25% by default).
+        yolo_prefetch_depth, yolo_depth_mem_limited = clamp_queue_depth(
+            yolo_prefetch_depth, available_bytes=avail_mem_bytes)
         
         yolo_result_queue = queue.Queue(maxsize=yolo_prefetch_depth) if yolo_prefetch_enabled else None
         yolo_prefetch_thread = None
@@ -2038,6 +2070,12 @@ class PhotoProcessor:
         env_decode_workers = os.getenv("SUPERPICKY_DECODE_PREFETCH_DEPTH", "").strip()
         if env_decode_workers.isdigit():
             decode_workers = max(1, int(env_decode_workers))
+        # 同上：线程数直接决定在途大图数量（在途 = 线程数 + 1），必须同时受硬上限与
+        # 可用内存约束，否则一个环境变量就能把进程推到 OOM。
+        # Same as above: workers bound the in-flight frames (workers + 1), so both the hard
+        # cap and available memory must constrain it, or one env var can push it into OOM.
+        decode_workers, decode_workers_mem_limited = clamp_prefetch_workers(
+            decode_workers, available_bytes=avail_mem_bytes)
         # 队列深度保持 1：推理线程逐张消费，多开槽位只会多压几张 172MB 大图
         # Queue depth stays 1: the inference thread consumes one at a time and extra slots
         # would only hold more 172MB frames.
@@ -2810,7 +2848,22 @@ class PhotoProcessor:
             )
             yolo_prefetch_thread.start()
             if self._perf_enabled:
-                self._log(f"  ⚙️ YOLO prefetch: on (depth={yolo_prefetch_depth}, decode_threads={decode_workers})")
+                # 把「是否被可用内存收紧」写进日志：线上只有这一行能说明线程数为什么比
+                # 默认值小，没有它就只能靠猜。
+                # Log whether available memory shrank the values; without it a smaller-than-
+                # default worker count is unexplainable from the log alone.
+                mem_note = []
+                if avail_mem_bytes:
+                    mem_note.append(f"avail={avail_mem_bytes // (1024 * 1024)}MB")
+                if yolo_depth_mem_limited:
+                    mem_note.append("depth=mem-limited")
+                if decode_workers_mem_limited:
+                    mem_note.append("threads=mem-limited")
+                mem_suffix = f", {', '.join(mem_note)}" if mem_note else ""
+                self._log(
+                    f"  ⚙️ YOLO prefetch: on (depth={yolo_prefetch_depth}, "
+                    f"decode_threads={decode_workers}{mem_suffix})"
+                )
         elif self._perf_enabled:
             if env_yolo_prefetch_raw:
                 self._log("  ⚙️ YOLO prefetch: off")
@@ -3410,7 +3463,7 @@ class PhotoProcessor:
                             # detector cache instead of a fourth round-trip.
                             is_manual_focus = False
                             try:
-                                _fm_meta = get_focus_detector()._read_exif(
+                                _fm_meta = get_focus_detector().read_exif(
                                     raw_path, ['FocusMode'])
                                 focus_mode = str(
                                     (_fm_meta or {}).get('FocusMode', '')).strip().lower()
